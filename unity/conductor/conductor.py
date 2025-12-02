@@ -14,8 +14,6 @@ import contextlib
 
 
 from ..conversation_manager.base import BaseConversationManagerHandle
-from ..conversation_manager.handle import ConversationManagerHandle
-from ..conversation_manager.event_broker import get_event_broker
 from ..common.llm_client import new_llm_client
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -37,27 +35,17 @@ from .types import StateManager
 from .prompt_builders import build_ask_prompt, build_request_prompt
 from .base import BaseConductor
 from ..contact_manager.base import BaseContactManager
-from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.base import BaseTranscriptManager
-from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
-from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..guidance_manager.base import BaseGuidanceManager
-from ..guidance_manager.guidance_manager import GuidanceManager
 from ..skill_manager.base import BaseSkillManager
-from ..skill_manager.skill_manager import SkillManager
 from ..task_scheduler.base import BaseTaskScheduler
-from ..task_scheduler.task_scheduler import TaskScheduler
 from ..task_scheduler.active_queue import ActiveQueue
 from ..web_searcher.base import BaseWebSearcher
-from ..web_searcher.web_searcher import WebSearcher
 from ..file_manager.base import BaseGlobalFileManager
-from ..file_manager.global_file_manager import GlobalFileManager
 from ..actor.base import BaseActor
-from ..actor.hierarchical_actor import HierarchicalActor
 from ..actor.base import BaseActorHandle
 from ..secret_manager.base import BaseSecretManager
-from ..secret_manager.secret_manager import SecretManager
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -65,6 +53,9 @@ from ..events.manager_event_logging import (
 )
 from ..constants import is_semantic_cache_enabled
 from .concurrency_guard import ActiveSessionRegistry
+from ..common.sentinels import _DisabledSentinel
+from ..settings import SETTINGS
+from .manager_registry import get_class
 
 if TYPE_CHECKING:  # type hints only
     from ..image_manager.types.image_refs import ImageRefs
@@ -111,79 +102,192 @@ class Conductor(BaseConductor):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        # ── Managers – use provided instances or default to REAL back-ends ──
+        # ── Managers – use provided instances or settings-driven defaults ──
+        # When None is passed, use SETTINGS to determine implementation.
+        # DISABLED sentinel explicitly disables optional managers.
 
-        # Actor – real executor for free-form activities
-        self._actor = actor if actor is not None else HierarchicalActor()
+        # Actor (foundational - cannot be disabled)
+        if actor is not None:
+            self._actor = actor
+        else:
+            actor_cls = get_class("actor", SETTINGS.UNITY_ACTOR_IMPL)
+            self._actor = actor_cls()
 
-        # Contact manager
-        self._contact_manager = (
-            contact_manager
-            if contact_manager is not None
-            else ContactManager(
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
+        # ContactManager (foundational - cannot be disabled)
+        if contact_manager is not None:
+            self._contact_manager = contact_manager
+        else:
+            contacts_cls = get_class("contacts", SETTINGS.UNITY_CONTACTS_IMPL)
+            if SETTINGS.UNITY_CONTACTS_IMPL == "simulated":
+                self._contact_manager = contacts_cls(
+                    description=description,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                self._contact_manager = contacts_cls(
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                )
+
+        # TranscriptManager (foundational - cannot be disabled)
+        if transcript_manager is not None:
+            self._transcript_manager = transcript_manager
+        else:
+            transcripts_cls = get_class("transcripts", SETTINGS.UNITY_TRANSCRIPTS_IMPL)
+            if SETTINGS.UNITY_TRANSCRIPTS_IMPL == "simulated":
+                self._transcript_manager = transcripts_cls(
+                    description=description,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                self._transcript_manager = transcripts_cls(
+                    contact_manager=self._contact_manager,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                )
+
+        # TaskScheduler (foundational - cannot be disabled)
+        if task_scheduler is not None:
+            self._task_scheduler = task_scheduler
+        else:
+            tasks_cls = get_class("tasks", SETTINGS.UNITY_TASKS_IMPL)
+            if SETTINGS.UNITY_TASKS_IMPL == "simulated":
+                self._task_scheduler = tasks_cls(
+                    description=description,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                self._task_scheduler = tasks_cls(
+                    actor=self._actor,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                )
+
+        # ConversationManager (foundational - cannot be disabled)
+        if conversation_manager is not None:
+            self._cm_handle = conversation_manager
+        else:
+            conversation_cls = get_class(
+                "conversation",
+                SETTINGS.UNITY_CONVERSATION_IMPL,
             )
-        )
+            if SETTINGS.UNITY_CONVERSATION_IMPL == "simulated":
+                self._cm_handle = conversation_cls(
+                    assistant_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+                    contact_id=os.getenv("CONTACT_ID", "1"),
+                    description=description,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                # Real ConversationManagerHandle requires a ConversationManager
+                # which has complex dependencies - caller must provide it explicitly
+                raise ValueError(
+                    "UNITY_CONVERSATION_IMPL='real' requires an explicit "
+                    "conversation_manager argument. Either pass a conversation_manager "
+                    "or set UNITY_CONVERSATION_IMPL='simulated'.",
+                )
 
-        self._transcript_manager = (
-            transcript_manager
-            if transcript_manager is not None
-            else TranscriptManager(
-                contact_manager=self._contact_manager,
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
-            )
-        )
+        # ── Optional managers (can be disabled via DISABLED sentinel or settings) ──
 
-        self._knowledge_manager = (
-            knowledge_manager
-            if knowledge_manager is not None
-            else KnowledgeManager(
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
-            )
-        )
+        # KnowledgeManager
+        if isinstance(knowledge_manager, _DisabledSentinel):
+            self._knowledge_manager = None
+        elif knowledge_manager is not None:
+            self._knowledge_manager = knowledge_manager
+        elif not SETTINGS.UNITY_KNOWLEDGE_ENABLED:
+            self._knowledge_manager = None
+        else:
+            knowledge_cls = get_class("knowledge", SETTINGS.UNITY_KNOWLEDGE_IMPL)
+            if SETTINGS.UNITY_KNOWLEDGE_IMPL == "simulated":
+                self._knowledge_manager = knowledge_cls(
+                    description=description,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                self._knowledge_manager = knowledge_cls(
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                )
 
-        self._guidance_manager = (
-            guidance_manager
-            if guidance_manager is not None
-            else GuidanceManager(
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
-            )
-        )
+        # GuidanceManager
+        if isinstance(guidance_manager, _DisabledSentinel):
+            self._guidance_manager = None
+        elif guidance_manager is not None:
+            self._guidance_manager = guidance_manager
+        elif not SETTINGS.UNITY_GUIDANCE_ENABLED:
+            self._guidance_manager = None
+        else:
+            guidance_cls = get_class("guidance", SETTINGS.UNITY_GUIDANCE_IMPL)
+            if SETTINGS.UNITY_GUIDANCE_IMPL == "simulated":
+                self._guidance_manager = guidance_cls(
+                    description=description,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                self._guidance_manager = guidance_cls(
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                )
 
-        self._secret_manager = (
-            secret_manager if secret_manager is not None else SecretManager()
-        )
+        # SecretManager
+        if isinstance(secret_manager, _DisabledSentinel):
+            self._secret_manager = None
+        elif secret_manager is not None:
+            self._secret_manager = secret_manager
+        elif not SETTINGS.UNITY_SECRETS_ENABLED:
+            self._secret_manager = None
+        else:
+            secrets_cls = get_class("secrets", SETTINGS.UNITY_SECRETS_IMPL)
+            if SETTINGS.UNITY_SECRETS_IMPL == "simulated":
+                self._secret_manager = secrets_cls(
+                    description=description,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                self._secret_manager = secrets_cls()
 
-        self._skill_manager = (
-            skill_manager if skill_manager is not None else SkillManager()
-        )
+        # SkillManager
+        if isinstance(skill_manager, _DisabledSentinel):
+            self._skill_manager = None
+        elif skill_manager is not None:
+            self._skill_manager = skill_manager
+        elif not SETTINGS.UNITY_SKILLS_ENABLED:
+            self._skill_manager = None
+        else:
+            skills_cls = get_class("skills", SETTINGS.UNITY_SKILLS_IMPL)
+            if SETTINGS.UNITY_SKILLS_IMPL == "simulated":
+                self._skill_manager = skills_cls(
+                    description=description,
+                    rolling_summary_in_prompts=rolling_summary_in_prompts,
+                    simulation_guidance=simulation_guidance,
+                )
+            else:
+                self._skill_manager = skills_cls()
 
-        self._task_scheduler = (
-            task_scheduler
-            if task_scheduler is not None
-            else TaskScheduler(
-                actor=self._actor,
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
-            )
-        )
+        # WebSearcher
+        if isinstance(web_searcher, _DisabledSentinel):
+            self._web_searcher = None
+        elif web_searcher is not None:
+            self._web_searcher = web_searcher
+        elif not SETTINGS.UNITY_WEB_SEARCH_ENABLED:
+            self._web_searcher = None
+        else:
+            web_cls = get_class("web_search", SETTINGS.UNITY_WEB_SEARCH_IMPL)
+            if SETTINGS.UNITY_WEB_SEARCH_IMPL == "simulated":
+                self._web_searcher = web_cls(description=description)
+            else:
+                self._web_searcher = web_cls()
 
-        self._web_searcher = web_searcher if web_searcher is not None else WebSearcher()
-
-        self._file_manager: BaseGlobalFileManager = (
-            global_file_manager
-            if global_file_manager is not None
-            else GlobalFileManager([])
-        )
-
-        self._cm_handle = (
-            conversation_manager
-            if conversation_manager is not None
-            else ConversationManagerHandle(
-                event_broker=get_event_broker(),
-                conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
-                contact_id=os.getenv("CONTACT_ID", "1"),
-            )
-        )
+        # GlobalFileManager
+        if isinstance(global_file_manager, _DisabledSentinel):
+            self._file_manager: BaseGlobalFileManager | None = None
+        elif global_file_manager is not None:
+            self._file_manager = global_file_manager
+        elif not SETTINGS.UNITY_FILES_ENABLED:
+            self._file_manager = None
+        else:
+            files_cls = get_class("files", SETTINGS.UNITY_FILES_IMPL)
+            self._file_manager = files_cls([])
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
@@ -195,21 +299,31 @@ class Conductor(BaseConductor):
         """Re-compute passive / active tool maps based on current active task."""
 
         # -------- base passive helpers -------------------------------- #
-        passive = methods_to_tool_dict(
+        # Build list of ask methods, filtering out None managers
+        passive_methods = [
+            # Foundational managers (always present)
             self._contact_manager.ask,
             self._transcript_manager.ask,
-            self._knowledge_manager.ask,
-            self._guidance_manager.ask,
-            self._secret_manager.ask,
-            self._skill_manager.ask,
             self._task_scheduler.ask,
-            self._web_searcher.ask,
-            self._file_manager.ask,
             self._cm_handle.ask,
             self._cm_handle.interject,
             self._cm_handle.get_full_transcript,
-            include_class_name=True,
-        )
+        ]
+        # Optional managers (may be None)
+        if self._knowledge_manager is not None:
+            passive_methods.append(self._knowledge_manager.ask)
+        if self._guidance_manager is not None:
+            passive_methods.append(self._guidance_manager.ask)
+        if self._secret_manager is not None:
+            passive_methods.append(self._secret_manager.ask)
+        if self._skill_manager is not None:
+            passive_methods.append(self._skill_manager.ask)
+        if self._web_searcher is not None:
+            passive_methods.append(self._web_searcher.ask)
+        if self._file_manager is not None:
+            passive_methods.append(self._file_manager.ask)
+
+        passive = methods_to_tool_dict(*passive_methods, include_class_name=True)
 
         # -------- add active_task.ask when a plan is alive ------------------- #
         if self._active_task is not None and not self._active_task.done():
@@ -224,22 +338,30 @@ class Conductor(BaseConductor):
         self.add_tools("ask", passive)
 
         # -------- build active helpers (passive + writers) ------------ #
+        # Build list of write methods, filtering out None managers
+        active_methods = [
+            # Foundational managers (always present)
+            self._contact_manager.update,
+            self._task_scheduler.update,
+            ToolSpec(self._task_scheduler.execute, max_concurrent=1),
+            self._actor.act,
+            self.clear,
+        ]
+        # Optional managers (may be None)
+        if self._knowledge_manager is not None:
+            active_methods.append(self._knowledge_manager.update)
+        if self._guidance_manager is not None:
+            active_methods.append(self._guidance_manager.update)
+        if self._secret_manager is not None:
+            active_methods.append(self._secret_manager.update)
+        if self._web_searcher is not None:
+            active_methods.append(self._web_searcher.update)
+        if self._file_manager is not None:
+            active_methods.append(self._file_manager.organize)
 
         active = {
             **passive,  # read-only tools are also valid here
-            **methods_to_tool_dict(
-                self._contact_manager.update,
-                self._knowledge_manager.update,
-                self._guidance_manager.update,
-                self._secret_manager.update,
-                self._task_scheduler.update,
-                self._web_searcher.update,
-                self._file_manager.organize,
-                self._actor.act,
-                ToolSpec(self._task_scheduler.execute, max_concurrent=1),
-                self.clear,
-                include_class_name=True,
-            ),
+            **methods_to_tool_dict(*active_methods, include_class_name=True),
         }
 
         # Enforce mutual exclusion between Actor.act and TaskScheduler.execute by

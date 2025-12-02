@@ -76,6 +76,47 @@ class ProductionSettings(BaseSettings):
     UNITY_LOG_INCLUDE_PREFIXES: str = "unity"
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Conductor Manager Configuration
+    # ─────────────────────────────────────────────────────────────────────────
+    # Foundational managers (cannot be disabled, only implementation switched):
+    #   - Actor, ContactManager, TranscriptManager, TaskScheduler, ConversationManager
+    # Optional managers (can be disabled via ENABLED=False):
+    #   - KnowledgeManager, GuidanceManager, SecretManager, SkillManager,
+    #     WebSearcher, GlobalFileManager
+
+    # -- Foundational managers (implementation only) --
+    # Actor: hierarchical | single_function | code_act | simulated
+    UNITY_ACTOR_IMPL: str = "hierarchical"
+    # ContactManager: real | simulated
+    UNITY_CONTACTS_IMPL: str = "real"
+    # TranscriptManager: real | simulated
+    UNITY_TRANSCRIPTS_IMPL: str = "real"
+    # TaskScheduler: real | simulated
+    UNITY_TASKS_IMPL: str = "real"
+    # ConversationManager: real | simulated
+    UNITY_CONVERSATION_IMPL: str = "real"
+
+    # -- Optional managers (enabled + implementation) --
+    # KnowledgeManager
+    UNITY_KNOWLEDGE_ENABLED: bool = True
+    UNITY_KNOWLEDGE_IMPL: str = "real"
+    # GuidanceManager
+    UNITY_GUIDANCE_ENABLED: bool = True
+    UNITY_GUIDANCE_IMPL: str = "real"
+    # SecretManager
+    UNITY_SECRETS_ENABLED: bool = True
+    UNITY_SECRETS_IMPL: str = "real"
+    # SkillManager
+    UNITY_SKILLS_ENABLED: bool = True
+    UNITY_SKILLS_IMPL: str = "real"
+    # WebSearcher
+    UNITY_WEB_SEARCH_ENABLED: bool = True
+    UNITY_WEB_SEARCH_IMPL: str = "real"
+    # GlobalFileManager
+    UNITY_FILES_ENABLED: bool = True
+    UNITY_FILES_IMPL: str = "real"
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
     @field_validator("UNIFY_CACHE", mode="before")
@@ -96,6 +137,12 @@ class ProductionSettings(BaseSettings):
         "UNITY_SILENCE_URLLIB3",
         "UNITY_SILENCE_OPENAI",
         "UNITY_LOG_ONLY_PROJECT",
+        "UNITY_KNOWLEDGE_ENABLED",
+        "UNITY_GUIDANCE_ENABLED",
+        "UNITY_SECRETS_ENABLED",
+        "UNITY_SKILLS_ENABLED",
+        "UNITY_WEB_SEARCH_ENABLED",
+        "UNITY_FILES_ENABLED",
         mode="before",
     )
     @classmethod

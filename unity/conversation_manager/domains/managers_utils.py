@@ -10,13 +10,12 @@ from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
-from unity.contact_manager.contact_manager import ContactManager
-from unity.conversation_manager.handle import ConversationManagerHandle
 from unity.conversation_manager.events import *
 from unity.events.event_bus import EVENT_BUS
 from unity.memory_manager.memory_manager import MemoryManager
-from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conductor.conductor import Conductor
+from unity.conductor.manager_registry import get_class
+from unity.settings import SETTINGS
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -286,7 +285,8 @@ async def listen_to_operations(cm: "ConversationManager") -> None:
         # Wait for next operation (with timeout to allow checking for shutdown)
         try:
             async_func, args, kwargs = await asyncio.wait_for(
-                _operations_queue.get(), timeout=1.0
+                _operations_queue.get(),
+                timeout=1.0,
             )
         except asyncio.TimeoutError:
             continue
@@ -360,7 +360,7 @@ def _init_managers(
         )
     print(
         "[ManagersWorker] Unity initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds"
+        f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
     # Assumes UNIFY_KEY is already in environment from set_details()
@@ -374,29 +374,37 @@ def _init_managers(
     EVENT_BUS.set_window("Comms", 50)
     print(
         "[ManagersWorker] EventBus configured in "
-        f"{perf_counter() - local_start_time:.2f} seconds"
+        f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 2. Initialize ContactManager
+    # 2. Initialize ContactManager (respects UNITY_CONTACTS_IMPL setting)
     print("[ManagersWorker] Initializing ContactManager...")
     local_start_time = perf_counter()
-    cm.contact_manager = ContactManager()
+    contacts_cls = get_class("contacts", SETTINGS.UNITY_CONTACTS_IMPL)
+    if SETTINGS.UNITY_CONTACTS_IMPL == "simulated":
+        cm.contact_manager = contacts_cls(description="production deployment")
+    else:
+        cm.contact_manager = contacts_cls()
     print(
-        "[ManagersWorker] ContactManager initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds"
+        f"[ManagersWorker] ContactManager ({contacts_cls.__name__}) initialized in "
+        f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 3. Initialize TranscriptManager
+    # 3. Initialize TranscriptManager (respects UNITY_TRANSCRIPTS_IMPL setting)
     print("[ManagersWorker] Initializing TranscriptManager...")
     local_start_time = perf_counter()
-    cm.transcript_manager = TranscriptManager(contact_manager=cm.contact_manager)
+    transcripts_cls = get_class("transcripts", SETTINGS.UNITY_TRANSCRIPTS_IMPL)
+    if SETTINGS.UNITY_TRANSCRIPTS_IMPL == "simulated":
+        cm.transcript_manager = transcripts_cls(description="production deployment")
+    else:
+        cm.transcript_manager = transcripts_cls(contact_manager=cm.contact_manager)
     print(
-        "[ManagersWorker] TranscriptManager initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds"
+        f"[ManagersWorker] TranscriptManager ({transcripts_cls.__name__}) initialized in "
+        f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 4. Configure TranscriptManager logger
-    if api_key:
+    # 4. Configure TranscriptManager logger (only for real implementation)
+    if api_key and SETTINGS.UNITY_TRANSCRIPTS_IMPL != "simulated":
         cm.transcript_manager._get_logger().session.headers[
             "Authorization"
         ] = f"Bearer {api_key}"
@@ -411,25 +419,33 @@ def _init_managers(
     )
     print(
         "[ManagersWorker] MemoryManager initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds"
+        f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 6. Initialize ConversationManagerHandle
+    # 6. Initialize ConversationManagerHandle (respects UNITY_CONVERSATION_IMPL setting)
     print("[ManagersWorker] Initializing ConversationManagerHandle...")
     local_start_time = perf_counter()
-    cm._conversation_manager_handle = ConversationManagerHandle(
-        event_broker=cm.event_broker,
-        conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
-        contact_id="1",
-        transcript_manager=cm.transcript_manager,
-        conversation_manager=cm,
-    )
+    conversation_cls = get_class("conversation", SETTINGS.UNITY_CONVERSATION_IMPL)
+    if SETTINGS.UNITY_CONVERSATION_IMPL == "simulated":
+        cm._conversation_manager_handle = conversation_cls(
+            assistant_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+            contact_id="1",
+            description="production deployment",
+        )
+    else:
+        cm._conversation_manager_handle = conversation_cls(
+            event_broker=cm.event_broker,
+            conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+            contact_id="1",
+            transcript_manager=cm.transcript_manager,
+            conversation_manager=cm,
+        )
     print(
-        "[ManagersWorker] ConversationManagerHandle initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds"
+        f"[ManagersWorker] ConversationManagerHandle ({conversation_cls.__name__}) initialized in "
+        f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 7. Initialize Conductor
+    # 7. Initialize Conductor (all other managers use settings automatically)
     print("[ManagersWorker] Initializing Conductor...")
     try:
         local_start_time = perf_counter()
@@ -440,14 +456,14 @@ def _init_managers(
         )
         print(
             f"[ManagersWorker] Conductor initialized in "
-            f"{perf_counter() - local_start_time:.2f} seconds"
+            f"{perf_counter() - local_start_time:.2f} seconds",
         )
     except Exception as e:
         print(f"[ManagersWorker] Error initializing Conductor: {e}")
 
     print(
         "[ManagersWorker] All managers initialized in "
-        f"{perf_counter() - start_time:.2f} seconds"
+        f"{perf_counter() - start_time:.2f} seconds",
     )
 
 
