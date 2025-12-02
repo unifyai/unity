@@ -80,7 +80,10 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
             "- _gated_website_search: search a specific website via the Actor (handles login if gated).",
             "  • Parameters: query, website",
             "  • **IMPORTANT**: This tool spawns an expensive browser session. Call it exactly ONCE per query.",
-            "  • Do NOT retry or re-call if results seem incomplete — summarize what was found and stop.",
+            "  • Do NOT retry or re-call if results seem incomplete — synthesize what was found and stop.",
+            "  • **Returns raw content**: The tool returns ALL raw page content found (not pre-summarized).",
+            "    After receiving results, YOU MUST synthesize and summarize the raw content into a coherent answer.",
+            "    Include inline citations with source URLs/titles for every fact or claim.",
             "  • Examples:",
             '    - _gated_website_search(query="latest AI trends", website={"host": "medium.com"})',
         ]
@@ -143,7 +146,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "3. Otherwise, extract at most one highly relevant URL.",
         "4. If still insufficient, do one more targeted step (search OR extract), then STOP and answer.",
         "5. Do not loop through many tools or repeat equivalent steps.",
-        "6. **Gated websites**: Call `_gated_website_search` at most ONCE. Never retry — summarize whatever was found.",
+        "6. **Gated websites**: Call `_gated_website_search` at most ONCE. Never retry.",
+        "   The tool returns raw content — you must synthesize it into a summary with citations.",
     ]
 
     lines += [
@@ -152,6 +156,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "-------------------",
         "- Be precise and concise; cite sources inline (title or URL).",
         "- If evidence is insufficient, do one targeted step; otherwise answer with best-supported facts.",
+        "- **For gated website results**: Synthesize the raw content into a coherent summary.",
+        "  Include inline citations (e.g., [Source Title](URL) or 'according to <title>') for each key fact.",
         "- After you write the final answer, do not call further tools.",
     ]
 
