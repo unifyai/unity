@@ -9,7 +9,7 @@ import sys
 from typing import Awaitable, Callable, Iterable
 
 from unity.conversation_manager.event_broker import get_event_broker
-from unity.conversation_manager.new_events import PhoneCallStarted, PhoneCallEnded
+from unity.conversation_manager.events import PhoneCallStarted, PhoneCallEnded
 
 # Shared event broker instance
 event_broker = get_event_broker()
