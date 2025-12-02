@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 from unity.conductor.simulated import SimulatedConductor
 from unity.actor.hierarchical_actor import (
     HierarchicalActor,
-    HierarchicalPlan,
-    _HierarchicalPlanState,
+    HierarchicalActorHandle,
+    _HierarchicalHandleState,
     ImplementationDecision,
     InterjectionDecision,
     FunctionPatch,
@@ -96,7 +96,12 @@ async def test_request_routes_to_actor(monkeypatch):
         }, f"Assistant should only request Actor_act here, saw: {sorted(requested_actor)}"
 
 
-async def wait_for_state(task: HierarchicalPlan, expected_state, timeout=60, poll=0.1):
+async def wait_for_state(
+    task: HierarchicalActorHandle,
+    expected_state,
+    timeout=60,
+    poll=0.1,
+):
     """
     Poll the plan's state until it matches expected_state (or timeout).
     Raises AssertionError on timeout with a helpful log tail.
@@ -276,19 +281,19 @@ async def test_manages_lifecycle_jit_interjection(monkeypatch):
     )
 
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=60,
     )
 
     await handle.interject("Great, now click the 'Submit' button.")
 
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.RUNNING),
+        wait_for_state(plan_handle, _HierarchicalHandleState.RUNNING),
         timeout=180,
     )
 
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=60,
     )
 
@@ -535,27 +540,27 @@ async def test_multiple_interjections_passthrough(monkeypatch):
     )
 
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=60,
     )
 
     await handle.interject("Add submit step")
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.RUNNING),
+        wait_for_state(plan_handle, _HierarchicalHandleState.RUNNING),
         timeout=180,
     )
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=60,
     )
 
     await handle.interject("Then continue")
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.RUNNING),
+        wait_for_state(plan_handle, _HierarchicalHandleState.RUNNING),
         timeout=180,
     )
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=60,
     )
 
@@ -737,11 +742,11 @@ async def test_interject_mid_think_no_duplicates(monkeypatch):
 
     # The plan should still progress correctly to RUNNING and pause again after replay
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.RUNNING),
+        wait_for_state(plan_handle, _HierarchicalHandleState.RUNNING),
         timeout=180,
     )
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=60,
     )
 
@@ -849,7 +854,7 @@ async def test_clarification_passthrough(monkeypatch):
 
     # The plan should complete a run and pause for interjection
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=120,
     )
 
@@ -953,7 +958,7 @@ async def test_handle_ask_passthrough(monkeypatch):
     plan_handle = await _wait_for_plan_handle(real_actor, timeout=120)
 
     await asyncio.wait_for(
-        wait_for_state(plan_handle, _HierarchicalPlanState.PAUSED_FOR_INTERJECTION),
+        wait_for_state(plan_handle, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION),
         timeout=60,
     )
 

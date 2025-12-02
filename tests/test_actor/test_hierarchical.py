@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 from unity.actor.hierarchical_actor import (
     HierarchicalActor,
-    HierarchicalPlan,
+    HierarchicalActorHandle,
     VerificationAssessment,
-    _HierarchicalPlanState,
+    _HierarchicalHandleState,
 )
 from unity.actor.action_provider import ActionProvider
 from unity.controller.browser import Browser
@@ -120,7 +120,7 @@ async def sign_in():
 
     # --- Assert ---
     # 1. The plan should complete successfully.
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
     # 2. The LLM should have been called the expected number of times.
     assert mock_llm.call_count == 4
@@ -208,7 +208,7 @@ async def main_plan():
 
     # --- Assert ---
     # 1. The plan should complete successfully after the replan.
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
     # 2. _check_state_against_goal was called three times.
     assert mock_check_state.call_count == 3
@@ -276,7 +276,7 @@ async def main_plan():
     # We will also mock the replan of the parent to see it gets called
     mock_handle_dynamic_implementation = AsyncMock()
     monkeypatch.setattr(
-        HierarchicalPlan,
+        HierarchicalActorHandle,
         "_handle_dynamic_implementation",
         mock_handle_dynamic_implementation,
     )
@@ -296,7 +296,7 @@ async def main_plan():
     )
 
     # 2. Now that we have the message, the state MUST be correct.
-    assert plan._state == _HierarchicalPlanState.PAUSED_FOR_ESCALATION
+    assert plan._state == _HierarchicalHandleState.PAUSED_FOR_ESCALATION
     assert "ESCALATION" in escalation_message
     assert "child_task" in escalation_message
 
@@ -414,7 +414,7 @@ async def course_correction_main():
     mock_action_provider.browser_act.assert_any_call("Click button D")
 
     # 4. The final result should be from the modified plan.
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -472,7 +472,7 @@ async def main_plan():
 
     # 3. The plan should have continued and completed the original task.
     mock_action_provider.browser_act.assert_called_with("Do original task")
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
     # 4. Check the action log for the rollback message.
     action_log_str = " ".join(plan.action_log)
@@ -518,7 +518,7 @@ async def main_plan():
 
     # --- Assert ---
     mock_action_provider.browser_act.assert_called_once_with("Do something")
-    assert plan._state == _HierarchicalPlanState.ERROR
+    assert plan._state == _HierarchicalHandleState.ERROR
     assert "fatal_error" in " ".join(plan.action_log)
     assert "Unrecoverable error" in " ".join(plan.action_log)
 
@@ -554,7 +554,7 @@ async def main_plan():
     )
     mock_handle_dynamic_implementation = AsyncMock()
     monkeypatch.setattr(
-        HierarchicalPlan,
+        HierarchicalActorHandle,
         "_handle_dynamic_implementation",
         mock_handle_dynamic_implementation,
     )
@@ -666,7 +666,7 @@ async def main_plan():
     await asyncio.gather(plan.result(), clarification_handler())
 
     # --- Assert ---
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
     mock_generate_plan.assert_called_once()
     call_args_tuple = mock_generate_plan.call_args.args
     assert len(call_args_tuple) == 2
@@ -717,7 +717,7 @@ async def main_plan():
     # --- Assert ---
     assert "Plan was stopped" in stop_result
     assert plan.done()
-    assert plan._state == _HierarchicalPlanState.STOPPED
+    assert plan._state == _HierarchicalHandleState.STOPPED
 
 
 @pytest.mark.asyncio
@@ -753,12 +753,12 @@ async def main_plan():
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
     plan = await actor.act("A long running plan to pause.")
     await asyncio.sleep(0.1)
-    assert plan._state == _HierarchicalPlanState.RUNNING
+    assert plan._state == _HierarchicalHandleState.RUNNING
 
     # Pause the plan
     pause_result = await plan.pause()
     assert "Plan paused" in pause_result
-    assert plan._state == _HierarchicalPlanState.PAUSED
+    assert plan._state == _HierarchicalHandleState.PAUSED
 
     # Ensure it's actually paused by trying to await the result with a timeout
     with pytest.raises(asyncio.TimeoutError):
@@ -767,14 +767,14 @@ async def main_plan():
     # Resume the plan
     resume_result = await plan.resume()
     assert "Plan resumed" in resume_result
-    assert plan._state == _HierarchicalPlanState.RUNNING
+    assert plan._state == _HierarchicalHandleState.RUNNING
 
     # Unblock the paused action and get the final result
     pause_event.set()
     await plan.result()
 
     # --- Assert ---
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -839,7 +839,7 @@ async def child_task():
 
     # --- Assert ---
     # 1. The plan should complete successfully.
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
     assert "Nested implementation complete" in final_result
 
     # 2. Check the sequence of implementations in the action log.
@@ -919,7 +919,7 @@ async def main_plan():
 
     # Pause the running plan
     await plan.pause()
-    assert plan._state == _HierarchicalPlanState.PAUSED
+    assert plan._state == _HierarchicalHandleState.PAUSED
 
     # Modify the plan while it's paused.
     modification_result = await plan.modify_plan("Change the action.")
@@ -933,7 +933,7 @@ async def main_plan():
     assert "modified and resumed successfully" in modification_result
 
     # 2. The plan should complete successfully with the new action.
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
     mock_action_provider.browser_act.assert_any_call("new action after pause")
 
     # 3. The action log should show the pause before the modification.
@@ -969,7 +969,7 @@ async def test_invalid_code_generation_handling(
 
     # --- Assert ---
     # 1. The plan should be in an ERROR state.
-    assert plan._state == _HierarchicalPlanState.ERROR
+    assert plan._state == _HierarchicalHandleState.ERROR
 
     # 2. The final result string should contain the error message.
     assert "ERROR:" in result
@@ -1054,7 +1054,7 @@ async def course_correction_main():
     # 3. The plan should have rolled back and completed the ORIGINAL task.
     assert "original action" in plan.plan_source_code
     mock_action_provider.browser_act.assert_called_with("original action")
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -1115,7 +1115,7 @@ async def step_B_stub():
 
     # --- Assert ---
     # 1. The plan should complete successfully.
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
     # 2. **CRUCIAL ASSERTION:** The action from `step_A` should have been
     #    executed exactly once, checking the mock handle.
@@ -1226,7 +1226,7 @@ async def main_plan():
 
     # --- Assert 2: State After Modification ---
     assert "modified and resumed successfully" in modification_result
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
     assert mock_action_provider.browser_act.call_count == 3
     mock_action_provider.browser_act.assert_called_with("Performing NEW task for A")
     assert len(plan.completed_functions) == 2
@@ -1322,7 +1322,7 @@ async def main_plan():
     mock_action_provider.browser_act.assert_any_call("Go to linkedin.com")
 
     # 4. The plan should complete.
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -1522,7 +1522,7 @@ async def main_plan():
 
     # --- Assert ---
     # 1. The plan should complete successfully
-    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert plan._state == _HierarchicalHandleState.COMPLETED
     assert "Plan completed" in result
 
     # 2. All test functions should have been executed
