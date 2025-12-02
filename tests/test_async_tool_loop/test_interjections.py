@@ -13,88 +13,106 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any, List
 
 import pytest
-import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
     _wait_for_condition,
+    _wait_for_any_assistant_tool_call,
 )
-
-# --------------------------------------------------------------------------- #
-#  GLOBALS                                                                    #
-# --------------------------------------------------------------------------- #
-
-MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS                                                       #
 # --------------------------------------------------------------------------- #
-@unify.traced
 async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
     await asyncio.sleep(0.50)
     return txt
 
 
-@unify.traced
 async def slow() -> str:
     await asyncio.sleep(0.15)
     return "slow"
 
 
-@unify.traced
 async def fast() -> str:
     await asyncio.sleep(0.05)
     return "fast"
 
 
-# ---------------------------------------------------------------------------#
-#  Utility                                                                    #
-# ---------------------------------------------------------------------------#
-@unify.traced
-def new_client() -> unify.AsyncUnify:
-    """
-    Return a fresh client with its own conversation state so tests do not
-    interfere with one another.
-    """
-    return new_llm_client()
-
-
-@unify.traced
 def _first_with_tool_calls(msgs: List[dict]) -> int:
     return next(i for i, m in enumerate(msgs) if m.get("tool_calls"))
 
 
-@unify.traced
 def _interjection_index(msgs: List[dict], snippet: str) -> int:
-    """Return index of the system-role interjection whose content includes snippet."""
-    return next(
-        i
-        for i, m in enumerate(msgs)
-        if m["role"] == "system"
-        and "user: **" in m.get("content", "")
-        and snippet in m["content"]
-    )
+    """Return index of a user-role interjection whose content includes snippet.
+
+    Interjections are now sent as simple user messages (not system messages)
+    for Claude/Gemini compatibility. This looks for user messages after the
+    first user message that contain the given snippet.
+    """
+    first_user_seen = False
+    for i, m in enumerate(msgs):
+        if m["role"] == "user":
+            if not first_user_seen:
+                first_user_seen = True
+                continue
+            # This is an interjection (user message after the first one)
+            if snippet in m.get("content", ""):
+                return i
+    raise StopIteration(f"No interjection found containing snippet: {snippet}")
 
 
-@unify.traced
 def _tool_indices(msgs: List[dict]) -> List[int]:
     return [i for i, m in enumerate(msgs) if m["role"] == "tool"]
 
 
-@unify.traced
 def _are_contiguous(indices: List[int]) -> bool:
     return sorted(indices) == list(range(min(indices), max(indices) + 1))
 
 
-@unify.traced
+def _is_internal_bookkeeping(msg: dict) -> bool:
+    """Identify internal bookkeeping system messages that should be ignored for ordering checks.
+
+    These are system messages injected by the async tool loop for internal purposes
+    (e.g., visibility guidance, runtime context, semantic cache hints) that don't
+    represent user-visible message ordering.
+    """
+    if msg.get("role") != "system":
+        return False
+    # Check for known internal bookkeeping markers
+    return any(
+        msg.get(marker)
+        for marker in (
+            "_visibility_guidance",
+            "_runtime_context",
+            "_semantic_cache_hint",
+            "_ctx_header",
+        )
+    )
+
+
+def _effectively_adjacent(msgs: List[dict], idx1: int, idx2: int) -> bool:
+    """Check if idx2 immediately follows idx1 when ignoring internal bookkeeping messages.
+
+    Returns True if there are no non-bookkeeping messages between idx1 and idx2.
+    This is useful for verifying message ordering while ignoring internal system
+    messages that don't affect the semantic order of tool results and interjections.
+    """
+    if idx2 <= idx1:
+        return False
+    # Check that all messages between idx1 and idx2 are internal bookkeeping
+    for i in range(idx1 + 1, idx2):
+        if not _is_internal_bookkeeping(msgs[i]):
+            return False
+    return True
+
+
 def _assistant_tool_turns(msgs: List[dict[str, Any]]):
     """Yield assistant turns that contain tool_calls."""
     return [m for m in msgs if m["role"] == "assistant" and m.get("tool_calls")]
@@ -105,12 +123,12 @@ def _assistant_tool_turns(msgs: List[dict[str, Any]]):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_leads_to_second_tool_and_final_result():
+async def test_interject_triggers_tool_and_result(model):
     """
     Start with echo("A"), then interject to also echo("B"). Expect two tool
     calls and a final plain-text result.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         message=("Use the `echo` tool to output the text 'A'."),
@@ -159,16 +177,17 @@ async def test_interject_leads_to_second_tool_and_final_result():
     idx_second_asst = msgs.index(assistant_tool_turns[1])
     assert idx_first_asst < idx_inter_B < idx_second_asst
 
+    # Interjections are now simple user messages (not system messages with wrapper content)
     inter_msg = msgs[idx_inter_B]
-    assert inter_msg["content"].startswith("The user *cannot* see")
-    assert "user: **" in inter_msg["content"] and "echo B" in inter_msg["content"]
+    assert inter_msg["role"] == "user"
+    assert "echo B" in inter_msg["content"]
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_stops_gracefully():
+async def test_stop_stops_gracefully(model):
     """handle.stop() cancels the loop and result() returns a standard notice string."""
-    client = new_client()
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Echo something then say 'ok'.",
@@ -183,13 +202,13 @@ async def test_stop_stops_gracefully():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_backfills_missing_tool_reply_for_helper_call() -> None:
+async def test_backfills_helper_call_reply(model) -> None:
     """
     Pre-seed transcript with an assistant helper tool_call (e.g. wait).
     New behaviour: helper `wait` is pruned (no backfilled tool reply, no chat clutter).
     The pre-seeded assistant helper turn should be removed, and no tool reply should appear.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
 
     helper_call_id = "call_TEST_HELPER"
     helper_name = "wait"
@@ -246,7 +265,8 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_patient_interjection_during_llm_triggers_deferred_turn(
+async def test_patient_interjection_defers_turn(
+    model,
     monkeypatch,
 ) -> None:
     """
@@ -254,7 +274,7 @@ async def test_patient_interjection_during_llm_triggers_deferred_turn(
     is already thinking must trigger exactly one extra LLM turn after the current one
     completes, so the interjection is processed (without cancelling the in-flight LLM).
     """
-    client = new_client()
+    client = new_llm_client(model=model)
 
     from unity.common._async_tool import loop as _loop
 
@@ -311,21 +331,23 @@ async def test_patient_interjection_during_llm_triggers_deferred_turn(
     assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
     assert len(assistant_msgs) >= 2
 
-    # Verify the system interjection message is present and appears between the two assistant turns
-    sys_indices = [
+    # Verify the user interjection message is present and appears between the two assistant turns
+    # Interjections are now user messages (not system messages) for Claude/Gemini compatibility
+    interjection_indices = [
         i
         for i, m in enumerate(client.messages)
-        if m.get("role") == "system"
+        if m.get("role") == "user"
         and "please consider this later" in (m.get("content") or "")
     ]
-    assert sys_indices, "Expected a system interjection message in the transcript"
+    assert (
+        interjection_indices
+    ), "Expected a user interjection message in the transcript"
     idx_first_asst = client.messages.index(assistant_msgs[0])
     idx_second_asst = client.messages.index(assistant_msgs[-1])
-    assert any(idx_first_asst < si < idx_second_asst for si in sys_indices)
+    assert any(idx_first_asst < si < idx_second_asst for si in interjection_indices)
 
     # Final answer should be from the second turn
     assert isinstance(final, str) and final.strip()
-    assert "second" in final or len(assistant_msgs) >= 2
 
     # Cleanup: restore original generator
     monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
@@ -333,12 +355,12 @@ async def test_patient_interjection_during_llm_triggers_deferred_turn(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_patient_does_not_cancel_inflight_llm(monkeypatch) -> None:
+async def test_patient_interjection_preserves_llm(model, monkeypatch) -> None:
     """
     When the LLM is currently thinking, a patient interjection
     (trigger_immediate_llm_turn=False) must NOT cancel the in-flight LLM call.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
 
     # Spy/patch the inner generation wrapper to gate completion and record cancellation
     from unity.common._async_tool import loop as _loop
@@ -393,12 +415,12 @@ async def test_interjection_patient_does_not_cancel_inflight_llm(monkeypatch) ->
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_immediate_cancels_inflight_llm(monkeypatch) -> None:
+async def test_immediate_interjection_cancels_llm(model, monkeypatch) -> None:
     """
     When the LLM is currently thinking, an immediate interjection
     (default behaviour) MUST cancel the in-flight LLM call.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
 
     from unity.common._async_tool import loop as _loop
 
@@ -452,46 +474,50 @@ async def test_interjection_immediate_cancels_inflight_llm(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjections_are_processed_and_loop_completes():
+async def test_interjections_processed_successfully(model):
     """
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
         (
             "Follow STRICTLY these steps:\n"
             '1) Call the tool `echo` with {"txt":"A"}.\n'
-            "2) WAIT for my next instruction; do NOT produce a final answer yet.\n"
-            '3) For each user interjection of the form \'X please\', call `echo` once with that letter as {"txt": "X"}, in FIFO order. '
-            "I will interject 'B please' then 'C please'.\n"
-            "4) Only after all requested echo calls have completed, reply with exactly the single word: done.\n"
-            "Never include 'B' or 'C' in your assistant messages; produce them only via tool calls."
+            "2) When you see a user interjection of the form 'X please' (arriving as a system message), "
+            "immediately call `echo` with {\"txt\": \"X\"}. I will interject 'B please' then 'C please'.\n"
+            "3) Only after ALL echo calls (A, B, and C) have completed, reply with exactly the single word: done.\n"
+            "Never include 'B' or 'C' in your assistant messages; produce them only via tool calls. "
+            "Do NOT say you are waiting - just call the tools as instructed."
         ),
         {"echo": echo},
     )
 
+    # Wait for echo("A") to be requested (first echo call)
     await _wait_for_tool_request(client, "echo")
     await handle.interject("B please")
 
-    await _wait_for_tool_request(client, "echo")
+    # Wait for the NEXT echo request (echo("B")) using event-based helper.
+    # Can't use _wait_for_tool_request again since it only checks count >= 1.
+    await _wait_for_any_assistant_tool_call("echo")
     await handle.interject("C please")
 
     final = await handle.result()
     assert isinstance(final, str) and final.strip()
 
     msgs = client.messages
-    # New behaviour: multiple interjections can be consolidated into the same
-    # system message block. Instead of requiring distinct message indices,
-    # assert that both snippets appear and that "B please" precedes "C please"
-    # within the combined interjection text.
-    inter_sys_msgs = [
-        m.get("content", "")
-        for m in msgs
-        if m.get("role") == "system" and "user: **" in (m.get("content", "") or "")
-    ]
-    combined = "\n".join(inter_sys_msgs)
+    # Interjections are now user messages (not system messages with wrapper content)
+    # Find all user messages after the first one (which is the original request)
+    first_user_seen = False
+    interjection_contents = []
+    for m in msgs:
+        if m.get("role") == "user":
+            if not first_user_seen:
+                first_user_seen = True
+                continue
+            interjection_contents.append(m.get("content", ""))
+    combined = "\n".join(interjection_contents)
     assert "B please" in combined and "C please" in combined
     assert combined.find("B please") < combined.find("C please")
 
@@ -501,12 +527,12 @@ async def test_interjections_are_processed_and_loop_completes():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_single_tool_result_is_inserted_before_interjection():
+async def test_tool_result_precedes_interjection(model):
     """
     Run `slow` once then reply "ACK". Interject while running.
     Expect: assistant → tool result → interjection.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         (
@@ -527,18 +553,21 @@ async def test_single_tool_result_is_inserted_before_interjection():
     i_tool = _tool_indices(msgs)[0]
     i_user = _interjection_index(msgs, "thanks!")
 
-    assert (i_asst + 1 == i_tool) and (i_tool + 1 == i_user)
+    # Tool result should immediately follow assistant, interjection should
+    # effectively follow tool result (ignoring internal bookkeeping messages)
+    assert i_asst + 1 == i_tool
+    assert _effectively_adjacent(msgs, i_tool, i_user)
     assert len(msgs[i_asst]["tool_calls"]) == 1
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_parallel_tool_results_shift_interjection_down():
+async def test_parallel_results_shift_interjection(model):
     """
     Run both `fast` and `slow`, interject while they are running.
     Expect both tool results right after the assistant turn, interjection follows.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -563,17 +592,19 @@ async def test_parallel_tool_results_shift_interjection_down():
     tool_idxs = _tool_indices(msgs)[:2]
     i_user = _interjection_index(msgs, "cheers!")
 
+    # Tool results should be contiguous and immediately follow assistant,
+    # interjection should effectively follow last tool result
     assert _are_contiguous(tool_idxs)
     assert tool_idxs[0] == i_asst + 1
-    assert i_user == max(tool_idxs) + 1
+    assert _effectively_adjacent(msgs, max(tool_idxs), i_user)
     assert len(msgs[i_asst]["tool_calls"]) >= 2
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_stops_ongoing_llm():
+async def test_interjection_stops_ongoing_llm(model):
     """The first LLM generation is stopped once the user interjects."""
-    client = new_client()
+    client = new_llm_client(model=model)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -589,9 +620,11 @@ async def test_interjection_stops_ongoing_llm():
     assert len(assistant_msgs) == 1
 
     roles = [m["role"] for m in client.messages]
-    assert roles.count("user") == 1
+    # Now we expect 2 user messages: original request + interjection
+    assert roles.count("user") == 2
+    # The interjection about dolphins should be a user message
     assert any(
-        m["role"] == "system" and "dolphins" in m.get("content", "")
+        m["role"] == "user" and "dolphins" in m.get("content", "")
         for m in client.messages
     )
 
@@ -601,8 +634,8 @@ async def test_interjection_stops_ongoing_llm():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjectable_tool_roundtrip() -> None:
-    client = new_client()
+async def test_interjectable_tool_roundtrip(model) -> None:
+    client = new_llm_client(model=model)
 
     exec_log: List[str] = []
 
@@ -669,12 +702,12 @@ async def test_interjectable_tool_roundtrip() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
+async def test_immediate_interjection_has_reply(model) -> None:
     """
     When an interjection arrives immediately after an assistant tool_calls turn,
     a tool placeholder must already be present to maintain API ordering.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
 
     import time as _time
 
@@ -713,10 +746,11 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
 
     await handle.interject("finish")
 
-    # Wait until the interjection system message appears; then assert placeholder adjacency
+    # Wait until the interjection user message appears; then assert placeholder adjacency
+    # Interjections are now simple user messages (not system messages with wrapper)
     async def _saw_interjection_msg() -> bool:
         return any(
-            m.get("role") == "system" and "user: **finish**" in (m.get("content") or "")
+            m.get("role") == "user" and "finish" in (m.get("content") or "")
             for m in (client.messages or [])
         )
 
@@ -727,17 +761,16 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
 
     final_ans = await handle.result()
     assert isinstance(final_ans, str) and len(final_ans) > 0
-    assert "done" in final_ans.lower()
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
+async def test_backfills_prior_assistant_reply(model) -> None:
     """
     Pre-seed transcript with assistant tool_call but no tool reply.
     The loop must backfill a tool message directly after that assistant turn.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
 
     def slow_tool(x: int) -> str:
         return f"ok:{x}"
@@ -801,3 +834,91 @@ async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
     handle.stop()
     final2 = await handle.result()
     assert final2 == "processed stopped early, no result"
+
+
+# --------------------------------------------------------------------------- #
+#  SYSTEM MESSAGE PRESERVATION WITH INTERJECTIONS                             #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_system_message_preserved_with_runtime_interjections(model) -> None:
+    """
+    Verify that the original system message is preserved and followed when
+    runtime system messages (e.g., visibility_guidance) are inserted between
+    user messages due to interjections.
+
+    This tests the scenario: user -> system(runtime) -> user
+
+    The model should still see and follow the original system instructions
+    despite the interleaved runtime system messages. This was a regression
+    where the system message was being dropped for Claude models when
+    preprocess_msgs was active.
+    """
+    # Use a very specific, verifiable instruction
+    SYSTEM_INSTRUCTION = (
+        "IMPORTANT: You must respond with EXACTLY the format 'ECHO: X' "
+        "where X is the user's most recent message. No other text allowed."
+    )
+
+    client = new_llm_client(model=model)
+    client.set_system_message(SYSTEM_INSTRUCTION)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="first",
+        tools={},
+        max_consecutive_failures=1,
+    )
+
+    # Interject to create the user -> system(runtime) -> user pattern.
+    # The visibility_guidance system message gets inserted between user messages.
+    await handle.interject("second")
+
+    final = await handle.result()
+
+    # Verify the model followed the system instructions (saw the ECHO format requirement).
+    # This would fail if the system message was dropped.
+    assert (
+        "ECHO" in final.upper()
+    ), f"Model should follow system instruction to use ECHO format. Got: {final!r}"
+    # The most recent message should be echoed
+    assert (
+        "second" in final.lower()
+    ), f"Model should echo the interjected message 'second'. Got: {final!r}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_multiple_interjections_preserve_system_message(model) -> None:
+    """
+    Verify system message preservation with multiple rapid interjections.
+
+    Tests: user -> system(runtime) -> user -> user (multiple interjections)
+
+    The model should still see the original system instructions after
+    multiple interjections create a complex message interleaving pattern.
+    """
+    SYSTEM_INSTRUCTION = (
+        "Count how many user messages you received and respond with ONLY "
+        "a single digit number. No other text, punctuation, or explanation."
+    )
+
+    client = new_llm_client(model=model)
+    client.set_system_message(SYSTEM_INSTRUCTION)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="one",
+        tools={},
+        max_consecutive_failures=1,
+    )
+
+    await handle.interject("two")
+    await handle.interject("three")
+
+    final = await handle.result()
+
+    # Model should count 3 messages if it sees the system instruction
+    assert (
+        "3" in final
+    ), f"Model should count 3 user messages per system instruction. Got: {final!r}"

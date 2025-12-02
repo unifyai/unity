@@ -34,9 +34,10 @@ _root_logger_early = logging.getLogger()
 if not _root_logger_early.handlers:
     _root_logger_early.addHandler(logging.NullHandler())
 
+from tests.settings import SETTINGS
 from tests.helpers import (
-    SETTINGS,
     PRECREATED_CONTEXTS,
+    set_session_tags,
 )
 
 
@@ -155,6 +156,7 @@ def stub_controller_deps(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 from unity.singleton_registry import SingletonRegistry
+from unity.common.context_registry import ContextRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +164,7 @@ def _clear_singletons_between_tests():
     """Ensure *singleton* instances never leak from one test to the next."""
     yield
     SingletonRegistry.clear()  # Clear the registry after each test
+    ContextRegistry.clear()  # Clear the context handler after each test
 
 
 # --------------------------------------------------------------------------- #
@@ -181,6 +184,13 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="Force fresh scenario creation.",
+    )
+    parser.addoption(
+        "--test-tags",
+        action="store",
+        default="",
+        help="Comma-separated list of tags to associate with this test run "
+        "(logged to the Combined context). Falls back to UNIFY_TEST_TAGS env var.",
     )
 
     group = parser.getgroup("custom-logging")
@@ -280,11 +290,17 @@ def pytest_sessionstart(session):
     if os.environ.get("CI"):
         unify.set_cache_backend("local_separate")
 
-    unify.activate(
-        project_name,
-        overwrite=SETTINGS.UNIFY_OVERWRITE_PROJECT,
-    )
-    unify.set_user_logging(False)
+    if SETTINGS.UNIFY_SKIP_SESSION_SETUP:
+        # Project and shared contexts already prepared externally (e.g., by
+        # ._prepare_shared_project.sh). Just activate without overwrite.
+        unify.activate(project_name, overwrite=False)
+        unify.set_user_logging(False)
+    else:
+        unify.activate(
+            project_name,
+            overwrite=SETTINGS.UNIFY_OVERWRITE_PROJECT,
+        )
+        unify.set_user_logging(False)
 
     # ------------------------------------------------------------------
     #  Ensure the unity runtime is fully initialised for the test suite
@@ -297,6 +313,43 @@ def pytest_sessionstart(session):
     except Exception:
         # Fallback to default project if UnityTests not available yet
         unity.init()
+
+    # ------------------------------------------------------------------
+    #  Parse and store session-level test tags for duration logging
+    #  Priority: CLI --test-tags > env var UNIFY_TEST_TAGS
+    # ------------------------------------------------------------------
+    tags_raw = session.config.getoption("--test-tags", default="")
+    if not tags_raw:
+        tags_raw = SETTINGS.UNIFY_TEST_TAGS
+    tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    set_session_tags(tags)
+
+    # ------------------------------------------------------------------
+    #  Ensure the Combined context exists for duration and LLM I/O logging
+    #  (idempotent: tolerates pre-existing context/fields and concurrent
+    #  creation attempts from parallel pytest sessions)
+    # ------------------------------------------------------------------
+    if SETTINGS.UNIFY_SKIP_SESSION_SETUP:
+        # Combined context already prepared externally; skip creation
+        pass
+    else:
+        try:
+            unify.create_context("Combined")
+        except Exception:
+            pass  # Already exists or transient failure
+        try:
+            unify.create_fields(
+                context="Combined",
+                fields={
+                    "test_fpath": {"type": "str", "mutable": True},
+                    "tags": {"type": "list", "mutable": True},
+                    "duration": {"type": "float", "mutable": True},
+                    "llm_io": {"type": "list", "mutable": True},
+                    "settings": {"type": "dict", "mutable": True},
+                },
+            )
+        except Exception:
+            pass  # Fields already exist or transient failure
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -317,10 +370,6 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "requires_real_unify: mark test as requiring the real unify implementation",
-    )
-    config.addinivalue_line(
-        "markers",
-        "unit: mark a test as a deterministic unit test",
     )
     config.addinivalue_line(
         "markers",
@@ -382,13 +431,9 @@ def _normalize_pytest_nodeid(nodeid):
     return normalized[:24]
 
 
-def _is_test_parametrized(item):
-    return any(i.name == "parametrize" for i in item.iter_markers())
-
-
 def pytest_runtest_call(item):
     func_name = item.originalname
-    if _is_test_parametrized(item):
+    if "[" in item.nodeid:  # Any parametrization (markers, fixtures, etc.)
         # Need to keep track of invocation count for parametrized tests
         # In case of a later failure.
         current_count = getattr(item.obj, "_unity_pytest_invocation_count", 0)
@@ -480,14 +525,13 @@ def _get_context_name_for_item(item):
 
 def pytest_collection_finish(session):
     # Compute all contexts and fire off background creation tasks
-    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
+    # Skip when UNIFY_SKIP_SESSION_SETUP is set (shared project mode)
+    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE and not SETTINGS.UNIFY_SKIP_SESSION_SETUP:
         contexts: set[str] = set()
         for item in session.items:
             ctx = _get_context_name_for_item(item)
             contexts.add(ctx)
             contexts.add(f"{ctx}/Events/_callbacks/")
-            if SETTINGS.UNIFY_TRACED:
-                contexts.add(f"{ctx}/Traces/")
 
         # TODO: Should delete contexts before creating them
         # But this is mostly fine now for CI purpose, as we create

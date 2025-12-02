@@ -9,12 +9,17 @@ from pathlib import Path
 from typing import Callable, Optional
 import contextlib
 
+from unity.singleton_registry import SingletonABCMeta
+from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager import debug_logger
-from unity.conversation_manager.domains.call_manager import LivekitCallManager
+from unity.conversation_manager.domains.call_manager import (
+    CallConfig,
+    LivekitCallManager,
+)
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
 
 from unity.conversation_manager.domains.llm import LLM
 from unity.conversation_manager.domains.actions import (
@@ -22,13 +27,14 @@ from unity.conversation_manager.domains.actions import (
     build_dynamic_response_models,
 )
 from unity.conversation_manager.domains.notifications import NotificationBar
-from unity.conversation_manager.domains.utils import Debouncer
+from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conductor.conductor import Conductor
 from unity.conversation_manager.domains import managers_utils
+from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 import redis.asyncio as redis
 
 
@@ -50,7 +56,7 @@ if not logger.handlers:
 MAX_CONV_MANAGER_MSGS = 50
 
 
-class ConversationManager:
+class ConversationManager(metaclass=SingletonABCMeta):
     def __init__(
         self,
         event_broker: redis.Redis,
@@ -117,19 +123,12 @@ class ConversationManager:
         self.conductor: Conductor = None
 
         # llm
-        self.llm = LLM("gpt-4.1", event_broker)
+        self.llm = LLM("gpt-5-mini", event_broker)
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
         # call manager
-        self.call_manager = LivekitCallManager(
-            self.assistant_id,
-            self.assistant_about,
-            self.assistant_number,
-            self.voice_provider,
-            self.voice_id,
-            self.voice_mode,
-        )
+        self.call_manager = LivekitCallManager(self.get_call_config())
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -147,19 +146,13 @@ class ConversationManager:
 
         self.mode = "text"
         self.chat_history = []
-        self.contact_index = ContactIndex(is_local=bool(self.assistant_id))
+        self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
         self.conductor_handles: dict[int, dict] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = datetime.now()
         self._current_snapshot = None
-        self.call_exchange_id = None
-        self.unify_call_exchange_id = None
-        self.call_start_timestamp = None
-        self.unify_call_start_timestamp = None
-        self.conference_name = ""
-        self.call_contact = None
         self.is_summarizing = None
         self.max_messages = 30
 
@@ -170,6 +163,13 @@ class ConversationManager:
         self._filler_task: asyncio.Task | None = None
         self._filler_started: asyncio.Event = asyncio.Event()
         self._filler_done: asyncio.Event = asyncio.Event()
+
+        # proactive speech
+        self.proactive_speech = ProactiveSpeech()
+        self._proactive_speech_task: asyncio.Task | None = None
+
+        # ask handles
+        self.active_ask_handle: Optional["SteerableToolHandle"] = None
 
     def snapshot(self):
         self._current_snapshot = datetime.now()
@@ -240,7 +240,7 @@ class ConversationManager:
                     topic = "app:comms:phone_utterance"
                     event = AssistantPhoneUtterance(
                         self.contact_index.get_contact(
-                            phone_number=self.call_contact["phone_number"],
+                            phone_number=self.call_manager.call_contact["phone_number"],
                         ),
                         parsed_out["phone_utterance"],
                     )
@@ -280,6 +280,9 @@ class ConversationManager:
             )
             self.is_summarizing = True
 
+        # Schedule proactive speech check after assistant turn
+        await self.schedule_proactive_speech()
+
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
@@ -293,11 +296,9 @@ class ConversationManager:
                 self.build_response_model()
                 # asyncio.create_task(self.publish_startup())
 
-                # this feels like it should be its own method really buts its really big
-                # so will keep that way for now
-                # also this is now fully blocking, will discuss it again with everyone what is the best
-                # way to deal with this
-                await managers_utils.init_conv_manager(self)
+                # Start initialization and operations listener
+                asyncio.create_task(managers_utils.init_conv_manager(self))
+                asyncio.create_task(managers_utils.listen_to_operations(self))
                 print("Default startup")
 
             while True:
@@ -387,6 +388,16 @@ class ConversationManager:
             "assistant_email": self.assistant_email,
         }
 
+    def get_call_config(self) -> CallConfig:
+        return CallConfig(
+            assistant_id=self.assistant_id,
+            assistant_bio=self.assistant_about,
+            assistant_number=self.assistant_number,
+            voice_provider=self.voice_provider,
+            voice_id=self.voice_id,
+            voice_mode=self.voice_mode,
+        )
+
     def build_response_model(self):
         self.dynamic_response_models = build_dynamic_response_models(
             realtime=self.call_manager.realtime,
@@ -399,6 +410,10 @@ class ConversationManager:
         if self.job_name and self.assistant_id:
             debug_logger.mark_job_done(self.job_name)
         self.stop.set()
+
+    # ToDo: Refactor this to use the debouncer like the LLM run
+
+    # Filler related methods
 
     async def run_filler_once(self):
         if self.call_manager.realtime or self.mode not in [
@@ -448,3 +463,171 @@ class ConversationManager:
                 await self.cancel_filler()
             else:
                 await self._filler_done.wait()
+
+    # Proactive speech related methods
+
+    async def schedule_proactive_speech(self, skip_initial_wait: bool = False):
+        """Decides if and when to speak proactively, and schedules it.
+
+        Args:
+            skip_initial_wait: If True, skip the initial 8s wait (used when rescheduling after a false decision)
+        """
+        print(
+            f"[Proactive Speech] schedule_proactive_speech called, mode={self.mode}, skip_initial_wait={skip_initial_wait}"
+        )
+        await self.cancel_proactive_speech()
+
+        # Only schedule if we are in a call/voice mode where silence matters
+        if self.mode not in ["call", "unify_call", "gmeet"]:
+            print(
+                f"[Proactive Speech] Skipping: mode {self.mode} not in supported modes",
+            )
+            return
+
+        print("[Proactive Speech] Creating proactive speech task...")
+        # Create a task to run the decision and potential wait
+        self._proactive_speech_task = asyncio.create_task(
+            self._proactive_speech_loop(skip_initial_wait=skip_initial_wait)
+        )
+        self._proactive_speech_task.add_done_callback(log_task_exc)
+
+    async def cancel_proactive_speech(self):
+        if self._proactive_speech_task and not self._proactive_speech_task.done():
+            # Don't cancel if we are running inside the task (recursion case)
+            if self._proactive_speech_task == asyncio.current_task():
+                return
+
+            self._proactive_speech_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._proactive_speech_task
+            self._proactive_speech_task = None
+
+    async def _proactive_speech_loop(self, skip_initial_wait: bool = False):
+        try:
+            # Wait a reasonable amount of time first to allow for natural conversation flow
+            if not skip_initial_wait:
+                print("[Proactive Speech] Waiting 5s before checking for silence...")
+                await asyncio.sleep(10)
+            else:
+                print(
+                    "[Proactive Speech] Skipping initial wait (reschedule after false decision)"
+                )
+
+            print("[Proactive Speech] Entering _proactive_speech_loop")
+
+            # Build conversation from contact_index and calculate elapsed time
+            conversation_turns = []
+            last_message_timestamp = None
+
+            contact = self.call_manager.call_contact or self.contact_index.get_contact(
+                contact_id=1
+            )
+            if (
+                contact
+                and contact["contact_id"] in self.contact_index.active_conversations
+            ):
+                active_contact = self.contact_index.active_conversations[
+                    contact["contact_id"]
+                ]
+                phone_thread = active_contact.threads.get("phone", [])
+
+                for msg in phone_thread:
+                    role = "assistant" if msg.name == "You" else "user"
+                    content = msg.content
+
+                    if content.startswith("<") and content.endswith(">"):
+                        continue
+
+                    conversation_turns.append({"role": role, "content": content})
+
+                    if hasattr(msg, "timestamp") and msg.timestamp:
+                        last_message_timestamp = msg.timestamp
+
+            # Calculate elapsed time from last message timestamp
+            if last_message_timestamp:
+                from datetime import datetime
+
+                now = datetime.now()
+                if isinstance(last_message_timestamp, datetime):
+                    elapsed_seconds = (now - last_message_timestamp).total_seconds()
+                else:
+                    elapsed_seconds = 0
+            else:
+                elapsed_seconds = 0
+
+            print(
+                f"[Proactive Speech] Elapsed time since last message: {elapsed_seconds:.1f}s",
+            )
+
+            decision = await self.proactive_speech.decide(
+                conversation_turns,
+                self.system_prompt,
+                elapsed_seconds=elapsed_seconds,
+            )
+            print(
+                f"[Proactive Speech] Decision: should_speak={decision.should_speak}, delay={decision.delay}s"
+            )
+
+            if not decision.should_speak:
+                # Adaptive wait: if we're already past 10s, check more frequently (5s)
+                # Otherwise, wait until we hit ~12s threshold (but cap at 7s max wait)
+                if elapsed_seconds < 10:
+                    wait_time = min(
+                        12 - elapsed_seconds, 7
+                    )  # Wait until ~12s, but max 7s
+                else:
+                    wait_time = 5  # Already past 10s, check every 5s
+
+                print(
+                    f"[Proactive Speech] Not speaking (LLM chose delay={decision.delay}s), will check again in {wait_time:.1f}s"
+                )
+                await asyncio.sleep(wait_time)
+                # Skip initial wait when rescheduling since we just waited
+                await self.schedule_proactive_speech(skip_initial_wait=True)
+                return
+
+            print(
+                f"Proactive Speech decided to speak in {decision.delay}s: {decision.content}",
+            )
+            await asyncio.sleep(decision.delay)
+
+            # Record in contact_index
+            contact = self.call_manager.call_contact or self.contact_index.get_contact(
+                contact_id=1
+            )
+            if contact:
+                self.contact_index.push_message(
+                    contact,
+                    "phone" if self.mode == "call" else "unify_call",
+                    message_content=decision.content,
+                    role="assistant",
+                )
+
+            # Publish to voice layer
+            if self.call_manager.realtime:
+                await self.event_broker.publish(
+                    "app:call:call_notifs",
+                    json.dumps({"content": decision.content}),
+                )
+            else:
+                channel = f"app:{self.mode}:response_gen"
+                await self.event_broker.publish(
+                    channel,
+                    json.dumps({"type": "start_gen"}),
+                )
+                await self.event_broker.publish(
+                    channel,
+                    json.dumps({"type": "gen_chunk", "chunk": decision.content}),
+                )
+                await self.event_broker.publish(
+                    channel,
+                    json.dumps({"type": "end_gen"}),
+                )
+
+            await self.schedule_proactive_speech()
+
+        except asyncio.CancelledError:
+            print("Proactive speech task cancelled.")
+            raise
+        except Exception as e:
+            print(f"Error in proactive speech loop: {e}")

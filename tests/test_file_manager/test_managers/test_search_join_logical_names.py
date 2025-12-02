@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from tests.helpers import _handle_project
 from unity.file_manager.types import FilePipelineConfig
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_join_with_logical_names(file_manager, tmp_path: Path):
     fm = file_manager

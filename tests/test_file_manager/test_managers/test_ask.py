@@ -9,12 +9,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.eval
 from tests.helpers import _handle_project
 from tests.test_file_manager.helpers import ask_judge
 
 
 @pytest.mark.asyncio
-async def test_ask_nonexistent_file(file_manager):
+async def test_ask_nonexistent(file_manager):
     """Test asking about non-existent file raises error."""
     with pytest.raises(FileNotFoundError):
         await file_manager.ask_about_file("nonexistent.txt", "What is this file about?")
@@ -192,7 +194,7 @@ async def test_ask_with_rolling_summary(file_manager, supported_file_examples: d
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_about_file_integration(file_manager, fm_root, tmp_path: Path):
+async def test_ask_about_integration(file_manager, fm_root, tmp_path: Path):
     """Integration test for the ask_about_file method."""
     fm = file_manager
     # Create test file and parse by absolute path (no import needed)
@@ -215,7 +217,7 @@ async def test_ask_about_file_integration(file_manager, fm_root, tmp_path: Path)
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_multiple_files_integration(file_manager, fm_root, tmp_path: Path):
+async def test_ask_multiple_integration(file_manager, fm_root, tmp_path: Path):
     """Integration test for asking about multiple files."""
     fm = file_manager
     # Create test files (no import needed)
@@ -246,7 +248,7 @@ async def test_ask_multiple_files_integration(file_manager, fm_root, tmp_path: P
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_about_file_triggers_filter_join_via_loop(
+async def test_ask_about_triggers_filter_join_via_loop(
     file_manager,
     tmp_path: Path,
 ):
@@ -301,7 +303,7 @@ async def test_ask_about_file_triggers_filter_join_via_loop(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_about_file_triggers_search_multi_join_via_loop(
+async def test_ask_about_triggers_search_multi_join_via_loop(
     file_manager,
     tmp_path: Path,
 ):

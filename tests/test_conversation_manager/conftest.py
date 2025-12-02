@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Type
 import redis.asyncio as redis
 
-from unity.conversation_manager.new_events import (
+from unity.conversation_manager.events import (
     Event,
     GetContactsResponse,
     StartupEvent,
@@ -215,7 +215,6 @@ async def conversation_manager_process(redis_server):
     test_env.update(
         {
             "JOB_NAME": "test_job",
-            "UNIFY_TRACED": "true",
             "UNIFY_CACHE": "true",
             "TEST": "true",
         },
@@ -294,7 +293,7 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
 
     # wait for the conversation manager to initialize
     print("Waiting for initialization to complete...")
-    await asyncio.sleep(50)
+    await asyncio.sleep(20)
 
     # Wait for CM to subscribe to channels by checking for active pattern subscriptions
     print("⏳ Waiting for conversation manager to subscribe to Redis channels...")

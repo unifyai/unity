@@ -1,7 +1,7 @@
 from collections import deque
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import Field
 
@@ -44,10 +44,9 @@ class EmailMessage:
 
 
 class ContactIndex:
-    def __init__(self, is_local: bool = False):
+    def __init__(self):
         self.active_conversations: dict[str, Contact] = {}
         self.contacts: dict[int, Contact] = {}
-        self.is_local = is_local
 
     @property
     def boss_contact(self):
@@ -58,7 +57,11 @@ class ContactIndex:
         print(f"Setting contacts: {contacts}")
         for c in contacts:
             self.contacts[c["contact_id"]] = Contact(**c, is_boss=c["contact_id"] == 1)
-        if not self.is_local:
+
+        # only retain the -1 contact if it's different from the boss contact
+        c_neg1 = self.contacts.get(-1)
+        c_boss = self.contacts.get(1)
+        if c_neg1 and c_boss and c_neg1.first_name == c_boss.first_name:
             self.contacts.pop(-1, None)
 
     # is this supposed to fail for any reason?

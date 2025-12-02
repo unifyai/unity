@@ -58,10 +58,11 @@ async def test_recursive_snapshot_preserves_interjection_manager():
     out = await resumed.result()
     assert isinstance(out, str) and len(out) > 0
     hist = resumed.get_history() or []
+    # Interjections are now user messages (not system messages with wrapper)
     seen = [
         m
         for m in hist
-        if m.get("role") == "system" and interjection_text in str(m.get("content", ""))
+        if m.get("role") == "user" and interjection_text in str(m.get("content", ""))
     ]
     assert len(seen) == 1
 

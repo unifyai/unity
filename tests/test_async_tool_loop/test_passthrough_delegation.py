@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -24,29 +23,31 @@ from tests.test_async_tool_loop.async_helpers import (
 # ---------------------------------------------------------------------------
 
 
-@unify.traced
 async def sleeper(delay: float = 1.0) -> str:  # noqa: D401 – simple async
     """Sleep *delay* seconds then return."""
     await asyncio.sleep(delay)
     return "slept"
 
 
-async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
-    """Return a nested async-tool loop *handle* that requests pass-through."""
-    inner_client = new_llm_client()
-    # Start an inner loop that runs one sleeper tool.
-    inner_handle = start_async_tool_loop(
-        inner_client,
-        message="Run sleeper please.",
-        tools={"sleeper": sleeper},
-    )
-    # 🎯 mark for pass-through so the outer handle *adopts* this one.
-    inner_handle.__passthrough__ = True  # type: ignore[attr-defined]
-    return inner_handle  # outer tool returns instantly
+def _make_delegating_tool(model: str):
+    """Factory to create delegating_tool with a specific model."""
 
+    async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
+        """Return a nested async-tool loop *handle* that requests pass-through."""
+        inner_client = new_llm_client(model=model)
+        # Start an inner loop that runs one sleeper tool.
+        inner_handle = start_async_tool_loop(
+            inner_client,
+            message="Run sleeper please.",
+            tools={"sleeper": sleeper},
+        )
+        # 🎯 mark for pass-through so the outer handle *adopts* this one.
+        inner_handle.__passthrough__ = True  # type: ignore[attr-defined]
+        return inner_handle  # outer tool returns instantly
 
-delegating_tool.__name__ = "delegating_tool"
-delegating_tool.__qualname__ = "delegating_tool"
+    delegating_tool.__name__ = "delegating_tool"
+    delegating_tool.__qualname__ = "delegating_tool"
+    return delegating_tool
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ delegating_tool.__qualname__ = "delegating_tool"
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_outer_interjection_forwarded_to_inner(monkeypatch):
+async def test_outer_interjection_forwarded_to_inner(model, monkeypatch):
     """An *early* interjection (sent before delegate adoption) must be forwarded
     to the inner handle once the outer loop adopts it.
 
@@ -67,8 +68,9 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     """
 
     # ---- helper tool -----------------------------------------------------
-    @unify.traced  # noqa: D401 – simple async tool (no sleep for determinism)
-    async def sleeper(delay: float = 0.1) -> str:
+    async def sleeper(
+        delay: float = 0.1,
+    ) -> str:  # noqa: D401 – simple async tool (no sleep for determinism)
         return "slept"
 
     # ---- counter to verify delegate.interject was called ------------------
@@ -79,7 +81,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
     async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         """Return a nested handle marked for pass-through with patched interject."""
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
 
         inner_handle = start_async_tool_loop(
             inner_client,
@@ -112,7 +114,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
     # ---- start outer loop -------------------------------------------------
     # Real client; strongly instruct the model to call our delegating tool
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call "
         "`delegating_tool_interject` with no arguments. Then wait for it to complete before replying.",
@@ -158,7 +160,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch):
+async def test_interject_multicasts_passthrough(model, monkeypatch):
     """An early interjection must be forwarded to ALL passthrough handles."""
 
     # Counters to verify both inner handles receive the interjection
@@ -169,7 +171,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
         __passthrough__ = True  # signal passthrough mode
 
     async def _make_inner(counter: list[str]) -> AsyncToolLoopHandle:
-        client = new_llm_client()
+        client = new_llm_client(model=model)
 
         async def _noop():
             return "ok"
@@ -208,7 +210,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
         await gate.wait()
         return inner_two
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both `delegate_one` and `delegate_two` "
         "with no arguments, in the same turn, then wait for completion before replying.",
@@ -248,7 +250,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
+async def test_ask_multicasts_passthrough(model, monkeypatch):
     """Programmatic ask() on the outer handle should be sent to every passthrough handle."""
 
     class MockPassthrough(SteerableToolHandle):
@@ -305,7 +307,7 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
     async def d2():  # type: ignore[valid-type]
         return h2
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools `d1` and `d2` "
         "with no arguments, then wait for completion before replying.",
@@ -367,7 +369,7 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch):
+async def test_passthrough_clarification_bubbles(model, monkeypatch):
     """Clarification from a passthrough handle bubbles to the outer loop and can be answered programmatically."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -423,7 +425,7 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch
         return inner
 
     # Force a single tool call to spawn the passthrough handle (via instruction to real LLM)
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying with a brief final message.",
@@ -465,7 +467,7 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handles():
+async def test_steering_propagates_passthrough(model):
     """Outer pause/resume/stop should be forwarded to all active passthrough handles."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -522,7 +524,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     async def t2():  # type: ignore[valid-type]
         return h2
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools `t1` and `t2` "
         "with no arguments in the same turn, then wait for completion before replying.",
@@ -578,7 +580,8 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handle(
+async def test_interject_kwargs_forwarded(
+    model,
     monkeypatch,
 ):
     """Programmatic outer.interject(..., priority=..., metadata=...) forwards kwargs to a passthrough child."""
@@ -640,7 +643,7 @@ async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handl
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -698,7 +701,7 @@ async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handl
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
+async def test_steering_kwargs_forwarded(model, monkeypatch):
     """Programmatic pause/resume/stop kwargs are forwarded to a passthrough child that overrides their signatures."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -752,7 +755,7 @@ async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -815,7 +818,7 @@ async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
+async def test_no_extra_turn_passthrough_handover(model, monkeypatch):
     """Outer loop continues after passthrough and performs exactly one follow-up
     LLM step once the inner tool completes.
 
@@ -829,14 +832,13 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
     """
 
     # Inner real client; instruct it to call `sleeper` then finish
-    inner_client = new_llm_client()
+    inner_client = new_llm_client(model=model)
     inner_client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call `sleeper` with {"delay": 0.01}. '
         "After it finishes, reply exactly with the single word DONE.",
     )
 
     # Tool: quick async sleep
-    @unify.traced
     async def sleeper(delay: float = 0.01) -> str:
         return "slept"
 
@@ -855,7 +857,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
     delegating_tool_regression.__qualname__ = "delegating_tool_regression"
 
     # Outer client; spy wrapper records calls while still hitting the real LLM
-    outer_client = new_llm_client()
+    outer_client = new_llm_client(model=model)
     outer_client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `delegating_tool_regression` "
         "with no arguments, then wait for the inner task to complete before replying.",
@@ -905,7 +907,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch):
+async def test_ask_images_multicasts_passthrough(model, monkeypatch):
     """
     Programmatic outer.ask(..., images=...) should be forwarded to all active
     passthrough handles' ask methods, carrying the images payload.
@@ -968,7 +970,7 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
     async def d2():  # type: ignore[valid-type]
         return h2
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools `d1` and `d2` "
         "with no arguments, then wait for completion before replying.",
@@ -1032,7 +1034,7 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_early_ask_forwarded_on_adoption(monkeypatch):
+async def test_early_ask_forwarded_on_adoption(model, monkeypatch):
     """An early outer.ask(...) issued after scheduling but before adoption is replayed to the adopted passthrough handle."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -1087,7 +1089,7 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
         await gate.wait()
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1128,7 +1130,7 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
+async def test_adoption_syncs_pause_state_when_paused(model, monkeypatch):
     """If the outer loop is paused at adoption time, the adopted passthrough handle receives pause() once."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -1184,7 +1186,7 @@ async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
         await gate.wait()
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1219,13 +1221,13 @@ async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
     ), "resume() should not be applied at adoption when outer remains paused"
 
     # Let the outer loop finish cleanly – paused outer cannot complete without resume
-    outer.resume()
+    await outer.resume()
     await outer.result()
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
+async def test_adoption_respects_resumed_state(model, monkeypatch):
     """If the outer loop is resumed by adoption time, the adopted passthrough handle receives no pause/resume replay."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -1280,7 +1282,7 @@ async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
         await gate.wait()
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1319,7 +1321,7 @@ async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
+async def test_interject_immediate_and_mirrored(model, monkeypatch):
     """Programmatic interject should:
     - forward immediately to adopted passthrough handle(s) (no LLM step)
     - produce an assistant helper tool_call 'interject_*' and an ack tool message
@@ -1371,7 +1373,7 @@ async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1456,7 +1458,7 @@ async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
+async def test_ask_immediate_and_mirrored(model, monkeypatch):
     """Programmatic ask should:
     - forward immediately to adopted passthrough handle(s) (no LLM step)
     - produce an assistant helper tool_call 'ask_*' and an ack tool message
@@ -1507,7 +1509,7 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1596,7 +1598,8 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_custom_method_only_propagates_to_matching_passthrough_handles(
+async def test_custom_method_propagates_matching(
+    model,
     monkeypatch,
 ):
     """
@@ -1646,10 +1649,9 @@ async def test_custom_method_only_propagates_to_matching_passthrough_handles(
             return "ok"
 
     # Two inner clients
-    client_one = new_llm_client()
-    client_two = new_llm_client()
+    client_one = new_llm_client(model=model)
+    client_two = new_llm_client(model=model)
 
-    @unify.traced
     async def noop():
         return "ok"
 
@@ -1673,7 +1675,7 @@ async def test_custom_method_only_propagates_to_matching_passthrough_handles(
         return h
 
     # Outer client instructs model to call both delegates in the first turn
-    outer_client = new_llm_client()
+    outer_client = new_llm_client(model=model)
     outer_client.set_system_message(
         "In your FIRST assistant turn, call both tools `delegate_custom` and `delegate_base` "
         "with no arguments, then wait for completion before replying.",
@@ -1785,7 +1787,7 @@ async def test_custom_method_only_propagates_to_matching_passthrough_handles(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
+async def test_adoption_replay_mirrors_interject(model, monkeypatch):
     """An interject sent before adoption should be mirrored on adoption and functionally forwarded once."""
 
     calls = {"count": 0}
@@ -1836,7 +1838,7 @@ async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
         await gate.wait()
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1878,7 +1880,7 @@ async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
+async def test_interject_replayed_to_new_child(model, monkeypatch):
     """
     Multi-child adoption: send interject after both delegates are scheduled but before
     the second delegate returns its handle. Expect:
@@ -1960,7 +1962,7 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
         await gate.wait()
         return late
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools "
         "`delegate_early` and `delegate_late` with no arguments, then wait for completion before replying.",

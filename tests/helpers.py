@@ -2,37 +2,31 @@ import unify
 import functools
 import inspect
 import sys
+import time
 import traceback
 from os import sep
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, List
 from unity.events.event_bus import EVENT_BUS
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from tests.settings import SETTINGS
 
 # Contexts that were pre-created during collection;
 PRECREATED_CONTEXTS: set[str] = set()
 
-
-# Settings for the testing environment
-class TestingSettings(BaseSettings):
-    UNIFY_TRACED: bool = False
-    UNIFY_CACHE: bool = True
-    UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
-    UNIFY_OVERWRITE_PROJECT: bool = False
-    UNIFY_REGISTER_SUMMARY_CALLBACKS: bool = False
-    UNIFY_REGISTER_UPDATE_CALLBACKS: bool = False
-    UNIFY_TESTS_RAND_PROJ: bool = False
-    UNIFY_TESTS_DELETE_PROJ_ON_EXIT: bool = False
-    UNIFY_CACHE_BENCHMARK: bool = False
-    UNIFY_PRETEST_CONTEXT_CREATE: bool = False
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=True,
-        extra="ignore",
-    )
+# Session-level tags for duration logging (set via --test-tags CLI option)
+_SESSION_TAGS: List[str] = []
 
 
-SETTINGS = TestingSettings()
+def set_session_tags(tags: List[str]) -> None:
+    """Set the session-level tags for duration logging."""
+    global _SESSION_TAGS
+    _SESSION_TAGS = list(tags)
+
+
+def get_session_tags() -> List[str]:
+    """Get the session-level tags for duration logging."""
+    return list(_SESSION_TAGS)
 
 
 # ---------- CURSOR DEBUG LOGGER --------------------------------
@@ -46,6 +40,80 @@ def _ctx_name(fn: Callable, fn_name: str) -> str:
     file_path = fn.__code__.co_filename
     test_path = "/".join(file_path.split(f"{sep}tests{sep}")[1].split(sep))[:-3]
     return f"tests/{test_path}/{fn_name}" if test_path else fn_name
+
+
+def _test_fpath(fn: Callable, fn_name: str) -> str:
+    """Return the test path in format 'folder_a/folder_b/fname.py::test_name'."""
+    file_path = fn.__code__.co_filename
+    # Extract path relative to 'tests/' directory
+    parts = file_path.split(f"{sep}tests{sep}")
+    if len(parts) > 1:
+        rel_path = parts[1].replace(sep, "/")
+    else:
+        # Fallback: just use the filename
+        rel_path = file_path.split(sep)[-1]
+    return f"{rel_path}::{fn_name}"
+
+
+def _get_llm_io_dir() -> Path | None:
+    """Get the LLM I/O debug directory for the current session."""
+    try:
+        from unity.constants import SESSION_ID
+    except ImportError:
+        return None
+
+    root = Path(".llm_io_debug")
+    if not root.exists():
+        return None
+
+    # Match the sanitization used in the async_tool loop
+    import re
+
+    session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
+    session_dir = root / session_safe
+    if session_dir.exists():
+        return session_dir
+    return None
+
+
+def _list_llm_io_files() -> set[Path]:
+    """List all LLM I/O files in the current session directory."""
+    llm_io_dir = _get_llm_io_dir()
+    if llm_io_dir is None:
+        return set()
+    return set(llm_io_dir.glob("*.txt"))
+
+
+def _collect_llm_io_contents(files: set[Path]) -> List[str]:
+    """Read contents of LLM I/O files."""
+    contents = []
+    for f in sorted(files):
+        try:
+            contents.append(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return contents
+
+
+def _log_test_combined(
+    test_fpath: str,
+    duration: float,
+    llm_io: List[str],
+) -> None:
+    """Log test duration, LLM I/O, and settings to the Combined context."""
+    try:
+        unify.log(
+            context="Combined",
+            test_fpath=test_fpath,
+            tags=get_session_tags(),
+            duration=duration,
+            llm_io=llm_io,
+            settings=SETTINGS.model_dump(),
+            new=True,
+        )
+    except Exception:
+        # Logging is best-effort; don't fail tests if it errors
+        pass
 
 
 def _handle_project(
@@ -65,10 +133,7 @@ def _handle_project(
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
-        if SETTINGS.UNIFY_TRACED:
-            result = unify.traced(fn)(*a, **kw)
-        else:
-            result = fn(*a, **kw)
+        result = fn(*a, **kw)
         if inspect.isawaitable(result):
             return await result
         return result
@@ -84,6 +149,7 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            fpath = _test_fpath(test_fn, test_fn_name)
             skip_ctx_create = False
             if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
                 skip_ctx_create = ctx in PRECREATED_CONTEXTS
@@ -92,6 +158,10 @@ def _handle_project(
                     unify.delete_context(ctx)
                     skip_ctx_create = False
 
+            # Track LLM I/O files before test starts
+            llm_io_before = _list_llm_io_files()
+
+            start_time = time.perf_counter()
             try:
                 unify.set_context(
                     ctx,
@@ -107,8 +177,6 @@ def _handle_project(
 
                     _unity_mod.init("UnityTests")
                     EVENT_BUS.clear()
-                if SETTINGS.UNIFY_TRACED:
-                    unify.set_trace_context("Traces")
                 await _call(test_fn, *args, **kwargs)
 
             except Exception:
@@ -116,6 +184,12 @@ def _handle_project(
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
             finally:
+                duration = time.perf_counter() - start_time
+                # Collect new LLM I/O files created during test
+                llm_io_after = _list_llm_io_files()
+                new_llm_io_files = llm_io_after - llm_io_before
+                llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
+                _log_test_combined(fpath, duration, llm_io_contents)
                 if delete_ctx_on_exit:
                     unify.delete_context(ctx)
                 unify.unset_context()
@@ -130,6 +204,7 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            fpath = _test_fpath(test_fn, test_fn_name)
             skip_ctx_create = False
             if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
                 skip_ctx_create = ctx in PRECREATED_CONTEXTS
@@ -138,6 +213,10 @@ def _handle_project(
                     unify.delete_context(ctx)
                     skip_ctx_create = False
 
+            # Track LLM I/O files before test starts
+            llm_io_before = _list_llm_io_files()
+
+            start_time = time.perf_counter()
             try:
                 unify.set_context(
                     ctx,
@@ -153,17 +232,19 @@ def _handle_project(
 
                     _unity_mod.init("UnityTests")
                     EVENT_BUS.clear()
-                if SETTINGS.UNIFY_TRACED:
-                    unify.set_trace_context("Traces")
-                    unify.traced(test_fn)(*args, **kwargs)
-                else:
-                    test_fn(*args, **kwargs)
+                test_fn(*args, **kwargs)
 
             except Exception:
                 exc_type, exc_value, exc_tb = sys.exc_info()
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
             finally:
+                duration = time.perf_counter() - start_time
+                # Collect new LLM I/O files created during test
+                llm_io_after = _list_llm_io_files()
+                new_llm_io_files = llm_io_after - llm_io_before
+                llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
+                _log_test_combined(fpath, duration, llm_io_contents)
                 if delete_ctx_on_exit:
                     unify.delete_context(ctx)
                 unify.unset_context()

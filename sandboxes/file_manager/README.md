@@ -24,9 +24,6 @@ The entry‑point lives at `sandboxes/file_manager/global_file_manager_sandbox.p
 # Basic text-only session
 python -m sandboxes.file_manager.global_file_manager_sandbox
 
-# Enable tracing
-python -m sandboxes.file_manager.global_file_manager_sandbox --traced
-
 # Voice I/O via Deepgram + Cartesia
 python -m sandboxes.file_manager.global_file_manager_sandbox --voice
 ```
@@ -38,7 +35,6 @@ CLI flags
 ```
 --voice / -v        Enable voice capture (Deepgram) + TTS playback (Cartesia)
 --debug / -d        Show full reasoning steps of every tool-loop
---traced / -t       Wrap manager calls with unify.traced for detailed logs
 --project_name / -p Name of the Unify project/context (default: "Sandbox")
 --overwrite / -o    Delete any existing data for the chosen project before start
 --project_version   Roll back to a specific project commit (int index)

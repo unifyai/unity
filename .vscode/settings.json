@@ -8,5 +8,6 @@
     "python.testing.pytestEnabled": true,
     "python.testing.cwd": "${workspaceFolder}",
     "workbench.editor.enablePreview": false,
-    "python.envFile": "${workspaceFolder}/.env"
+    "python.envFile": "${workspaceFolder}/.env",
+    "debugpy.justMyCode": false
 }

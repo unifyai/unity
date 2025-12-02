@@ -3,7 +3,6 @@ import copy
 from typing import List
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
@@ -17,11 +16,11 @@ from unity.common.llm_client import new_llm_client
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
+async def test_preprocess_msgs_dynamic_placeholder(model, monkeypatch):
     """Verify that the preprocess hook patches placeholders *per-LLM-call* and
     that the modifications never leak into the persistent chat history."""
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     # Counter so each invocation produces a fresh replacement value.
     counter = {"n": 0}
@@ -68,7 +67,6 @@ async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
     # turns (request tool → result → final answer).                       #
     # ------------------------------------------------------------------ #
 
-    @unify.traced  # no-op decorator from real library
     async def dummy_tool():  # noqa: D401
         await asyncio.sleep(0.01)
         return "OK"
@@ -100,6 +98,4 @@ async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
     ), "Original placeholder should remain in persistent transcript."
 
     # 3️⃣  Loop completes and returns assistant reply.
-    assert (
-        "all done" in final.lower() or final.strip()
-    ), "Loop did not finish correctly."
+    assert isinstance(final, str) and final.strip(), "Loop did not finish correctly."

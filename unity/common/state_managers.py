@@ -24,10 +24,21 @@ class BaseStateManager(ABC):
 
     The class intentionally defines no abstract methods to avoid constraining
     individual manager contracts.
+
+    Caller Context
+    --------------
+    When a manager invokes another manager's tool loop, the ``_as_caller_description``
+    class attribute provides a one-liner describing this manager from the perspective
+    of the callee. This is injected into the system message so the LLM understands
+    who the "user" messages are coming from.
     """
 
     # Global registry of discovered manager classes keyed by class name
     _registry: Dict[str, Type["BaseStateManager"]] = {}
+
+    # Override in subclasses to describe this manager when it's the caller of another.
+    # Used to explain who the "user" is in nested tool loops.
+    _as_caller_description: str = "another component of the assistant system"
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -94,6 +105,26 @@ def get_manager_registry() -> Dict[str, Type[BaseStateManager]]:
     extended by calling `discover_manager_modules()` to import manager packages.
     """
     return dict(BaseStateManager._registry)
+
+
+def get_caller_description(manager_class_name: str) -> Optional[str]:
+    """
+    Look up the caller description for a manager by class name.
+
+    Parameters
+    ----------
+    manager_class_name : str
+        The class name of the manager (e.g., "Conductor", "TaskScheduler").
+
+    Returns
+    -------
+    str | None
+        The ``_as_caller_description`` for the manager, or None if not found.
+    """
+    cls = BaseStateManager._registry.get(manager_class_name)
+    if cls is None:
+        return None
+    return getattr(cls, "_as_caller_description", None)
 
 
 def _iter_unity_subpackages() -> Iterable[str]:

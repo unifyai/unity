@@ -216,8 +216,12 @@ async def start_api_server(
     )
 
     # Set environment variables
-    os.environ.setdefault("UNIFY_CACHE", str(config["unify_cache"]).lower())
-    os.environ.setdefault("UNIFY_TRACED", str(config["unify_traced"]).lower())
+    cache_val = config["unify_cache"]
+    # For bool values, convert to lowercase string; for string modes, preserve as-is
+    os.environ.setdefault(
+        "UNIFY_CACHE",
+        str(cache_val).lower() if isinstance(cache_val, bool) else cache_val,
+    )
 
     # Set log level if specified
     if config["log_level"]:

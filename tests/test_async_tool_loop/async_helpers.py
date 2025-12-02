@@ -11,7 +11,6 @@ _ASSISTANT_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
 _TOOL_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
 
 
-@unify.traced
 def count_assistant_tool_calls(msgs: List[dict], tool_name: str) -> int:
     """Return the number of *assistant* turns whose visible ``tool_calls``
     reference *tool_name* (exact match).
@@ -44,7 +43,6 @@ async def _wait_for_condition(predicate, poll: float, timeout: float):
     raise TimeoutError("Timed out waiting for condition to become true.")
 
 
-@unify.traced
 async def _wait_for_tool_request(
     client: "unify.AsyncUnify",
     tool_name: str,
@@ -63,7 +61,6 @@ async def _wait_for_tool_request(
     await _wait_for_condition(_predicate, poll=poll, timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_tool_scheduled(
     outer_handle,
     tool_name: str,
@@ -93,7 +90,6 @@ async def _wait_for_tool_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tools_scheduled(
     outer_handle,
     tool_names: list[str],
@@ -121,7 +117,6 @@ async def _wait_for_tools_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tool_requested_and_scheduled(
     client: "unify.AsyncUnify",
     outer_handle,
@@ -141,7 +136,6 @@ async def _wait_for_tool_requested_and_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tools_requested_and_scheduled(
     client: "unify.AsyncUnify",
     outer_handle,
@@ -162,7 +156,6 @@ async def _wait_for_tools_requested_and_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tool_result(
     client: "unify.AsyncUnify",
     tool_name: str | None = None,
@@ -191,7 +184,6 @@ async def _wait_for_tool_result(
     await _wait_for_condition(_predicate, poll=poll, timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_assistant_call_prefix(
     client: "unify.AsyncUnify",
     prefix: str,
@@ -244,7 +236,6 @@ async def _wait_for_assistant_call_prefix(
     )
 
 
-@unify.traced
 async def _wait_for_tool_message_prefix(
     client: "unify.AsyncUnify",
     prefix: str,
@@ -309,6 +300,23 @@ def make_gated_sync_tool(return_value: str = "ok", timeout: float = 300):
 
     def _tool():
         gate.wait(timeout=timeout)
+        return return_value
+
+    return gate, _tool
+
+
+def make_gated_async_tool(return_value: str = "ok", timeout: float = 300):
+    """
+    Return (gate, tool_fn) where tool_fn is an async function that blocks
+    until gate.set() is called, then returns `return_value`.
+
+    Useful for async tool loops to keep a tool running until a deterministic
+    trigger is observed in the outer test.
+    """
+    gate = asyncio.Event()
+
+    async def _tool():
+        await asyncio.wait_for(gate.wait(), timeout=timeout)
         return return_value
 
     return gate, _tool
@@ -385,15 +393,16 @@ def first_tool_message_by_name(msgs: List[dict], name: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-@unify.traced
-async def _wait_for_system_interjection_event(
+async def _wait_for_interjection_event(
     *,
     contains: str | None = None,
     timeout: float = 300.0,
 ):
-    """Await the next ToolLoop event whose message is a non-leading system interjection.
+    """Await the next ToolLoop event whose message is a user interjection.
 
-    We subscribe to the EventBus and trigger on the first matching event after registration.
+    Interjections are now sent as simple user messages (not system messages)
+    for Claude/Gemini compatibility. We subscribe to the EventBus and trigger
+    on the first matching user message event after registration.
     """
     from unity.events.event_bus import EVENT_BUS
 
@@ -401,7 +410,8 @@ async def _wait_for_system_interjection_event(
 
     # Build a safe filter expression evaluated against evt.model_dump() namespace
     # Payload shape published by LoopMessageDispatcher.to_event_bus: {"message": <dict>, ...}
-    base = "(payload['message'].get('role') == 'system')"
+    # Interjections are now user messages (not system messages)
+    base = "(payload['message'].get('role') == 'user')"
     if contains is not None:
         # substring match in content without relying on builtins
         sub = contains.replace("'", "\\'")
@@ -424,7 +434,10 @@ async def _wait_for_system_interjection_event(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
+# Backwards compatibility alias
+_wait_for_system_interjection_event = _wait_for_interjection_event
+
+
 async def _wait_for_any_assistant_tool_call(
     tool_name: str,
     *,
@@ -458,7 +471,6 @@ async def _wait_for_any_assistant_tool_call(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_any_tool_message_by_name(
     tool_name: str,
     *,
@@ -490,7 +502,6 @@ async def _wait_for_any_tool_message_by_name(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_any_tool_message_prefix(
     prefix: str,
     *,
@@ -527,7 +538,6 @@ async def _wait_for_any_tool_message_prefix(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_assistant_tool_calls(
     tool_names: list[str],
     *,
@@ -562,6 +572,66 @@ async def _wait_for_assistant_tool_calls(
                                     return
                     except Exception:
                         continue
+        except Exception:
+            pass
+
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        every_n=1,
+    )
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+def _is_synthetic_check_status_stub(msg: dict) -> bool:
+    """Check if this assistant message is a synthetic check_status_ stub.
+
+    Synthetic stubs are emitted by the loop to preserve chronological ordering
+    when a tool's placeholder is not at the transcript tail. They're internal
+    bookkeeping, not actual LLM responses.
+    """
+    tool_calls = msg.get("tool_calls") or []
+    if not tool_calls:
+        return False
+    return all(
+        (tc.get("function", {}).get("name", "") or "").startswith("check_status_")
+        for tc in tool_calls
+    )
+
+
+async def _wait_for_next_assistant_response_event(
+    *,
+    timeout: float = 300.0,
+):
+    """Wait until the async tool loop publishes an assistant message to the EventBus.
+
+    This helper registers a callback and waits for the NEXT assistant message
+    event to be published. It's designed to be called after a tool result is
+    available, to detect when the LLM has responded to that result.
+
+    This uses the EventBus to detect when the LLM has actually responded,
+    avoiding race conditions with fixed delays.
+
+    Note: Synthetic check_status_* assistant stubs (used for chronological
+    ordering in the transcript) are skipped - this only triggers on real
+    LLM responses.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    async def _cb(events):
+        try:
+            for evt in events or []:
+                payload = getattr(evt, "payload", {})
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                # Skip synthetic check_status_ stubs (internal bookkeeping)
+                if _is_synthetic_check_status_stub(msg):
+                    continue
+                done.set()
+                return
         except Exception:
             pass
 

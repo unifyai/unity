@@ -40,7 +40,6 @@ Standard flags:
 * `--project_name` / `-p`     – Unify project/context name
 * `--overwrite` / `-o`        – delete existing data for the project before start
 * `--project_version`         – load a specific saved version (index)
-* `--traced` / `-t`           – wrap manager calls with Unify tracing
 * `--debug` / `-d`            – show verbose tool logs (reasoning steps)
 
 Local GUI usage (default)

@@ -12,7 +12,6 @@ It supports:
 from __future__ import annotations
 
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
-import os
 import asyncio
 import logging
 import sys
@@ -37,6 +36,7 @@ if str(ROOT) not in sys.path:
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.llm_client import new_llm_client
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
@@ -188,7 +188,7 @@ async def _dispatch_with_context(
         return "refactor", handle, clar_up_q, clar_down_q
 
     # ───── everything else – ask an LLM judge ────────────────────────
-    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
+    judge = new_llm_client(async_client=False, response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
@@ -220,8 +220,6 @@ async def _main_async() -> None:
     parser = build_cli_parser("KnowledgeManager sandbox")
     args = parser.parse_args()
 
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
     activate_project(args.project_name, args.overwrite)
 
     # ─────────────────── project version handling ────────────────────
@@ -248,8 +246,6 @@ async def _main_async() -> None:
     LG.setLevel(logging.INFO)
 
     km = KnowledgeManager()
-    if args.traced:
-        km = unify.traced(km)
 
     _COMMANDS_HELP = (
         "\nKnowledgeManager sandbox – type commands below (press ↵ with an empty "

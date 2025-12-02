@@ -25,17 +25,17 @@ from .prompt_builders import (
     build_ask_prompt,
     build_refactor_prompt,
 )
-from ..common.context_store import TableStore
 from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from ..common.context_registry import ContextRegistry, TableContext
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
+from ..common.metrics_utils import reduce_logs
 
 # Module delegations (split helpers for parity with ContactManager)
 from .storage import (
-    provision_storage as _storage_provision,
     get_columns as _storage_get_columns,
     tables_overview as _storage_tables_overview,
     ctx_for_table as _storage_ctx_for_table,
@@ -67,6 +67,14 @@ from .ops import (
 
 
 class KnowledgeManager(BaseKnowledgeManager):
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Knowledge",
+                description="Knowledge base for the assistant.",
+            ),
+        ]
+
     def __init__(
         self,
         *,
@@ -138,6 +146,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._tables_overview,
                 self._filter,
                 self._search,
+                self._reduce,
                 include_class_name=False,
             ),
         }
@@ -193,32 +202,16 @@ class KnowledgeManager(BaseKnowledgeManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
-        self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
+        self._ctx = ContextRegistry.get_context(self, "Knowledge")
 
         # Only compute the Contacts context if the caller requested integration.
-        self._contacts_ctx = (
-            (f"{read_ctx}/Contacts" if read_ctx else "Contacts")
-            if include_contacts
-            else None
-        )
+        self._contacts_ctx: Optional[str]
+        if include_contacts:
+            from unity.contact_manager.contact_manager import ContactManager
 
-        # Optional: idempotently ensure Contacts exists when linkage enabled
-        if self._contacts_ctx is not None:
-            try:
-                TableStore(
-                    self._contacts_ctx,
-                    unique_keys={"contact_id": "int"},
-                    auto_counting={"contact_id": None},
-                ).ensure_context()
-            except Exception:
-                # Best-effort; KnowledgeManager can still function without immediate Contacts access
-                pass
-
-        # Ensure any additional storage requirements are provisioned
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
+            self._contacts_ctx = ContextRegistry.get_context(ContactManager, "Contacts")
+        else:
+            self._contacts_ctx = None
 
     async def _maybe_build_show_all_seed(
         self,
@@ -381,8 +374,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search on the first step; auto thereafter."""
-        if step_index < 1 and "search" in current_tools:
+        """Require search on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search" in current_tools
+        ):
             return ("required", {"search": current_tools["search"]})
         return ("auto", current_tools)
 
@@ -391,8 +390,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require ask on the first step; auto thereafter."""
-        if step_index < 1 and "ask" in current_tools:
+        """Require ask on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
@@ -401,8 +406,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require ask on the first step; auto thereafter."""
-        if step_index < 1 and "ask" in current_tools:
+        """Require ask on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
@@ -765,17 +776,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             pass
 
         # Re-provision any required/linked storage
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
-
-    # Private #
-    # --------#
-
-    def _provision_storage(self) -> None:
-        """Ensure optional linked storage exists (e.g. root-level Contacts)."""
-        _storage_provision(self)
 
     # Tables
 
@@ -1723,6 +1723,64 @@ class KnowledgeManager(BaseKnowledgeManager):
             offset=offset,
             limit=limit,
             tables=tables,
+        )
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        table: str,
+        metric: str,
+        keys: str | List[str],
+        filter: Optional[str | Dict[str, str]] = None,
+        group_by: Optional[str | List[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over a single knowledge table.
+
+        Parameters
+        ----------
+        table : str
+            Logical table name managed by this KnowledgeManager (for example
+            ``\"Content\"``, ``\"Products\"``, or ``\"Contacts\"`` when linkage
+            is enabled).
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric columns in ``table`` to aggregate. A single
+            column name returns a scalar; a list of column names computes the
+            metric independently per key and returns a ``{key -> value}``
+            mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) using the same Python
+            syntax as the :py:meth:`_filter` tool. When a string, the
+            expression is applied uniformly; when a dict, each key maps to its
+            own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional column(s) to group by. Use a single column name for one
+            grouping level, or a list such as ``[\"category\", \"row_id\"]`` to
+            group hierarchically in that order. When provided, the result
+            becomes a nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric` behaviour.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the resolved table context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        ctx = self._ctx_for_table(table)
+        return reduce_logs(
+            context=ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
         )
 
     @read_only

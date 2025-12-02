@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import unify
 import asyncio
 
 import pytest
@@ -22,7 +21,6 @@ from tests.helpers import _handle_project, capture_events
 from unity.common.llm_client import new_llm_client
 
 
-@unify.traced
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
     # Avoid time-based sleeping; just return immediately
     return text.upper()
@@ -31,16 +29,27 @@ async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
 # --------------------------------------------------------------------------- #
 #                         Integration-level expectations                       #
 # --------------------------------------------------------------------------- #
+
+
+def _filter_runtime_context(events: list) -> list:
+    """Filter out internal runtime context events (user visibility guidance, etc.)."""
+    return [
+        evt
+        for evt in events
+        if not evt.payload.get("message", {}).get("_runtime_context")
+    ]
+
+
 @pytest.mark.asyncio
 @_handle_project
-async def test_basic_event_flow() -> None:
+async def test_basic_event_flow(model) -> None:
     """
     End-to-end check:
 
         user/msg → assistant/tool-call → tool/result → assistant/final-text
     """
 
-    client = new_llm_client().set_system_message(
+    client = new_llm_client(model=model).set_system_message(
         "You are an automated test agent.\n"
         "You MUST call the tool named `echo` exactly once, passing the user's message as the `text` argument.\n"
         "Do NOT reply directly without first calling the `echo` tool (even if you think you know the answer).\n"
@@ -61,9 +70,9 @@ async def test_basic_event_flow() -> None:
             prune_tool_duplicates=True,
         )
 
-    # Exactly four events should have been published for the run.
+    # Filter out internal runtime context events and check conversation flow.
     # Captured events are already in chronological order (oldest first).
-    events = captured_events
+    events = _filter_runtime_context(captured_events)
     assert len(events) == 4
 
     roles = [evt.payload["message"]["role"] for evt in events]
@@ -85,40 +94,48 @@ async def test_basic_event_flow() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_publishes_user_event() -> None:
+async def test_interjection_publishes_user_event(model) -> None:
     """
-    Run the *wrapper* helper so that we can inject an extra user turn while the
-    loop is still thinking, then confirm that the event bus recorded it.
-    """
+    Verify that interjections are published to the event bus as user messages.
 
-    client = new_llm_client()
-    client.set_system_message(
-        "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said most recently, and do not include the quoation marks in your response.",
-    )
+    This test is purely about event bus mechanics, not model behavior.
+    Model response quality and instruction-following are tested separately
+    in test_interjections.py.
+    """
+    client = new_llm_client(model=model)
+    # Minimal prompt - we don't care about model's response quality here
+    client.set_system_message("Acknowledge any messages you receive.")
 
     async with capture_events("ToolLoop") as captured_events:
         handle = start_async_tool_loop(
             client=client,
-            message="first",
-            tools={},  # no tools needed
+            message="initial message",
+            tools={},
             max_consecutive_failures=1,
         )
 
-        # Interject with second.
-        await handle.interject("second")
+        await handle.interject("interjected message")
 
-        final = await handle.result()
+        # We don't need to verify model output - just let it complete
+        await handle.result()
 
-    assert "you said: second" in final.lower().replace("*", "")
-
-    events = captured_events
+    # Filter out internal runtime context events
+    events = _filter_runtime_context(captured_events)
     roles = [evt.payload["message"]["role"] for evt in events]
-    assert "user" in roles  # initial user
-    # Interjection is now published as a system message that includes the
-    # user-visible text in bold. Ensure we saw exactly one initial user and a system interjection.
-    assert roles.count("user") == 1
-    assert any(
-        evt.payload["message"]["role"] == "system"
-        and "user: **second**" in (evt.payload["message"].get("content") or "")
+
+    # EVENT BUS ASSERTIONS ONLY - no model behavior checks
+    assert (
+        roles.count("user") == 2
+    ), "Event bus should record both initial and interjected user messages"
+
+    user_contents = [
+        evt.payload["message"].get("content", "")
         for evt in events
-    )
+        if evt.payload["message"]["role"] == "user"
+    ]
+    assert any(
+        "initial" in c for c in user_contents
+    ), "Initial message should be recorded"
+    assert any(
+        "interjected" in c for c in user_contents
+    ), "Interjection should be recorded"

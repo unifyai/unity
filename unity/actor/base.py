@@ -69,6 +69,10 @@ class BaseActor(ABC):
     not create durable records or schedules.
     """
 
+    _as_caller_description: str = (
+        "the Actor, performing a live action on behalf of the end user"
+    )
+
     # ─────────────────────────── Work management ────────────────────────── #
 
     @abstractmethod

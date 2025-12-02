@@ -4,10 +4,10 @@ from typing import Dict, Optional, Set
 
 import unify
 
+from ..common.context_registry import ContextRegistry
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from .types.message import Message
-from .types.exchange import Exchange
 
 
 def provision_storage(self) -> None:
@@ -16,22 +16,12 @@ def provision_storage(self) -> None:
     self._store = TableStore(
         self._transcripts_ctx,
         unique_keys={"message_id": "int"},
-        auto_counting={"message_id": None, "exchange_id": None},
+        auto_counting={"message_id": None},
         description=(
             "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
         ),
         fields=model_to_fields(Message),
     )
-    self._store.ensure_context()
-
-    # Exchanges context: one row per exchange_id with optional metadata
-    self._exchanges_store = TableStore(
-        self._exchanges_ctx,
-        unique_keys={"exchange_id": "int"},
-        description="One row per conversation exchange/thread with optional metadata.",
-        fields=model_to_fields(Exchange),
-    )
-    self._exchanges_store.ensure_context()
 
     # No local columns cache; always read from TableStore when needed
 
@@ -81,19 +71,8 @@ def clear(self) -> None:
     # No local cache to reset
 
     # Drop ensure memo then re-provision via shared helper
-    try:
-        from ..common.context_store import TableStore as _TS  # local import
-
-        try:
-            _TS._ENSURED.discard((unify.active_project(), self._transcripts_ctx))
-        except Exception:
-            pass
-        try:
-            _TS._ENSURED.discard((unify.active_project(), self._exchanges_ctx))
-        except Exception:
-            pass
-    except Exception:
-        pass
+    ContextRegistry.refresh(self, "Transcripts")
+    ContextRegistry.refresh(self, "Exchanges")
 
     # Recreate contexts and required columns via shared helper
     provision_storage(self)

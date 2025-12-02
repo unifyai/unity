@@ -836,6 +836,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
+        # Auto-pause base tools that are currently running
+        with suppress(Exception):
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                h = getattr(_inf, "handle", None)
+                if h is None:
+                    ev = getattr(_inf, "pause_event", None)
+                    if ev is not None and hasattr(ev, "clear"):
+                        with suppress(Exception):
+                            ev.clear()
+
         self._pause_event.clear()
         # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
@@ -1096,7 +1108,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             callid_to_tool_name=extracted.get("callid_to_tool_name", {}),
         )
         # Mirror pending interjection steering entries from steer_log which may not be in msgs yet.
-        # Represent them as system messages appended to the end with monotonically increasing indices.
+        # Represent them as user messages appended to the end with monotonically increasing indices.
+        # (Changed from system messages for Claude/Gemini compatibility.)
         try:
             steer_log = list(getattr(self, "_steer_log", []) or [])
         except Exception:
@@ -1127,7 +1140,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     continue
                 if content in existing_contents:
                     continue
-                interjections.append({"role": "system", "content": content})
+                interjections.append({"role": "user", "content": content})
                 interjections_indices.append(base_idx + appended)
                 existing_contents.add(content)
                 appended += 1
@@ -1591,13 +1604,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     combined.append((int(idx_val), tmsg))
             except Exception:
                 pass
-            # Interjections with indices
+            # Interjections with indices (supports both user and system roles for
+            # backwards compatibility - new format uses user, old format used system)
             try:
                 for idx_val, imsg in zip(
                     snap.interjection_positions or [],
                     snap.system_interjections or [],
                 ):
-                    if isinstance(imsg, dict) and imsg.get("role") == "system":
+                    if isinstance(imsg, dict) and imsg.get("role") in (
+                        "user",
+                        "system",
+                    ):
                         combined.append((int(idx_val), imsg))
             except Exception:
                 pass
@@ -2777,6 +2794,7 @@ def start_async_tool_loop(
     interrupt_llm_with_interjections: bool = True,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
+    caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,
     max_steps: Optional[int] = 100,
     timeout: Optional[int] = 300,
@@ -2846,6 +2864,7 @@ def start_async_tool_loop(
                 interrupt_llm_with_interjections=interrupt_llm_with_interjections,
                 propagate_chat_context=propagate_chat_context,
                 parent_chat_context=parent_chat_context,
+                caller_description=caller_description,
                 log_steps=log_steps,
                 max_steps=max_steps,
                 timeout=timeout,

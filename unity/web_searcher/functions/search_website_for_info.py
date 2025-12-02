@@ -1,20 +1,31 @@
 async def search_website_for_info(
-    search_query,
+    search_queries,
     website,
     credentials,
-    response_format=None,
 ):
     """
-    Log into a website if needed and extract information relevant to a query.
+    Log into a website if needed and extract information relevant to one or more queries.
 
     Behaviour
     ---------
     - Navigates to the provided website (prepends https:// when missing).
     - If credentials are provided as secret_ids, attempts to resolve a username/password
       pair via the SecretManager and log in when a sign-in flow is detected.
-    - Searches the website for the given query, opens the best match and summarizes the result.
-    - When a Pydantic response_format is provided, returns a structured object; otherwise returns a string summary.
+    - Searches the website for each query in search_queries, extracts content from results.
+    - Returns a string summary with all extracted content.
+
+    Parameters
+    ----------
+    search_queries : list[str] | str
+        One or more search queries to run on the site. Can be a single string or list.
+    website : str
+        The website host/URL to search.
+    credentials : list[int]
+        List of secret_ids for login credentials.
     """
+    # Normalize search_queries to a list
+    if isinstance(search_queries, str):
+        search_queries = [search_queries]
 
     url = (website or "").strip()
     if url and not (url.startswith("http://") or url.startswith("https://")):
@@ -54,27 +65,103 @@ async def search_website_for_info(
             "If a login screen appears and credentials are required, indicate that no usable credentials were resolved and continue with public content.",
         )
 
-    await action_provider.act(
-        (
-            "Use the site's own search or navigation to find the single most relevant page for: '%s'. Open it, read it, and prepare a short summary with the page URL."
-            % (search_query,)
-        ),
-    )
-    summary = await action_provider.query(
-        "Return a concise summary (3-5 sentences) and include the current page URL at the top.",
-    )
+    # Skip common non-content URL patterns
+    skip_patterns = [
+        "login",
+        "logout",
+        "signin",
+        "signup",
+        "signout",
+        "register",
+        "search?",
+        "newsletter",
+        "account",
+        "subscribe",
+        "users",
+        "edit",
+        "/category/",
+        "/author/",
+        "/page/",
+        "#",
+        "javascript:",
+        "mailto:",
+    ]
 
-    if response_format is not None:
-        try:
-            structured = await action_provider.reason(
-                request=(
-                    "Transform the given page summary into the requested structured model. Only include fields that exist on the model."
-                ),
-                context=str(summary),
-                response_format=response_format,
-            )
-            return structured
-        except Exception:
-            return str(summary)
+    all_content_parts = []
+    visited_urls = set()
 
-    return str(summary)
+    # Loop through each search query
+    for search_query in search_queries:
+        print(f"[WS] Searching for: {search_query}")
+
+        # Navigate back to homepage for each new query
+        await action_provider.navigate(url)
+
+        # Step 1: Find and use the site's search functionality
+        await action_provider.act(
+            f"Look for a search box or search icon on this page. If you find one, use it to search for: '{search_query}'. "
+            "Use plain words only for general searches — do not use special syntax, operators, or quotes. "
+            "If location search is involed, use town names or postcodes, and filter distance within reasonable range if applicable. "
+            "If you see '0 results', 'no results found', or an error message, try a simpler/shorter query. "
+            "Only if no search functionality exists, navigate to a query-relevant section (e.g., news, articles, deals, etc) instead.",
+        )
+
+        # Step 2: Get all links from the search results page
+        print("[WS] Extracting links from search results...")
+        links_result = await action_provider.get_links(same_domain=True)
+        links = links_result.get("links", [])
+        print(f"[WS] Found {len(links)} links for query: {search_query}")
+
+        # Step 3: Extract content from top N articles using raw content extraction
+        n = 3
+        i = 0
+        for link in links[:100]:
+            if i >= n:
+                break
+
+            href = link.get("href", "")
+            link_text = link.get("text", "")
+
+            # Skip empty, visited, or obviously non-article links
+            if not href or href in visited_urls:
+                continue
+            if any(skip in href.lower() for skip in skip_patterns):
+                continue
+            if href.endswith("/"):
+                continue
+
+            visited_urls.add(href)
+            i += 1
+
+            try:
+                print(f"[WS] Navigating to: {href[:80]}...")
+                await action_provider.navigate(href)
+
+                # Check for and solve any captcha if present
+                await action_provider.act(
+                    "If you see a CAPTCHA, cookie consent, or access verification prompt, solve or dismiss it. "
+                    "Otherwise, do nothing and confirm the page content is visible.",
+                )
+
+                # Get raw content in markdown format (no LLM overhead)
+                content_result = await action_provider.get_content(format="markdown")
+                page_url = content_result.get("url", href)
+                title = content_result.get("title", "") or link_text
+                raw_content = content_result.get("content", "")
+
+                # Truncate content for LLM context window
+                truncated = (
+                    raw_content[:4000] if len(raw_content) > 4000 else raw_content
+                )
+
+                if truncated.strip():
+                    all_content_parts.append(
+                        f"**{title}** ({page_url})\n[Query: {search_query}]\n{truncated}",
+                    )
+                    print(f"[WS] Extracted content from: {title[:50]}...")
+
+            except Exception as e:
+                print(f"[WS] Failed to extract from {href[:50]}: {e}")
+                continue
+
+    return "\n\n".join(all_content_parts)

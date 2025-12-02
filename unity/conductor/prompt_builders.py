@@ -96,6 +96,7 @@ def build_ask_prompt(
         "Do not explain HOW the question will be answered, which low-level tools will be used, or instruct the user how to phrase their question; that is handled entirely by the domain managers.",
         "Use the WebSearcher.ask tool for general knowledge, external information, industry concepts, best practices or anything that would reasonably be found on the web (and not in your internal managers).",
         "For live or time-sensitive facts (e.g., questions containing 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must use WebSearcher.ask – do not rely on internal memory for these.",
+        "When using WebSearcher for research or data gathering, always request citations and source URLs in your query so the user can verify the information.",
         "Use Contact/Transcript/Knowledge/Task managers for internal state about people, messages, stored facts and tasks respectively.",
         # Files domain (read-only)
         (
@@ -135,6 +136,7 @@ def build_ask_prompt(
             f'\n• Web – live facts (weather today)\n  `{web_ask_fname}(text="What\'s the weather in Berlin today?")`'
             f'\n• Web – live facts (headlines this week)\n  `{web_ask_fname}(text="What are the major world news headlines this week?")`'
             f'\n• Web – live facts (yesterday\'s decision)\n  `{web_ask_fname}(text="Did the UN Security Council approve the resolution yesterday?")`'
+            f'\n• Web – search gated site with citations\n  `{web_ask_fname}(text="Search HealthInvestor for elderly care property sales. Include source URLs and citations.")`'
         )
         if web_ask_fname
         else ""
@@ -210,6 +212,8 @@ def build_request_prompt(
     task_update_fname = _tool_name(tools, "taskscheduler_update")
     task_execute_fname = _tool_name(tools, "taskscheduler_execute")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
+    web_update_fname = _tool_name(tools, "websearcher_update")
+    secret_ask_fname = _tool_name(tools, "secretmanager_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
     fm_ask_fname = _tool_name(tools, "globalfilemanager_ask")
     fm_organize_fname = _tool_name(tools, "globalfilemanager_organize")
@@ -265,6 +269,7 @@ def build_request_prompt(
         "Orchestrate by calling the appropriate managers' `ask` or `update` methods; do not describe or expose HOW the change will be implemented.",
         "Use WebSearcher.ask for external information, market practices, definitions, or anything you would reasonably look up online.",
         "For live or time-sensitive facts (e.g., 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must call WebSearcher.ask rather than relying on internal memory.",
+        "When searching for data or research, always include 'with citations' or 'include source URLs' in your query so results are verifiable.",
         "When the request involves tasks:",
         f"- Understand intent then check context via `{task_ask_fname}`",
         f"- Apply changes via `{task_update_fname}` if needed",
@@ -284,6 +289,13 @@ def build_request_prompt(
             else "- Perform safe organization via GlobalFileManager.organize (rename/move only; no create/delete)"
         ),
         "- Use ask for discovery, then call organize to apply changes.",
+        "\nWebsite Configuration (WebSearcher, not KnowledgeManager)",
+        "------------------------------------------------------------",
+        "- Saving/registering/configuring websites always goes to WebSearcher.update — NOT KnowledgeManager.",
+        "- WebSearcher owns the Websites catalog. Do not store website info in the knowledge base.",
+        f"- Flow: `{secret_ask_fname}` (find credentials) → `{web_update_fname}` (register site with credentials).",
+        "- When searching gated websites, always request citations and source URLs in your query.",
+        "- Results from gated sites should include: article titles, URLs, publication dates, and key data points.",
         "Task execution policy — mandatory execute when asked to run/start:",
         f"- If the user says 'run', 'start', 'execute', 'begin', or 'launch' a task, you MUST call `{task_execute_fname}` exactly once.",
         f"- Do NOT use `{task_update_fname}` as a substitute for starting a task. Only use `{task_update_fname}` to create a missing task or to adjust fields prior to execution, then call `{task_execute_fname}`.",
@@ -335,6 +347,7 @@ def build_request_prompt(
         "• Never satisfy a read-only sub-request using the narrative result of a write; always call the appropriate `ask` tool.",
         f"• Read-only tools include: {read_only_tools_line}.",
         f"• Write tools include: `{contact_update_fname}`, `{knowledge_update_fname}`, `{guidance_update_fname}`, `{task_update_fname}`"
+        + (f", `{web_update_fname}`" if web_update_fname else "")
         + (f", `{fm_organize_fname}`" if fm_organize_fname else "")
         + ".",
     ]
@@ -381,6 +394,19 @@ def build_request_prompt(
             f'• Create or update guidance\n  `{guidance_update_fname}(text="Create guidance: Troubleshooting VPN issues")`',
         ],
     )
+
+    # Gated website examples (WebSearcher owns website configuration)
+    if secret_ask_fname and web_update_fname:
+        usage_examples += (
+            f"\n• Register gated websites (find credentials, then save to WebSearcher)\n"
+            f'  1) `{secret_ask_fname}(text="Find credentials for medium.com and nytimes.com")`\n'
+            f'  2) `{web_update_fname}(text="Register medium.com and nytimes.com as gated websites with the credentials found. Mark as subscribed.")`'
+        )
+    if web_ask_fname:
+        usage_examples += (
+            f"\n• Search a gated website (with citations)\n"
+            f'  `{web_ask_fname}(text="Search HealthInvestor for recent elderly care acquisitions. Include source URLs, sale prices, buyers, and sellers.")`'
+        )
 
     if actor_act_fname:
         usage_examples += (

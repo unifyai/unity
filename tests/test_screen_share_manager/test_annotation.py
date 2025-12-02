@@ -13,10 +13,9 @@ from tests.test_screen_share_manager.conftest import (
 )
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_annotation_should_noop_for_empty_event_list(mocked_manager):
+async def test_should_noop_for_empty_event_list(mocked_manager):
     """
     WHY: A simple edge case to ensure the method handles empty inputs
     without calling the LLM or raising an error.
@@ -27,10 +26,9 @@ async def test_annotation_should_noop_for_empty_event_list(mocked_manager):
     mocks["annotate"].generate.assert_not_called()
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_annotation_prompt_combines_all_contexts(mocked_manager):
+async def test_prompt_combines_all_contexts(mocked_manager):
     """
     WHY: The quality of an annotation depends on rich context. This test verifies
     that the prompt correctly includes the long-term session summary, the immediate
@@ -68,10 +66,9 @@ async def test_annotation_prompt_combines_all_contexts(mocked_manager):
     assert "A previous key event." in prompt
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_successful_annotation_triggers_summary_update(mocked_manager):
+async def test_successful_trigger_summary_update(mocked_manager):
     """
     WHY: Annotating events is a key activity that should update the session's
     narrative summary. This test confirms that a successful annotation
@@ -98,10 +95,9 @@ async def test_successful_annotation_triggers_summary_update(mocked_manager):
         )
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_annotation_handles_empty_llm_response_gracefully(mocked_manager):
+async def test_handles_empty_llm_response_gracefully(mocked_manager):
     """
     WHY: To ensure robustness against non-crashing but invalid LLM outputs.
     If the LLM returns an empty string, that event should be skipped, not
@@ -129,10 +125,9 @@ async def test_annotation_handles_empty_llm_response_gracefully(mocked_manager):
     assert getattr(h2, "annotation", None) is None
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_annotations_are_added_to_recent_key_events_for_next_turn(mocked_manager):
+async def test_added_to_recent_key_events_for_next_turn(mocked_manager):
     """
     WHY: To test the statefulness of context between annotation calls. The
     annotations from one turn should serve as `_recent_key_events` context for the next.

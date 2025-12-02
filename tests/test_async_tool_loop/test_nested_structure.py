@@ -163,13 +163,13 @@ def _find_child_by_handle(children: list[dict], handle_name: str) -> dict | None
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_reports_child_tool_and_handle():
+async def test_nested_structure_reports_child_tool_and_handle(model):
     inner = ToyHandle()
 
     async def Outer_spawn():  # type: ignore[valid-type]
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -231,13 +231,13 @@ async def test_nested_structure_reports_child_tool_and_handle():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_reports_deep_hierarchy_via_task_info():
+async def test_nested_structure_reports_deep_hierarchy(model):
     nested = NestedHandle()
 
     async def Outer_spawn():  # type: ignore[valid-type]
         return nested
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -291,14 +291,14 @@ async def test_nested_structure_reports_deep_hierarchy_via_task_info():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_includes_wrapper_attribute_children():
+async def test_nested_structure_includes_wrapper_attribute_children(model):
     inner = ToyHandle()
     wrapped = WrapperHandle(inner)
 
     async def Outer_spawn():  # type: ignore[valid-type]
         return wrapped
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",

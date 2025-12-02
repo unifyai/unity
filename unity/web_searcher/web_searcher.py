@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
 import asyncio
 import unify
+import functools
 from pathlib import Path
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -23,18 +24,29 @@ from unity.events.event_bus import EVENT_BUS, Event
 from unity.web_searcher import prompt_builders
 from .base import BaseWebSearcher
 from ..common.tool_outcome import ToolOutcome
-from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k
 from .types.website import Website
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 class WebSearcher(BaseWebSearcher):
     """
     Manages web search and extraction.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Websites",
+                description="Catalog of websites of interest for WebSearcher routing/policies.",
+                fields=model_to_fields(Website),
+                unique_keys={"website_id": "int", "host": "str", "name": "str"},
+                auto_counting={"website_id": None},
+            ),
+        ]
 
     def __init__(self):
         super().__init__()
@@ -57,14 +69,14 @@ class WebSearcher(BaseWebSearcher):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must match for WebSearcher."
-        self._websites_ctx = f"{read_ctx}/Websites"
+        self._websites_ctx = ContextRegistry.get_context(self, "Websites")
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
             self._search,
             self._extract,
             self._crawl,
             self._map,
-            self._search_gated_website,
+            self._gated_website_search,
             self._filter_websites,
             self._search_websites,
             include_class_name=False,
@@ -90,7 +102,6 @@ class WebSearcher(BaseWebSearcher):
             from ..actor.hierarchical_actor import HierarchicalActor
 
             self._hierarchical_actor = HierarchicalActor()
-            # self._ensure_default_function_exists()
         return self._hierarchical_actor
 
     def _ensure_default_function_exists(self) -> None:
@@ -103,17 +114,13 @@ class WebSearcher(BaseWebSearcher):
 
         try:
             fm = self.hierarchical_actor.function_manager
-            results = fm.search_functions(
-                filter="name == 'search_website_for_info'",
-                limit=1,
-            )
-            if results:
-                self._default_function_id = int(results[0].get("function_id"))
-                return
-
             fn_path = Path(__file__).parent / "functions" / "search_website_for_info.py"
             source = fn_path.read_text(encoding="utf-8")
-            fm.add_functions(implementations=[source], overwrite=False)
+            fm.add_functions(
+                implementations=[source],
+                overwrite=True,
+                verify={"search_website_for_info": False},
+            )
             # Re-check presence and set id if now present
             check = fm.search_functions(
                 filter="name == 'search_website_for_info'",
@@ -194,7 +201,7 @@ class WebSearcher(BaseWebSearcher):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
-            timeout=500,
+            timeout=900,
         )
 
         # If the caller requests reasoning steps, wrap the handle's result
@@ -232,28 +239,21 @@ class WebSearcher(BaseWebSearcher):
                 self._last_crawls: Dict[str, Any] = {}
             if not hasattr(self, "_last_maps"):
                 self._last_maps: Dict[str, Any] = {}
-            # Provision Websites store
-            self._websites_store = TableStore(
-                self._websites_ctx,
-                unique_keys={"website_id": "int", "host": "str", "name": "str"},
-                auto_counting={"website_id": None},
-                description=(
-                    "Catalog of websites of interest for WebSearcher routing/policies."
-                ),
-                fields=model_to_fields(Website),
-            )
-            self._websites_store.ensure_context()
-            try:
-                ensure_vector_column(
-                    self._websites_ctx,
-                    embed_column="notes_emb",
-                    source_column="notes",
-                    derived_expr=None,
-                )
-            except Exception:
-                pass
         except Exception:
             # Best-effort only; callers operate without caches if needed
+            pass
+
+    @functools.cache
+    def _ensure_notes_vector(self) -> None:
+        # Ensure vector for notes (best-effort)
+        try:
+            ensure_vector_column(
+                self._websites_ctx,
+                embed_column="notes_emb",
+                source_column="notes",
+                derived_expr=None,
+            )
+        except Exception:
             pass
 
     @functools.wraps(BaseWebSearcher.clear, updated=())
@@ -282,7 +282,7 @@ class WebSearcher(BaseWebSearcher):
         except Exception:
             pass
 
-        self._provision_storage()
+        ContextRegistry.refresh(self, "Websites")
 
         # Attempt to ensure context visibility before reads
         try:
@@ -367,6 +367,7 @@ class WebSearcher(BaseWebSearcher):
             parent_chat_context=_parent_chat_context,
             response_format=response_format,
             tool_policy=self._default_update_tool_policy,
+            timeout=900,
         )
 
         if _return_reasoning_steps:
@@ -550,6 +551,7 @@ class WebSearcher(BaseWebSearcher):
         """
         if not isinstance(notes, str) or not notes.strip():
             return []
+        self._ensure_notes_vector()
         rows = table_search_top_k(
             context=self._websites_ctx,
             references={"notes": notes},
@@ -583,22 +585,27 @@ class WebSearcher(BaseWebSearcher):
             for r in rows
         ]
 
-    async def _search_gated_website(
+    async def _gated_website_search(
         self,
         *,
-        query: str,
+        queries: str | list[str],
         website: Dict[str, Any] | Website,
     ) -> str:
         """Search a gated website using the Actor entrypoint with Website data.
 
         Parameters
         ----------
-        query : str
-            Precise query to find on the target site.
+        queries : str | list[str]
+            One or more search queries to run on the target site.
+            Pass multiple queries to search for different topics in a single browser session.
         website : Website | dict
             Website record containing host, credentials, actor_entrypoint, notes.
         """
         print("Searching gated website:", website)
+        # Normalize queries to a list
+        if isinstance(queries, str):
+            queries = [queries]
+
         # Normalise website record
         host: str = (
             website.get("host")
@@ -627,18 +634,20 @@ class WebSearcher(BaseWebSearcher):
         self._ensure_default_function_exists()
         function_id = (
             actor_fn_id
-            if isinstance(actor_fn_id, int) and actor_fn_id >= 0
+            if actor_fn_id is not None and actor_fn_id >= 0
             else self._default_function_id
         )
-        if not function_id:
+        if function_id is None:
             return "Failed gated website search: Both actor entrypoint and default function are unavailable. Unable to resolve."
 
         # Start the actor plan with explicit entrypoint args
+        queries_desc = ", ".join(queries[:3]) + ("..." if len(queries) > 3 else "")
         plan = await self.hierarchical_actor.act(
-            description=f"Search website for information: {query}. Start with {host}",
+            description=f"Search website for information: {queries_desc}. Start with {host}",
             entrypoint=function_id,
-            entrypoint_args=[query, host, creds, None],
+            entrypoint_args=[queries, host, creds],
             persist=False,
+            new_session=True,
         )
         result = await plan.result()
         return str(result)
@@ -943,13 +952,19 @@ class WebSearcher(BaseWebSearcher):
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
         """
-        Require an initial read-only ask on the first turn; auto thereafter.
+        Require an initial read-only ask on the first turn (if enabled); auto thereafter.
 
         This mirrors ContactManager behaviour so that update flows that depend
         on catalog inspection begin with a deterministic nested ask handle,
         making nested-structure behaviour stable.
         """
-        if step_index < 1 and "ask" in current_tools:
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
@@ -1000,7 +1015,3 @@ class WebSearcher(BaseWebSearcher):
             "base_url": response.get("base_url"),
             "results": response.get("results", []),
         }
-
-    # ------------------------------------------------------------------ #
-    #  Small internal helpers (LLM client + tool policies)               #
-    # ------------------------------------------------------------------ #

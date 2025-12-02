@@ -1,11 +1,11 @@
 import asyncio
 import json
 
-from unity.conversation_manager.new_events import (
+from unity.conversation_manager.events import (
     ConductorClarificationRequest,
     ConductorClarificationResponse,
-    ConductorHandleRequest,
-    ConductorRequest,
+    ConductorHandleResponse,
+    ConductorHandleStarted,
     EmailReceived,
     EmailSent,
     PhoneCallReceived,
@@ -20,6 +20,24 @@ from unity.conversation_manager.new_events import (
     UnifyMessageReceived,
     UnifyMessageSent,
 )
+
+
+contacts = [
+    {
+        "contact_id": 0,
+        "first_name": "Test",
+        "surname": "Assistant",
+        "email_address": "assistant@test.com",
+        "phone_number": "+15555551234",
+    },
+    {
+        "contact_id": 1,
+        "first_name": "Test",
+        "surname": "Contact",
+        "email_address": "test@contact.com",
+        "phone_number": "+15555551111",
+    },
+]
 
 
 async def send_incoming_sms(test_redis_client, contact: dict, content: str):
@@ -238,75 +256,55 @@ async def capture_stream_response(pubsub, label: str, timeout: float = 60.0):
     return got_start, chunks, got_end
 
 
-async def capture_conductor_request(
+async def capture_conductor_handle_started(
     event_capture,
     action_name: str,
     timeout: float = 60.0,
 ):
-    """Wait for and capture a ConductorRequest event"""
+    """Wait for and capture a ConductorHandleStarted event"""
     print(f"⏳ Waiting for Conductor {action_name} request (timeout: 60s)...")
-    request = await event_capture.wait_for_event(
-        ConductorRequest,
+    handle_started = await event_capture.wait_for_event(
+        ConductorHandleStarted,
         timeout=timeout,
         action_name=action_name,
     )
 
-    assert isinstance(request, ConductorRequest)
-    assert request.action_name == action_name
-    assert len(request.query) > 0
-    assert request.parent_chat_context is not None
+    assert isinstance(handle_started, ConductorHandleStarted)
+    assert handle_started.action_name == action_name
+    assert len(handle_started.query) > 0
 
     print(f"✅ Got Conductor {action_name} request")
-    print(f"   Query: {request.query[:100]}...")
-    return request
+    print(f"   Query: {handle_started.query[:100]}...")
+    return handle_started
 
 
-async def capture_conductor_handle_request(
+async def capture_conductor_handle_response(
     event_capture,
     handle_id: int,
     action_name: str,
+    call_id: str = "",
     timeout: float = 60.0,
 ):
-    """Wait for and capture a ConductorHandleRequest event"""
+    """Wait for and capture a ConductorHandleResponse event"""
     print(f"⏳ Waiting for Conductor handle {action_name} request (timeout: 60s)...")
-    request = await event_capture.wait_for_event(
-        ConductorHandleRequest,
+    response = await event_capture.wait_for_event(
+        ConductorHandleResponse,
         timeout=timeout,
         handle_id=handle_id,
         action_name=action_name,
     )
 
-    assert isinstance(request, ConductorHandleRequest)
-    assert request.handle_id == handle_id
-    assert request.action_name == action_name
-    assert len(request.query) > 0
-    assert request.parent_chat_context is not None
+    assert isinstance(response, ConductorHandleResponse)
+    assert response.handle_id == handle_id
+    assert response.action_name == action_name
+    if action_name in ["conductor_handle_ask", "conductor_handle_interject", "conductor_handle_answer_clarification"]:
+        assert len(response.query) > 0
+    if call_id:
+        assert response.call_id == call_id
 
     print(f"✅ Got Conductor handle {action_name} request: handle_id={handle_id}")
-    print(f"   Query: {request.query[:100]}...")
-    return request
-
-
-async def send_conductor_response(
-    test_redis_client,
-    handle_id: int,
-    action_name: str,
-    query: str,
-):
-    """Manually send a ConductorResponse event (simulating conductor responding)"""
-    from unity.conversation_manager.new_events import ConductorResponse
-
-    conductor_response = ConductorResponse(
-        handle_id=handle_id,
-        action_name=action_name,
-        query=query,
-        response=f"Started: {query}",
-    )
-    print(f"\n✓ Sending ConductorResponse: handle_id={handle_id}, action={action_name}")
-    await test_redis_client.publish(
-        "app:conductor:output_events",
-        conductor_response.to_json(),
-    )
+    print(f"   Query: {response.query[:100]}...")
+    return response
 
 
 async def send_conductor_clarification_request(
@@ -329,28 +327,3 @@ async def send_conductor_clarification_request(
         "app:conductor:output_events",
         clarification_request.to_json(),
     )
-
-
-async def capture_conductor_clarification_response(
-    event_capture,
-    handle_id: int,
-    call_id: str,
-    timeout: float = 60.0,
-):
-    """Wait for and capture a ConductorClarificationResponse event"""
-    print(f"⏳ Waiting for Conductor clarification response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        ConductorClarificationResponse,
-        timeout=timeout,
-        handle_id=handle_id,
-        call_id=call_id,
-    )
-
-    assert isinstance(response, ConductorClarificationResponse)
-    assert response.handle_id == handle_id
-    assert response.call_id == call_id
-    assert len(response.response) > 0
-
-    print(f"✅ Got Conductor clarification response: handle_id={handle_id}")
-    print(f"   Response: {response.response[:100]}...")
-    return response

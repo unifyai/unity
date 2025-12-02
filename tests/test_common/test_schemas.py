@@ -70,7 +70,7 @@ def _tool_with_optional_mapping(
         ),
     ],
 )
-def test_annotation_to_schema_variants(t, checker):
+def test_annotation_schema_conversion(t, checker):
     """Every major annotation flavour is converted correctly."""
     assert checker(llmh.annotation_to_schema(t))
 
@@ -83,7 +83,7 @@ def _demo_func(a: str, col: ColumnType):
     return None
 
 
-def test_method_to_schema_includes_enum():
+def test_schema_includes_enum():
     schema = llmh.method_to_schema(_demo_func)
     params = schema["function"]["parameters"]["properties"]
     assert params["a"]["type"] == "string"
@@ -94,7 +94,7 @@ def test_method_to_schema_includes_enum():
 # --------------------------------------------------------------------------- #
 #  PRIVATE OPTIONAL ARGUMENTS ARE NOT EXPOSED                                 #
 # --------------------------------------------------------------------------- #
-def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
+def test_schema_hides_private_optionals() -> None:
     """
     *Optional* parameters whose names begin with an underscore (``_``)
     must **not** appear in the schema that is presented to the LLM.
@@ -103,7 +103,6 @@ def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
     """
 
     # ── 1. optional private argument should be hidden ─────────────────────
-    @unify.traced
     def sample_tool(a: int, b: int = 0, _secret: str = "x") -> int:
         """
         Sample calculator.
@@ -131,7 +130,6 @@ def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
     assert "a" in required and "b" not in required
 
     # ── 2. required private argument should be kept ───────────────────────
-    @unify.traced
     def tool_with_required_private(x: int, _hidden: str) -> str:
         """
         Echo tool.
@@ -159,14 +157,13 @@ def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
 # --------------------------------------------------------------------------- #
 #  `_parent_chat_context` MUST NEVER BE EXPOSED                                #
 # --------------------------------------------------------------------------- #
-def test_parent_chat_context_parameter_is_always_hidden() -> None:
+def test_schema_hides_context_param() -> None:
     """
     The special ``_parent_chat_context`` argument is injected automatically by
     the tool-loop.  It must be hidden from both the schema **and** the
     docstring that is sent to the LLM.
     """
 
-    @unify.traced
     def tool_with_ctx(a: int, _parent_chat_context: list[dict]):
         """
         Dummy tool.
@@ -180,7 +177,6 @@ def test_parent_chat_context_parameter_is_always_hidden() -> None:
         """
         return a
 
-    @unify.traced
     def tool_with_ctx_optional(
         a: int,
         _parent_chat_context: list[dict] | None = None,
@@ -209,7 +205,7 @@ def test_parent_chat_context_parameter_is_always_hidden() -> None:
 # --------------------------------------------------------------------------- #
 #  OPTIONAL[Dict[str, str]] COLLAPSES TO OBJECT (NO STRING ALTERNATIVE)       #
 # --------------------------------------------------------------------------- #
-def test_optional_dict_parameter_collapses_without_string() -> None:
+def test_optional_dict_schema_simplification() -> None:
     """
     Optional[Dict[str, str]] should collapse to a plain object schema.
     Prior to the fix, NoneType was treated as "string", producing
@@ -235,7 +231,7 @@ def _tool_with_optional_builtin_mapping(
     return None
 
 
-def test_optional_builtin_dict_parameter_is_object_without_string() -> None:
+def test_optional_builtin_dict_schema() -> None:
     """
     Optional[builtin dict] should surface as a plain object to the LLM.
     Prior to the fix, builtin dict could degrade to "string" in unions,
@@ -252,7 +248,7 @@ def test_optional_builtin_dict_parameter_is_object_without_string() -> None:
     assert images_schema.get("additionalProperties") is True
 
 
-def test_annotation_to_schema_builtin_dict_maps_to_object() -> None:
+def test_dict_annotation_schema() -> None:
     s = llmh.annotation_to_schema(dict)
     assert s["type"] == "object"
     assert s.get("additionalProperties") is True
@@ -261,7 +257,7 @@ def test_annotation_to_schema_builtin_dict_maps_to_object() -> None:
 # --------------------------------------------------------------------------- #
 #  method_to_schema – docstring MRO fallback                                  #
 # --------------------------------------------------------------------------- #
-def test_method_to_schema_mro_fallback_uses_base_docstring() -> None:
+def test_schema_inherits_base_docstring() -> None:
     class _Base:
         def action(self, x: int) -> None:
             """Base doc: perform action."""
@@ -277,7 +273,7 @@ def test_method_to_schema_mro_fallback_uses_base_docstring() -> None:
     assert "Base doc: perform action." in desc
 
 
-def test_method_to_schema_prefers_child_docstring_over_base() -> None:
+def test_schema_prefers_child_docstring() -> None:
     class _Base:
         def go(self) -> None:
             """Base doc: go."""
@@ -294,7 +290,7 @@ def test_method_to_schema_prefers_child_docstring_over_base() -> None:
     assert "Base doc" not in desc
 
 
-def test_method_to_schema_plain_function_unchanged() -> None:
+def test_schema_plain_function() -> None:
     def _plain(a: int) -> None:
         """Plain function doc."""
         return None
@@ -309,9 +305,8 @@ def test_method_to_schema_plain_function_unchanged() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.unit
 @_handle_project
-def test_images_field_schema_is_nested_and_enforced() -> None:
+def test_nested_image_schema_enforcement() -> None:
     """Provision a context with the Message schema and assert:
     - the `images` field is created with a nested JSON Schema (contains expected keys)
     - logging with a valid `images` payload succeeds
@@ -412,9 +407,8 @@ class _Record(BaseModel):
     payload: _Payload
 
 
-@pytest.mark.unit
 @_handle_project
-def test_model_to_fields_nested_pydantic_enforced() -> None:
+def test_nested_pydantic_schema_enforcement() -> None:
     """Provision a context from an arbitrary nested Pydantic model and assert:
     - the serialized data_type for the nested field includes child property names;
     - logging succeeds for valid nested payloads;

@@ -10,7 +10,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_publish():
+async def test_basic_publish():
     """Publishing a valid event should complete without exceptions
     and the event should be stored in the in-memory deque.
     """
@@ -35,7 +35,7 @@ async def test_publish():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_concurrent_publishes_lock_integrity():
+async def test_concurrent_integrity():
     """
     Do a burst of concurrent publishes across two event types; all should succeed
     and be visible afterwards, demonstrating that the internal asyncio.Lock

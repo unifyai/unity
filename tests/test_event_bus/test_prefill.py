@@ -11,7 +11,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_prefill_from_upstream_on_new_instance():
+async def test_prefill_on_new_instance():
     """
     After some events are published with one EventBus, a brand-new EventBus
     should hydrate those same events from Unify logs into its in-memory window.

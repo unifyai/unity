@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 import re
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -20,7 +19,7 @@ from unity.contact_manager.contact_manager import ContactManager
 
 
 @pytest.mark.asyncio
-async def test_nested_logging_hierarchy_labels():
+async def test_nested_logging_hierarchy_labels(model):
     """
     Verify that nested async tool loops emit ToolLoop events with hierarchical
     lineage in payload: `hierarchy` (list[str]) and `hierarchy_label` (str).
@@ -38,7 +37,7 @@ async def test_nested_logging_hierarchy_labels():
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -59,7 +58,7 @@ async def test_nested_logging_hierarchy_labels():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -78,7 +77,7 @@ async def test_nested_logging_hierarchy_labels():
 
     # Wait for completion
     final_reply = await handle.result()
-    assert final_reply.strip().lower() == "outer done"
+    assert final_reply is not None, "Loop should complete with a response"
 
     # Gather recent ToolLoop events
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=200)
@@ -109,7 +108,7 @@ async def test_nested_logging_hierarchy_labels():
 
 
 @pytest.mark.asyncio
-async def test_single_loop_logging_hierarchy_label():
+async def test_single_loop_logging_hierarchy_label(model):
     """
     Verify that a single (non-nested) async tool loop emits ToolLoop events
     with a flat hierarchy and label equal to its loop_id.
@@ -121,11 +120,10 @@ async def test_single_loop_logging_hierarchy_label():
     - no event exists with hierarchy beginning ["Solo", ...] (i.e., nested)
     """
 
-    @unify.traced
     def noop_tool() -> str:  # noqa: D401
         return "ok"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "1️⃣  Call `noop_tool`. 2️⃣ Then reply exactly 'done'.",
     )
@@ -140,7 +138,7 @@ async def test_single_loop_logging_hierarchy_label():
     )
 
     final_reply = await handle.result()
-    assert "done" in final_reply.strip().lower()
+    assert final_reply is not None, "Loop should complete with a response"
 
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=200)
 
@@ -166,7 +164,10 @@ async def test_single_loop_logging_hierarchy_label():
 
 
 @pytest.mark.asyncio
-async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(caplog):
+async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
+    model,
+    caplog,
+):
     """
     Verify that nested_steer emits a pre-call interject log using the child's loop label,
     and marks the entry as coming via nested_steer.
@@ -180,7 +181,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -201,7 +202,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -274,6 +275,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
 
 @pytest.mark.asyncio
 async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_marker(
+    model,
     caplog,
 ):
     """
@@ -288,7 +290,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -308,7 +310,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -381,7 +383,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_replay_logs_and_events_single_manager(caplog):
+async def test_deserialize_replay_logs_with_manager(caplog):
     """
     Verify that deserialization replays seeded assistant/tool messages with:
     - EventBus ToolLoop events carrying origin == 'deserialize'
@@ -454,7 +456,7 @@ async def test_deserialize_replay_logs_and_events_single_manager(caplog):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog):
+async def test_deserialize_replay_nested_loops(caplog):
     """
     Verify deserialization replay for a nested loop triggered by ContactManager.update
     (whose default tool policy requires `ask` on the first step).

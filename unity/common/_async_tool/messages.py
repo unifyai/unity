@@ -8,9 +8,45 @@ import unify
 from typing import Callable, Optional, Any
 from .utils import maybe_await
 from ...constants import LOGGER
-from contextlib import suppress
+from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
 from .images import append_images_with_source
+
+
+@contextmanager
+def _preserve_canonical_messages(client, canonical_msgs):
+    """Context manager to ensure client.messages returns canonical_msgs during the block.
+
+    Properties defined at class level cannot be shadowed by instance attributes,
+    so we temporarily patch the class-level property to check for a special
+    `_canonical_messages` attribute first.
+    """
+    prop_class = None
+    orig_prop = None
+    try:
+        client._canonical_messages = canonical_msgs
+        for klass in type(client).__mro__:
+            if "messages" in klass.__dict__:
+                prop_class = klass
+                orig_prop = klass.__dict__["messages"]
+                break
+        if prop_class is not None and orig_prop is not None:
+
+            def _patched_getter(self, _orig=orig_prop):
+                cm = getattr(self, "_canonical_messages", None)
+                return cm if cm is not None else _orig.fget(self)
+
+            prop_class.messages = property(_patched_getter)
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
+        if prop_class is not None and orig_prop is not None:
+            with suppress(Exception):
+                prop_class.messages = orig_prop
+        with suppress(Exception):
+            del client._canonical_messages
 
 
 # TODO: Some of these helpers should not be placed here, but in utils.py or their own files
@@ -47,6 +83,177 @@ def is_non_final_tool_reply(msg: dict) -> bool:
     except Exception:
         return False
     return False
+
+
+def transform_tool_calls_to_context(
+    msgs: list[dict],
+    *,
+    marker_key: str = "_transformed_context",
+    context_header: str = "[Prior tool execution context]",
+    context_footer: str = "[Continue with the original request]",
+    predicate: Callable[[dict], bool] | None = None,
+) -> list[dict]:
+    """Transform assistant tool_calls into a system context message.
+
+    This unified function handles two scenarios:
+    1. Seeded transcripts for Claude reasoning models that require
+       provider-specific metadata (thinking blocks) which we lack when
+       replaying manually constructed tool calls.
+    2. Claude extended thinking re-enablement after forced-tool turns where
+       thinking was disabled (incompatible with tool_choice="required").
+
+    Parameters
+    ----------
+    msgs : list[dict]
+        The list of messages to transform.
+    marker_key : str
+        Key to set on the context system message for identification.
+    context_header : str
+        Header text for the context message.
+    context_footer : str
+        Footer text for the context message.
+    predicate : callable | None
+        Optional function(msg) -> bool to determine which assistant messages
+        need transformation. If None, transforms ALL assistant messages with
+        tool_calls.
+
+    Returns
+    -------
+    list[dict]
+        Transformed message list with matching tool_calls converted to context.
+    """
+    if not msgs:
+        return msgs
+
+    # Default predicate: transform all assistant messages with tool_calls
+    if predicate is None:
+
+        def predicate(m: dict) -> bool:
+            return (
+                isinstance(m, dict)
+                and m.get("role") == "assistant"
+                and bool(m.get("tool_calls"))
+            )
+
+    # Check if any messages need transformation
+    if not any(predicate(m) for m in msgs):
+        return msgs
+
+    # Build a mapping of tool_call_id -> tool result content
+    tool_results: dict[str, dict] = {}
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "tool":
+            tcid = m.get("tool_call_id")
+            if isinstance(tcid, str) and tcid:
+                tool_results[tcid] = {
+                    "name": m.get("name", "unknown"),
+                    "content": m.get("content", ""),
+                }
+
+    # Collect IDs of tool_calls from messages that need transformation
+    transformed_call_ids: set[str] = set()
+    tool_call_descriptions: list[str] = []
+
+    for m in msgs:
+        if not predicate(m):
+            continue
+        for tc in m.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            tc_id = tc.get("id", "")
+            transformed_call_ids.add(tc_id)
+            func = tc.get("function") or {}
+            name = func.get("name", "unknown")
+            args = func.get("arguments", "{}")
+            result_info = tool_results.get(tc_id)
+            if result_info:
+                result_content = result_info.get("content", "(no result)")
+                tool_call_descriptions.append(
+                    f"• Called `{name}({args})` → {result_content}",
+                )
+            else:
+                tool_call_descriptions.append(
+                    f"• Called `{name}({args})` → (pending/no result)",
+                )
+
+    # Build transformed message list
+    transformed: list[dict] = []
+    context_inserted = False
+
+    for m in msgs:
+        if not isinstance(m, dict):
+            transformed.append(m)
+            continue
+
+        role = m.get("role")
+
+        if role == "user":
+            transformed.append(m)
+
+        elif role == "assistant":
+            if predicate(m):
+                # Insert context AT THIS POSITION (where the transformed turn was)
+                # This maintains chronological order so Claude sees preserved turns
+                # before the synthetic summary of non-thinking turns.
+                if not context_inserted and tool_call_descriptions:
+                    context_msg = {
+                        "role": "system",
+                        "content": (
+                            context_header
+                            + "\n"
+                            + "\n".join(tool_call_descriptions)
+                            + "\n"
+                            + context_footer
+                        ),
+                        marker_key: True,
+                    }
+                    transformed.append(context_msg)
+                    context_inserted = True
+                # Skip the assistant message itself - replaced by context
+            else:
+                transformed.append(m)
+
+        elif role == "tool":
+            # Skip tool messages for transformed calls
+            tcid = m.get("tool_call_id")
+            if tcid in transformed_call_ids:
+                continue
+            else:
+                transformed.append(m)
+
+        else:
+            transformed.append(m)
+
+    return transformed
+
+
+def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
+    """Transform assistant tool_calls without thinking blocks into system context.
+
+    Convenience wrapper for Claude extended thinking compatibility.
+    """
+
+    def needs_transformation(m: dict) -> bool:
+        if not isinstance(m, dict):
+            return False
+        if m.get("role") != "assistant":
+            return False
+        if not m.get("tool_calls"):
+            return False
+        # Check if thinking_blocks is missing or null
+        provider_fields = m.get("provider_specific_fields") or {}
+        thinking_blocks = provider_fields.get("thinking_blocks")
+        return thinking_blocks is None
+
+    return transform_tool_calls_to_context(
+        msgs,
+        marker_key="_claude_thinking_context",
+        context_header="[Prior tool execution context - extended thinking was disabled]",
+        context_footer="[Continue with extended thinking enabled]",
+        predicate=needs_transformation,
+    )
 
 
 def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
@@ -92,35 +299,9 @@ def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
 async def generate_with_preprocess(
     client: unify.AsyncUnify,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]],
-    *,
-    debug_log: Callable[[list[dict], dict, str], None],
     **gen_kwargs,
 ):
     if preprocess_msgs is None:
-        # Even without a preprocessing hook, emit exactly what will be sent
-        # to the LLM so LLM I/O debug captures requests as well as responses.
-        original_msgs = client.messages  # reference to canonical log
-        msgs_copy = copy.deepcopy(original_msgs)
-
-        # Remove a raw leading system prompt (used only for generation) to
-        # match the behaviour of the preprocessed path
-        try:
-            if msgs_copy and isinstance(msgs_copy[0], dict):
-                top_p = msgs_copy[0]
-                if top_p.get("role") == "system" and not top_p.get("_ctx_header"):
-                    msgs_copy.pop(0)
-        except Exception:
-            pass
-
-        # Capture the system message
-        sys_txt = getattr(client, "system_message", "") or ""
-
-        # Late-stage request log: emit exactly what will be sent to the LLM
-        try:
-            debug_log(msgs_copy, gen_kwargs, sys_txt)
-        except Exception:
-            pass
-
         return await maybe_await(client.generate(**gen_kwargs))
 
     original_msgs = client.messages  # reference to canonical log
@@ -134,24 +315,29 @@ async def generate_with_preprocess(
         )
         patched = msgs_copy
 
-    # Also remove a raw leading system prompt from the patched messages (used only for generation)
-    try:
-        if patched and isinstance(patched[0], dict):
-            top_p = patched[0]
-            if top_p.get("role") == "system" and not top_p.get("_ctx_header"):
-                patched.pop(0)
-    except Exception:
-        pass
-
-    # Capture the system message
+    # Capture the system message for potential patching
     sys_txt = getattr(client, "system_message", "") or ""
     sys_patched = sys_txt
 
-    # Late-stage debug log: emit exactly what will be sent to the LLM
-    try:
-        debug_log(patched, gen_kwargs, sys_patched)
-    except Exception:
-        pass
+    # ──────────────────────────────────────────────────────────────────────
+    # Fix: Ensure the original system message is always at the front of
+    # patched messages. The Unify client's generate() checks if ANY system
+    # message exists in messages[], and if so, doesn't prepend system_message.
+    # This means if preprocessing adds a system message (like Claude's
+    # thinking-block context), the original system prompt gets dropped.
+    #
+    # We explicitly prepend the original system_message to patched messages
+    # if it's not already there, ensuring it's always sent to the LLM.
+    # ──────────────────────────────────────────────────────────────────────
+    if sys_txt:
+        # Check if the first message is already the original system message
+        first_is_original_system = (
+            patched
+            and patched[0].get("role") == "system"
+            and patched[0].get("content") == sys_txt
+        )
+        if not first_is_original_system:
+            patched = [{"role": "system", "content": sys_txt}] + patched
 
     start_len = len(patched)
 
@@ -163,38 +349,43 @@ async def generate_with_preprocess(
     # ``messages`` list.  To remain compatible with *both* variants we
     # detect the attribute that is actually consumed by the downstream
     # ``generate`` call and patch **that** for the duration of the call.
+    #
+    # When we swap ``_messages``, the public ``messages`` property would
+    # also return the patched list, causing a race condition for external
+    # code polling ``client.messages``. We use _preserve_canonical_messages
+    # to ensure external observers see the canonical log during the swap.
     # ------------------------------------------------------------------
     target_attr = "_messages" if hasattr(client, "_messages") else "messages"
     original_system_message = getattr(client, "system_message", None)
-    try:
-        # Patch the system message to the injected version for the duration of the call
+    with suppress(Exception):
         if original_system_message is not None:
             setattr(client, "system_message", sys_patched)
-    except Exception:
-        pass
 
     original_container = getattr(client, target_attr)
-    setattr(client, target_attr, patched)
-    try:
-        result = await maybe_await(client.generate(**gen_kwargs))
 
-        # Append any new messages the LLM produced back to canonical log
-        current_msgs = getattr(client, target_attr)
-        if len(current_msgs) > start_len:
-            original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
+    # Use context manager to preserve canonical messages visibility when swapping
+    preserve_ctx = (
+        _preserve_canonical_messages(client, original_container)
+        if target_attr == "_messages"
+        else suppress()
+    )
 
-        return result
-    finally:
-        # Always restore the canonical chat log so the outer loop remains
-        # consistent irrespective of whether we patched `_messages` or
-        # `messages`.
-        setattr(client, target_attr, original_container)
-        # Restore original system message
+    with preserve_ctx:
+        setattr(client, target_attr, patched)
         try:
-            if original_system_message is not None:
-                setattr(client, "system_message", original_system_message)
-        except Exception:
-            pass
+            result = await maybe_await(client.generate(**gen_kwargs))
+
+            # Append any new messages the LLM produced back to canonical log
+            current_msgs = getattr(client, target_attr)
+            if len(current_msgs) > start_len:
+                original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
+
+            return result
+        finally:
+            setattr(client, target_attr, original_container)
+            with suppress(Exception):
+                if original_system_message is not None:
+                    setattr(client, "system_message", original_system_message)
 
 
 def chat_context_repr(
@@ -527,7 +718,13 @@ async def ensure_placeholders_for_pending(
     msg_dispatcher,
 ) -> list[str]:
     created: list[str] = []
-    for task in list(tools_data.pending):
+    # Sort by call_idx to ensure deterministic placeholder ordering matching
+    # the original tool_calls array order. This makes the "at tail" check in
+    # process_completed_task behave consistently regardless of set iteration.
+    for task in sorted(
+        list(tools_data.pending),
+        key=lambda t: getattr(tools_data.info.get(t), "call_idx", 0),
+    ):
         _inf = tools_data.info.get(task)
         if not _inf:
             continue

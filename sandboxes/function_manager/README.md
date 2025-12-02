@@ -46,8 +46,6 @@ The entry-point lives at `sandboxes/function_manager/sandbox.py` and can be exec
 # Basic interactive session
 python -m sandboxes.function_manager.sandbox
 
-# With detailed tracing enabled
-python -m sandboxes.function_manager.sandbox --traced
 ```
 
 CLI flags
@@ -55,7 +53,6 @@ CLI flags
 The sandbox uses the common helper in `sandboxes/utils.py`, so it shares a standard set of startup options:
 
 ```
---traced / -t       Wrap manager calls with unify.traced for detailed logs
 --project_name / -p Name of the Unify **project/context** (default: "Sandbox")
 --overwrite / -o    Delete any existing data for the chosen project before start
 --project_version   Roll back to a specific project commit (int index)

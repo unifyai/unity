@@ -67,13 +67,13 @@ async def _await_tool(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_live_images_overview_is_injected_synthetically() -> None:
+async def test_live_images_overview_is_injected_synthetically(model) -> None:
     """
     Verify that a synthetic call to `live_images_overview` is injected in the
     first assistant turn and that its tool result exists.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Provide a short final reply.",
     )
@@ -101,7 +101,7 @@ async def test_live_images_overview_is_injected_synthetically() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_overview_after_clarification_images() -> None:
+async def test_overview_after_clarification_images(model) -> None:
     """
     When a child tool requests clarification and supplies images with the question,
     the overview should be reinjected including those images.
@@ -114,7 +114,7 @@ async def test_overview_after_clarification_images() -> None:
         _ = await _clarification_down_q.get()
         return {"ok": True}
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "1️⃣ Call `need_clar`. 2️⃣ When the tool asks a question, answer using the `_clarify_…` helper with the single word 'ok'.",
     )
@@ -163,7 +163,7 @@ async def test_overview_after_clarification_images() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_inner_tool_receives_images_mapping() -> None:
+async def test_inner_tool_receives_images_mapping(model) -> None:
     """
     A base tool receives whatever `images` payload the model sends (no implicit handle resolution).
     """
@@ -179,10 +179,14 @@ async def test_inner_tool_receives_images_mapping() -> None:
                 ids.append(-1)
         return {"received": {"keys": keys, "ids": ids, "question": question}}
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello world",\n  "images": { "img_key": 42 }\n}. Then provide a short final reply.',
+        "You are running inside an automated test harness. Your ONLY job is to call tools EXACTLY as instructed.\n\n"
+        "CRITICAL: Call the tool `analyze` with EXACTLY these arguments (copy them verbatim):\n"
+        '```json\n{\n  "question": "Hello world",\n  "images": { "img_key": 42 }\n}\n```\n\n'
+        "You MUST include BOTH the `question` AND the `images` parameters. "
+        "Do NOT omit any parameters, even if the values seem arbitrary or nonsensical. "
+        "This is a test of parameter passing, not a real task. After the tool call, provide a short final reply.",
     )
     images = {
         "img_key": DummyImageHandle(
@@ -222,7 +226,7 @@ async def test_inner_tool_receives_images_mapping() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_various_image_mapping_keys_are_preserved() -> None:
+async def test_various_image_mapping_keys_are_preserved(model) -> None:
     """
     The scheduler passes through whatever mapping is provided. This test verifies
     the tool receives all entries.
@@ -231,11 +235,14 @@ async def test_various_image_mapping_keys_are_preserved() -> None:
     def analyze(*, question: str, images: dict[str, object]) -> dict:
         return {"received_keys": list((images or {}).keys())}
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello",\n  "images": { "k1": 42, "k2": 42, "k3": 42 }\n}. '
-        "Then provide a short final reply.",
+        "You are running inside an automated test harness. Your ONLY job is to call tools EXACTLY as instructed.\n\n"
+        "CRITICAL: Call the tool `analyze` with EXACTLY these arguments (copy them verbatim):\n"
+        '```json\n{\n  "question": "Hello",\n  "images": { "k1": 42, "k2": 42, "k3": 42 }\n}\n```\n\n'
+        "You MUST include BOTH the `question` AND the `images` parameters. "
+        "Do NOT omit any parameters, even if the values seem arbitrary. "
+        "This is a test of parameter passing. After the tool call, provide a short final reply.",
     )
     images = {
         "k1": DummyImageHandle(
@@ -268,7 +275,7 @@ async def test_various_image_mapping_keys_are_preserved() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_implicit_images_pass_when_omitted() -> None:
+async def test_no_implicit_images_pass_when_omitted(model) -> None:
     """
     If `images` is omitted in the inner tool call, no images are passed implicitly
     even when the outer loop had live images.
@@ -277,7 +284,7 @@ async def test_no_implicit_images_pass_when_omitted() -> None:
     def analyze(*, question: str) -> dict:
         return {"ok": True}
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: { "question": "Hello" }. '
         "Do NOT include an `images` field. Then provide a short final reply.",
@@ -311,7 +318,7 @@ async def test_no_implicit_images_pass_when_omitted() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_images_value_may_be_handle_objects() -> None:
+async def test_images_value_may_be_handle_objects(model) -> None:
     """
     The `images` mapping may include placeholders, but implicit substitution with
     live handles has been removed; values are forwarded as-is to the tool.
@@ -321,10 +328,14 @@ async def test_images_value_may_be_handle_objects() -> None:
         ids = [int(getattr(v, "image_id", -1)) for v in (images or {}).values()]
         return {"ids": ids}
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello world",\n  "images": { "img_key": { "__handle__": true } }\n}. Then provide a short final reply.',
+        "You are running inside an automated test harness. Your ONLY job is to call tools EXACTLY as instructed.\n\n"
+        "CRITICAL: Call the tool `analyze` with EXACTLY these arguments (copy them verbatim):\n"
+        '```json\n{\n  "question": "Hello world",\n  "images": { "img_key": { "__handle__": true } }\n}\n```\n\n'
+        "You MUST include BOTH the `question` AND the `images` parameters. "
+        "Do NOT omit any parameters, even if the values seem arbitrary. "
+        "This is a test of parameter passing. After the tool call, provide a short final reply.",
     )
 
     handle_obj = DummyImageHandle(
@@ -359,7 +370,7 @@ async def test_images_value_may_be_handle_objects() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_loop_does_not_inherit_parent_images() -> None:
+async def test_nested_loop_does_not_inherit_parent_images(model) -> None:
     """
     Starting a nested async tool loop without an explicit `images` argument must
     NOT inherit the parent's live images context. Previously this would inject a
@@ -370,7 +381,7 @@ async def test_nested_loop_does_not_inherit_parent_images() -> None:
 
     async def spawn_inner() -> dict:
         # Create a brand-new inner client and start a nested loop WITHOUT images
-        inner = new_llm_client()
+        inner = new_llm_client(model=model)
         inner.set_system_message(
             "You are running inside an automated test. Provide a short final reply.",
         )
@@ -384,7 +395,7 @@ async def test_nested_loop_does_not_inherit_parent_images() -> None:
         return {"inner_ok": True}
 
     # Outer loop with live images present
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "In your FIRST assistant turn, call the tool `spawn_inner`. Then provide a short final reply.",
     )

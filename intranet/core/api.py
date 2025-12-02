@@ -12,7 +12,6 @@ User-friendly interface for interacting with the RAG system, featuring:
 """
 
 import json
-import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +21,7 @@ from contextlib import asynccontextmanager
 
 # RAG Agent components
 from .rag_agent import IntranetRAGAgent
+from unity.common.llm_client import get_cache_setting
 
 # Import new Pydantic models
 try:
@@ -81,8 +81,7 @@ class ResponseEnhancer:
         # Initialize LLM for response enhancement
         self.llm_client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
+            cache=get_cache_setting(),
         )
 
     async def enhance_response(

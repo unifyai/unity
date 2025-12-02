@@ -7,10 +7,12 @@ from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..knowledge_manager.types import ColumnType
 from ..common.tool_outcome import ToolOutcome
 from ..common.tool_spec import read_only, manager_tool
+from ..common.metrics_utils import reduce_logs
 
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
+from ..common.context_registry import ContextRegistry, TableContext
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -20,6 +22,7 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..common.model_to_fields import model_to_fields
 from ..events.manager_event_logging import log_manager_call
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
@@ -56,6 +59,17 @@ from .search import (
 
 
 class ContactManager(BaseContactManager):
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Contacts",
+                description="List of contacts, with all contact details stored.",
+                fields=model_to_fields(Contact),
+                unique_keys={"contact_id": "int"},
+                auto_counting={"contact_id": None},
+            ),
+        ]
+
     # ──────────────────────────────────────────────────────────────────────
     #  Class-level constants / configuration
     # ──────────────────────────────────────────────────────────────────────
@@ -103,7 +117,7 @@ class ContactManager(BaseContactManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a ContactManager."
-        self._ctx = f"{read_ctx}/Contacts"
+        self._ctx = ContextRegistry.get_context(self, "Contacts")
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
@@ -128,6 +142,7 @@ class ContactManager(BaseContactManager):
                 self._list_columns,
                 self.filter_contacts,
                 self._search_contacts,
+                self._reduce,
                 include_class_name=False,
             ),
         }
@@ -159,9 +174,8 @@ class ContactManager(BaseContactManager):
         self._provision_storage()
 
         # ── ensure an assistant contact with id 0 exists and is up-to-date ──
-        self._sync_assistant_contact()
         # ── ensure a default *user* contact with id 1 exists and is up-to-date ──
-        self._sync_user_contact()
+        self._sync_required_contacts()
 
     # ──────────────────────────────────────────────────────────────────────
     #  Public API (English-only entrypoints for the LLM)
@@ -329,16 +343,7 @@ class ContactManager(BaseContactManager):
         # No per-instance custom field state to reset
 
         # Ensure the schema exists again via shared provisioning helper
-        try:
-            # Remove any previous ensure memo and force re-provisioning
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        ContextRegistry.refresh(self, "Contacts")
 
         self._provision_storage()
 
@@ -356,8 +361,7 @@ class ContactManager(BaseContactManager):
             pass
 
         # Recreate assistant and default user contacts (id 0 and 1)
-        self._sync_assistant_contact()
-        self._sync_user_contact()
+        self._sync_required_contacts()
 
     # (Optional) Public programmatic helpers (non-LLM)
     def get_contact_info(
@@ -483,6 +487,58 @@ class ContactManager(BaseContactManager):
         """
         cols = self._get_columns()
         return cols if include_types else list(cols)
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Compute basic reduction metrics over the Contacts table.
+
+        Parameters
+        ----------
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric contact fields to aggregate, for example
+            ``\"contact_id\"`` or numeric custom columns. A single column name
+            returns a scalar; a list of column names computes the metric
+            independently per key and returns a ``{key -> value}`` mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) in the same Python syntax as
+            :py:meth:`filter_contacts`. When a string, the expression is applied
+            uniformly; when a dict, each key maps to its own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional contact field(s) to group by, for example ``\"respond_to\"``
+            or a segmenting custom column. Use a single column name for one
+            grouping level, or a list such as ``[\"respond_to\", \"contact_id\"]``
+            to group hierarchically in that order. When provided, the result
+            becomes a nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric` behaviour.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the Contacts context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        return reduce_logs(
+            context=self._ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
 
     @read_only
     def filter_contacts(
@@ -1077,11 +1133,21 @@ class ContactManager(BaseContactManager):
     def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
         _sys_ensure_columns_exist(self, extra_fields)
 
-    def _sync_assistant_contact(self) -> None:
-        _sys_sync_assistant_contact(self)
-
-    def _sync_user_contact(self) -> None:
-        _sys_sync_user_contact(self)
+    def _sync_required_contacts(self) -> None:
+        existing_logs = unify.get_logs(
+            context=self._ctx,
+            filter="contact_id == 0 or contact_id == 1",
+            limit=2,
+        )
+        logs_by_contact_id = {
+            int(lg.entries.get("contact_id")): lg
+            for lg in existing_logs
+            if lg.entries.get("contact_id") is not None
+        }
+        assistant_log = logs_by_contact_id.get(0)
+        user_log = logs_by_contact_id.get(1)
+        _sys_sync_assistant_contact(self, assistant_log)
+        _sys_sync_user_contact(self, user_log)
 
     # Validation / sanitization
     def _allowed_fields(self) -> list[str]:
@@ -1113,8 +1179,14 @@ class ContactManager(BaseContactManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_contacts on the first step; auto thereafter."""
-        if step_index < 1 and "search_contacts" in current_tools:
+        """Require search_contacts on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search_contacts" in current_tools
+        ):
             return (
                 "required",
                 {"search_contacts": current_tools["search_contacts"]},
@@ -1126,8 +1198,14 @@ class ContactManager(BaseContactManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require ask on the first step; auto thereafter."""
-        if step_index < 1 and "ask" in current_tools:
+        """Require ask on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
@@ -1136,13 +1214,15 @@ class ContactManager(BaseContactManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_contacts/ask_image/attach_image_raw; auto thereafter.
+        """On step 0, require one of search_contacts/ask_image/attach_image_raw (if enabled); auto thereafter.
 
         This ensures the model begins by either running a semantic query, asking
         a provided image a question, or attaching image context; subsequent steps
         can proceed freely.
         """
-        if step_index < 1:
+        from unity.settings import SETTINGS
+
+        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
             allowed_first_turn: Dict[str, Any] = {}
             for name in ("search_contacts", "ask_image", "attach_image_raw"):
                 if name in current_tools:

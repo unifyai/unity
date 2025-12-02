@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 from datetime import datetime, timezone, timedelta
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -8,9 +7,8 @@ from unity.transcript_manager.types.message import Message
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project  # ensures isolated Unify context per run
-def testupdate_contact_id_rewrites_sender_and_receivers():
+def test_rewrites_sender_and_receivers():
     """Verify TranscriptManager.update_contact_id swaps ids across *all* messages."""
 
     tm = TranscriptManager()

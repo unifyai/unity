@@ -478,7 +478,6 @@ class IntranetRAGAgent:
 
             client = new_llm_client(
                 cache=True,
-                traced=True,
                 response_format=RAGLLMResponseRaw,
             )
             client.set_system_message(system_msg)

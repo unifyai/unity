@@ -1,4 +1,3 @@
-import pytest
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.priority import Priority
@@ -6,7 +5,6 @@ from unity.task_scheduler.types.status import Status
 
 
 @_handle_project
-@pytest.mark.unit
 def test_create_task():
     task_scheduler = TaskScheduler()
     task_scheduler._create_task(
@@ -37,7 +35,6 @@ def test_create_task():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_delete_task():
     task_scheduler = TaskScheduler()
 
@@ -56,7 +53,6 @@ def test_delete_task():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_create_task_with_response_policy():
     ts = TaskScheduler()
 
@@ -77,7 +73,6 @@ def test_create_task_with_response_policy():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_create_tasks_single_queue_and_ids():
     ts = TaskScheduler()
 
@@ -108,7 +103,6 @@ def test_create_tasks_single_queue_and_ids():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_create_tasks_multi_queues_with_start_times():
     ts = TaskScheduler()
 
@@ -152,7 +146,6 @@ def test_create_tasks_multi_queues_with_start_times():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_task_scheduler_clear():
     ts = TaskScheduler()
 

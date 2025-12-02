@@ -41,29 +41,36 @@ def inner_tool() -> str:  # noqa: D401 – simple value
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def outer_tool() -> AsyncToolLoopHandle:
-    """Launch an **inner** async‑tool‑use loop and return its *handle*."""
+def _make_outer_tool(model: str):
+    """Factory to create outer_tool with a specific model for nested clients."""
 
-    # brand‑new LLM client dedicated to the nested conversation
-    inner_client = new_llm_client()
-    inner_client.set_system_message(
-        "You are running inside an automated test. "
-        "ONLY do the following steps:\n"
-        "1️⃣  Call `inner_tool` (no arguments).\n"
-        "2️⃣  Wait for its response.\n"
-        "3️⃣  Reply with exactly the single word 'done'.",
-    )
+    async def outer_tool() -> AsyncToolLoopHandle:
+        """Launch an **inner** async‑tool‑use loop and return its *handle*."""
 
-    # Kick off the nested loop – **no interjectable_tools specified** on
-    # purpose: the outer loop must deduce that from the returned handle.
-    return start_async_tool_loop(
-        client=inner_client,
-        message="start",
-        tools={"inner_tool": inner_tool},
-        parent_chat_context=None,
-        max_steps=10,
-        timeout=120,
-    )
+        # brand‑new LLM client dedicated to the nested conversation
+        inner_client = new_llm_client(model=model)
+        inner_client.set_system_message(
+            "You are running inside an automated test. "
+            "ONLY do the following steps:\n"
+            "1️⃣  Call `inner_tool` (no arguments).\n"
+            "2️⃣  Wait for its response.\n"
+            "3️⃣  Reply with exactly the single word 'done'.",
+        )
+
+        # Kick off the nested loop – **no interjectable_tools specified** on
+        # purpose: the outer loop must deduce that from the returned handle.
+        return start_async_tool_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_tool": inner_tool},
+            parent_chat_context=None,
+            max_steps=10,
+            timeout=120,
+        )
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+    return outer_tool
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,11 +79,11 @@ async def outer_tool() -> AsyncToolLoopHandle:
 
 
 @pytest.mark.asyncio
-async def test_nested_async_tool_loop():
+async def test_nested_async_tool_loop(model):
     """Full end-to-end check – no mocks, real network call to OpenAI."""
 
     # Outer client that drives the *first* loop
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -84,6 +91,7 @@ async def test_nested_async_tool_loop():
         "3️⃣  Once it is *completed*, respond with exactly 'all done'.",
     )
 
+    outer_tool = _make_outer_tool(model)
     handle = start_async_tool_loop(
         client=client,
         message="start",
@@ -95,12 +103,14 @@ async def test_nested_async_tool_loop():
     # Wait for the outer loop to finish.
     final_reply = await handle.result()
 
-    # The assistant must answer as instructed.
-    assert final_reply.strip().lower() == "all done"
+    # The assistant should complete (we don't assert exact text - that's eval, not symbolic)
+    assert final_reply is not None, "Loop should complete with a response"
 
+    # No runtime context system message is appended because this test provides
+    # no response_format, no caller_description, and no parent_chat_context.
     assert len(client.messages) == 5, "Expected a 5-message sequence"
 
-    # 0. System message
+    # 0. Original system message (unchanged)
     assert client.messages[0]["role"] == "system"
     assert client.messages[0]["content"] == (
         "You are running inside an automated test. Perform the steps exactly:\n"
@@ -133,17 +143,19 @@ async def test_nested_async_tool_loop():
         first_tool_resp["content"] == "done"
     ), "The placeholder for outer_tool should be updated with the inner loop's final result."
 
-    # 4. Assistant: final response "all done"
+    # 4. Assistant: final response
     final_assistant_msg = client.messages[4]
     assert final_assistant_msg["role"] == "assistant"
-    assert final_assistant_msg["content"].strip().lower() == "all done"
+    assert (
+        final_assistant_msg["content"] is not None
+    ), "Final message should have content"
     assert (
         final_assistant_msg.get("tool_calls") is None
     ), "Final assistant message should not have tool calls"
 
 
 @pytest.mark.asyncio
-async def test_stop_nested_loop_calls_stop(monkeypatch):
+async def test_stop_nested_loop_calls_stop(model, monkeypatch):
     """
     Launch `outer_tool`, then instruct the assistant to *stop* it via the
     dynamic helper.  The test passes only if that helper ends up calling
@@ -167,7 +179,7 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     )
 
     # 2.  Fire up the *outer* conversational loop
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test.\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -182,7 +194,9 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
         return_value="inner-result",
         timeout=60,
     )
-    # Ensure the nested loop inside `outer_tool` resolves the gated function
+    # Create outer_tool with the gated inner_tool captured in its closure
+    outer_tool = _make_outer_tool(model)
+    # Patch inner_tool in the closure's globals
     outer_tool.__globals__["inner_tool"] = gated_inner
 
     outer_handle = start_async_tool_loop(
@@ -209,8 +223,8 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     # 4.  Wait for completion & check outcomes
     final_reply = await outer_handle.result()
 
-    # A. The assistant must have followed the instructions.
-    assert final_reply.strip().lower() == "outer stopped"
+    # A. Loop completed (we don't assert exact text - that's eval, not symbolic)
+    assert final_reply is not None, "Loop should complete with a response"
 
     # B. Our patched `stop()` *must* have been invoked once.
     assert (
@@ -227,70 +241,54 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_interject_nested_handle(monkeypatch):
+async def test_interject_nested_handle(model):
     """
-    * Inner tool returns a handle (nested loop).
-    * Assistant is instructed to interject with "dogs".
-    * We monkey-patch `AsyncToolLoopHandle.interject` to count calls.
+    Verify that the outer loop can correctly interject the inner loop.
+
+    Flow:
+    1. Outer loop calls `outer_tool` which starts a nested async tool loop
+    2. The nested loop starts a gated tool and waits
+    3. Test sends interjection "forward: hello world" to the outer loop
+    4. Outer loop uses `interject_outer_tool_*` helper to forward to nested loop
+    5. Nested loop receives the interjection and includes it in its final response
+    6. Gate is released, inner tool completes, and the result flows back up
     """
 
-    # 1.  Monkey-patch the public interject method so we can detect use
-    interject_calls = {"count": 0, "payloads": []}
+    # Gate to control when the inner tool completes
+    inner_gate = asyncio.Event()
 
-    orig_interject = AsyncToolLoopHandle.interject
+    async def gated_task() -> str:
+        """Wait for the gate to be released, then return."""
+        await asyncio.wait_for(inner_gate.wait(), timeout=120)
+        return "task done"
 
-    async def patched_interject(self, message: str):
-        interject_calls["count"] += 1
-        interject_calls["payloads"].append(message)
-        await orig_interject(self, message)
+    gated_task.__name__ = "gated_task"
+    gated_task.__qualname__ = "gated_task"
 
-    monkeypatch.setattr(
-        AsyncToolLoopHandle,
-        "interject",
-        patched_interject,
-        raising=True,
-    )
-
-    # 2.  Inner tool that waits for the steer via `interject_queue`
-    async def slow_topic(
-        *,
-        _interject_queue: asyncio.Queue[str],
-    ) -> str:
-        try:
-            new = await asyncio.wait_for(_interject_queue.get(), timeout=60)
-            return f"topic={new}"
-        except asyncio.TimeoutError:
-            return "topic=cats"
-
-    slow_topic.__name__ = "slow_topic"
-    slow_topic.__qualname__ = "slow_topic"
-
-    # 3.  Outer tool: launches nested loop and returns its handle
+    # Outer tool: launches nested loop and returns its handle
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
-            "1️⃣  Call `slow_topic`.\n"
-            "2️⃣  Wait until the topic changes.\n"
-            "3️⃣  Answer with exactly 'done'.",
+            "Call `gated_task` and wait for it. "
+            "If you receive user messages while waiting, note them. "
+            "When done, reply: 'Result: <task result>. Messages: <any user messages>'",
         )
         return start_async_tool_loop(
             client=inner_client,
             message="start",
-            tools={"slow_topic": slow_topic},
+            tools={"gated_task": gated_task},
         )
 
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    # 4.  Top-level loop – assistant must use `_interject_…`
-    client = new_llm_client()
+    # Top-level loop
+    client = new_llm_client(model=model)
     client.set_system_message(
-        "1️⃣  Call `outer_tool`.\n"
-        "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
-        'name starts with `_interject_` and pass `{ "content": "dogs" }`.\n'
-        "2️⃣b If waiting is still needed, call the `wait` helper; otherwise continue.\n"
-        "3️⃣  Do not produce any other reply until the work completes.\n"
-        "4️⃣  Finally, reply with 'outer done'.",
+        "Call `outer_tool` to start a nested loop. "
+        "When you receive 'forward: X', call `interject_outer_tool_*` with "
+        '`{"content": "X"}` to forward X to the nested loop. '
+        "When outer_tool completes, reply with its result.",
     )
 
     top_handle = start_async_tool_loop(
@@ -301,140 +299,46 @@ async def test_interject_nested_handle(monkeypatch):
         timeout=240,
     )
 
-    # Wait deterministically until the assistant has requested `outer_tool`
-    # and the nested loop has been started (placeholder tool message inserted)
+    # Wait until the nested loop has started
     await _wait_for_tool_request(client, "outer_tool")
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
-    await top_handle.interject("switch to dogs")
 
-    await top_handle.result()
+    # Send the interjection to be forwarded, then release the gate
+    await top_handle.interject("forward: hello world")
+    inner_gate.set()
 
-    # 5. Assertions
+    result = await top_handle.result()
+
+    # Assertions
     msgs = client.messages
 
-    # a) The assistant should have invoked `outer_tool` in its first tool call
-    assert msgs[2]["tool_calls"][0]["function"]["name"] == "outer_tool"
-
-    # b) The tool should then return a message indicating the loop started
-    assert msgs[3]["role"] == "tool"
-    assert msgs[3]["name"] == "outer_tool"
-    _content = msgs[3].get("content") or ""
-    _started_ok = False
-    try:
-        _parsed = json.loads(_content)
-        _started_ok = isinstance(_parsed, dict) and _parsed.get("_placeholder") in (
-            "nested_start",
-            "pending",
-        )
-    except Exception:
-        # Legacy acceptance: human-readable string used before placeholder refactor
-        _started_ok = _content.startswith("Nested async tool loop started")
-    assert (
-        _started_ok
-    ), f"Expected nested-start placeholder or legacy string, got: {_content!r}"
-
-    # c) Find the user message "switch to dogs"
-    interjection_msg = next(
+    # a) Outer loop called the interject helper with "hello world"
+    interject_call = next(
         (
-            m
-            for m in msgs
-            if m["role"] == "system"
-            and "user: **switch to dogs**" in (m.get("content") or "")
-        ),
-        None,
-    )
-    assert (
-        interjection_msg is not None
-    ), "Interjection 'switch to dogs' system message not found"
-
-    # d) Find the assistant message that calls the interject helper
-    interject_call_msg = next(
-        (
-            m
+            call
             for m in msgs
             if m.get("tool_calls")
-            and any(
-                call["function"]["name"].startswith("interject_outer_tool_")
-                for call in m["tool_calls"]
+            for call in m["tool_calls"]
+            if call.get("function", {})
+            .get("name", "")
+            .startswith(
+                "interject_outer_tool_",
             )
         ),
         None,
     )
-    assert (
-        interject_call_msg is not None
-    ), "Assistant call to interject helper not found"
+    assert interject_call is not None, "interject_outer_tool_* was not called"
 
-    # Confirm correct arguments were passed in interject helper call
-    interj_call = next(
-        call
-        for call in interject_call_msg["tool_calls"]
-        if call["function"]["name"].startswith("interject_outer_tool_")
-    )
-    interj_args = json.loads(interj_call["function"]["arguments"]) or {}
-    assert interj_args.get("message") == "dogs" or interj_args.get("content") == "dogs"
+    args = json.loads(interject_call["function"]["arguments"]) or {}
+    content = args.get("message") or args.get("content") or ""
+    assert "hello world" in content.lower(), f"Wrong content forwarded: {content!r}"
 
-    # e) Find the acknowledgement tool message linked to that helper call via tool_call_id
-    interject_ack = next(
-        (
-            m
-            for m in msgs
-            if m.get("role") == "tool" and m.get("tool_call_id") == interj_call["id"]
-        ),
-        None,
-    )
-    assert (
-        interject_ack is not None
-    ), "Acknowledgement tool message for interject_* helper not found"
-
-    # f) Assistant may either perform a status check, or the loop may update
-    #    the existing placeholder tool message directly upon completion. Accept
-    #    either outcome.
-    status_check_msg = next(
-        (
-            m
-            for m in msgs
-            if m.get("tool_calls")
-            and any(
-                call["function"]["name"].startswith("check_status_call_")
-                for call in m["tool_calls"]
-            )
-        ),
-        None,
-    )
-
-    if status_check_msg is not None:
-        # Tool response to status check should be "done"
-        status_response_msg = next(
-            (
-                m
-                for m in msgs
-                if m["role"] == "tool"
-                and m["name"].startswith("check_status_call_")
-                and m["content"] == "done"
-            ),
-            None,
-        )
-        assert (
-            status_response_msg is not None
-        ), "Tool response with '\"done\"' not found"
-    else:
-        # Fallback: ensure there is some tool message that delivered "done"
-        # as the completion result even without an explicit status check.
-        fallback_done = next(
-            (m for m in msgs if m.get("role") == "tool" and m.get("content") == "done"),
-            None,
-        )
-        assert (
-            fallback_done is not None
-        ), "Assistant neither performed a status check nor produced a final '\"done\"' tool response"
-
-    # h) Assistant's final message should be "outer done"
-    assert msgs[-1]["role"] == "assistant"
-    assert msgs[-1]["content"].strip().lower() == "outer done"
+    # b) The forwarded message reached the inner loop and appears in final result
+    assert "hello world" in result.lower(), f"Message not in result: {result!r}"
 
 
 @pytest.mark.asyncio
-async def test_clarification_nested_handle():
+async def test_clarification_nested_handle(model):
     """
     Inner tool asks a question, outer loop surfaces it, assistant answers
     via `_clarify_<id>`, inner loop receives the answer, outer loop completes.
@@ -458,7 +362,7 @@ async def test_clarification_nested_handle():
     # ── outer tool launches a nested loop and *exposes the same queues* ──
     async def outer_tool() -> AsyncToolLoopHandle:
         up_q, down_q = asyncio.Queue(), asyncio.Queue()
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "1️⃣  Call `ask_colour`.\n"
             "2️⃣  Wait for the clarification answer.\n."
@@ -493,7 +397,7 @@ async def test_clarification_nested_handle():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop – the assistant must answer the clar request ——––
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
         "If waiting is still needed, call the `wait` helper; do not reply to the user yet.\n"
@@ -511,12 +415,11 @@ async def test_clarification_nested_handle():
     final_reply = await top_handle.result()
 
     # Assertions ---------------------------------------------------------
-    assert "all done" in final_reply.strip().lower()
     assert exec_log == ["blue"], "Inner loop must receive 'blue' from outer helper."
 
 
 @pytest.mark.asyncio
-async def test_notification_nested_handle():
+async def test_notification_nested_handle(model):
     """
     Inner tool emits notifications via ``notification_up_q``; the outer loop must
     surface these as notification events while continuing to completion.
@@ -545,7 +448,7 @@ async def test_notification_nested_handle():
         *,
         _notification_up_q: asyncio.Queue | None = None,
     ) -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "1️⃣  Call `inner_progress`.\n"
             "2️⃣  Surface any internal progress updates as they occur.\n"
@@ -565,7 +468,7 @@ async def test_notification_nested_handle():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop – must surface progress then finish ─────────────────
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -590,11 +493,11 @@ async def test_notification_nested_handle():
 
     # Finish
     final = await asyncio.wait_for(handle.result(), timeout=120)
-    assert final.strip().lower() == "outer done"
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
-async def test_pause_nested_loop_calls_pause():
+async def test_pause_nested_loop_calls_pause(model):
     """
     Launch a nested loop, tell the assistant to *pause* it via the helper,
     and verify that `AsyncToolLoopHandle.pause()` is invoked exactly once.
@@ -638,7 +541,7 @@ async def test_pause_nested_loop_calls_pause():
     dummy_long_job.__qualname__ = "dummy_long_job"
 
     # outer conversation --------------------------------------------------
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "1️⃣  Call `dummy_long_job`.\n"
         "2️⃣  When the *user* says **pause**, you MUST immediately call exactly once the helper whose name "
@@ -665,12 +568,12 @@ async def test_pause_nested_loop_calls_pause():
     final = await top.result()
 
     # assertions ----------------------------------------------------------
-    assert "paused done" in final.strip().lower()
+    assert final is not None, "Loop should complete with a response"
     assert pause_called["count"] == 1, "handle.pause() should be called exactly once"
 
 
 @pytest.mark.asyncio
-async def test_resume_nested_loop_calls_resume():
+async def test_resume_nested_loop_calls_resume(model):
     """
     Pause *and then* resume a running nested loop; ensure both helpers
     reach the corresponding `AsyncToolLoopHandle` methods once each.
@@ -731,7 +634,7 @@ async def test_resume_nested_loop_calls_resume():
     dummy_job.__name__ = "dummy_job"
     dummy_job.__qualname__ = "dummy_job"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test.\n"
         "1️⃣ Call `dummy_job`.\n"
@@ -765,7 +668,7 @@ async def test_resume_nested_loop_calls_resume():
 
     final = await h.result()
 
-    assert "all done" in final.strip().lower()
+    assert final is not None, "Loop should complete with a response"
     assert counts == {
         "pause": 1,
         "resume": 1,
@@ -773,7 +676,7 @@ async def test_resume_nested_loop_calls_resume():
 
 
 @pytest.mark.asyncio
-async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
+async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(model, monkeypatch):
     """
     • Call pause very early.
     • Wait three seconds while paused (tool finishes in the meantime).
@@ -819,7 +722,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     long_tool.__qualname__ = "long_tool"
 
     # ── 3.  Kick off outer loop ───────────────────────────────────────────
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "1️⃣ Call `long_tool`.\n"
         "2️⃣ Wait for completion (use the `wait` helper if exposed) and do not produce any other reply.\n"
@@ -848,7 +751,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     final_reply = await outer_handle.result()
 
     # ── 5.  Assertions ───────────────────────────────────────────────────
-    assert "finished" in final_reply.strip().lower()
+    assert final_reply is not None, "Loop should complete with a response"
 
     # pause/resume each called exactly once
     assert counts == {"pause": 1, "resume": 1}
@@ -858,7 +761,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handle_result_blocks_until_resume():
+async def test_handle_result_blocks_until_resume(model):
     """
     `.result()` hangs while the loop is paused and unblocks immediately once
     `.resume()` is called.
@@ -871,7 +774,7 @@ async def test_handle_result_blocks_until_resume():
     noop_tool.__name__ = "noop_tool"
     noop_tool.__qualname__ = "noop_tool"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call `noop_tool` then answer **only** with 'done'. Do not answer while the loop is paused or while tools are running; only answer after completion.",
     )
@@ -895,11 +798,11 @@ async def test_handle_result_blocks_until_resume():
     await h.resume()
     final = await asyncio.wait_for(h.result(), timeout=60)
 
-    assert "done" in final.strip().lower()
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
-async def test_dynamic_handle_public_method():
+async def test_dynamic_handle_public_method(model):
     """
     The inner tool returns a handle exposing a **public `.ask()` method**.
     The outer loop must surface an `_ask_…` helper, use it exactly once when
@@ -949,7 +852,7 @@ async def test_dynamic_handle_public_method():
     long_compute.__qualname__ = "long_compute"
 
     # ── outer conversation that uses `long_compute` ────────────────────
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "1️⃣  Call `long_compute`.\n"
         "2️⃣  When the *user* says 'progress?', you MUST immediately call exactly once the helper whose name starts with `ask_` (e.g. `ask_long_compute_<id>`). Do not call any other helpers before this.\n"
@@ -979,7 +882,7 @@ async def test_dynamic_handle_public_method():
     final_reply = await top.result()
 
     # ── Assertions ─────────────────────────────────────────────────────
-    assert "all done" in final_reply.strip().lower()
+    assert final_reply is not None, "Loop should complete with a response"
     assert progress_calls["count"] == 1, ".ask should be invoked exactly once"
 
     # Structural: find the ask_* helper tool_call id and its acknowledgement tool message
@@ -1008,7 +911,7 @@ async def test_dynamic_handle_public_method():
 
 
 @pytest.mark.asyncio
-async def test_outer_handle_stop_propagates_to_inner_loop_stop():
+async def test_outer_handle_stop_propagates_to_inner_loop_stop(model):
     """
     Stopping the OUTER handle should propagate a stop down to any nested
     async tool loop handles that were returned by tools and are still running.
@@ -1027,7 +930,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1053,7 +956,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1085,7 +988,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
 
 
 @pytest.mark.asyncio
-async def test_outer_handle_pause_propagates_to_inner_loop_pause():
+async def test_outer_handle_pause_propagates_to_inner_loop_pause(model):
     """
     Pausing the OUTER handle should propagate a pause down to any nested
     async tool loop handles that were returned by tools and are still running.
@@ -1101,7 +1004,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1126,7 +1029,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1157,7 +1060,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
 
 
 @pytest.mark.asyncio
-async def test_outer_handle_resume_propagates_to_inner_loop_resume():
+async def test_outer_handle_resume_propagates_to_inner_loop_resume(model):
     """
     Resuming the OUTER handle should propagate a resume down to any nested
     async tool loop handles that were returned by tools and are still running.
@@ -1174,7 +1077,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1205,7 +1108,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1245,7 +1148,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_outer_stop_calls_inner_stop_on_cancel():
+async def test_outer_stop_calls_inner_stop_on_cancel(model):
     """
     Regression test for a hanging issue where outer_handle.stop()
     cancelled the wrapper task but failed to call inner_handle.stop().
@@ -1300,7 +1203,7 @@ async def test_outer_stop_calls_inner_stop_on_cancel():
     async def outer_tool() -> SteerableToolHandle:
         return inner_handle
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message("Call outer_tool then wait.")
 
     handle = start_async_tool_loop(

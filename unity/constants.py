@@ -1,86 +1,59 @@
-import logging
-from datetime import datetime, timezone
-import os
+"""
+unity/constants.py
+==================
 
+Runtime constants and backward-compatible accessors for settings.
+
+This module provides:
+1. True runtime constants (SESSION_ID, LOGGER) that cannot be configured via env
+2. Backward-compatible module-level accessors for settings (now in unity/settings.py)
+3. Logging setup for verbose asyncio debug mode
+"""
+
+import logging
+import os
+from datetime import datetime, timezone
+
+from unity.settings import SETTINGS
+
+# ─────────────────────────────────────────────────────────────────────────────
+# True Runtime Constants (not configurable via environment)
+# ─────────────────────────────────────────────────────────────────────────────
 SESSION_ID = datetime.now(timezone.utc).isoformat()
 LOGGER = logging.getLogger("unity")
+
+# External service key (not managed by settings since it's a secret)
 ANTICAPTCHA_KEY = os.getenv("ANTICAPTCHA_KEY")
 
-# Global asyncio debug flag loaded from environment variable. Set ASYNCIO_DEBUG=1 (or true/yes/on) to enable.
-ASYNCIO_DEBUG = os.getenv("ASYNCIO_DEBUG", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-# Optional verbose debug logging flag. When enabled, structured logging with
-# task/thread breadcrumbs is added.
-ASYNCIO_VERBOSE_DEBUG = os.getenv("ASYNCIO_VERBOSE_DEBUG", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-# LLM I/O logging flag: when enabled, full raw LLM request/response payloads
-# are captured under a per-run directory (named by SESSION_ID). Each request and
-# each response is written to its own timestamped file inside that directory.
-# Enable with LLM_IO_DEBUG=true (or 1/yes/on). This is intentionally separate
-# from normal loop logging.
-LLM_IO_DEBUG = os.getenv("LLM_IO_DEBUG", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-PYTEST_LOG_TO_FILE = os.getenv("PYTEST_LOG_TO_FILE", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+# ─────────────────────────────────────────────────────────────────────────────
+# Backward-Compatible Accessors
+# These provide module-level access to settings for existing code.
+# New code should import SETTINGS directly from unity.settings.
+# ─────────────────────────────────────────────────────────────────────────────
+ASYNCIO_DEBUG = SETTINGS.ASYNCIO_DEBUG
+ASYNCIO_VERBOSE_DEBUG = SETTINGS.ASYNCIO_VERBOSE_DEBUG
+LLM_IO_DEBUG = SETTINGS.LLM_IO_DEBUG
+PYTEST_LOG_TO_FILE = SETTINGS.PYTEST_LOG_TO_FILE
 
 
 def is_semantic_cache_enabled() -> bool:
-    """
-    Check if semantic cache mode is enabled via the UNITY_SEMANTIC_CACHE environment variable.
-
-    Semantic cache mode is OFF by default. Set UNITY_SEMANTIC_CACHE=true (or 1/yes/on)
-    to enable it.
-    """
-    return os.getenv("UNITY_SEMANTIC_CACHE", "false").lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
+    """Check if semantic cache mode is enabled."""
+    return SETTINGS.UNITY_SEMANTIC_CACHE
 
 
 def is_readonly_ask_guard_enabled() -> bool:
-    """
-    Flag controlling the read-only ask guard (mutation-intent classifier).
-
-    Off by default to avoid changing unit tests; enable by setting
-    UNITY_READONLY_ASK_GUARD=true (or 1/yes/on) in production.
-    """
-    return os.getenv("UNITY_READONLY_ASK_GUARD", "true").lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
+    """Check if the read-only ask guard is enabled."""
+    return SETTINGS.UNITY_READONLY_ASK_GUARD
 
 
-# --------------------------------------------------------------------------- #
-#  Logging setup for verbose asyncio debug mode                               #
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging Setup for Verbose Asyncio Debug Mode
+# ─────────────────────────────────────────────────────────────────────────────
 
 if ASYNCIO_VERBOSE_DEBUG:
     import asyncio
-    import threading
     import sys
+    import threading
 
     class _TaskFilter(logging.Filter):
         """Attach asyncio task/thread names to log records."""
@@ -107,23 +80,19 @@ if ASYNCIO_VERBOSE_DEBUG:
     if not _already_configured:
         _root.setLevel(logging.INFO)
         _root.addFilter(_TaskFilter())
-        _handler._asyncio_debug = True  # Mark to detect duplication
+        _handler._asyncio_debug = True  # type: ignore[attr-defined]
         _root.addHandler(_handler)
 
-        # (Verbose mode uses a logger filter instead of a global record factory.)
-
-# --------------------------------------------------------------------------- #
-#  Defensive record factory: ensure optional fields exist to avoid KeyError     #
-#  in formatters that reference %(task)s or %(thread)s even when verbose mode   #
-#  is off or filters are not attached.                                         #
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
+# Defensive Record Factory
+# Ensures optional fields exist to avoid KeyError in formatters.
+# ─────────────────────────────────────────────────────────────────────────────
 
 _orig_factory = logging.getLogRecordFactory()
 
 
 def _safe_record_factory(*args, **kwargs):  # pragma: no cover - trivial shim
     rec = _orig_factory(*args, **kwargs)
-    # Provide defaults if absent so formatters never raise KeyError.
     if not hasattr(rec, "task"):
         rec.task = "-"
     if not hasattr(rec, "thread"):

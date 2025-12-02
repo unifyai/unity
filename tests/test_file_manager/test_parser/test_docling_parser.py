@@ -9,15 +9,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from tests.helpers import _handle_project
 from unity.file_manager.parser import DoclingParser
 
 
-@pytest.mark.unit
 @_handle_project
-def test_txt_file_parsing(parser: DoclingParser, supported_format_files):
+def test_txt_parsing(parser: DoclingParser, supported_format_files):
     """Test that .txt files are parsed correctly."""
     # Parse simple text
     txt_files = supported_format_files[".txt"]["files"]
@@ -31,7 +29,6 @@ def test_txt_file_parsing(parser: DoclingParser, supported_format_files):
     assert result["metadata"].get("file_format") in ("txt", "text")
 
 
-@pytest.mark.unit
 @_handle_project
 def test_multi_paragraph_parsing(parser: DoclingParser, supported_format_files):
     """Test parsing of multi-paragraph documents."""
@@ -61,7 +58,6 @@ def test_multi_paragraph_parsing(parser: DoclingParser, supported_format_files):
     assert "Third paragraph" in all_paragraph_text
 
 
-@pytest.mark.unit
 @_handle_project
 def test_special_characters(parser: DoclingParser, supported_format_files):
     """Test handling of special characters."""
@@ -79,7 +75,6 @@ def test_special_characters(parser: DoclingParser, supported_format_files):
     ), f"Expected special characters in content: {full_text}"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_various_text_formats(parser: DoclingParser, supported_format_files):
     """Test parsing of various text-based formats that are actually supported."""
@@ -139,9 +134,8 @@ def test_various_text_formats(parser: DoclingParser, supported_format_files):
             assert len(full_text.strip()) > 0, f"No content extracted for {file_ext}"
 
 
-@pytest.mark.unit
 @_handle_project
-def test_empty_file_handling(parser: DoclingParser, tmp_path: Path):
+def test_empty_file(parser: DoclingParser, tmp_path: Path):
     """Test handling of empty files."""
     empty_file = tmp_path / "empty.txt"
     empty_file.write_text("", encoding="utf-8")
@@ -153,9 +147,8 @@ def test_empty_file_handling(parser: DoclingParser, tmp_path: Path):
     assert len(document.sections) == 0  # Empty file should have no sections
 
 
-@pytest.mark.unit
 @_handle_project
-def test_large_text_handling(parser: DoclingParser, tmp_path: Path):
+def test_large_text(parser: DoclingParser, tmp_path: Path):
     """Test handling of larger text files."""
     # Create a file with many paragraphs
     paragraphs = [f"Paragraph {i}: " + "Lorem ipsum " * 50 for i in range(20)]
@@ -178,9 +171,8 @@ def test_large_text_handling(parser: DoclingParser, tmp_path: Path):
         assert f"Paragraph {i}:" in document.full_text
 
 
-@pytest.mark.unit
 @_handle_project
-def test_parser_metadata(parser: DoclingParser, supported_format_files):
+def test_metadata(parser: DoclingParser, supported_format_files):
     """Test that parser metadata is correctly set."""
     txt_files = supported_format_files[".txt"]["files"]
     document = parser.parse(txt_files["simple"])

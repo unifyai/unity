@@ -61,7 +61,6 @@ class _DocStub:
         return {}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_embed_off_no_columns(file_manager, tmp_path: Path):
     fm = file_manager
@@ -115,7 +114,6 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
     assert "_summary_emb" not in fields
 
 
-@pytest.mark.unit
 @_handle_project
 def test_embed_after_single_hook_and_columns(file_manager, tmp_path: Path):
     fm = file_manager
@@ -182,7 +180,6 @@ def test_embed_after_single_hook_and_columns(file_manager, tmp_path: Path):
     assert "_summary_emb" in fields
 
 
-@pytest.mark.unit
 @_handle_project
 def test_embed_along_content_hooks_per_chunk(file_manager, tmp_path: Path):
     fm = file_manager
@@ -239,7 +236,6 @@ def test_embed_along_content_hooks_per_chunk(file_manager, tmp_path: Path):
     assert "_summary_emb" in fields
 
 
-@pytest.mark.unit
 def test_resolve_embed_strategy_auto_without_parse():
     # Build a fake document with tables to simulate size
     small_doc = _DocStub(tables=[_TableStub(rows=[1, 2])])  # 2 rows
@@ -260,7 +256,6 @@ def test_resolve_embed_strategy_auto_without_parse():
 # ---------------- Additional cross-format strategy and table tests ---------------- #
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize(
     "label,total_records,total_table_rows,threshold,expected",
     [
@@ -297,7 +292,6 @@ def test_auto_strategy_across_formats(
     assert _res(doc, result, cfg) == expected
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.parametrize(
     "file_name,sheet_name,num_rows,batch_size,target_columns",

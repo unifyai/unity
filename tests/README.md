@@ -1,38 +1,189 @@
-## Run Python tests in parallel with tmux
+# Tests
 
-This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided, or when per-test mode is enabled) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
+This directory contains the test suite for Unity. Before diving into how to run tests, it's important to understand the philosophy behind how tests are structured.
 
-When a session starts, it executes roughly:
+## Test Philosophy: Symbolic ↔ Eval Spectrum
+
+Tests in this codebase fall on a spectrum between two paradigms:
+
+### Symbolic Tests
+
+At one end of the spectrum, **symbolic tests** use the LLM purely as a stub. The LLM receives minimal "dummy" instructions designed to trigger specific code paths, allowing us to verify that core async logic, tools, and state management work correctly.
+
+**Key characteristics:**
+- LLM behavior is deterministic and predictable
+- Focus is on testing the *infrastructure*: async tool loops, steering, pausing/resuming, state mutations
+- The LLM's "intelligence" is irrelevant—we just need it to call the right tools in the right order
+- Failures indicate regressions in our symbolic/programmatic logic
+
+### Eval Tests
+
+At the other end, **eval tests** exercise the system end-to-end. We ask a high-level question or give a directive, then verify the outcome—regardless of how many internal tool calls or LLM steps occurred.
+
+**Key characteristics:**
+- Focus is on *capability*: "Did the assistant correctly answer the question?" or "Did it complete the task?"
+- Internal implementation details (tool call order, number of steps) don't matter
+- Tests the LLM's reasoning and decision-making in realistic scenarios
+- Failures may indicate prompt issues, tool design problems, or genuine capability gaps
+
+### The Spectrum (Not Binary)
+
+Most tests sit somewhere between these extremes. A test might:
+- Use realistic prompts but only verify specific tool calls were made
+- Test end-to-end behavior but with constrained, predictable inputs
+- Combine symbolic infrastructure checks with high-level outcome assertions
+
+Think of each test as having a "slider" between symbolic and eval—not a binary classification.
+
+### Caching and Determinism (`UNIFY_CACHE`)
+
+When `UNIFY_CACHE="true"` (the default), all LLM responses are cached in `.cache.ndjson` files:
+
+1. **First run**: The LLM executes normally; responses are stored in the cache
+2. **Subsequent runs**: Cached responses are replayed—no actual LLM calls occur
+
+This means:
+- **Symbolic tests** behave identically on every run (cache acts as a deterministic stub)
+- **Eval tests** *also* become deterministic after the first run—they replay the same LLM "thinking" that produced the original passing result
+- Both test types effectively verify that *symbolic logic has not regressed* once the cache is populated
+- Tests run fast on CI (milliseconds vs seconds/minutes for real LLM calls)
+- To re-evaluate LLM behavior, delete the relevant `.cache.ndjson`, set `UNIFY_CACHE="false"`, or use `--env UNIFY_CACHE=false` with the parallel runner
+
+### Tagging Tests as Eval
+
+To mark a test file as eval (end-to-end LLM reasoning), add a module-level pytest marker:
+
+```python
+import pytest
+
+# All tests in this file exercise end-to-end LLM reasoning
+pytestmark = pytest.mark.eval
+```
+
+For mixed files where only some tests are eval, use test-level markers:
+
+```python
+@pytest.mark.eval
+@pytest.mark.asyncio
+async def test_natural_language_query():
+    ...
+```
+
+### Running Test Categories
+
+Use the parallel runner flags to filter by test category:
 
 ```bash
-export UNIFY_TESTS_RAND_PROJ=True
-export UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True
+# Run only eval tests (end-to-end LLM reasoning)
+./.parallel_run.sh --eval-only tests
+
+# Run only symbolic tests (infrastructure/deterministic)
+./.parallel_run.sh --symbolic-only tests
+
+# Standard pytest also works
+pytest -m eval tests/
+pytest -m "not eval" tests/
+```
+
+---
+
+## Running Tests
+
+### Quick Start
+
+```bash
+# Run all tests sequentially
+pytest tests/
+
+# Run a specific test file
+pytest tests/test_contact_manager/test_create_contact.py
+
+# Run a specific test
+pytest tests/test_contact_manager/test_create_contact.py::test_create_single_contact
+```
+
+### Parallel Execution
+
+For faster runs, use either:
+
+1. **pytest-xdist** (simple, built-in):
+   ```bash
+   pytest -n auto tests/
+   ```
+
+2. **`.parallel_run.sh`** (better debugging experience—see below)
+
+---
+
+## Parallel Test Runner (`.parallel_run.sh`)
+
+This helper script launches one tmux session per test file (or per test function with `-t`) and runs `pytest` in its own window. It searches recursively and can be restricted to specific folders, files, or tests.
+
+### Why not just pytest-xdist?
+
+pytest-xdist works fine for basic parallel execution. However, `.parallel_run.sh` provides a significantly better **debugging experience** for our LLM-heavy async tests:
+
+| Feature | `.parallel_run.sh` | pytest-xdist |
+|---------|-------------------|--------------|
+| **Interactive debugging** | `tmux attach -t <session>` to any running/failed test | Output multiplexed across workers; hard to isolate |
+| **Post-failure inspection** | Failed sessions stay open with full scrollback | Just a failure message in terminal |
+| **Visual status** | Real-time `? ⏳` / `o ✅` / `x ❌` per test file | Single progress bar |
+| **Log isolation** | Per-session files in `.pytest_logs/` | Merged output (requires extra config) |
+| **Load balancing** | Static (1 session = 1 target) | Dynamic redistribution |
+
+**When tmux shines:** Our tests involve complex async LLM tool loops with steering, pausing, resuming, and interjections. When something fails, you need the complete context—the LLM I/O, the async flow, the interleaved logs. Being able to `tmux attach` to a failing test, scroll through its full history, and even interact with it is invaluable.
+
+**When to use xdist instead:** For quick parallel runs where you don't need debugging (`pytest -n auto`), or when dynamic load balancing matters (tests with highly variable durations).
+
+**TL;DR:** This script prioritizes **developer experience** over raw parallelization efficiency. Both approaches achieve parallelism; this one makes debugging failures much easier.
+
+### Shared Project Mode (Default)
+
+By default, `.parallel_run.sh` uses a **shared project mode** where all parallel test sessions log to the same `UnityTests` project. This enables:
+
+- **Unified duration logging**: All test durations and LLM I/O are recorded in a single `Combined` context, making it easy to compare runtimes and review LLM calls across different test files.
+- **Race-free parallel execution**: The script automatically runs an internal prepare module (`_prepare_shared_project.py`) before spawning sessions. This module idempotently creates the shared project and contexts once, eliminating race conditions.
+- **Faster startup**: Sessions skip redundant project/context creation since it's already done.
+
+When a session starts in shared mode, it executes roughly:
+
+```bash
+export UNIFY_SKIP_SESSION_SETUP=True
 source ~/unity/.venv/bin/activate
 pytest <target>
 ```
 
-## Live status and auto-close
+### Random Projects Mode
 
-- Status prefix: each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
-- Auto-close on success: sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
+For isolation purposes, you can use `--env` to give each tmux session its own isolated project:
+
+```bash
+./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+```
+
+In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` which is deleted on exit. The script auto-detects when `UNIFY_TESTS_RAND_PROJ=true` is set and skips the shared project preparation.
+
+### Live Status and Auto-Close
+
+- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
+- **Auto-close on success**: Sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
 - You can still attach before auto-close; you'll see the final message (e.g., `pytest exited with code: 0`) and a short notice that auto-close is scheduled.
 
-## Install
+### Installation
 
 Save the script at the repository root as a hidden file and make it executable:
 
 ```bash
-curl -o .parallel_run.sh <paste-your-script-here-or-save-manually>
 chmod +x .parallel_run.sh
 ```
 
-## Requirements
+### Requirements
 
 - **tmux** and **pytest** must be installed (e.g., `brew install tmux`).
 - **Virtualenv** is assumed to live at `~/unity/.venv/`. If yours differs, update the `source ~/unity/.venv/bin/activate` line inside the script.
 - Optional: create an `.env` file at the repository root (i.e., `~/unity/.env`). Both helper scripts will auto-load it if present via `tests/../.env`.
 
-## Basic usage
+### Basic Usage
 
 From the repository root, run:
 
@@ -42,10 +193,11 @@ From the repository root, run:
 
 What happens:
 
-- **Discovery**: Recursively finds all `*.py` files (excluding caches/venvs; see excludes below).
-- **Sessions**: Creates one tmux session per file.
-- **Window name**: The file’s basename without `.py`.
-- **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `? ⏳ tests-unit-test_math` (then `o ✅ tests-unit-test_math` or `x ❌ tests-unit-test_math`).
+1. **Prepare**: The shared `UnityTests` project and `Combined` context are created (if not already present).
+2. **Discovery**: Recursively finds all `test_*.py` files (excluding caches/venvs; see excludes below).
+3. **Sessions**: Creates one tmux session per file.
+4. **Window name**: The file's basename without `.py`.
+5. **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `? ⏳ unit-test_math` (then `o ✅ unit-test_math` or `x ❌ unit-test_math`).
 
 Common tmux actions:
 
@@ -55,7 +207,7 @@ tmux attach -t <session-name>          # attach to a session
 tmux switch-client -t <session-name>   # switch sessions (when already inside tmux)
 ```
 
-## Targeting specific folders/files/tests
+### Targeting Specific Folders/Files/Tests
 
 Limit the search by passing directories and/or `.py` files. Examples:
 
@@ -83,6 +235,30 @@ Limit the search by passing directories and/or `.py` files. Examples:
 
 # Wait for completion and log to files (CI / Agent mode)
 ./.parallel_run.sh --wait tests/unit
+
+# Set environment variables (see "Environment Variable Overrides" below)
+./.parallel_run.sh --env UNIFY_CACHE=false tests
+./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+
+# Use isolated random projects
+./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+
+# Run only eval tests (end-to-end LLM reasoning tests)
+./.parallel_run.sh --eval-only tests
+
+# Run only symbolic tests (infrastructure/deterministic tests)
+./.parallel_run.sh --symbolic-only tests
+
+# Repeat tests for statistical sampling (see below)
+./.parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager
+
+# Tag test runs for filtering (logged to Combined context)
+./.parallel_run.sh --tags "experiment-1" tests
+./.parallel_run.sh --tags "model-compare,gpt-4o" tests
+
+# Combine with other options
+./.parallel_run.sh --eval-only --wait tests/test_contact_manager
+./.parallel_run.sh --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
 ```
 
 How it interprets arguments:
@@ -94,7 +270,7 @@ How it interprets arguments:
   - When you do not specify individual tests, the script creates one session per file.
   - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
 
-## Wait Mode and Logs (`--wait`)
+### Wait Mode and Logs (`--wait`)
 
 Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipelines or automated agents.
 
@@ -106,10 +282,10 @@ Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipeli
 - Blocks until all tmux sessions complete.
 - If all pass, exits with code `0`.
 - If any fail, exits with code `1` and lists the failed sessions.
-- **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/tests-unit-test_math.txt`).
+- **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/unit-test_math.txt`).
 - **Debugging**: When running with `--wait`, inspect these log files to diagnose failures instead of attaching to tmux sessions (though sessions remain open for inspection if they fail).
 
-## Match tests by filename (glob-style)
+### Match Tests by Filename (Glob-Style)
 
 Use `-m/--match` to run tests whose basenames match a simple glob pattern. The pattern is matched against the filename only (not the full path). Quote the pattern to prevent your shell from expanding it.
 
@@ -135,23 +311,130 @@ This one-liner matches files such as:
 
 Notes:
 
-- `*` means “anything before/after” in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
+- `*` means "anything before/after" in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
 - When using `-m/--match`, the default behavior still applies: one tmux session per matching test file.
 
-## Defaults & conventions
+### Environment Variable Overrides (`--env`)
+
+The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions. This is the primary way to configure test behavior—any environment variable recognized by `TestingSettings` (see `tests/settings.py`) can be overridden.
+
+**Usage:**
+
+```bash
+# Single override
+./.parallel_run.sh --env UNIFY_CACHE=false tests
+
+# Multiple overrides (flag can be repeated)
+./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+
+# Disable caching for fresh LLM calls
+./.parallel_run.sh --env UNIFY_CACHE=false tests
+
+# Use isolated random projects (each session gets its own project)
+./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+```
+
+**Available Variables:**
+
+Settings are organized in two classes with inheritance:
+- `ProductionSettings` (`unity/settings.py`) - used in deployed system AND tests
+- `TestingSettings` (`tests/settings.py`) - inherits production + adds test-only settings
+
+The `--env` approach is intentionally generic. Any variable from either class is available via `--env` without modifying the shell script.
+
+**Production Settings** (also used in tests):
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `UNIFY_MODEL` | str | `gpt-5.1@openai` | LLM model to use |
+| `UNIFY_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
+| `LLM_IO_DEBUG` | bool | `true` | Log full LLM request/response payloads |
+| `ASYNCIO_DEBUG` | bool | `false` | Enable asyncio debug mode |
+| `ASYNCIO_VERBOSE_DEBUG` | bool | `false` | Verbose asyncio logging with task/thread breadcrumbs |
+| `PYTEST_LOG_TO_FILE` | bool | `true` | Log pytest output to files |
+| `UNITY_SEMANTIC_CACHE` | bool | `false` | Enable semantic cache mode |
+| `UNITY_READONLY_ASK_GUARD` | bool | `true` | Enable read-only ask guard (mutation-intent classifier) |
+| `FIRST_ASK_TOOL_IS_SEARCH` | bool | `true` | Force semantic search tool on first step of `ask` methods |
+| `FIRST_MUTATION_TOOL_IS_ASK` | bool | `true` | Force `ask` tool on first step of mutation methods (`update`, `refactor`, `organize`) |
+| `UNITY_SILENCE_HTTPX` | bool | `true` | Silence httpx library logging |
+| `UNITY_SILENCE_URLLIB3` | bool | `true` | Silence urllib3 library logging |
+| `UNITY_SILENCE_OPENAI` | bool | `true` | Silence openai library logging |
+| `UNITY_LOG_ONLY_PROJECT` | bool | `true` | Only log unity project messages |
+| `UNITY_LOG_INCLUDE_PREFIXES` | str | `"unity"` | Comma-separated logger prefixes to include |
+
+**Test-Only Settings**:
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `UNIFY_DELETE_CONTEXT_ON_EXIT` | bool | `false` | Delete test context after each test |
+| `UNIFY_OVERWRITE_PROJECT` | bool | `false` | Overwrite project on activation |
+| `UNIFY_REGISTER_SUMMARY_CALLBACKS` | bool | `false` | Register summary callbacks |
+| `UNIFY_REGISTER_UPDATE_CALLBACKS` | bool | `false` | Register update callbacks |
+| `UNIFY_TESTS_RAND_PROJ` | bool | `false` | Use random project names (isolated per session) |
+| `UNIFY_TESTS_DELETE_PROJ_ON_EXIT` | bool | `false` | Delete random project when session exits |
+| `UNIFY_CACHE_BENCHMARK` | bool | `false` | Enable cache hit/miss benchmarking |
+| `UNIFY_PRETEST_CONTEXT_CREATE` | bool | `false` | Pre-create contexts before tests |
+| `UNIFY_TEST_TAGS` | str | `""` | Comma-separated tags for duration logging (use `--tags` shorthand) |
+| `UNIFY_SKIP_SESSION_SETUP` | bool | `false` | Skip project/context creation (pre-done) |
+
+### Command-Line Options
+
+| Option | Description |
+|--------|-------------|
+| `-w`, `--wait` | Block until all tests complete; exit 0 on success, 1 on any failure |
+| `-t`, `--per-test` | Create one session per test function instead of per file |
+| `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
+| `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |
+| `--tags TAG` | Tag test runs for filtering (shorthand for `--env UNIFY_TEST_TAGS=...`; repeatable, comma-separated) |
+| `--eval-only` | Run only tests marked with `pytest.mark.eval` (end-to-end LLM tests) |
+| `--symbolic-only` | Run only tests NOT marked with `pytest.mark.eval` (infrastructure tests) |
+| `--repeat N` | Run each test N times; useful for statistical sampling (see below) |
+
+### Statistical Sampling with `--repeat`
+
+The `--repeat N` flag runs each test target N times, creating N separate tmux sessions per target. While this works with any test, **the primary use case is for eval tests with `UNIFY_CACHE=false`**.
+
+**Why this matters:**
+
+- **Symbolic tests** are deterministic—running them multiple times yields identical results (especially with caching enabled). There's no statistical value.
+- **Eval tests with caching** are also deterministic after the first run—the cached LLM responses are replayed exactly.
+- **Eval tests with `UNIFY_CACHE=false`** make fresh LLM calls each run. The LLM may reason differently, take more/fewer steps, or even fail occasionally. Each run is an independent sample.
+
+**Use cases for repeated eval runs:**
+
+1. **Pass rate estimation**: Run an eval test 20 times to measure reliability (e.g., "passes 18/20 = 90%")
+2. **Runtime distribution**: Plot test durations across runs to understand variance
+3. **LLM step analysis**: Compare how many tool calls or reasoning steps the model takes
+4. **Thinking time metrics**: Measure average LLM response latency across samples
+5. **Regression detection**: A test that was 100% reliable but now fails 5% of the time indicates a problem
+
+**Example workflow:**
+
+```bash
+# Run a specific eval test 10 times without caching
+./.parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
+
+# Run all eval tests 5 times each, wait for completion
+./.parallel_run.sh --env UNIFY_CACHE=false --repeat 5 --eval-only --wait tests
+```
+
+Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to avoid name collisions) and its own log file in `.pytest_logs/`. After completion, you can analyze the logs to compute statistics.
+
+### Defaults & Conventions
 
 - **Environment**:
   - If `../.env` exists relative to the `tests` directory (i.e., `~/unity/.env`), it will be sourced automatically so you can define `UNIFY_KEY`, `UNIFY_BASE_URL`, or other variables once.
-  - Exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True` inside each session so it works whether or not a tmux server is already running.
+  - By default, exports `UNIFY_SKIP_SESSION_SETUP=True` for shared project mode.
+  - Use `--env` to override any `TestingSettings` variable (see table above).
 - **Virtualenv**: Assumes `~/unity/.venv/bin/activate`.
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
 - **Names**:
-  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `? ⏳ tests-unit-test_math` → `o ✅ tests-unit-test_math` or `x ❌ tests-unit-test_math`.
+  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `? ⏳ unit-test_math` → `o ✅ unit-test_math` or `x ❌ unit-test_math`.
   - Window: `<filename-without-.py>`.
   - If a session name already exists, the script appends `-2`, `-3`, … to avoid collisions.
 
-## Tips
+### Tips
 
 - **Watch session statuses live**:
 
@@ -177,9 +460,9 @@ Notes:
 
 - **See test output later**: just `tmux attach -t <session-name>` — pytest output stays in the window buffer.
 
-## Troubleshooting
+### Troubleshooting
 
-- **“tmux: command not found”**
+- **"tmux: command not found"**
   - Install tmux (e.g., `brew install tmux`, `apt-get install tmux`).
 
 - **Virtualenv not found / wrong Python**
@@ -190,7 +473,7 @@ Notes:
     ```
 
 - **No sessions created**
-  - Ensure there are `.py` files under the provided paths and that excludes aren’t hiding your files.
+  - Ensure there are `.py` files under the provided paths and that excludes aren't hiding your files.
 
 - **Permission denied**
   - Make the script executable:
@@ -199,7 +482,7 @@ Notes:
     chmod +x .parallel_run.sh
     ```
 
-## Customization
+### Customization
 
 Open `.parallel_run.sh` and tweak as needed:
 
@@ -207,7 +490,7 @@ Open `.parallel_run.sh` and tweak as needed:
 - **`run_cmd()`** — change the command chain (e.g., add flags: `pytest -q -x`).
 - **Session naming** — adjust `session_basename_for()` to your taste.
 
-## Quick reference (tmux)
+### Quick Reference (tmux)
 
 - Next/prev session (inside tmux):
   - Open the command prompt: `Ctrl-b :`
@@ -217,11 +500,379 @@ Open `.parallel_run.sh` and tweak as needed:
 - Switch (inside tmux): `tmux switch-client -t <name>`
 - Kill: `tmux kill-session -t <name>`
 
-That’s it! Run it, list sessions, and jump into whichever test you want to watch.
+That's it! Run it, list sessions, and jump into whichever test you want to watch.
 
-## Cleanup stray Unify test projects
+---
 
-If tests are aborted (e.g., `tmux kill-server`), temporary Unify projects prefixed with `UnityTests_` may remain on the backend. Use the cleanup helper to remove them:
+## Test Data Logging
+
+Tests log rich telemetry to the Unify backend, enabling post-hoc analysis of test runs, LLM behavior, and performance. Data is organized into two layers: a **global summary context** and **per-test contexts**.
+
+### Combined Context (Global Summary)
+
+Every test logs a summary record to the shared `Combined` context within the `UnityTests` project. This provides a unified view across all tests in a session.
+
+**Schema:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `test_fpath` | `str` | Test path: `folder/file.py::test_name` |
+| `tags` | `list` | Session-level tags (via `--tags`, `--test-tags`, or `UNIFY_TEST_TAGS`) |
+| `duration` | `float` | Wall-clock time in seconds |
+| `llm_io` | `list` | Full LLM request/response logs (from `.llm_io_debug/` files) |
+| `settings` | `dict` | Complete settings snapshot (production + test-only) |
+
+**Use cases:**
+
+- **Duration analysis**: Compare runtimes across tests, identify slow tests, track performance regressions
+- **Settings ablation**: Filter by settings values to compare behavior with different configurations (e.g., `UNIFY_CACHE=true` vs `UNIFY_CACHE=false`)
+- **LLM debugging**: Inspect the full LLM I/O for any test without re-running it
+- **Tagging experiments**: Use `--test-tags "experiment-A,gpt-4"` to label runs for later filtering
+
+**Example query:** "Show all tests where `UNIFY_CACHE=false` and duration > 10s"
+
+### Per-Test Contexts (State Manager Data)
+
+Each test decorated with `@_handle_project` gets its own isolated context. Within this context, state managers (`ContactManager`, `TranscriptManager`, `TaskScheduler`, etc.) store their domain data in sub-contexts.
+
+**Context hierarchy example:**
+
+```
+tests/test_contact_manager/test_basic/test_create          # Root test context
+├── Contacts                                                # ContactManager data
+├── Transcripts                                             # TranscriptManager data
+├── Knowledge                                               # KnowledgeManager data
+├── Tasks                                                   # TaskScheduler data
+├── Events/_callbacks/                                      # EventBus subscriptions
+└── ...                                                     # Other manager contexts
+```
+
+**How it works:**
+
+1. The `@_handle_project` decorator (in `tests/helpers.py`) creates a unique context path derived from the test's file path and function name:
+   - `tests/test_contact_manager/test_basic.py::test_create` → `tests/test_contact_manager/test_basic/test_create`
+
+2. Before the test runs, the decorator:
+   - Sets this as the active Unify context
+   - Clears the EventBus to ensure isolation
+   - Records which LLM I/O files exist (to detect new ones during the test)
+
+3. During the test, state managers automatically create their sub-contexts (e.g., `Contacts`, `Transcripts`) under the active context.
+
+4. After the test completes:
+   - Duration is calculated
+   - New LLM I/O files are collected
+   - A summary record is logged to `Combined`
+   - Optionally, the test context is deleted (if `UNIFY_DELETE_CONTEXT_ON_EXIT=true`)
+
+**Decorator usage:**
+
+```python
+from tests.helpers import _handle_project
+
+@_handle_project
+def test_create_contact():
+    cm = ContactManager()
+    cm._create_contact(first_name="Alice")
+    # ... assertions
+```
+
+For async tests:
+
+```python
+@_handle_project
+async def test_async_operation():
+    result = await some_async_call()
+    # ... assertions
+```
+
+### Scenario Fixtures (Shared Seed Data)
+
+Some test suites use session-scoped fixtures to create shared seed data once, then reset to that state before each test. This is more efficient than recreating data for every test.
+
+**Example from `test_contact_manager/conftest.py`:**
+
+```python
+@pytest_asyncio.fixture(scope="session")
+async def contact_scenario(request):
+    """Create seeded contacts once per session."""
+    ctx = "tests/test_contact/Scenario"
+    unify.set_context(ctx, relative=False)
+
+    # Seed data (idempotent - skips if already exists)
+    builder = await ScenarioBuilderContacts.create()
+
+    # Commit the initial state for rollback
+    unify.commit_context(ctx, commit_message="Initial seed data")
+
+    return builder.cm, id_mapping
+
+@pytest.fixture(scope="function")
+def contact_manager_scenario(contact_scenario):
+    """Rollback to clean state before each test."""
+    cm, id_map = contact_scenario
+
+    # Reset to committed state
+    unify.rollback_context(ctx, commit_hash=initial_commit_hash)
+
+    yield cm, id_map
+```
+
+**Key concepts:**
+
+- **Session fixture** (`scope="session"`): Creates seed data once per pytest session
+- **Commit/rollback**: Uses Unify's git-like versioning to snapshot and restore state
+- **Function fixture** (`scope="function"`): Rolls back before each test for isolation
+
+### Inspecting Logged Data
+
+**Via Unify Dashboard:**
+
+Browse to the `UnityTests` project and explore:
+- `Combined` context for summary records
+- Individual test contexts (e.g., `tests/test_contact_manager/test_basic/test_create`) for detailed state
+
+**Via Python:**
+
+```python
+import unify
+
+unify.activate("UnityTests")
+
+# Query Combined context
+logs = unify.get_logs(context="Combined")
+for log in logs:
+    print(f"{log['test_fpath']}: {log['duration']:.2f}s")
+
+# Query a specific test's contacts
+unify.set_context("tests/test_contact_manager/test_basic/test_create/Contacts")
+contacts = unify.get_logs()
+```
+
+### Context Cleanup
+
+By default, test contexts persist across runs (useful for debugging). To auto-delete:
+
+```bash
+# Delete context after each test
+./.parallel_run.sh --env UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+
+# Or delete entire project after session
+./.parallel_run.sh --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+```
+
+---
+
+## Grid Search (`.grid_search.sh`)
+
+Run tests across all combinations of settings values. This is useful for:
+
+- **Model comparisons**: Compare behavior across different LLMs
+- **Feature flag ablations**: Test with settings enabled/disabled
+- **Configuration sweeps**: Find optimal settings combinations
+
+### Basic Usage
+
+```bash
+# Make executable (first time only)
+chmod +x tests/.grid_search.sh
+
+# Grid search across models
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" tests/test_contact_manager/
+
+# Grid search across models AND cache settings (2×2 = 4 combinations)
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" --env UNIFY_CACHE="true|false" tests/
+```
+
+### How It Works
+
+1. **Parse grid variables**: Settings with `|` separators define the search space
+2. **Generate combinations**: Full Cartesian product of all values
+3. **Launch runs**: Each combination spawns a separate `.parallel_run.sh` invocation
+4. **Auto-tag**: Each run is automatically tagged with its `--env` values for easy filtering
+5. **Log results**: Each run logs both tags and full settings dict to `Combined`
+
+### Auto-Tagging
+
+Each run is **automatically tagged** with all `--env` values passed to `.grid_search.sh`. This makes post-hoc analysis trivial—you can filter results by the exact configuration used for each run.
+
+**How it works:**
+
+- Tags are formatted as `KEY1=val1,KEY2=val2,...` (comma-separated)
+- **Grid variables** (with `|`): The specific value selected for that run is tagged
+- **Constant variables** (no `|`): Included in tags for all runs
+- **Background variables** (from `.env` file): NOT included in tags
+
+**Why this design?**
+
+When running a grid search, you want to filter results by the variables you're actively experimenting with. Variables from `.env` or other sources are held constant across all runs and don't help distinguish between grid cells. They still appear in the full `settings` dict for completeness, but the `tags` field contains only what you passed on the command line.
+
+**Example:**
+
+```bash
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+```
+
+Generates 4 runs with these auto-tags:
+
+| Run | Tags |
+|-----|------|
+| 1 | `UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true` |
+| 2 | `UNIFY_MODEL=gpt-4o,UNIFY_CACHE=false` |
+| 3 | `UNIFY_MODEL=claude-3,UNIFY_CACHE=true` |
+| 4 | `UNIFY_MODEL=claude-3,UNIFY_CACHE=false` |
+
+With a constant variable:
+
+```bash
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
+```
+
+Generates 2 runs:
+
+| Run | Tags |
+|-----|------|
+| 1 | `UNIFY_MODEL=gpt-4o,EXPERIMENT_ID=exp-42` |
+| 2 | `UNIFY_MODEL=claude-3,EXPERIMENT_ID=exp-42` |
+
+### Syntax
+
+```bash
+./.grid_search.sh [options] --env KEY=val1|val2|val3 [--env KEY2=a|b] [targets...]
+```
+
+- **Pipe (`|`)**: Separates values to grid over
+- **No pipe**: Single value passed through to all runs
+- **Targets**: Test files/directories (same as `.parallel_run.sh`)
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--env KEY=val1\|val2` | Grid variable (multiple values, pipe-separated); each value becomes a separate run |
+| `--env KEY=value` | Constant variable (single value for all runs, included in auto-tags) |
+| `-n`, `--dry-run` | Show generated commands without executing (including auto-tags) |
+| `--wait-all` | Run combinations sequentially (with `--wait` per run) |
+| `-h`, `--help` | Show help |
+
+All other options are passed through to `.parallel_run.sh`.
+
+### Examples
+
+**Model comparison with eval tests:**
+
+```bash
+./.grid_search.sh \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic|gemini-2.5-pro@google" \
+  --env UNIFY_CACHE="false" \
+  --eval-only \
+  tests/test_contact_manager/
+```
+
+This generates 3 runs (one per model), each with fresh LLM calls.
+
+**Feature flag ablation:**
+
+```bash
+./.grid_search.sh \
+  --env FIRST_ASK_TOOL_IS_SEARCH="true|false" \
+  --env FIRST_MUTATION_TOOL_IS_ASK="true|false" \
+  tests/test_conductor/
+```
+
+This generates 4 runs (2×2 grid) testing all combinations of these two feature flags.
+
+**Dry run to preview:**
+
+```bash
+./.grid_search.sh -n \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
+  --env UNIFY_CACHE="true|false" \
+  tests/
+```
+
+Output:
+
+```
+Grid Search Configuration
+=========================
+Grid variables:
+  UNIFY_MODEL: gpt-4o@openai | claude-sonnet-4-20250514@anthropic
+  UNIFY_CACHE: true | false
+
+Total combinations: 4
+
+Generated runs:
+  [1/4] UNIFY_MODEL=gpt-4o@openai UNIFY_CACHE=true
+  [2/4] UNIFY_MODEL=gpt-4o@openai UNIFY_CACHE=false
+  [3/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNIFY_CACHE=true
+  [4/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNIFY_CACHE=false
+
+Dry run - commands that would be executed:
+
+  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=true --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=true tests/
+  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=false tests/
+  ...
+```
+
+Note that each run includes `--tags` with the specific configuration values—this happens automatically.
+
+**Sequential execution (resource-constrained):**
+
+```bash
+./.grid_search.sh --wait-all \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
+  tests/
+```
+
+Runs combinations one at a time instead of all concurrently.
+
+### Analyzing Results
+
+After a grid search, query the `Combined` context to compare results. The auto-generated tags make filtering straightforward:
+
+```python
+import unify
+
+unify.activate("UnityTests")
+logs = unify.get_logs(context="Combined")
+
+# Filter by tags (contains the exact --env values from the grid search)
+for log in logs:
+    tags = log.get("tags", [])
+    duration = log.get("duration", 0)
+    # Tags are like ["UNIFY_MODEL=gpt-4o", "UNIFY_CACHE=true"]
+    print(f"{tags}: {duration:.2f}s")
+
+# Or filter by specific tag values
+gpt4_runs = [log for log in logs if "UNIFY_MODEL=gpt-4o" in log.get("tags", [])]
+```
+
+The full `settings` dict is also available for variables not passed via `--env` (e.g., values from `.env` files).
+
+Or use the Unify dashboard to filter by `tags` (exact match) or `settings.UNIFY_MODEL` (for all values).
+
+### Combining with Other Features
+
+Grid search composes with all `.parallel_run.sh` features:
+
+```bash
+# Grid + eval-only + repeat for statistical sampling
+./.grid_search.sh \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
+  --env UNIFY_CACHE="false" \
+  --eval-only \
+  --repeat 5 \
+  tests/test_contact_manager/test_ask.py
+```
+
+This generates 2 models × 5 repeats = 10 runs, useful for comparing pass rates across models.
+
+---
+
+## Cleanup Unify Test Projects
+
+Use the cleanup helper to delete test projects from the Unify backend. By default, it deletes **both** the shared `UnityTests` project and any random `UnityTests_*` projects:
 
 ```bash
 # first time only, ensure it's executable
@@ -230,25 +881,32 @@ chmod +x tests/.project_cleanup.sh
 # show what would be deleted (no changes), prompt env if needed
 tests/.project_cleanup.sh --dry-run
 
-# delete interactively (prompts for environment and confirmation)
+# delete all test projects (shared + random) interactively
 tests/.project_cleanup.sh
 
 # delete without prompts
 tests/.project_cleanup.sh -y
 
-# use a custom prefix
-tests/.project_cleanup.sh --prefix UnityTests_
+# only delete random projects (UnityTests_*), keep the shared one
+tests/.project_cleanup.sh --random-only
 
-# also include the base UnityTests project in deletion
-tests/.project_cleanup.sh --include_main
-
-# combine with other flags (e.g., skip confirmations)
-tests/.project_cleanup.sh --include_main -y
+# only delete the shared project (UnityTests), keep random ones
+tests/.project_cleanup.sh --shared-only
 
 # force environment without prompt
 tests/.project_cleanup.sh -s   # staging
 tests/.project_cleanup.sh -p   # production
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Show matching projects without deleting |
+| `-y`, `--yes` | Do not prompt for confirmation |
+| `--shared-only` | Only delete the shared `UnityTests` project |
+| `--random-only` | Only delete random `UnityTests_*` projects |
+| `--prefix PREFIX` | Override prefix for random projects (default: `UnityTests_`) |
+| `-s`, `--staging` | Use staging environment |
+| `-p`, `--production` | Use production environment |
 
 Requirements:
 
@@ -257,7 +915,3 @@ Requirements:
 - To skip the environment prompt, either pass `-s/--staging` or `-p/--production`,
   or set `UNIFY_BASE_URL` (e.g., `https://api.unify.ai/v0` for production or
   `https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0` for staging).
-
-Notes:
-
-- `--include_main` is optional and will additionally delete the plain `UnityTests` project (useful when a non-suffixed main project exists alongside temporary `UnityTests_...` ones).

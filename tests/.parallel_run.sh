@@ -24,6 +24,22 @@ WAIT_FOR_COMPLETION=0
 # Optional filename match (glob-like, e.g., "*_tool_docstring*")
 NAME_PATTERN=""
 
+# Test category filters (symbolic ↔ eval spectrum)
+# With --eval-only: run only tests marked with pytest.mark.eval
+# With --symbolic-only: run only tests NOT marked with pytest.mark.eval
+EVAL_ONLY=0
+SYMBOLIC_ONLY=0
+
+# Repeat count for statistical sampling
+# With --repeat N: run each test N times (useful for eval tests)
+REPEAT_COUNT=1
+
+# Environment variable overrides (accumulated via --env KEY=VALUE)
+declare -a ENV_OVERRIDES=()
+
+# Tags (accumulated via --tags, shorthand for UNIFY_TEST_TAGS)
+declare -a TAGS=()
+
 # Resolve repo root (parent of this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -49,25 +65,152 @@ while (( "$#" )); do
         exit 2
       fi
       ;;
+    -e|--env)
+      if [[ -n "${2-}" && "$2" == *=* ]]; then
+        ENV_OVERRIDES+=( "$2" )
+        shift 2
+      else
+        echo "Error: -e|--env requires KEY=VALUE argument (e.g., --env UNIFY_CACHE=false)." >&2
+        exit 2
+      fi
+      ;;
+    --eval-only)
+      EVAL_ONLY=1
+      shift
+      ;;
+    --symbolic-only)
+      SYMBOLIC_ONLY=1
+      shift
+      ;;
+    --repeat)
+      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
+        REPEAT_COUNT="$2"
+        shift 2
+      else
+        echo "Error: --repeat requires a positive integer argument (e.g., --repeat 5)." >&2
+        exit 2
+      fi
+      ;;
+    --tags)
+      if [[ -n "${2-}" ]]; then
+        # Split on comma and add each tag to TAGS array
+        IFS=',' read -ra tag_parts <<< "$2"
+        for tag in "${tag_parts[@]}"; do
+          [[ -n "$tag" ]] && TAGS+=( "$tag" )
+        done
+        shift 2
+      else
+        echo "Error: --tags requires a value (e.g., --tags experiment-1 or --tags \"foo,bar\")." >&2
+        exit 2
+      fi
+      ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
       shift
       ;;
   esac
 done
+
+# Validate mutually exclusive flags
+if (( EVAL_ONLY && SYMBOLIC_ONLY )); then
+  echo "Error: --eval-only and --symbolic-only are mutually exclusive." >&2
+  exit 2
+fi
+
+# Build pytest marker filter based on flags
+MARKER_FILTER=""
+if (( EVAL_ONLY )); then
+  MARKER_FILTER="-m eval"
+elif (( SYMBOLIC_ONLY )); then
+  MARKER_FILTER="-m 'not eval'"
+fi
+
+# ---------------------------------------------------------------------------
+# Helper: check if random projects mode is enabled via --env
+# ---------------------------------------------------------------------------
+is_random_projects_mode() {
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    case "$kv" in
+      UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Helper: build environment exports string from --env overrides and --tags
+# ---------------------------------------------------------------------------
+build_env_exports() {
+  local exports=""
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    exports="$exports $kv"
+  done
+  # Append UNIFY_TEST_TAGS if any tags were specified via --tags
+  if (( ${#TAGS[@]} > 0 )); then
+    local joined_tags
+    joined_tags=$(IFS=','; echo "${TAGS[*]}")
+    exports="$exports UNIFY_TEST_TAGS=$joined_tags"
+  fi
+  echo "$exports"
+}
+
 # Reset positional parameters safely under nounset (only expand if set)
 set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 
 # Always operate from the repo root for discovery, regardless of where the script was invoked
 cd "$REPO_ROOT"
 
+# ---------------------------------------------------------------------------
+# Prepare the shared project (unless using random projects mode)
+# ---------------------------------------------------------------------------
+if is_random_projects_mode; then
+  echo "Random projects mode detected; skipping shared project preparation..."
+else
+  echo "Preparing shared UnityTests project..."
+  # Activate virtualenv if available, then run the prepare script
+  if [[ -f "$REPO_ROOT/.venv/bin/activate" ]]; then
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/.venv/bin/activate"
+  fi
+  if [[ -f "$SCRIPT_DIR/_prepare_shared_project.py" ]]; then
+    python "$SCRIPT_DIR/_prepare_shared_project.py"
+  else
+    echo "Warning: _prepare_shared_project.py not found." >&2
+    echo "Falling back to random projects mode." >&2
+    ENV_OVERRIDES+=( "UNIFY_TESTS_RAND_PROJ=True" "UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True" )
+  fi
+fi
+
 # Build the command to run in each tmux session
 run_cmd() {
   local target="$1"   # pytest target (file path or node id)
   local log_file="$2" # pytest log file path
+  local marker_arg="$3"  # optional marker filter (e.g., "-m eval")
   # Build the inner script first with safe %q for path/target, then quote the whole script with %q
   local inner
-  inner=$(printf 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && pytest %q; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$log_file" "$REPO_ROOT" "$target")
+  local env_exports
+  if is_random_projects_mode; then
+    # Random projects mode: each session gets its own project
+    env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
+  else
+    # Shared project mode: skip session setup (already done by prepare script)
+    env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
+  fi
+  # Append user-provided --env overrides
+  local user_overrides
+  user_overrides="$(build_env_exports)"
+  if [[ -n "$user_overrides" ]]; then
+    env_exports="$env_exports$user_overrides"
+  fi
+  # Build pytest command with optional marker filter
+  local pytest_cmd
+  if [[ -n "$marker_arg" ]]; then
+    pytest_cmd=$(printf 'pytest %s %q' "$marker_arg" "$target")
+  else
+    pytest_cmd=$(printf 'pytest %q' "$target")
+  fi
+  inner=$(printf '%s PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$log_file" "$REPO_ROOT" "$pytest_cmd")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -218,8 +361,26 @@ build_find_cmd() {
 # Collect pytest node ids for a given target (file or directory)
 collect_nodes_for_target() {
   local target="$1"
+  local marker_arg="$2"  # optional marker filter
   local cmd
-  cmd=$(printf 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.venv/bin/activate && pytest --collect-only -q %q' "$target")
+  local env_exports
+  if is_random_projects_mode; then
+    env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
+  else
+    env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
+  fi
+  # Append user-provided --env overrides
+  local user_overrides
+  user_overrides="$(build_env_exports)"
+  if [[ -n "$user_overrides" ]]; then
+    env_exports="$env_exports$user_overrides"
+  fi
+  # Build collection command with optional marker filter
+  if [[ -n "$marker_arg" ]]; then
+    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s %q' "$env_exports" "$marker_arg" "$target")
+  else
+    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %q' "$env_exports" "$target")
+  fi
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   bash -lc "$cmd" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true
 }
@@ -266,14 +427,14 @@ if (( PER_TEST )); then
     for f in "${direct_files[@]}"; do
       while IFS= read -r nid; do
         [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
-      done < <(collect_nodes_for_target "$f")
+      done < <(collect_nodes_for_target "$f" "$MARKER_FILTER")
     done
   fi
   if (( ${#found_files[@]} )); then
     for f in "${found_files[@]}"; do
       while IFS= read -r nid; do
         [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
-      done < <(collect_nodes_for_target "$f")
+      done < <(collect_nodes_for_target "$f" "$MARKER_FILTER")
     done
   fi
   if (( ${#direct_nodes[@]} )); then
@@ -302,6 +463,18 @@ if (( ${#files[@]} == 0 )); then
   exit 0
 fi
 
+# Expand targets for repeat runs (statistical sampling)
+if (( REPEAT_COUNT > 1 )); then
+  original_files=( "${files[@]}" )
+  files=()
+  for (( r=1; r<=REPEAT_COUNT; r++ )); do
+    for f in "${original_files[@]}"; do
+      files+=( "$f" )
+    done
+  done
+  echo "Repeating each test $REPEAT_COUNT times (${#files[@]} total sessions from ${#original_files[@]} unique targets)"
+fi
+
 declare -a made_sessions=()
 declare -a session_ids=()
 for target in "${files[@]}"; do
@@ -317,7 +490,7 @@ for target in "${files[@]}"; do
   log_file=".pytest_logs/${session}.txt"
 
   # Create the session first (no command), set remain-on-exit, then send the command.
-  cmd="$(run_cmd "$target" "$log_file")"
+  cmd="$(run_cmd "$target" "$log_file" "$MARKER_FILTER")"
 
   # Capture session ID to track this specific run robustly
   sid=$(tmux new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
@@ -337,13 +510,20 @@ done
 
 echo
 echo "Trigger:"
-echo "  • Run everything under current dir:     ./\\.parallel_run.sh"
-echo "  • Only a folder:                         ./\\.parallel_run.sh test_cats"
-echo "  • Multiple roots:                        ./\\.parallel_run.sh tests/unit tests/integration"
-echo "  • Specific files:                        ./\\.parallel_run.sh tests/test_foo.py tests/test_bar.py"
-echo "  • Specific tests:                        ./\\.parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
-echo "  • Per-test (dirs/files):                 ./\\.parallel_run.sh -t tests tests/test_foo.py"
-echo "  • Per-test (everything here):            ./\\.parallel_run.sh -t"
+echo "  • Run everything under current dir:     ./.parallel_run.sh"
+echo "  • Only a folder:                         ./.parallel_run.sh test_cats"
+echo "  • Multiple roots:                        ./.parallel_run.sh tests/unit tests/integration"
+echo "  • Specific files:                        ./.parallel_run.sh tests/test_foo.py tests/test_bar.py"
+echo "  • Specific tests:                        ./.parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
+echo "  • Per-test (dirs/files):                 ./.parallel_run.sh -t tests tests/test_foo.py"
+echo "  • Per-test (everything here):            ./.parallel_run.sh -t"
+echo "  • Set environment variables:             ./.parallel_run.sh --env UNIFY_CACHE=false tests"
+echo "  • Multiple env vars:                     ./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests"
+echo "  • Tag test runs:                         ./.parallel_run.sh --tags experiment-1 tests"
+echo "  • Multiple tags:                         ./.parallel_run.sh --tags \"model-compare,gpt-4o\" tests"
+echo "  • Run only eval tests:                   ./.parallel_run.sh --eval-only tests"
+echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic-only tests"
+echo "  • Repeat tests for sampling:             ./.parallel_run.sh --repeat 5 --eval-only tests"
 echo
 echo "Observe:"
 echo "  • Watch sessions: watch -n 0.5 'tmux ls'"

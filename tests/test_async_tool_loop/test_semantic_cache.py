@@ -7,7 +7,7 @@ import json
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common._async_tool import semantic_cache as sc
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from unity.common._async_tool.semantic_cache import _Config, SemanticCacheResult
 from unity.common.tool_spec import read_only, normalise_tools, manager_tool
 from unity.common.state_managers import BaseStateManager
@@ -26,18 +26,18 @@ def _patch_semantic_cache_config(monkeypatch):
     )
 
 
-def create_client():
-    return new_llm_client(cache=False)
+def create_client(model: str = DEFAULT_MODEL):
+    return new_llm_client(model=model, cache=False)
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_single_tool_exact_match():
+async def test_single_tool_exact_match(model):
     @read_only
     def say_hello():
         return "Hello from Unity!"
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
@@ -61,7 +61,7 @@ async def test_single_tool_exact_match():
 
     sc._SEMANTIC_CACHE_SAVER.wait()
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
@@ -87,12 +87,12 @@ async def test_single_tool_exact_match():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_single_tool_no_exact_match():
+async def test_single_tool_no_exact_match(model):
     @read_only
     def say_hello():
         return "Hello from Unity!"
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Call the say_hello tool and reply with the result only",
@@ -116,7 +116,7 @@ async def test_single_tool_no_exact_match():
 
     sc._SEMANTIC_CACHE_SAVER.wait()
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Could you please call the say_hello tool?",
@@ -142,7 +142,7 @@ async def test_single_tool_no_exact_match():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_with_different_arguments():
+async def test_tool_with_different_arguments(model):
 
     @read_only
     def search_contact(name: str):
@@ -152,7 +152,7 @@ async def test_tool_with_different_arguments():
     def find_contact(name: str):
         return f"Contact not found: {name}"
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Can you search for a contact with the name 'John Doe'?",
@@ -163,7 +163,7 @@ async def test_tool_with_different_arguments():
     assert "John Doe" in res
     sc._SEMANTIC_CACHE_SAVER.wait()
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Can you look for a contact with the name 'Jane Doe'?",
@@ -178,7 +178,7 @@ async def test_tool_with_different_arguments():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_is_re_called():
+async def test_tool_is_re_called(model):
     _call_count = 0
 
     @read_only
@@ -192,7 +192,7 @@ async def test_tool_is_re_called():
         return ret
 
     query = "How is the weather? Call the current_weather tool and reply with the result only"
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         query,
@@ -205,7 +205,7 @@ async def test_tool_is_re_called():
 
     sc._SEMANTIC_CACHE_SAVER.wait()
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         query,
@@ -219,7 +219,7 @@ async def test_tool_is_re_called():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_construct_new_user_message():
+async def test_construct_new_user_message(model):
     @read_only
     async def say_hello():
         await asyncio.sleep(1)
@@ -229,12 +229,13 @@ async def test_construct_new_user_message():
     async def say_goodbye():
         return "Goodbye from Unity!"
 
-    client = create_client()
+    client = create_client(model=model)
     initial_user_message = "Call the say_hello tool and reply with the result only"
     handle = start_async_tool_loop(
         client,
         initial_user_message,
         tools={"say_hello": say_hello, "say_goodbye": say_goodbye},
+        semantic_cache="write",
     )
 
     await handle.interject("Actually, I meant to call the say_goodbye tool")
@@ -253,7 +254,7 @@ async def test_construct_new_user_message():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_prune_tools():
+async def test_prune_tools(model):
     @read_only
     def say_hello(data: str) -> str:
         return f"Hello from Unity!"
@@ -266,7 +267,7 @@ async def test_prune_tools():
     def find_contact(name: str) -> str:
         return f"Contact found: {name}"
 
-    client = create_client()
+    client = create_client(model=model)
 
     instruction = (
         "1) Call `say_hello` with data='foo' and `say_goodbye` with data='bar' exactly once each (in any order).\n"
@@ -299,12 +300,12 @@ async def test_prune_tools():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_call_signature_updated():
+async def test_tool_call_signature_updated(model):
     @read_only
     def say_hello():
         return "Hello from Unity!"
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Call the say_hello tool and reply with the result only",
@@ -319,7 +320,7 @@ async def test_tool_call_signature_updated():
     def _say_hello_new(user: str):
         return f"Hello from {user}!"
 
-    client = create_client()
+    client = create_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Call the say_hello tool with the argument 'Unify' and reply with the result only",
@@ -444,7 +445,7 @@ async def test_get_dummy_tool_parse_arguments_cached():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_semantic_cache_recursive(monkeypatch):
+async def test_semantic_cache_recursive(model, monkeypatch):
     class ManagerC(BaseStateManager):
         @read_only
         def _get_answer(self):
@@ -461,7 +462,7 @@ async def test_semantic_cache_recursive(monkeypatch):
 
         @manager_tool
         async def ask(self, text):
-            client = create_client()
+            client = create_client(model=model)
             client.set_system_message(
                 "Whatever the user asks, call the get_answer tool and reply with the result only",
             )
@@ -488,7 +489,7 @@ async def test_semantic_cache_recursive(monkeypatch):
 
         @manager_tool
         async def ask(self, text):
-            client = create_client()
+            client = create_client(model=model)
             client.set_system_message(
                 "Whatever the user asks, call the ManagerC.ask tool and reply with the result only",
             )
@@ -515,7 +516,7 @@ async def test_semantic_cache_recursive(monkeypatch):
 
         @manager_tool
         async def ask(self, text):
-            client = create_client()
+            client = create_client(model=model)
             client.set_system_message(
                 "You are a simulated manager, "
                 "whatever the user asks, call the ManagerB.ask tool and reply with the result only",

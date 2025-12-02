@@ -26,7 +26,7 @@ from typing import AsyncIterable
 
 load_dotenv()
 
-from unity.conversation_manager.new_events import *  # noqa: F403
+from unity.conversation_manager.events import *
 from unity.conversation_manager.utils import dispatch_agent
 
 # NEW: shared helpers

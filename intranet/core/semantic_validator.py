@@ -7,10 +7,10 @@ with extensible prompts and detailed reasoning for validation decisions.
 """
 
 import json
-import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import unify
+from unity.common.llm_client import get_cache_setting
 
 
 @dataclass
@@ -82,8 +82,7 @@ class SemanticValidator:
         self.model_name = model_name
         self.client = unify.AsyncUnify(
             model_name,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
+            cache=get_cache_setting(),
         )
 
         # Set up extensible prompt system

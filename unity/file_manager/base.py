@@ -49,6 +49,10 @@ class BaseGlobalFileManager(BaseStateManager, metaclass=SingletonABCMeta):
     assumptions in the final reply.
     """
 
+    _as_caller_description: str = (
+        "the FileManager, managing files on behalf of the end user"
+    )
+
     # ------------------------------ Public API ------------------------------ #
     @abstractmethod
     async def ask(

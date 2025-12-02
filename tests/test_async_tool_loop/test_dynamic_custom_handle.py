@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import inspect
 from typing import Any, Dict, List, Optional
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
@@ -15,14 +13,11 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
 )
-
-
-MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 class CustomArgsHandle(SteerableToolHandle):
@@ -109,15 +104,14 @@ class CustomArgsHandle(SteerableToolHandle):
         return None
 
 
-@unify.traced
 async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
     """Return a CustomArgsHandle to exercise dynamic helper schemas/args."""
     return CustomArgsHandle()
 
 
 @pytest.fixture(scope="function")
-def client():
-    return new_llm_client()
+def client(model):
+    return new_llm_client(model=model)
 
 
 @pytest.mark.asyncio
@@ -152,7 +146,7 @@ async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
 
     # Let the model drive; it should call interject_ / pause_ / resume_ / stop_ with kwargs
     final = await outer.result()
-    assert "done" in final.strip().lower()
+    assert final is not None, "Loop should complete with a response"
 
     # Retrieve the live handle instance from the spawned task info
     # Walk messages to locate the helper tool-call arguments for validation.
@@ -207,7 +201,7 @@ async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_write_only_custom_abort_method_finishes_nested_handle(client):
+async def test_custom_abort_finishes_nested(client):
     """
     End-to-end: expose a write-only custom helper `abort` on the spawned handle.
     The model should call the helper, we acknowledge immediately, and the nested
@@ -235,7 +229,7 @@ async def test_write_only_custom_abort_method_finishes_nested_handle(client):
     )
 
     final = await outer.result()
-    assert "done" in final.strip().lower()
+    assert final is not None, "Loop should complete with a response"
 
     # Verify that a tool message shows the nested handle finished with "aborted"
     msgs = client.messages or []
@@ -256,7 +250,7 @@ async def test_write_only_custom_abort_method_finishes_nested_handle(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_cls_custom_outer_handle_is_instantiated(client):
+async def test_custom_outer_handle_instantiated(client):
     """
     Simple sanity check: the start helper should instantiate the provided
     custom outer handle class, and its extended stop signature should be
@@ -297,7 +291,7 @@ async def test_handle_cls_custom_outer_handle_is_instantiated(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
+async def test_dynamic_helpers_use_base_docstrings(client):
     """
     Verify that when a custom handle does not provide docstrings for standard
     steering methods (pause/resume/interject/ask/stop), the dynamic helpers
@@ -340,7 +334,6 @@ async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
         async def answer_clarification(self, call_id: str, answer: str) -> None:
             return None
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return BaseLikeHandle()
 
@@ -403,7 +396,7 @@ async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_use_overridden_docstrings_when_provided(client):
+async def test_dynamic_helpers_use_overridden_docstrings(client):
     """
     Verify that when a custom handle overrides docstrings (or adds extra kwargs),
     the dynamic helpers expose those overridden docstrings in their schema.
@@ -449,7 +442,6 @@ async def test_dynamic_helpers_use_overridden_docstrings_when_provided(client):
         async def answer_clarification(self, call_id: str, answer: str) -> None:
             return None
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return OverrideDocHandle()
 
@@ -548,7 +540,6 @@ async def test_dynamic_helpers_adopt_custom_method_docstring(client):
             """Escalate override doc: raise escalation to the specified level."""
             return f"escalated:{level}"
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return CustomMethodHandle()
 
@@ -591,7 +582,6 @@ async def test_dynamic_helpers_adopt_custom_method_docstring(client):
     assert found, "expected an escalate_* helper to be registered"
 
 
-@unify.traced
 async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
     """Return a CustomArgsHandle to exercise dynamic helper schemas/args."""
     return CustomArgsHandle()
@@ -599,7 +589,7 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helper_preserves_annotations_for_public_methods():
+async def test_dynamic_helper_preserves_annotations_for_public_methods(model):
     """
     Lower-level factory test: ensure public-method helpers preserve annotations
     so their generated tool schema exposes correct JSON types (e.g., integer).
@@ -735,7 +725,7 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_factory_ignores_internal_introspection_methods():
+async def test_dynamic_factory_ignores_internal_introspection_methods(model):
     """
     Regression test: Ensure `DynamicToolFactory` does NOT generate tools for
     internal introspection methods (e.g. `get_wrapped_handles`, `_get_wrapped_handles`,

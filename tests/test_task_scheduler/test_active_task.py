@@ -34,7 +34,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_ask(monkeypatch):
+async def test_ask(monkeypatch):
     """
     `ActiveTask.ask` should forward to the wrapped plan exactly once.
     """
@@ -72,7 +72,7 @@ async def test_active_task_ask(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_interject(monkeypatch):
+async def test_interject(monkeypatch):
     """
     `ActiveTask.interject` should forward to the wrapped plan exactly once.
     """
@@ -110,7 +110,7 @@ async def test_active_task_interject(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_pause_resume(monkeypatch):
+async def test_pause_resume(monkeypatch):
     """
     The wrapper should transparently forward `pause` and `resume`.
     """
@@ -155,7 +155,7 @@ async def test_active_task_pause_resume(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_stop(monkeypatch):
+async def test_stop(monkeypatch):
     """
     Calling `ActiveTask.stop` should proxy to the plan and mark it done.
     """
@@ -193,7 +193,7 @@ async def test_active_task_stop(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_result_and_done():
+async def test_result_and_done():
     """
     A normal workflow should complete once enough steps have been taken.
     """
@@ -219,7 +219,7 @@ async def test_active_task_result_and_done():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_interject_implies_defer_and_reinstate(monkeypatch):
+async def test_interject_implies_defer_and_reinstate(monkeypatch):
     """
     An interjection like "let's stop this and do it later" should trigger a
     graceful stop and reintegration, resulting in a "stopped" outcome rather
@@ -277,7 +277,7 @@ async def test_active_task_interject_implies_defer_and_reinstate(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_entrypoint_demonstrates_function_knowledge_during_ask():
+async def test_entrypoint_demonstrates_function_knowledge_during_ask():
     """
     Mirror the SimulatedActor entrypoint test, but run through ActiveTask to
     ensure the scheduler wrapper forwards the entrypoint so the actor observes
@@ -331,7 +331,7 @@ def simulate_linkedin_sales_leads() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_interject_image_guides_simulation_to_spreadsheet(
+async def test_interject_image_guides_simulation_to_spreadsheet(
     monkeypatch,
 ):
     """

@@ -25,10 +25,10 @@ the model’s behaviour stays deterministic enough for the assertions below.
 from __future__ import annotations
 
 import asyncio
-import os
 import time
-from tests.helpers import _handle_project, SETTINGS
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from tests.helpers import _handle_project
+from tests.settings import SETTINGS
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 import pytest
@@ -44,49 +44,29 @@ from unity.common.tool_spec import ToolSpec
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS (sync + async)                                        #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def add(x: int, y: int) -> int:
     return x + y
 
 
-@unify.traced
 def divide(a: int, b: int) -> float:  # may raise
     return a / b
 
 
-@unify.traced
 def launch() -> None:
     raise Exception
 
 
-@unify.traced
 async def fast_tool(res: str = "fast") -> str:
     await asyncio.sleep(0.05)
     return res
 
 
-@unify.traced
 async def slow_tool(res: str = "slow") -> str:
     await asyncio.sleep(0.3)
     return res
 
 
-# --------------------------------------------------------------------------- #
-#  HELPERS                                                                    #
-# --------------------------------------------------------------------------- #
-@unify.traced
-def new_client() -> unify.AsyncUnify:
-    """
-    Return a fresh client *with its own conversation state* so that tests do
-    not interfere with one another.
-    """
-    return new_llm_client().set_system_message(
-        "Feel free to call multiple *different* tools per turn if appropriate.",
-    )
-
-
-@unify.traced
-def count_tool_messages(client: unify.AsyncUnify) -> int:
+def count_tool_messages(client) -> int:
     return sum(1 for m in client.messages if m["role"] == "tool")
 
 
@@ -95,8 +75,8 @@ def count_tool_messages(client: unify.AsyncUnify) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_happy_path_single_sync_tool():
-    client = new_client()
+async def test_happy_path_single_sync_tool(model):
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -114,14 +94,13 @@ async def test_happy_path_single_sync_tool():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_concurrent_tools_waits_for_all_results():
+async def test_concurrent_tools_waits_for_all_results(model):
     """
     The loop launches `fast` and `slow` concurrently but must *not* call the
     model again until *both* have finished.
     """
     events: list[tuple[str, float]] = []
 
-    @unify.traced
     async def fast():
         events.append(("fast_start", time.monotonic()))
         await asyncio.sleep(0.05)
@@ -131,7 +110,6 @@ async def test_concurrent_tools_waits_for_all_results():
     fast.__name__ = "fast"
     fast.__qualname__ = "fast"
 
-    @unify.traced
     async def slow():
         events.append(("slow_start", time.monotonic()))
         await asyncio.sleep(0.30)
@@ -141,20 +119,18 @@ async def test_concurrent_tools_waits_for_all_results():
     slow.__name__ = "slow"
     slow.__qualname__ = "slow"
 
-    class InstrumentedClient(unify.AsyncUnify):  # type: ignore[misc]
+    class InstrumentedClient(unify.AsyncUnify):
         async def generate(self, **kwargs):  # noqa: D401
             events.append(("generate", time.monotonic()))
             return await super().generate(**kwargs)
 
     # Manually constructing to support inheritance, but mirroring new_llm_client defaults
     client = InstrumentedClient(
-        os.getenv("UNIFY_MODEL", DEFAULT_MODEL),
+        model,
         reasoning_effort="high",
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
-    client.set_traced(True)
 
     _ = await start_async_tool_loop(
         client,
@@ -191,8 +167,8 @@ async def test_concurrent_tools_waits_for_all_results():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_recovers_after_failure():
-    client = new_client()
+async def test_recovers_after_failure(model):
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -218,8 +194,8 @@ async def test_recovers_after_failure():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_aborts_after_too_many_failures():
-    client = new_client()
+async def test_aborts_after_too_many_failures(model):
+    client = new_llm_client(model=model)
 
     with pytest.raises(RuntimeError):
         await start_async_tool_loop(
@@ -236,8 +212,8 @@ async def test_aborts_after_too_many_failures():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mixed_sync_async_tools():
-    client = new_client()
+async def test_mixed_sync_async_tools(model):
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -256,7 +232,6 @@ async def test_mixed_sync_async_tools():
 # --------------------------------------------------------------------------- #
 #  PRETTY PRINTING – tool returns pure JSON string                            #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def emit_json() -> str:
     # Compact JSON string (no spaces/newlines). The loop should pretty‑print it.
     return '{"foo":1,"bar":[2,3],"baz":{"ok":true}}'
@@ -264,8 +239,8 @@ def emit_json() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_pretty_prints_json_string_tool_result():
-    client = new_client()
+async def test_pretty_prints_json_string_tool_result(model):
+    client = new_llm_client(model=model)
 
     # Ask the model to call the tool once, then reply. Result should be pretty‑printed in the transcript.
     _ = await start_async_tool_loop(
@@ -303,7 +278,7 @@ async def test_pretty_prints_json_string_tool_result():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D401
+async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noqa: D401
     """Verify that duplicate tool calls are kept or pruned according to the flag."""
 
     log: list[str] = []
@@ -316,98 +291,85 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
     echo.__name__ = "echo"
     echo.__qualname__ = "echo"
 
-    prompt = (
-        "You have access to a function named `echo(text: str)`.\n"
-        "CRITICAL: In your FIRST assistant message, request TWO tool calls to `echo`, "
-        "both in the SAME assistant message. Use the exact JSON arguments string "
-        '`{ "text": "hello" }` for each tool call (identical including spaces). Do not include any normal assistant text in that first message; only tool calls.\n'
-        "After you receive both tool replies, answer with a single short sentence."
-    )
+    # Seed a transcript with an assistant message containing TWO identical parallel
+    # tool calls. This removes dependency on model behavior for making parallel calls.
+    seeded = [
+        {
+            "role": "user",
+            "content": "Call echo twice with 'hello', then reply with a short sentence.",
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_dup_1",
+                    "type": "function",
+                    "function": {"name": "echo", "arguments": '{"text": "hello"}'},
+                },
+                {
+                    "id": "call_dup_2",
+                    "type": "function",
+                    "function": {"name": "echo", "arguments": '{"text": "hello"}'},
+                },
+            ],
+        },
+    ]
 
     # ------------------------------------------------------------------ #
     # 1️⃣  duplicates SHOULD be executed when pruning is disabled
     # ------------------------------------------------------------------ #
     log.clear()
-    client = new_client()
+    client = new_llm_client(model=model)
     await start_async_tool_loop(
         client=client,
-        message=prompt,
+        message=seeded,
         tools={"echo": echo},
         prune_tool_duplicates=False,
     ).result()
+    # Both duplicate calls should execute
     assert log == [
         "hello",
         "hello",
-    ], "With ignore_tool_duplicates=False the tool should be invoked twice."
-    roles = [
-        m["role"]
+    ], "With prune_tool_duplicates=False, both duplicate tool calls should be invoked."
+    # Verify transcript structure: both tool results appear after the seeded assistant turn
+    tool_results = [
+        m
         for m in client.messages
-        if not (
-            m.get("role") == "assistant"
-            and m.get("tool_calls")
-            and any(
-                (tc.get("function", {}) or {})
-                .get("name", "")
-                .startswith("check_status_")
-                for tc in m["tool_calls"]
-            )
-        )
-        and not (
-            m.get("role") == "tool"
-            and str(m.get("name", "")).startswith("check_status_")
-        )
+        if m.get("role") == "tool" and m.get("name") == "echo"
     ]
-    assert roles == [
-        "system",
-        "user",
-        "assistant",
-        "tool",
-        "tool",
-        "assistant",
-    ]
+    assert len(tool_results) == 2, "Expected 2 tool results when pruning is disabled"
 
     # ------------------------------------------------------------------ #
-    # 2️⃣  duplicates SHOULD be removed when pruning is enabled
+    # 2️⃣  duplicates SHOULD be pruned when pruning is enabled
     # ------------------------------------------------------------------ #
     log.clear()
-    client = new_client()
+    client = new_llm_client(model=model)
     await start_async_tool_loop(
         client=client,
-        message=prompt,
+        message=seeded,
         tools={"echo": echo},
         prune_tool_duplicates=True,
     ).result()
-    assert log == [
-        "hello",
-        "hello",
-    ], "With ignore_tool_duplicates=True, two invocations are still expected."
-    roles = [
-        m["role"]
-        for m in client.messages
-        if not (
-            m.get("role") == "assistant"
-            and m.get("tool_calls")
-            and any(
-                (tc.get("function", {}) or {})
-                .get("name", "")
-                .startswith("check_status_")
-                for tc in m["tool_calls"]
-            )
-        )
-        and not (
-            m.get("role") == "tool"
-            and str(m.get("name", "")).startswith("check_status_")
-        )
-    ]
-    assert roles == [
-        "system",
-        "user",
-        "assistant",
-        "tool",
-        "assistant",
-        "tool",
-        "assistant",
-    ]
+    # Only one call should execute from the seeded turn (duplicate pruned)
+    assert log[0] == "hello", "First tool call should execute"
+    # The seeded turn should only produce 1 tool result due to pruning
+    # (model may make additional calls in subsequent turns to compensate)
+    first_assistant_idx = next(
+        i
+        for i, m in enumerate(client.messages)
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    # Count tool results that appear before the next assistant turn
+    tool_results_after_first = []
+    for m in client.messages[first_assistant_idx + 1 :]:
+        if m.get("role") == "tool" and m.get("name") == "echo":
+            tool_results_after_first.append(m)
+        elif m.get("role") == "assistant":
+            break
+    assert (
+        len(tool_results_after_first) == 1
+    ), "With prune_tool_duplicates=True, only 1 tool result should follow the seeded assistant turn"
 
 
 # --------------------------------------------------------------------------- #
@@ -417,14 +379,16 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_tools_with_system_message() -> None:
+async def test_no_tools_with_system_message(model) -> None:
     """
     Verify that the loop completes correctly when **no** tools are available
     and the conversation starts with a system prompt:
 
         system → user → assistant
     """
-    client = new_client()  # ← already includes the system message
+    client = new_llm_client(model=model).set_system_message(
+        "You are a helpful assistant.",
+    )
 
     answer = await start_async_tool_loop(
         client,
@@ -444,13 +408,14 @@ async def test_no_tools_with_system_message() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_tools_without_system_message() -> None:
+async def test_no_tools_without_explicit_system_message(model) -> None:
     """
-    Same as above, but without a leading system message, giving the flow:
+    No tools, no explicit system message provided by the caller.
 
-        user → assistant
+    User visibility guidance is only injected lazily on first interjection,
+    so without interjections the flow is simply: user → assistant
     """
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -473,18 +438,17 @@ async def test_no_tools_without_system_message() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
+async def test_max_concurrent_limit_is_obeyed(model) -> None:  # noqa: D401
     """Ensure the per‑tool *runtime* concurrency cap is respected.
 
     We ask the model to run the same tool twice *in parallel*.  The limit
     (`max_concurrent=1`) should force the second call to wait until the
     first ends.  We tolerate the model making more than two invocations –
-    what matters is that **no overlap > 1** happens.
+    what matters is that **no overlap > 1** happens.
     """
 
     events: list[tuple[str, float]] = []
 
-    @unify.traced
     async def limited(label: str) -> str:
         events.append(("start", time.monotonic()))
         await asyncio.sleep(0.15)
@@ -496,7 +460,7 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
 
     tools = {"limited": ToolSpec(fn=limited, max_concurrent=1)}
 
-    client = new_client()
+    client = new_llm_client(model=model)
 
     # Kick off the interactive loop *without* awaiting the final result yet so
     # that we can synchronise on the **first** tool request and ensure all
@@ -555,7 +519,7 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_seeded_messages_then_final_tool_call():
+async def test_seeded_messages_then_final_tool_call(model):
     """
     Seed the loop with three messages:
       1) user instruction to first call `fast_tool`, then use `add(2, 3)`
@@ -565,7 +529,7 @@ async def test_seeded_messages_then_final_tool_call():
     The loop should then perform the final (real) tool call `add(2, 3)` and
     return the result.
     """
-    client = new_client()
+    client = new_llm_client(model=model)
 
     call_id = "seeded_fast_1"
     seeded = [
@@ -605,6 +569,13 @@ async def test_seeded_messages_then_final_tool_call():
     # The model should have used the add tool to compute 2 + 3
     assert answer.strip().startswith("5")
 
-    # Verify that both tool calls (seeded fast_tool and real add) are present
+    # Verify that the real add tool was called
     tool_names = [m.get("name") for m in client.messages if m.get("role") == "tool"]
-    assert "fast_tool" in tool_names and "add" in tool_names
+    assert "add" in tool_names
+
+    # Verify the seeded fast_tool context is preserved in client.messages.
+    # With lazy transformation (for Claude), the canonical messages retain
+    # the original structure; transformation only applies to API requests.
+    assert (
+        "fast_tool" in tool_names
+    ), "Seeded fast_tool should appear as a formal tool message in client.messages"

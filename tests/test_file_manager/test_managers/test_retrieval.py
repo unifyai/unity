@@ -11,10 +11,9 @@ from pathlib import Path
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_create_file_basic(file_manager, tmp_path: Path):
+def test_create_basic(file_manager, tmp_path: Path):
     """Import and parse a file; verify ingestion succeeded."""
     fm = file_manager
     p = tmp_path / "travel_notes.pdf"
@@ -30,10 +29,9 @@ def test_create_file_basic(file_manager, tmp_path: Path):
     assert rows and any(r.get("file_path", name) == name for r in rows)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_create_file_with_error(file_manager, tmp_path: Path):
+def test_create_with_error(file_manager, tmp_path: Path):
     """Unsupported extension still results in a parsable text fallback or error."""
     fm = file_manager
     p = tmp_path / "corrupt_music_score.xyz"
@@ -46,10 +44,9 @@ def test_create_file_with_error(file_manager, tmp_path: Path):
     assert _item["status"] in ("success", "error")
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_single_reference_basic(file_manager, tmp_path: Path):
+def test_search_single_reference_basic(file_manager, tmp_path: Path):
     """Test basic semantic search over file contents."""
     # Create test files with different content
     fm = file_manager
@@ -89,10 +86,9 @@ def test_search_files_single_reference_basic(file_manager, tmp_path: Path):
     assert "_summary_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_multi_columns(file_manager, tmp_path: Path):
+def test_search_multi_columns(file_manager, tmp_path: Path):
     """Test semantic search across multiple columns."""
     fm = file_manager
     fm.clear()
@@ -125,10 +121,9 @@ def test_search_files_multi_columns(file_manager, tmp_path: Path):
     assert "_file_path_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_ranking_precision_k1(file_manager, tmp_path: Path):
+def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
     """Test that search correctly ranks documents and returns most relevant first (k=1)."""
     # Create multiple documents with different relevance levels for the same query
     fm = file_manager
@@ -172,10 +167,9 @@ def test_search_files_ranking_precision_k1(file_manager, tmp_path: Path):
     assert results
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_ranking_precision_k3(file_manager, tmp_path: Path):
+def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
     """Test search ranking with k=3 to verify correct ordering."""
     # Create documents with varying degrees of relevance
     fm = file_manager
@@ -227,10 +221,9 @@ def test_search_files_ranking_precision_k3(file_manager, tmp_path: Path):
     assert "unrelated.docx" not in top_3_filenames
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_exact_match_beats_partial(file_manager, tmp_path: Path):
+def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
     """Test that exact keyword matches rank higher than partial matches."""
     fm = file_manager
     fm.clear()
@@ -263,10 +256,9 @@ def test_search_files_exact_match_beats_partial(file_manager, tmp_path: Path):
     assert any(r.get("file_path", "").endswith("exact_match.pdf") for r in results)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_multiple_reference_columns(file_manager, tmp_path: Path):
+def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
     """Test search across multiple reference columns with correct ranking."""
     # Create files where different signals appear in different fields
     fm = file_manager
@@ -299,10 +291,9 @@ def test_search_files_multiple_reference_columns(file_manager, tmp_path: Path):
     assert "_file_path_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_domain_specific_ranking(file_manager, tmp_path: Path):
+def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
     """Test search ranking for domain-specific queries."""
     # Create documents in different domains
     fm = file_manager
@@ -354,10 +345,9 @@ def test_search_files_domain_specific_ranking(file_manager, tmp_path: Path):
     )
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_filter_files_basic(file_manager, tmp_path: Path):
+def test_filter_basic(file_manager, tmp_path: Path):
     """Test basic filtering of files."""
     # Create test files
     fm = file_manager
@@ -382,10 +372,9 @@ def test_filter_files_basic(file_manager, tmp_path: Path):
     assert all(f.get("file_path", "").endswith(".pdf") for f in pdf_files)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_filter_files_metadata(file_manager, tmp_path: Path):
+def test_filter_metadata(file_manager, tmp_path: Path):
     """Test filtering files by metadata fields."""
     fm = file_manager
     fm.clear()
@@ -405,10 +394,9 @@ def test_filter_files_metadata(file_manager, tmp_path: Path):
     assert str(large_files[0].get("file_path", "")).endswith("large_file.pdf")
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_no_results_backfill(file_manager, tmp_path: Path):
+def test_search_no_results_backfill(file_manager, tmp_path: Path):
     """Test that search falls back to recent files when no semantic matches."""
     fm = file_manager
     fm.clear()
@@ -428,7 +416,6 @@ def test_search_files_no_results_backfill(file_manager, tmp_path: Path):
     assert any(r.get("file_path", "").endswith("random_doc.txt") for r in results)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_list_columns(file_manager, tmp_path: Path):

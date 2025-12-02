@@ -141,7 +141,7 @@ def _build_sender_join_ctx(
     return ensure_join_context(
         left_ctx=left_ctx,
         right_ctx=right_ctx,
-        join_expr=f"{left_ctx}.sender_id == {right_ctx}.contact_id",
+        join_expr=f"{left_ctx}.sender_id is not None and {left_ctx}.sender_id == {right_ctx}.contact_id",
         new_context=join_ctx,
         columns=select,
         mode="inner",
@@ -188,13 +188,15 @@ def format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any
     unique_ids: set[int] = set()
     for m in messages:
         try:
-            unique_ids.add(int(m.sender_id))
+            if m.sender_id is not None:
+                unique_ids.add(int(m.sender_id))
         except Exception:
             pass
         if isinstance(m.receiver_ids, list):
             for rid in m.receiver_ids:
                 try:
-                    unique_ids.add(int(rid))
+                    if rid is not None:
+                        unique_ids.add(int(rid))
                 except Exception:
                     pass
 

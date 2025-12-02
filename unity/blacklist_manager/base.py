@@ -28,6 +28,8 @@ class BaseBlackListManager(BaseStateManager, metaclass=SingletonABCMeta):
     field names and types.
     """
 
+    _as_caller_description: str = "the BlacklistManager, managing blocked contacts"
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

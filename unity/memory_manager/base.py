@@ -14,6 +14,10 @@ class BaseMemoryManager(ABC, metaclass=SingletonABCMeta):
     (they do **not** expose live, steerable handles).
     """
 
+    _as_caller_description: str = (
+        "the MemoryManager, performing offline memory maintenance"
+    )
+
     @abstractmethod
     async def update_contacts(
         self,

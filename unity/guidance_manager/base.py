@@ -19,6 +19,10 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
     • update — create/edit/delete guidance entries (mutations)
     """
 
+    _as_caller_description: str = (
+        "the GuidanceManager, managing assistant guidance and policies"
+    )
+
     # ------------------------------- Public API -------------------------------
     @abstractmethod
     async def ask(

@@ -5,10 +5,9 @@ from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import PNG_RED_B64
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_annotate_events_should_trigger_summary_update(mocked_manager):
+async def test_annotate_triggers_summary_update(mocked_manager):
     """Verifies that a successful annotation triggers an update to the session summary."""
     manager, mocks = mocked_manager
     manager.set_session_context("Initial summary.")
@@ -36,10 +35,9 @@ async def test_annotate_events_should_trigger_summary_update(mocked_manager):
         assert manager._session_summary == "Updated summary including the new event."
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_summary_should_persist_across_turns(mocked_manager):
+async def test_should_persist_across_turns(mocked_manager):
     """Tests that the session summary persists between manager operations."""
     manager, _ = mocked_manager
     manager.set_session_context("Session A")
@@ -53,10 +51,9 @@ async def test_summary_should_persist_across_turns(mocked_manager):
         assert "Session A" in manager._session_summary
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_summary_should_be_clearable(mocked_manager):
+async def test_should_be_clearable(mocked_manager):
     """Tests that the session summary can be reset by setting an empty context string."""
     manager, _ = mocked_manager
     manager.set_session_context("Some previous summary")

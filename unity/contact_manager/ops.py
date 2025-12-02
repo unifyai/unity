@@ -350,10 +350,7 @@ def merge_contacts(
             **(custom_updates or {}),
         )
 
-    delete_log_id = getattr(by_id[delete_id], "id", None)
-    delete_contact(self, contact_id=delete_id, _log_id=delete_log_id)
-
-    # Rewrite transcripts if needed
+    # Rewrite transcripts BEFORE deleting the merged contact to avoid FK SET NULL
     try:
         ctxs = unify.get_active_context()
         read_ctx = ctxs.get("read")
@@ -377,6 +374,10 @@ def merge_contacts(
 
         tm = TranscriptManager(contact_manager=self)
         tm.update_contact_id(original_contact_id=delete_id, new_contact_id=keep_id)
+
+    # Finally, delete the merged contact (FK SET NULL won't fire since no references remain)
+    delete_log_id = getattr(by_id[delete_id], "id", None)
+    delete_contact(self, contact_id=delete_id, _log_id=delete_log_id)
 
     return {
         "outcome": "contacts merged successfully",

@@ -38,7 +38,6 @@ This sandbox re-uses common helpers from `sandboxes/utils.py`, so it supports th
 ```
 --voice / -v        Enable voice capture (Deepgram) + TTS playback (Cartesia)
 --debug / -d        Show full reasoning steps of every tool-loop
---traced / -t       Wrap manager calls with unify.traced for detailed logs
 --project_name / -p Name of the Unify project/context (default: "Sandbox")
 --overwrite / -o    Delete any existing data for the chosen project before start
 --project_version   Roll back to a specific project commit (int index)
@@ -64,7 +63,6 @@ Notes on safety
 ---------------
 - The tool-loop prompts and tools are designed to never reveal raw secret values to LLMs. Read paths redact `value`.
 - `resolve` and `extract` bypass LLMs and publish only value-free metadata to logs.
-- If you wrap the manager with `unify.traced`, traces include method calls and arguments; secret values in tool arguments should be treated carefully in higher layers. The manager itself avoids echoing values in outcomes/messages.
 
 Example session (text mode)
 ---------------------------

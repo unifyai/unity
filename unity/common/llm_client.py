@@ -1,34 +1,49 @@
 from __future__ import annotations
 
-
-import json
-import os
 from typing import Any
 
 import unify
 
+from unity.settings import SETTINGS
 
-DEFAULT_MODEL = "gpt-5@openai"
+# Backward-compatible constant (now sourced from settings)
+DEFAULT_MODEL = SETTINGS.UNIFY_MODEL
+
+
+def get_cache_setting() -> bool | str:
+    """Return the cache setting from SETTINGS.
+
+    Backward-compatible wrapper. New code should use SETTINGS.UNIFY_CACHE directly.
+    """
+    return SETTINGS.UNIFY_CACHE
 
 
 def new_llm_client(
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     *,
+    async_client: bool = True,
     stateful: bool = False,
     **kwargs: Any,
-) -> "unify.AsyncUnify":
+) -> "unify.AsyncUnify | unify.Unify":
     """
-    Create a configured AsyncUnify client.
+    Create a configured Unify client.
 
-    Defaults to "gpt-5@openai" with sane defaults for reasoning effort and service tier.
+    If model is not specified, uses UNIFY_MODEL from settings (default: gpt-5.1@openai).
+    Defaults to high reasoning_effort and priority service_tier where applicable.
+    Returns an AsyncUnify client by default, or a synchronous Unify client when
+    async_client=False.
     """
+    if model is None:
+        model = SETTINGS.UNIFY_MODEL
+
     config = {
-        "cache": json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        "traced": json.loads(os.environ.get("UNIFY_TRACED", "false")),
+        "cache": SETTINGS.UNIFY_CACHE,
         "reasoning_effort": "high",
         "service_tier": "priority",
         "stateful": stateful,
     }
     config.update(kwargs)
 
-    return unify.AsyncUnify(model, **config)
+    if async_client:
+        return unify.AsyncUnify(model, **config)
+    return unify.Unify(model, **config)

@@ -6,8 +6,7 @@ import pytest
 from unity.file_manager.types import FilePipelineConfig
 
 
-@pytest.mark.unit
-def test_parse_return_mode_full(file_manager, tmp_path: Path):
+def test_return_mode_full(file_manager, tmp_path: Path):
     fm = file_manager
     p = tmp_path / "return_full.txt"
     p.write_text("alpha beta gamma")
@@ -20,8 +19,7 @@ def test_parse_return_mode_full(file_manager, tmp_path: Path):
     assert "status" in item and "file_format" in item
 
 
-@pytest.mark.unit
-def test_parse_return_mode_none(file_manager, tmp_path: Path):
+def test_return_mode_none(file_manager, tmp_path: Path):
     fm = file_manager
     p = tmp_path / "return_none.txt"
     p.write_text("alpha beta gamma")
@@ -33,7 +31,7 @@ def test_parse_return_mode_none(file_manager, tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_parse_async_single(file_manager, tmp_path: Path):
+async def test_async_single(file_manager, tmp_path: Path):
     fm = file_manager
     p = tmp_path / "return_async.txt"
     p.write_text("async parse content")

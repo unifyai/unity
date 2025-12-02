@@ -23,6 +23,10 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
     expose exactly the two public methods documented below.
     """
 
+    _as_caller_description: str = (
+        "the ContactManager, managing contact records on behalf of the end user"
+    )
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

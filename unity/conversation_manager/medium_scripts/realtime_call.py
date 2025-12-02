@@ -27,7 +27,8 @@ from livekit.plugins.openai import realtime as openai_realtime
 load_dotenv()
 
 from unity.conversation_manager.utils import dispatch_agent
-from unity.conversation_manager.new_events import *  # noqa: F403
+from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.events import *
 
 # NEW: shared helpers
 from unity.conversation_manager.medium_scripts.common import (

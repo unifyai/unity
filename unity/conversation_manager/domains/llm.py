@@ -5,8 +5,6 @@ from openai import AsyncOpenAI
 from pydantic_core import from_json
 from typing import Awaitable, Callable, Optional
 
-is_reasoning = lambda name: "gpt-5" in name
-
 
 class LLM:
     def __init__(self, model: str, event_broker=None):
@@ -42,8 +40,9 @@ class LLM:
             instructions=system_prompt,
             input=messages,
             text_format=response_model,
+            reasoning={"effort": "low"},
         )
-        out = out.output[0].content[0].text
+        out = out.output[1].content[0].text
         return out
 
     async def _run_stream(
@@ -62,6 +61,7 @@ class LLM:
             # input=self.chat_history + input_message,
             input=messages,
             text_format=response_model,
+            reasoning={"effort": "low"},
         ) as stream:
             done = False
             first_chunk = False

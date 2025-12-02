@@ -238,9 +238,6 @@ async def _main_async() -> None:
 
     args = parser.parse_args()
 
-    # tracing flag
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
     # ─────────────────── Unify context ────────────────────
     activate_project(args.project_name, args.overwrite)
 
@@ -275,8 +272,6 @@ async def _main_async() -> None:
 
     # manager
     rag_agent = IntranetRAGAgent(sandbox_mode=True)
-    if args.traced:
-        rag_agent = unify.traced(rag_agent)
 
     # ─────────────────── optional initial seeding ─────────────────────────
     # No automatic seeding – users can invoke 'us' / 'usv' commands to populate knowledge when desired.

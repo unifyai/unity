@@ -1,6 +1,8 @@
 import os
 from typing import Optional
 
+from unity.common.context_registry import ContextRegistry
+
 # Attempt to import the external 'unify' SDK. If unavailable, provide a minimal
 # no-op shim so importing the 'unity' package does not require extra installs.
 try:  # pragma: no cover - simple import guard
@@ -34,28 +36,18 @@ unify.set_client_direct_mode(True)
 # Default logging hygiene
 # ---------------------------------------------------------------------------
 
-
-def _truthy(env: str, default: bool = True) -> bool:
-    v = os.getenv(env)
-    if v is None:
-        return default
-    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+from unity.settings import SETTINGS as _SETTINGS
 
 
 def _configure_default_logging() -> None:
     """Apply safe, idempotent default logging rules.
 
-    Defaults:
-      - Show `unity` logs at INFO.
-      - Hide noisy third-party HTTP clients (httpx/urllib3/openai) unless opted-in.
-      - By default, include-only project logs (unity*) unless overridden via env.
-
-    Env flags (all optional):
-      - UNITY_SILENCE_HTTPX=true|false (default true)
-      - UNITY_SILENCE_URLLIB3=true|false (default true)
-      - UNITY_SILENCE_OPENAI=true|false (default true)
-      - UNITY_LOG_ONLY_PROJECT=true|false (default true)
-      - UNITY_LOG_INCLUDE_PREFIXES="unity,unify_requests" (used when UNITY_LOG_ONLY_PROJECT=true)
+    Settings are sourced from unity.settings.ProductionSettings:
+      - UNITY_SILENCE_HTTPX (default true)
+      - UNITY_SILENCE_URLLIB3 (default true)
+      - UNITY_SILENCE_OPENAI (default true)
+      - UNITY_LOG_ONLY_PROJECT (default true)
+      - UNITY_LOG_INCLUDE_PREFIXES (default "unity")
     """
     if getattr(_configure_default_logging, "_done", False):
         return
@@ -67,16 +59,16 @@ def _configure_default_logging() -> None:
         logging.getLogger("unity").setLevel(logging.INFO)
 
         # 2) Mute common HTTP client libraries by default
-        if _truthy("UNITY_SILENCE_HTTPX", True):
+        if _SETTINGS.UNITY_SILENCE_HTTPX:
             logging.getLogger("httpx").setLevel(logging.WARNING)
-        if _truthy("UNITY_SILENCE_URLLIB3", True):
+        if _SETTINGS.UNITY_SILENCE_URLLIB3:
             logging.getLogger("urllib3").setLevel(logging.WARNING)
-        if _truthy("UNITY_SILENCE_OPENAI", True):
+        if _SETTINGS.UNITY_SILENCE_OPENAI:
             logging.getLogger("openai").setLevel(logging.WARNING)
 
         # 3) Optional include-only filter (default: enabled per request)
-        if _truthy("UNITY_LOG_ONLY_PROJECT", True):
-            allow_raw = os.getenv("UNITY_LOG_INCLUDE_PREFIXES", "unity")
+        if _SETTINGS.UNITY_LOG_ONLY_PROJECT:
+            allow_raw = _SETTINGS.UNITY_LOG_INCLUDE_PREFIXES
             allow = tuple(s.strip() for s in allow_raw.split(",") if s.strip())
 
             class _OnlyProject(logging.Filter):
@@ -102,6 +94,31 @@ def _configure_default_logging() -> None:
 
 
 _configure_default_logging()
+
+
+# ---------------------------------------------------------------------------
+# LLM I/O debug hooks (monkeypatch unify client when enabled)
+# ---------------------------------------------------------------------------
+
+
+def _install_llm_io_hooks() -> None:
+    """Install LLM I/O debug hooks if enabled via settings."""
+    if getattr(_install_llm_io_hooks, "_done", False):
+        return
+
+    try:
+        if _SETTINGS.LLM_IO_DEBUG:
+            from unity.common.llm_io_hooks import install_llm_io_hooks
+
+            install_llm_io_hooks()
+    except Exception:
+        # Never let hook installation crash imports
+        pass
+
+    _install_llm_io_hooks._done = True  # type: ignore[attr-defined]
+
+
+_install_llm_io_hooks()
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +201,18 @@ def init(
 
     # 2. Set the assistant context *after* validation
     ASSISTANT_CONTEXT = ctx
-    unify.set_context(ctx)
+
+    # Idempotent context setup: tolerate concurrent creation from parallel processes
+    # (e.g., pytest-xdist workers, CI parallelism, multi-instance deployments)
+    try:
+        unify.set_context(ctx)
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            unify.set_context(ctx, skip_create=True)
+        else:
+            raise
+
+    ContextRegistry.setup()
 
     # 3. Bring up the global EventBus
     from .events import event_bus as _event_bus_mod

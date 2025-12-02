@@ -33,12 +33,38 @@ from ..image_manager.image_manager import ImageManager
 from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
+from ..common.context_registry import TableContext, ContextRegistry
 
 
 class GuidanceManager(BaseGuidanceManager):
     """
     Concrete Guidance manager backed by Unify contexts and fields.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Guidance",
+                description="Table of distilled guidance entries from transcripts and images.",
+                fields=model_to_fields(Guidance),
+                unique_keys={"guidance_id": "int"},
+                auto_counting={"guidance_id": None},
+                foreign_keys=[
+                    {
+                        "name": "images[*].raw_image_ref.image_id",
+                        "references": "Images.image_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "function_ids[*]",
+                        "references": "Functions.function_id",  # TODO: change to the actual context
+                        "on_delete": "CASCADE",  # pop on function deletion
+                        "on_update": "CASCADE",
+                    },
+                ],
+            ),
+        ]
 
     def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
         super().__init__()
@@ -58,7 +84,7 @@ class GuidanceManager(BaseGuidanceManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a GuidanceManager."
 
-        self._ctx = f"{read_ctx}/Guidance" if read_ctx else "Guidance"
+        self._ctx = ContextRegistry.get_context(self, "Guidance")
 
         # Built-in fields derived from Guidance model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
@@ -312,17 +338,7 @@ class GuidanceManager(BaseGuidanceManager):
             pass
 
         # Ensure the schema exists again via shared provisioning helper
-        try:
-            # Remove any previous ensure memo and force re-provisioning
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
-
+        ContextRegistry.refresh(self, "Guidance")
         self._provision_storage()
 
         # Verify the context is visible before attempting reads
@@ -350,7 +366,6 @@ class GuidanceManager(BaseGuidanceManager):
             ),
             fields=model_to_fields(Guidance),
         )
-        self._store.ensure_context()
 
         # Prefill known custom fields once to include any preexisting non-private columns
         try:
@@ -499,6 +514,9 @@ class GuidanceManager(BaseGuidanceManager):
         for r in items:
             if not isinstance(r, AnnotatedImageRef):
                 continue
+            # Skip deleted images (SET NULL from FK policy)
+            if r.raw_image_ref.image_id is None:
+                continue
             iid = int(r.raw_image_ref.image_id)
             image_ids.append(iid)
             annotations_by_id.setdefault(iid, []).append(str(r.annotation))
@@ -641,6 +659,9 @@ class GuidanceManager(BaseGuidanceManager):
         annotations_by_id: Dict[int, List[str]] = {}
         for r in items:
             if not isinstance(r, AnnotatedImageRef):
+                continue
+            # Skip deleted images (SET NULL from FK policy)
+            if r.raw_image_ref.image_id is None:
                 continue
             iid = int(r.raw_image_ref.image_id)
             unique_ids.append(iid)
@@ -1003,7 +1024,14 @@ class GuidanceManager(BaseGuidanceManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        if step_index < 1 and "search" in current_tools:
+        """Require search on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search" in current_tools
+        ):
             return ("required", {"search": current_tools["search"]})
         return ("auto", current_tools)
 
@@ -1012,6 +1040,13 @@ class GuidanceManager(BaseGuidanceManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        if step_index < 1 and "ask" in current_tools:
+        """Require ask on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)

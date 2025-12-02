@@ -3,10 +3,9 @@ from unity.screen_share_manager.screen_share_manager import ScreenShareManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_lifecycle_should_handle_idempotent_start_stop():
+async def test_should_handle_idempotent_start_stop():
     """Tests that calling start/stop multiple times does not raise errors."""
     manager = ScreenShareManager()
     await manager.start()
@@ -15,10 +14,9 @@ async def test_lifecycle_should_handle_idempotent_start_stop():
     await manager.stop()  # Calling stop again should be safe
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_configuration_should_update_settings_dynamically():
+async def test_settings_update_dynamically():
     """Tests that changing settings on the manager instance is reflected."""
     manager = ScreenShareManager()
     manager.settings.frame_queue_size = 99

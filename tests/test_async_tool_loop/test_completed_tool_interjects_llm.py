@@ -7,6 +7,11 @@ import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
+from tests.test_async_tool_loop.async_helpers import (
+    make_gated_async_tool,
+    _wait_for_tool_result,
+    _wait_for_next_assistant_response_event,
+)
 
 # ────────────────────────────────────────────────────────────────────────────
 # Dummy tools – one finishes almost instantly, the other a little later
@@ -41,7 +46,10 @@ async def very_slow_task() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> None:
+async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
+    model,
+    caplog,
+) -> None:
     """
     When two tools are requested in one turn and only the fast one completes,
     the model will choose the `wait` helper to no-op until the very slow tool
@@ -50,24 +58,33 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> No
     - `wait` was indeed called (via log capture), and
     - `wait` does not appear in the final transcript (pruned from messages).
 
-    We still expect at least the initial assistant turn and final answer, and at
-    least two tool messages (placeholder + fast result), but do not require an
-    intermediate assistant message as it may be pruned when using `wait`.
+    This test uses a gated tool for very_slow_task to ensure deterministic timing:
+    1. fast_task completes
+    2. LLM gets a chance to respond (should call `wait`)
+    3. Only then is very_slow_task's gate released
+    4. LLM produces final answer
     """
 
     system_prompt = (
-        "You can call two tools: 'fast_task' and 'very_slow_task'. "
-        "Always call *both* in the same assistant turn. "
-        "If you receive only one result, think aloud and say you are still "
-        "waiting for the other. After you have both results give a final answer."
-        " Important: while at least one requested tool call is still running and not all results are available, you must call ONLY the helper tool named `wait` immediately and nothing else; do not produce any assistant text on that turn. Once all requested tool results have arrived, produce the final assistant reply."
+        "You have two tools: 'fast_task' and 'very_slow_task'. "
+        "When asked to run them, always call BOTH tools in a single assistant turn.\n\n"
+        "CRITICAL RULE: After calling tools, if any tool is still pending (shows '_placeholder': 'pending'), "
+        "you MUST call the `wait` tool and produce NO other output. Do not explain, do not ask questions, "
+        "do not produce any text - just call `wait`. Only after ALL tool results are available "
+        "(no pending placeholders remain) should you produce your final text response summarizing the results."
     )
 
     client = new_llm_client(
+        model=model,
         system_message=system_prompt,
     )
 
-    tools = {"fast_task": fast_task, "very_slow_task": very_slow_task}
+    # Create a gated tool for very_slow_task to control timing deterministically
+    very_slow_gate, gated_very_slow_task = make_gated_async_tool(
+        return_value="VERY_SLOW_RESULT",
+    )
+
+    tools = {"fast_task": fast_task, "very_slow_task": gated_very_slow_task}
 
     handle = start_async_tool_loop(
         client,
@@ -78,6 +95,21 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> No
 
     caplog.set_level(logging.INFO)
     caplog.clear()
+
+    # Wait for fast_task result to be processed
+    await _wait_for_tool_result(client, "fast_task", min_results=1)
+
+    # Wait for the LLM to actually respond after seeing the partial result.
+    # This uses EventBus events to detect when the next assistant message
+    # is published (which should be the `wait` call after fast_task completed).
+    # This avoids race conditions with fixed delays that might not be long
+    # enough for uncached LLM responses.
+    await _wait_for_next_assistant_response_event(timeout=120.0)
+
+    # Now release the gate so very_slow_task can complete
+    very_slow_gate.set()
+
+    # Wait for the loop to complete
     await handle.result()
 
     # ── Assertions ───────────────────────────────────────────────────────
@@ -105,18 +137,17 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> No
         m for m in client.messages if m.get("role") == "tool" and not is_status_tool(m)
     ]
 
-    # 1) Assert that `wait` was called (via loop logger), OR accept preemption
-    #    when the slow tool finishes before the LLM responds (detected via the
-    #    synthetic check_status_* assistant→tool pair).
+    # 1) Assert that `wait` was called (via loop logger)
     wait_logged = any(
         "Assistant chose `wait` – no-op; not persisting to transcript."
         in r.getMessage()
         for r in caplog.records
     )
-    has_status_pair = any(is_status_assistant(m) for m in client.messages) and any(
-        is_status_tool(m) for m in client.messages
+    assert wait_logged, (
+        "Expected LLM to call `wait` while very_slow_task was pending, but no "
+        "`wait` log was found. This may indicate the LLM did not follow the prompt "
+        "instructions to call `wait` when partial results are available."
     )
-    assert wait_logged or has_status_pair
 
     # 2) Assert that `wait` is not persisted in the transcript
     #    - no assistant tool_call with function name 'wait'
@@ -159,7 +190,7 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> No
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
+async def test_llm_step_is_preempted_by_late_tool_completion(model) -> None:
     """
     The model is instructed to call both tools in a single assistant turn. The fast
     task completes first, then the slow task completes while the model may still be
@@ -185,6 +216,7 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     )
 
     client = new_llm_client(
+        model=model,
         system_message=system_prompt,
     )
 

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, create_model
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.domains.contact_index import Contact
 
@@ -28,9 +28,7 @@ class ConductorAction(BaseModel):
             "'conductor_request': read-write request\n"
         ),
     )
-    query: str = Field(
-        ...,
-    )
+    query: str = Field(...)
 
 
 class ConductorHandleAction(BaseModel):
@@ -55,17 +53,14 @@ class ConductorHandleAction(BaseModel):
             "'conductor_handle_pause': pause the handle\n"
             "'conductor_handle_resume': resume the handle\n"
             "'conductor_handle_done': check if the handle is done\n"
-            "'conductor_handle_answer_clarification': answer a clarification question\n"
+            "'conductor_handle_answer_clarification': answer a clarification question from the conductor\n"
         ),
     )
-
-
-class ConductorAnswerClarificationAction(BaseModel):
-    """Answer a clarification question."""
-
-    action_name: Literal["conductor_answer_clarification"]
-    handle_id: int
-    call_id: str
+    query: str = Field(...)
+    call_id: Optional[str] = Field(
+        ...,
+        description="the call id of the call that the intervention is for (only used for clarifications)",
+    )
 
 
 # wait
@@ -258,20 +253,25 @@ async def get_update_or_create_contact(
             if v:
                 if contact[k] != v:
                     data_to_insert[k] = v
-        updated_contacts = cm.contact_manager.get_contact_info(
-            contact_id=[c.contact_id for c in cm.contact_index.contacts.values()],
+        updated_contacts_raw = cm.contact_manager.get_contact_info(
+            contact_id=list(cm.contact_index.contacts.keys()),
         )
-        updated_active_contacts = {
-            Contact(
-                **{**c.model_dump(), **uc, "threads": c.threads},
-            )
-            for (cid, c), uc in zip(
-                cm.contact_index.active_conversations.items(),
-                updated_contacts,
-            )
-        }
-        cm.contact_index.contacts = updated_contacts
-        cm.contact_index.active_conversations = updated_active_contacts
+        # Update contacts dict with Contact objects
+        for cid, uc in updated_contacts_raw.items():
+            if cid in cm.contact_index.contacts:
+                existing = cm.contact_index.contacts[cid]
+                cm.contact_index.contacts[cid] = Contact(
+                    **{**existing.model_dump(), **uc, "threads": existing.threads},
+                )
+            else:
+                cm.contact_index.contacts[cid] = Contact(**uc)
+        # Update active_conversations similarly
+        for cid, c in cm.contact_index.active_conversations.items():
+            if cid in updated_contacts_raw:
+                uc = updated_contacts_raw[cid]
+                cm.contact_index.active_conversations[cid] = Contact(
+                    **{**c.model_dump(), **uc, "threads": c.threads},
+                )
         contact = (
             cm.contact_index.get_contact(phone_number=phone)
             if phone
@@ -378,7 +378,7 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
         contact_id,
         contact_details,
     )
-    to_email = contact.get("email")
+    to_email = contact.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
     message_id = kwargs.get("message_id")
@@ -442,6 +442,8 @@ async def conductor_ask_request(
 ):
     """Start a Conductor ask/request, store handle, and publish started."""
     global _next_handle_id
+
+    await managers_utils.wait_for_initialization(cm)
     query = kwargs["query"]
     if "ask" in action_name:
         handle = await cm.conductor.ask(
@@ -481,16 +483,28 @@ async def conductor_ask_request(
     )
 
 
-@Action.register([...])
+@Action.register(
+    [
+        "conductor_handle_ask",
+        "conductor_handle_interject",
+        "conductor_handle_stop",
+        "conductor_handle_pause",
+        "conductor_handle_resume",
+        "conductor_handle_done",
+        "conductor_handle_answer_clarification",
+    ]
+)
 async def conductor_handle_actions(
     cm: "ConversationManager",
     action_name: str,
     *args,
     **kwargs,
 ):
+    await managers_utils.wait_for_initialization(cm)
     handle_id = kwargs["handle_id"]
     query = kwargs["query"]
-    handle_data = cm.handle_registry.get(handle_id)
+    call_id = kwargs["call_id"]
+    handle_data = cm.conductor_handles.get(handle_id)
     if not handle_data:
         print(f"[ManagersWorker] Unknown handle_id={handle_id} for action")
         return
@@ -505,30 +519,34 @@ async def conductor_handle_actions(
     result = ""
     try:
         match action_name:
-            case "ask":
+            case "conductor_handle_ask":
                 ask_handle = await handle.ask(
                     query,
                     parent_chat_context_cont=cm.chat_history,
                 )
                 result = await ask_handle.result()
-            case "interject":
+            case "conductor_handle_interject":
                 await handle.interject(
                     query,
                     parent_chat_context_cont=cm.chat_history,
                 )
                 result = "Handle Interjected"
-            case "stop":
+            case "conductor_handle_stop":
                 handle.stop(reason=query)
                 result = "Handle Stopped"
-            case "pause":
+                cm.conductor_handles.pop(handle_id, None)
+            case "conductor_handle_pause":
                 handle.pause()
                 result = "Handle Paused"
-            case "resume":
+            case "conductor_handle_resume":
                 handle.resume()
                 result = "Handle Resumed"
-            case "done":
+            case "conductor_handle_done":
                 done_result = handle.done()
                 result = "Handle Done" if done_result else "Handle Not Done"
+            case "conductor_handle_answer_clarification":
+                await handle.answer_clarification(call_id, query)
+                result = "Handle Answer Clarification"
             case _:
                 print(
                     f"[ManagersWorker] Unknown action_name={action_name} for intervention",
@@ -546,5 +564,6 @@ async def conductor_handle_actions(
             action_name=action_name,
             query=query,
             response=f"Intervened: {action_name} {result}",
+            call_id=call_id,
         ).to_json(),
     )

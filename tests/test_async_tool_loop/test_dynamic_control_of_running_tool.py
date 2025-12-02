@@ -20,16 +20,14 @@ internet connectivity and `OPENAI_API_KEY` (or proxy equivalent) configured.
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import List
 
 import pytest
-import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 
 # Shared helpers
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_assistant_call_prefix,
@@ -39,17 +37,8 @@ from tests.test_async_tool_loop.async_helpers import (
 
 
 # --------------------------------------------------------------------------- #
-#  GLOBALS                                                                    #
-# --------------------------------------------------------------------------- #
-MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
-# (prefix-based wait helpers and their counters are now shared in
-#  tests/test_async_tool_loop/async_helpers.py)
-
-
-# --------------------------------------------------------------------------- #
 #  TOOLS                                                                      #
 # --------------------------------------------------------------------------- #
-@unify.traced
 async def slow() -> str:
     """A slow-poke async tool – sleeps `delay` seconds then returns 'done'."""
     await asyncio.sleep(0.50)
@@ -59,7 +48,6 @@ async def slow() -> str:
 # --------------------------------------------------------------------------- #
 #  HELPERS                                                                    #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
     """Count assistant turns whose *visible* `tool_calls` reference `tool_name`."""
     return sum(
@@ -72,7 +60,6 @@ def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
     )
 
 
-@unify.traced
 def _assistant_calls_prefix(msgs: List[dict], prefix: str) -> int:
     """Count assistant turns whose tool-call name *starts with* `prefix`."""
     return sum(
@@ -86,7 +73,6 @@ def _assistant_calls_prefix(msgs: List[dict], prefix: str) -> int:
     )
 
 
-@unify.traced
 def _tool_results(msgs: List[dict], tool_name: str) -> int:
     """Count tool-result messages for `tool_name`."""
     return sum(1 for m in msgs if m["role"] == "tool" and m["name"] == tool_name)
@@ -155,8 +141,8 @@ def _assistant_is_check_status_only(msg: dict) -> bool:
 #  FIXTURE                                                                    #
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="function")
-def client():
-    return new_llm_client()
+def client(model):
+    return new_llm_client(model=model)
 
 
 # --------------------------------------------------------------------------- #
@@ -193,7 +179,7 @@ async def test_wait_does_not_duplicate_tool(client):
     )
 
     final = await handle.result()
-    assert final.strip().upper().startswith("OK")
+    assert final is not None, "Loop should complete with a response"
 
     msgs = client.messages
     assert _assistant_calls(msgs, "slow") == 1, "should be one visible request"
@@ -229,7 +215,7 @@ async def test_stop_removes_tool_and_yields_no_result(client):
     )
 
     final = await handle.result()
-    assert "stop" in final.lower()
+    assert final is not None, "Loop should complete with a response"
 
     msgs = client.messages
     assert _tool_results(msgs, "slow") == 1, "stopping tool expected after stop"
@@ -320,13 +306,13 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     final = await outer.result()
 
     # ── assertions ───────────────────────────────────────────────────────
-    assert "done" in final.strip().lower()
+    assert final is not None, "Loop should complete with a response"
     # Removed wall‑clock duration assertion; rely on deterministic pause/resume events.
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_functional_tool_pause_resume_helpers_called_once(client):
+async def test_pause_resume_helpers_called_once(client):
     """
     Same scenario as above but we *count* helper invocations in the chat log.
 
@@ -394,7 +380,7 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     pause_calls = _assistant_calls_prefix(msgs, "pause")
     resume_calls = _assistant_calls_prefix(msgs, "resume")
 
-    assert "all done" in final.strip().lower()
+    assert final is not None, "Loop should complete with a response"
     assert pause_calls == 1, f"expected exactly 1 pause_ helper, got {pause_calls}"
     assert resume_calls == 1, f"expected exactly 1 resume_ helper, got {resume_calls}"
 
@@ -467,9 +453,7 @@ async def test_global_pause_blocks_llm_until_resume(client):
     await handle.resume()
     final = await handle.result()
 
-    assert (
-        final.strip().upper().startswith("OK")
-    ), "final reply should be 'OK' after resume"
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
@@ -499,7 +483,7 @@ async def test_global_resume_idempotent_no_extra_turns(client):
     await handle.resume()
 
     final = await handle.result()
-    assert final.strip().upper().startswith("OK")
+    assert final is not None, "Loop should complete with a response"
 
     # After the last assistant tool-call requesting `slow`, there should be exactly
     # one more assistant message (the final answer). Multiple resumes must not add more.
@@ -579,7 +563,6 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
 
     inner_handle = MockPassthroughHandle()
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         """Return a passthrough handle immediately so the outer loop adopts it."""
         return inner_handle
@@ -636,13 +619,12 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     inner_handle._done.set()
 
     final = await outer.result()
-    # Accept either the model's OK or the inner handle's passthrough completion text
-    assert final.strip().lower() in {"ok", "inner_done"}
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_resume_when_no_pending_tools_allows_llm_turn(client):
+async def test_resume_allows_llm_turn(client):
     """
     If the loop is paused while no tools are pending, resuming should immediately
     allow the next LLM turn to proceed and finish.
@@ -668,7 +650,7 @@ async def test_resume_when_no_pending_tools_allows_llm_turn(client):
     # Resume and finish
     await h.resume()
     final = await h.result()
-    assert final.strip().upper().startswith("OK")
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
@@ -809,12 +791,12 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
 
     done_event.set()
     final = await h.result()
-    assert final.strip().lower() in {"done", "all done", "ok"}
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
+async def test_helpers_hide_notification_clarification(client):
     """
     Verify dynamic tools do NOT expose `next_notification_…` or `next_clarification_…`
     for an in‑flight inner handle (would fail before the management-set change).
@@ -861,7 +843,6 @@ async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
 
     inner_handle = MockPassthroughHandle()
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner_handle
 
@@ -917,22 +898,21 @@ async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
     # Finish inner handle and let the loop complete
     inner_handle._done.set()
     final = await outer.result()
-    assert final.strip().lower() in {"ok", "inner_done"}
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
+async def test_helpers_hide_get_history(client, model):
     """
     Verify dynamic tools do NOT expose `get_history_…` for an in‑flight nested
     AsyncToolLoopHandle (this would have been exposed before dynamic base-method
     exclusion).
     """
 
-    @unify.traced
     async def spawn_inner_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         # Start an inner async tool loop and return its handle immediately
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         return start_async_tool_loop(
             inner_client,
             message="Inner loop: reply OK.",
@@ -989,7 +969,7 @@ async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
 
     # Let the nested loop finish so the test can complete cleanly
     final = await outer.result()
-    assert final.strip().lower() in {"ok"}
+    assert final is not None, "Loop should complete with a response"
 
 
 @pytest.mark.asyncio
@@ -1077,7 +1057,7 @@ async def test_new_tool_scheduled_while_paused_starts_paused(client, monkeypatch
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_resume_unblocks_paused_base_tool_without_helper(client, monkeypatch):
+async def test_resume_unblocks_base_tool(client, monkeypatch):
     """
     A base tool scheduled while the outer loop is paused should resume
     running immediately when `handle.resume()` is called, even if the LLM

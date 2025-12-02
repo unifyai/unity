@@ -80,9 +80,6 @@ async def _main_async() -> None:
 
     args = parser.parse_args()
 
-    # tracing flag
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
     # Unify context
     activate_project(args.project_name, args.overwrite)
 
@@ -111,8 +108,6 @@ async def _main_async() -> None:
     LG.setLevel(logging.INFO)
 
     ws = WebSearcher()
-    if args.traced:
-        ws = unify.traced(ws)  # type: ignore[assignment]
 
     _COMMANDS_HELP = (
         "\nWebSearcher sandbox – type queries below (press ↵ with an empty "

@@ -32,6 +32,8 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
     for field names and types.
     """
 
+    _as_caller_description: str = "the FunctionManager, managing user-defined functions"
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

@@ -2,10 +2,7 @@ import asyncio
 import unify
 import json
 import inspect
-import os
-from pathlib import Path
 import copy
-import re
 
 from typing import (
     Dict,
@@ -21,7 +18,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
+from ...constants import LOGGER
 from ..tool_spec import ToolSpec, normalise_tools
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
@@ -30,6 +27,7 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
+    transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -47,7 +45,6 @@ from .images import (
     LIVE_IMAGES_LOG,
     build_live_images_overview_msgs,
 )
-from .formatting import sanitize_tool_msg_for_logging
 from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
     LoopConfig,
@@ -65,11 +62,30 @@ from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
 from . import semantic_cache as sc
 
-# Single per-run LLM I/O debug directory path (set on first use)
-_LLM_IO_FILE_PATH: str | None = None
-
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
+
+
+def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
+    """Remove duplicate tool calls from a list.
+
+    Returns (unique_calls, pruned_call_ids) where pruned_call_ids contains
+    the IDs of calls that were removed as duplicates.
+    """
+    seen: Set[tuple[str, str]] = set()
+    unique_calls: list = []
+    pruned_ids: set[str] = set()
+    for call in tool_calls:
+        _fn = call.get("function") or {}
+        _args = _fn.get("arguments", "")
+        _args_str = _args if isinstance(_args, str) else json.dumps(_args)
+        sig = (_fn.get("name", ""), _args_str)
+        if sig not in seen:
+            seen.add(sig)
+            unique_calls.append(call)
+        else:
+            pruned_ids.add(call.get("id", ""))
+    return unique_calls, pruned_ids
 
 
 class LoopLogger:
@@ -170,6 +186,7 @@ async def async_tool_loop_inner(
     interrupt_llm_with_interjections: bool = True,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
+    caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
@@ -305,104 +322,106 @@ async def async_tool_loop_inner(
             setattr(outer_handle_container[0], "_log_label", cfg.label)
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
-    # Independent, centrally-configured LLM I/O logging flag
-    llm_io_debug = bool(LLM_IO_DEBUG)
 
-    # File sink for LLM I/O: per-run directory under hidden folder, named by SESSION_ID
-    _llm_io_dir: str | None = None
-    if llm_io_debug:
-        with suppress(Exception):
-            global _LLM_IO_FILE_PATH
-            if _LLM_IO_FILE_PATH is None:
-                root = Path(os.getcwd())
-                logs_dir = root / ".llm_io_debug"
-                logs_dir.mkdir(parents=True, exist_ok=True)
-                # Sanitize SESSION_ID for filesystem safety
-                try:
-                    session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
-                except Exception:
-                    session_safe = (
-                        SESSION_ID.replace(":", "-").replace("+", "-").replace("/", "-")
+    # ── Model family detection (centralized) ──────────────────────────────────────
+    _model_name = str(getattr(client, "model", "") or "")
+    _model_base = _model_name.split("@")[0]
+    _is_claude = _model_base.startswith("claude")
+
+    # ── Reasoning model compatibility ────────────────────────────────────────────
+    # Handle reasoning model constraints:
+    # - Claude: extended thinking incompatible with tool_choice="required"; we
+    #   disable thinking on forced-tool turns and transform those messages later.
+    _claude_thinking_disabled = False
+    # Track seeded message count - messages at indices < this need transformation
+    # for Claude because they lack thinking blocks (manually constructed).
+    _seeded_msg_count = 0
+
+    def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
+        """Handle reasoning model compatibility. Returns effective preprocess."""
+        nonlocal _claude_thinking_disabled
+
+        effective_preprocess = preprocess_msgs
+
+        # Claude: Handle thinking/tool_choice incompatibility
+        # Anthropic's API prohibits extended thinking with tool_choice="required".
+        # LiteLLM converts reasoning_effort to thinking for Claude models, so we
+        # must prevent reasoning_effort from being sent. We temporarily clear the
+        # client's _reasoning_effort so the generate call won't enable thinking.
+        if _is_claude:
+            if tool_choice == "required":
+                # Clear reasoning_effort on the client to prevent thinking
+                if hasattr(client, "_reasoning_effort"):
+                    client._reasoning_effort = None
+                # Also remove from gen_kwargs in case it was explicitly set
+                gen_kwargs.pop("reasoning_effort", None)
+                gen_kwargs.pop("thinking", None)
+                _claude_thinking_disabled = True
+            else:
+                # Always apply transformation wrapper for Claude to handle:
+                # 1. Seeded messages without thinking blocks (manually constructed)
+                # 2. Synthetic check_status_ messages (chronological ordering pairs)
+                #
+                # We do NOT transform real loop-generated assistant messages (those
+                # have thinking blocks from Claude). Transforming those caused
+                # infinite loops where Claude couldn't understand the context.
+                outer_preprocess = effective_preprocess
+
+                def claude_wrapper(msgs):
+                    # Skip transformation when no tools available. The check_status_
+                    # synthetic messages are internal bookkeeping for chronological
+                    # ordering. When tools are exhausted, Claude just needs to produce
+                    # a final text response. Transforming to "[Continue from here]"
+                    # confuses Claude into producing empty responses when there's
+                    # nothing left to do.
+                    if not gen_kwargs.get("tools"):
+                        return outer_preprocess(msgs) if outer_preprocess else msgs
+
+                    # Build index lookup for efficiency
+                    msg_indices = {id(m): i for i, m in enumerate(msgs)}
+
+                    def needs_transformation(m: dict) -> bool:
+                        if not isinstance(m, dict):
+                            return False
+                        if m.get("role") != "assistant":
+                            return False
+                        if not m.get("tool_calls"):
+                            return False
+
+                        # Check 1: Synthetic check_status_ messages always need
+                        # transformation. These are loop-internal bookkeeping for
+                        # chronological tool result ordering and don't have thinking
+                        # blocks (they're synthesized, not from Claude).
+                        for tc in m.get("tool_calls") or []:
+                            func = tc.get("function", {})
+                            name = func.get("name", "")
+                            if isinstance(name, str) and name.startswith(
+                                "check_status_",
+                            ):
+                                return True
+
+                        # Check 2: Seeded messages without thinking blocks (those
+                        # passed in initially via the message parameter). These
+                        # are manually constructed and lack Claude's thinking.
+                        idx = msg_indices.get(id(m), 999999)
+                        if idx >= _seeded_msg_count:
+                            return False  # Not a seeded message
+                        provider_fields = m.get("provider_specific_fields") or {}
+                        thinking_blocks = provider_fields.get("thinking_blocks")
+                        return thinking_blocks is None
+
+                    msgs = transform_tool_calls_to_context(
+                        msgs,
+                        marker_key="_claude_thinking_compat",
+                        context_header="[Prior tool execution context]",
+                        context_footer="[Continue from here]",
+                        predicate=needs_transformation,
                     )
-                # Use the prior "filename" as a directory name for this run
-                session_dir = logs_dir / f"{session_safe}"
-                session_dir.mkdir(parents=True, exist_ok=True)
-                _LLM_IO_FILE_PATH = str(session_dir)
-            _llm_io_dir = _LLM_IO_FILE_PATH
+                    return outer_preprocess(msgs) if outer_preprocess else msgs
 
-    def _llm_io_write(header: str, body: str) -> None:
-        if not llm_io_debug or _llm_io_dir is None:
-            return
-        try:
-            # Resolve a unique filename inside the per-run directory using the current time
-            from datetime import datetime, timezone as _tz
-            import time as _time
+                effective_preprocess = claude_wrapper
 
-            _dir = Path(_llm_io_dir)
-            # Time-of-day without date, with nanosecond precision
-            _now = datetime.now(_tz.utc)
-            _hhmmss = _now.strftime("%H%M%S")
-            _ns = _time.time_ns() % 1_000_000_000
-            _base = f"{_hhmmss}_{_ns:09d}"
-            _path = _dir / f"{_base}.txt"
-            if _path.exists():
-                _i = 1
-                while True:
-                    _candidate = _dir / f"{_base}_{_i}.txt"
-                    if not _candidate.exists():
-                        _path = _candidate
-                        break
-                    _i += 1
-
-            with open(_path, "w", encoding="utf-8") as _f:
-                _f.write(f"🔄 [{logger.log_label}] {header}\n")
-                _f.write(body.rstrip())
-                _f.write("\n")
-            # Emit a concise terminal notice with the destination file
-            try:
-                kind = "request" if "request" in header.lower() else "response"
-                logger.info(f"LLM {kind} written to {_path}", prefix="📝")
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-    # Late-stage request logger used by generate_with_preprocess
-    def _log_llm_request(patched_msgs, gen_kwargs, system_message):
-        with suppress(Exception):
-            try:
-                from .utils import try_parse_json as _try_parse_json
-            except Exception:
-                _try_parse_json = lambda v: v
-
-            _msgs_pretty = []
-            for _m in patched_msgs:
-                _mm = copy.deepcopy(_m)
-                try:
-                    if _mm.get("role") == "assistant":
-                        for _tc in _mm.get("tool_calls") or []:
-                            _fn = _tc.get("function", {})
-                            _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
-                    if _mm.get("role") == "tool":
-                        _mm = sanitize_tool_msg_for_logging(_mm)
-                except Exception:
-                    pass
-                _msgs_pretty.append(_mm)
-
-            _req_payload = {
-                "model": getattr(client, "model", None),
-                "messages": _msgs_pretty,
-            }
-            for _k, _v in gen_kwargs.items():
-                _req_payload[_k] = _v
-
-            _sys_block = (
-                f"System message:\n{system_message}\n\n" if system_message else ""
-            )
-            _llm_io_write(
-                "LLM request ➡️:",
-                f"{_sys_block}{_dumps(_req_payload, indent=4)}",
-            )
+        return effective_preprocess
 
     _img_token = None
     _imglog_token = None
@@ -460,17 +479,51 @@ async def async_tool_loop_inner(
     # If structured output is expected, inform the model up-front so it can
     # plan its reasoning with the final JSON shape in mind.  Enforcement via
     # `set_response_format` still happens at the end of the loop.
+    # NOTE: This hint is added as a new system message (not mutating the original)
+    # and is appended later via _msg_dispatcher.append_msgs().
+    _response_format_hint: str | None = None
     if response_format is not None:
         try:
             _schema = _check_valid_response_format(response_format)
-            _hint = (
-                "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
+            _response_format_hint = (
+                "## Response Format\n"
+                "NOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
                 + json.dumps(_schema, indent=2)
             )
-
-            client.set_system_message((client.system_message or "") + _hint)
         except Exception as _exc:  # noqa: BLE001
             logger.error(f"response_format hint failed: {_exc!r}")
+
+    # ── User visibility guidance ──────────────────────────────────────────────
+    # Explain to the model what the end-user can and cannot see. This guidance
+    # is injected as a system message ONLY when the first interjection arrives,
+    # not at the start of the loop. This keeps the LLM focused on the task at
+    # hand until an interjection actually occurs.
+    #
+    # The guidance helps the model understand:
+    # 1. The user does NOT see any intermediate tool calls or tool results
+    # 2. The user only sees the initial request and any interjection messages
+    # 3. The user sees the final plain-text response from the assistant
+    #
+    # For Claude/Gemini: appended to the global system message via LiteLLM.
+    # For OpenAI: inserted positionally right before the first interjection.
+    # -------------------------------------------------------------------------
+    _user_visibility_guidance = (
+        "## User Visibility Context\n"
+        "IMPORTANT: The end-user who initiated this conversation can ONLY see:\n"
+        "1. Their original request and any follow-up messages they send (interjections)\n"
+        "2. Any notifications you emit (status updates, progress indicators, etc.)\n"
+        "3. Any clarification requests you send asking for more information\n"
+        "4. Your FINAL plain-text response at the end of this tool-use session\n\n"
+        "The user CANNOT see:\n"
+        "- Any intermediate tool calls you make\n"
+        "- Any tool results or outputs\n"
+        "- Any assistant messages that include tool_calls\n\n"
+        "When the user sends follow-up messages (interjections) during your tool-use "
+        "session, these appear as regular user messages. Consider and incorporate ALL "
+        "user interjections in your final response. Later interjections should override "
+        "earlier ones if there are any conflicting comments or requests."
+    )
+    _visibility_guidance_injected = False
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
@@ -515,24 +568,69 @@ async def async_tool_loop_inner(
             if not isinstance(message, list):
                 logger.info(f"User Message: {message}{suffix}", prefix="🧑‍💻")
 
-    # ── 0-a. Inject **system** header with broader context ───────────────────
+    # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
-    # When a parent context is supplied we prepend a single synthetic system
-    # message that *summarises* it.  This offers the LLM immediate awareness
-    # of the wider conversation without having to scroll the nested JSON.
-    # The special marker ``_ctx_header=True`` lets us later strip it when
-    # propagating context further down (avoids duplication).
-    # -----------------------------------------------------------------------
+    # Consolidate caller context and parent chat context into a single system
+    # message at the start of the conversation. This explains:
+    # 1. Who the "user" is (which manager is calling this loop)
+    # 2. The broader conversation context (for nested loops)
+    #
+    # The special marker ``_runtime_context=True`` lets us identify this message
+    # later. For backwards compatibility, ``_ctx_header=True`` is also set.
+    # -------------------------------------------------------------------------
 
+    # Derive caller description from lineage if not explicitly provided
+    _effective_caller_description = caller_description
+    if _effective_caller_description is None and lineage and len(lineage) >= 2:
+        # The parent caller is the second-to-last entry in the lineage
+        # (the last entry is this loop's own id)
+        try:
+            parent_label = lineage[-2]
+            # Extract class name from "ClassName.method" or "ClassName.method(id)"
+            parent_class = parent_label.split(".")[0].split("(")[0]
+            # Strip common prefixes like "Simulated", "Base", "V3" etc.
+            for prefix in ("Simulated", "Base"):
+                if parent_class.startswith(prefix) and len(parent_class) > len(prefix):
+                    parent_class = parent_class[len(prefix) :]
+            # Look up the caller description from the manager registry
+            from ..state_managers import get_caller_description
+
+            _effective_caller_description = get_caller_description(parent_class)
+        except Exception:
+            pass
+
+    runtime_context_parts: list[str] = []
+
+    # NOTE: User visibility guidance is NOT added here - it's injected lazily
+    # on the first interjection to keep the LLM focused on the task at hand.
+
+    # Add response format hint if structured output is expected
+    if _response_format_hint:
+        runtime_context_parts.append(_response_format_hint)
+
+    # Add caller context if available
+    if _effective_caller_description:
+        runtime_context_parts.append(
+            f"## Caller Context\n"
+            f"The 'user' messages in this conversation are from {_effective_caller_description}. "
+            f"The end user cannot see the details of this tool-use conversation.",
+        )
+
+    # Add parent chat context if available
     if parent_chat_context:
+        runtime_context_parts.append(
+            f"## Broader Context (read-only)\n"
+            f"{json.dumps(parent_chat_context, indent=2)}\n\n"
+            f"Resolve the *next* user request in light of this.",
+        )
+
+    # Always append runtime context as a new system message (never mutate the original)
+    if runtime_context_parts:
         sys_msg = {
             "role": "system",
-            "_ctx_header": True,
-            "content": (
-                "Broader context (read-only):\n"
-                f"{json.dumps(parent_chat_context, indent=2)}\n\n"
-                "Resolve the *next* user request in light of this."
-            ),
+            "_runtime_context": True,
+            "_ctx_header": True,  # backwards compatibility
+            "content": "\n\n".join(runtime_context_parts),
         }
         await _msg_dispatcher.append_msgs([sys_msg])
 
@@ -549,7 +647,19 @@ async def async_tool_loop_inner(
                 (m if isinstance(m, dict) else {"role": "user", "content": m})
                 for m in message
             ]
+
+        # NOTE: Claude models with extended thinking require special metadata on
+        # assistant messages containing tool_calls. We handle this via LAZY
+        # transformation in _apply_reasoning_model_compat → claude_wrapper,
+        # which transforms non-thinking assistant turns in the copy sent to
+        # the API, NOT in client.messages. This allows backfill to find and
+        # execute seeded tool_calls before transformation occurs.
+
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
+
+        # Track seeded message count for Claude transformation (must only
+        # transform seeded messages, not loop-generated ones)
+        _seeded_msg_count = len(client.messages)
         # Emit concise one-time banner and replay logs for seeded history (if requested)
         if replay_origin:
             try:
@@ -717,8 +827,15 @@ async def async_tool_loop_inner(
                     prefix="🔍",
                 )
             client.append_messages(msgs)
-            client.set_system_message(
-                (client.system_message or "") + sc.get_system_msg_hint(),
+            # Append semantic cache hint as a new system message (never mutate the original)
+            await _msg_dispatcher.append_msgs(
+                [
+                    {
+                        "role": "system",
+                        "_semantic_cache_hint": True,
+                        "content": sc.get_system_msg_hint(),
+                    },
+                ],
             )
             tools_data.normalized["semantic_search"] = ToolSpec(
                 fn=sc.semantic_search_placeholder,
@@ -772,6 +889,14 @@ async def async_tool_loop_inner(
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
                 tools_data.prune_over_quota_tool_calls(amsg)
+                # De-duplicate tool calls if pruning is enabled
+                if prune_tool_duplicates and amsg.get("tool_calls"):
+                    unique, pruned = prune_duplicate_tool_calls(amsg["tool_calls"])
+                    if pruned:
+                        amsg["tool_calls"] = unique
+                        entry["missing"] = [
+                            cid for cid in entry["missing"] if cid not in pruned
+                        ]
                 # Exclude any call_ids that will be adopted as resume_children
                 missing_ids = set(entry["missing"]) - resume_children_call_ids
                 if not missing_ids:
@@ -1406,6 +1531,29 @@ async def async_tool_loop_inner(
                 if (not inject_only) and (inf is not None):
                     base = str(method or "").lower().strip()
                     await _dispatch_steering_to_child(base, args, inf)
+                    # Track that this call_id was forwarded in the steer_log
+                    # so adopt_nested won't dispatch again for late-adopted handles
+                    with suppress(Exception):
+                        if outer_handle_container and outer_handle_container[0]:
+                            _steer_log = getattr(
+                                outer_handle_container[0],
+                                "_steer_log",
+                                [],
+                            )
+                            for rec in reversed(_steer_log):
+                                if rec.get(
+                                    "method",
+                                    "",
+                                ).lower().strip() == base and str(
+                                    inf.call_id,
+                                ) not in rec.get(
+                                    "forwarded_to",
+                                    [],
+                                ):
+                                    rec.setdefault("forwarded_to", []).append(
+                                        str(inf.call_id),
+                                    )
+                                    break
             except Exception:
                 continue
 
@@ -1917,51 +2065,17 @@ async def async_tool_loop_inner(
                         history_lines = []
 
                 # Support dict-style interjections carrying continued parent context
+                # Interjections are now sent as simple user messages (not system messages)
+                # because Claude and Gemini models do not support in-chat system messages.
+                # The user-visibility context has been moved to the topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
                     _incoming_images = extra.get("images")
-                    with suppress(Exception):
-                        _ctx_str = (
-                            json.dumps(_ctx_cont, indent=2)
-                            if _ctx_cont is not None
-                            else None
-                        )
-
-                    sys_content = (
-                        "The user *cannot* see *any* of the contents of this ongoing tool use chat context. "
-                        "They have just interjected with the following message (in bold at the bottom). "
-                        "From their perspective, the conversation thus far is as follows:\n"
-                        "--\n"
-                        + ("\n".join(history_lines))
-                        + f"\nuser: **{_msg_text}**\n"
-                        "--\n"
-                        + (
-                            "A continued parent chat context has been provided for this interjection.\n"
-                            + (_ctx_str or "(unserializable)")
-                            + "\n"
-                            if _ctx_cont is not None
-                            else ""
-                        )
-                        + "Please consider and incorporate *all* interjections in your final response to the user. "
-                        + "Later interjections should always override earlier interjections if there are "
-                        + "any conflicting comments/requests across the different interjections."
-                    )
                 else:
                     _msg_text = str(extra)
+                    _ctx_cont = None
                     _incoming_images = None
-                    sys_content = (
-                        "The user *cannot* see *any* of the contents of this ongoing tool use chat context. "
-                        "They have just interjected with the following message (in bold at the bottom). "
-                        "From their perspective, the conversation thus far is as follows:\n"
-                        "--\n"
-                        + ("\n".join(history_lines))
-                        + f"\nuser: **{_msg_text}**\n"
-                        "--\n"
-                        "Please consider and incorporate *all* interjections in your final response to the user. "
-                        "Later interjections should always override earlier interjections if there are "
-                        "any conflicting comments/requests across the different interjections."
-                    )
 
                 # Log a single concise interjection line
                 try:
@@ -1969,9 +2083,25 @@ async def async_tool_loop_inner(
                 except Exception:
                     pass
 
-                interjection_msg = {"role": "system", "content": sys_content}
+                # On the FIRST interjection, inject user visibility guidance as a
+                # system message so the model understands why a user message is
+                # appearing mid-tool-execution and what the user can/cannot see.
+                if not _visibility_guidance_injected:
+                    await _msg_dispatcher.append_msgs(
+                        [
+                            {
+                                "role": "system",
+                                "_visibility_guidance": True,
+                                "content": _user_visibility_guidance,
+                            },
+                        ],
+                    )
+                    _visibility_guidance_injected = True
+
+                # Send interjection as a simple user message
+                interjection_msg = {"role": "user", "content": _msg_text}
                 await _msg_dispatcher.append_msgs([interjection_msg])
-                last_valid_user_history = history_lines + [f"user: {extra}"]
+                last_valid_user_history = history_lines + [f"user: {_msg_text}"]
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 if _append_and_log_images_safely(_incoming_images):
@@ -2227,9 +2357,34 @@ async def async_tool_loop_inner(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
+            # Yield to allow just-scheduled tool tasks to complete (especially
+            # those that immediately return a SteerableToolHandle). This ensures
+            # dynamic helpers are generated with the handle's docstrings.
+            await asyncio.sleep(0)
+
+            # Process any tools that completed during the yield
+            for task in list(tools_data.pending):
+                if task.done():
+                    with suppress(Exception):
+                        await tools_data.process_completed_task(
+                            task=task,
+                            consecutive_failures=consecutive_failures,
+                            outer_handle_container=outer_handle_container,
+                            assistant_meta=assistant_meta,
+                            msg_dispatcher=_msg_dispatcher,
+                        )
+
             dynamic_tool_factory = DynamicToolFactory(tools_data)
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
+
+            # Register callback to refresh helpers when a handle is adopted mid-loop
+            def _refresh_helpers_for_task(task: asyncio.Task) -> None:
+                with suppress(Exception):
+                    dynamic_tool_factory._process_task(task)
+                    dynamic_tools.update(dynamic_tool_factory.dynamic_tools)
+
+            tools_data._on_handle_adopted = _refresh_helpers_for_task
 
             # If any task is currently waiting for clarification, hide the
             # global `wait` helper to ensure the model proceeds to request
@@ -2282,8 +2437,7 @@ async def async_tool_loop_inner(
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
                         client,
-                        preprocess_msgs,
-                        debug_log=_log_llm_request,
+                        _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         **_gen_kwargs,
                     ),
                     name="LLMGenerate",
@@ -2464,15 +2618,6 @@ async def async_tool_loop_inner(
                             await _handle_notification(notif_waiters2[pw], pw.result())
                         llm_turn_required = True
 
-                # If the LLM completed successfully, log the raw response object
-                if llm_io_debug and not llm_task.exception():
-                    with suppress(Exception):
-                        _raw_resp = llm_task.result()
-                        _llm_io_write(
-                            "LLM response ⬅️:",
-                            _dumps(_raw_resp, indent=4),
-                        )
-
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
@@ -2487,17 +2632,9 @@ async def async_tool_loop_inner(
 
                     _result = await generate_with_preprocess(
                         client,
-                        preprocess_msgs,
-                        debug_log=_log_llm_request,
+                        _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         **_gen_kwargs,
                     )
-
-                    if llm_io_debug:
-                        with suppress(Exception):
-                            _llm_io_write(
-                                "LLM response ⬅️:",
-                                _dumps(_result, indent=4),
-                            )
                 except Exception:
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
@@ -2552,23 +2689,38 @@ async def async_tool_loop_inner(
             if msg["tool_calls"]:
                 # ── De-duplicate tool calls (optional) ────────────────────────
                 if prune_tool_duplicates:
-                    seen: Set[tuple[str, str]] = set()
-                    unique_calls: list = []
-                    for call in msg["tool_calls"]:
-                        sig = (call["function"]["name"], call["function"]["arguments"])
-                        if sig not in seen:
-                            seen.add(sig)
-                            unique_calls.append(call)
-                    if len(unique_calls) != len(msg["tool_calls"]):
-                        # mutate in-place so history never contains duplicates
-                        msg["tool_calls"] = unique_calls
+                    unique, _ = prune_duplicate_tool_calls(msg["tool_calls"])
+                    if len(unique) != len(msg["tool_calls"]):
+                        msg["tool_calls"] = unique
 
                 # Always ensure over-quota tool calls are removed regardless of
                 # deduplication settings, before any scheduling occurs.
                 tools_data.prune_over_quota_tool_calls(msg)
+
+                # If pruning removed all calls and left a placeholder notice, inject a user turn
+                # so the model is prompted to continue. This prevents Assistant->Assistant history
+                # violations on strict models.
+                if not msg.get(
+                    "tool_calls",
+                ) and "(Tool calls were removed due to quota limits)" in str(
+                    msg.get("content") or "",
+                ):
+                    # Use 'user' role to ensure robust alternation for all providers
+                    sys_notice = {
+                        "role": "user",
+                        "content": "System notification: The tool calls in your last response were blocked due to quota limits. Please modify your plan or conclude.",
+                    }
+                    await _msg_dispatcher.append_msgs([sys_notice])
+
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
-                    args = json.loads(call["function"]["arguments"])
+
+                    # Parse arguments - handle both string (OpenAI) and dict formats
+                    _raw_args = call["function"]["arguments"]
+                    if isinstance(_raw_args, str):
+                        args = json.loads(_raw_args)
+                    else:
+                        args = _raw_args if isinstance(_raw_args, dict) else {}
 
                     # Special-case: handle synthetic `final_answer` tool
                     if name == "final_answer" and response_format is not None:
@@ -2623,23 +2775,55 @@ async def async_tool_loop_inner(
                     lname_cf = lname.casefold()
 
                     if lname_cf == "wait":
-                        # Log the no-op and prune it from the transcript to avoid clutter.
+                        # When there ARE pending tools, prune the wait call to avoid
+                        # transcript clutter - the loop will naturally wait for them.
+                        if tools_data.pending:
+                            try:
+                                logger.info(
+                                    "Assistant chose `wait` – no-op; not persisting to transcript.",
+                                    prefix="🕒",
+                                )
+                            except Exception:
+                                pass
+
+                            # Prune the `wait` tool call using a shared helper
+                            with suppress(Exception):
+                                from .messages import (
+                                    prune_wait_tool_call as _prune_wait,
+                                )
+
+                                _prune_wait(msg, call["id"], client=client)
+
+                            # After acknowledging a wait, do NOT grant an immediate LLM turn.
+                            # The loop should now wait for any pending tools or interjections.
+                            continue
+
+                        # When there are NO pending tools, pruning would cause an
+                        # infinite cache loop (same conversation → same cached response).
+                        # Instead, insert a factual tool response. This:
+                        # 1. Changes the conversation state (breaks cache)
+                        # 2. Is purely informational (no prescriptive instructions)
+                        # 3. Remains accurate even if interjections arrive later
                         try:
                             logger.info(
-                                "Assistant chose `wait` – no-op; not persisting to transcript.",
+                                "Assistant called `wait` with no pending tools.",
                                 prefix="🕒",
                             )
                         except Exception:
                             pass
 
-                        # Prune the `wait` tool call using a shared helper
-                        with suppress(Exception):
-                            from .messages import prune_wait_tool_call as _prune_wait
-
-                            _prune_wait(msg, call["id"], client=client)
-
-                        # After acknowledging a wait, do NOT grant an immediate LLM turn.
-                        # The loop should now wait for any pending tools or interjections.
+                        tool_msg = create_tool_call_message(
+                            name="wait",
+                            call_id=call["id"],
+                            content="No tasks are currently running.",
+                        )
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue
 
                     elif lname_cf.startswith("stop_") and not lname_cf.startswith(
@@ -2871,6 +3055,18 @@ async def async_tool_loop_inner(
                                     await _inject_live_images_overview(
                                         "clarify_helper_images",
                                     )
+
+                            # Update the original clarification_request placeholder to
+                            # reflect that the answer has been delivered. This ensures
+                            # Claude's transcript transformation sees a coherent state
+                            # even after the clarify assistant turn is collapsed.
+                            orig_placeholder = tools_data.info[tgt_task].tool_reply_msg
+                            if orig_placeholder is not None:
+                                orig_placeholder["content"] = (
+                                    f"Clarification answered: {ans!r}\n"
+                                    "(Waiting for tool to complete...)"
+                                )
+
                             # Always publish a tool reply acknowledging the clarify helper
                             tool_reply_msg = create_tool_call_message(
                                 name=name,
@@ -2886,9 +3082,6 @@ async def async_tool_loop_inner(
                                 tool_reply_msg,
                                 client,
                                 _msg_dispatcher,
-                            )
-                            tools_data.info[tgt_task].clarify_placeholder = (
-                                tool_reply_msg
                             )
                             continue  # handled clarify helper for live target
 
@@ -3088,7 +3281,51 @@ async def async_tool_loop_inner(
                                 coro=t,
                                 metadata=metadata,
                             )
+                        else:
+                            # Target task was already removed (e.g., by a prior
+                            # stop_ helper in the same assistant message). Insert
+                            # a no-op acknowledgement so the transcript stays valid.
+                            tool_msg = create_tool_call_message(
+                                name=name,
+                                call_id=call["id"],
+                                content=(
+                                    f"No-op: target task for '{name}' is no longer active."
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                     else:
+                        # ── Unknown/unavailable tool fallback ─────────────────────
+                        # If the tool doesn't exist OR wasn't visible on this turn
+                        # (e.g., the model hallucinated a tool name, or the tool was
+                        # hidden by tool_policy), insert an error tool response to
+                        # keep the transcript valid. Without this, the assistant
+                        # message would have an unresolved tool_call, causing
+                        # subsequent LLM calls to fail.
+                        if name not in policy_tools_norm:
+                            tool_msg = create_tool_call_message(
+                                name=name,
+                                call_id=call["id"],
+                                content=(
+                                    f"⚠️ Error: Tool '{name}' is not available. "
+                                    "The tool may have been removed or does not exist. "
+                                    "Please proceed without using this tool."
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+
                         # Use shared helper for base tools
                         await tools_data.schedule_base_tool_call(
                             msg,

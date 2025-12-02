@@ -7,6 +7,7 @@ import dataclasses
 
 
 from typing import (
+    Callable,
     Dict,
     Set,
     Tuple,
@@ -21,7 +22,6 @@ from .messages import (
     _normalise_kwargs_for_bound_method,
     forward_handle_call,
 )
-from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema
 from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
@@ -29,6 +29,7 @@ from contextlib import suppress
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
+    from .message_dispatcher import LoopMessageDispatcher
 
 
 class ToolsData:
@@ -45,6 +46,8 @@ class ToolsData:
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
         self.completed_results: Dict[str, str] = {}
+        # Callback for refreshing dynamic helpers when a handle is adopted
+        self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
 
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
@@ -63,37 +66,40 @@ class ToolsData:
         limit = self.normalized[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
 
-    # ── small helper: add completion tool message pair ──────────────
-    @staticmethod
+    def _at_tail(self, msg: dict) -> bool:
+        """True when *msg* is the very last entry in client.messages."""
+        return bool(self._client.messages) and self._client.messages[-1] is msg
+
     async def _emit_completion_pair(
+        self,
         result: str,
         call_id: str,
-        msg_dispatcher: LoopMessageDispatcher,
+        msg_dispatcher: "LoopMessageDispatcher",
     ) -> dict:
         """
-        Append a synthetic assistant→tool pair that carries the *final*
-        outcome for `call_id`.  Returns the tool-message so callers can
-        reuse it for logging / event-bus.
+        Append a synthetic assistant→tool pair carrying the final result
+        at the chronologically correct position (end of messages).
         """
-        dummy_id = f"{call_id}_status"
+        status_call_id = f"{call_id}_completed"
+        status_tool_name = f"check_status_{call_id}"
 
         assistant_stub = {
             "role": "assistant",
+            "content": None,
             "tool_calls": [
                 {
-                    "id": dummy_id,
+                    "id": status_call_id,
                     "type": "function",
                     "function": {
-                        "name": f"check_status_{call_id}",
+                        "name": status_tool_name,
                         "arguments": "{}",
                     },
                 },
             ],
-            "content": "",
         }
         tool_msg = create_tool_call_message(
-            name=f"check_status_{call_id}",
-            call_id=dummy_id,
+            name=status_tool_name,
+            call_id=status_call_id,
             content=result,
         )
 
@@ -148,43 +154,53 @@ class ToolsData:
         await asyncio.gather(*self.pending, return_exceptions=True)
         self.pending.clear()
 
-    # Remove any tool_calls in an assistant message that would exceed the
-    # hidden per-tool total-call quota. Operates in-place on asst_msg.
     def prune_over_quota_tool_calls(self, asst_msg: dict) -> None:
-        with suppress(Exception):
-            tool_calls = asst_msg.get("tool_calls") or []
-            if not isinstance(tool_calls, list) or not tool_calls:
-                return
+        """
+        In-place remove tool_calls from asst_msg if they would exceed the per-tool quota.
+        This ensures strict provider compliance: calls that are not executed
+        must not remain in the history without a response.
+        """
+        tcs = asst_msg.get("tool_calls")
+        if not tcs:
+            return
 
-            # Compute remaining budget per base tool (in this loop instance)
-            remaining: Dict[str, int] = {}
-            for name, spec in self.normalized.items():
-                lim = spec.max_total_calls
-                if lim is None:
+        # Track counts locally to handle multiple calls in this single batch
+        # without permanently modifying self.call_counts yet (that happens on schedule).
+        temp_counts = self.call_counts.copy()
+
+        valid_tcs = []
+        for tc in tcs:
+            try:
+                name = tc.get("function", {}).get("name")
+
+                if name not in self.normalized:
+                    # Unknown tools are kept (handled by execution/error logic)
+                    valid_tcs.append(tc)
                     continue
-                remaining[name] = max(0, lim - self._quota_count(name))
 
-            kept: list = []
-            for call in tool_calls:
-                with suppress(Exception):
-                    fn_name = call.get("function", {}).get("name")
-                if "fn_name" not in locals():
-                    fn_name = None
+                spec = self.normalized[name]
+                limit = spec.max_total_calls
+                current = temp_counts.get(name, 0)
 
-                # Only enforce quota on base tools that define a limit
-                if fn_name in remaining:
-                    if remaining[fn_name] > 0:
-                        kept.append(call)
-                        remaining[fn_name] -= 1
-                    else:
-                        # drop this over-quota call silently
-                        continue
-                else:
-                    kept.append(call)
+                if limit is not None and current >= limit:
+                    # Prune this call - do not add to valid_tcs
+                    continue
 
-            # In-place update only if changed
-            if len(kept) != len(tool_calls):
-                asst_msg["tool_calls"] = kept
+                # Keep it, and increment temp counter
+                temp_counts[name] = current + 1
+                valid_tcs.append(tc)
+            except Exception:
+                # Malformed tool call, keep it
+                valid_tcs.append(tc)
+
+        # In-place mutation of the assistant message
+        asst_msg["tool_calls"] = valid_tcs
+
+        # If the message becomes empty (no content, no tools), inject a placeholder content
+        # to satisfy API constraints and inform the model.
+        has_content = bool(asst_msg.get("content"))
+        if not valid_tcs and not has_content:
+            asst_msg["content"] = "(Tool calls were removed due to quota limits)"
 
     # Helper: schedule a base tool call (shared by main path and backfill)
     async def schedule_base_tool_call(
@@ -347,17 +363,11 @@ class ToolsData:
 
         1.  Pop bookkeeping (``pending`` / ``task_info``).
         2.  Serialise *success* or *exception* into ``result``.
-        3.  Patch or insert the correct **tool** message so the transcript
-            stays perfectly chronological.
+        3.  Patch or insert the correct **tool** message.
         4.  Emit the event-bus hook (if configured).
         5.  Record the payload in ``completed_results`` for potential post-hoc lookups.
         6.  Enforce the *max_consecutive_failures* safety valve.
         """
-
-        def _at_tail(msg: dict) -> bool:
-            """True when *msg* is the very last entry in client.messages."""
-            return bool(self._client.messages) and self._client.messages[-1] is msg
-
         info: ToolCallMetadata = self.pop_task(task)
         name = info.name
         call_id = info.call_id
@@ -486,50 +496,28 @@ class ToolsData:
         clarify_ph = info.clarify_placeholder
         tool_reply_msg = info.tool_reply_msg
 
-        if clarify_ph is not None:
-            if _at_tail(clarify_ph):
-                clarify_ph["content"] = result
-                tool_msg = clarify_ph
+        # Placeholder handling with chronological ordering:
+        # - At tail: update in-place
+        # - Not at tail: mark as completed, emit check_status pair at end
+        placeholder = clarify_ph or tool_reply_msg
+
+        if placeholder is not None:
+            if self._at_tail(placeholder):
+                placeholder["content"] = result
+                tool_msg = placeholder
             else:
+                placeholder["content"] = json.dumps(
+                    {
+                        "_placeholder": "completed",
+                        "status": "Tool completed. See check_status result below.",
+                        "result_call_id": f"{call_id}_completed",
+                    },
+                )
                 tool_msg = await self._emit_completion_pair(
                     result,
                     call_id,
                     msg_dispatcher,
                 )
-
-        elif tool_reply_msg is not None:
-            if _at_tail(tool_reply_msg):
-                # If the current tail tool message is a placeholder, choose the strategy:
-                # - For streaming progress placeholders, append a synthetic assistant→tool pair
-                #   (preserves progress history as append-only).
-                # - For simple 'pending' or 'nested_start' placeholders, update in-place so the
-                #   final result lives under the original tool message (restores pre-change UX).
-                placeholder_kind: Optional[str] = None
-                with suppress(Exception):
-                    _content_str = tool_reply_msg.get("content") or ""
-                    if isinstance(_content_str, str):
-                        parsed = json.loads(_content_str)
-                        if isinstance(parsed, dict):
-                            pk = parsed.get("_placeholder")
-                            if isinstance(pk, str) and pk:
-                                placeholder_kind = pk
-                if placeholder_kind == "progress":
-                    tool_msg = await self._emit_completion_pair(
-                        result,
-                        call_id,
-                        msg_dispatcher,
-                    )
-                else:
-                    tool_reply_msg["content"] = result
-                    tool_msg = tool_reply_msg
-            else:
-                # Not at tail: emit a synthetic assistant→tool pair to carry the result
-                tool_msg = await self._emit_completion_pair(
-                    result,
-                    call_id,
-                    msg_dispatcher,
-                )
-
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
             await insert_tool_message_after_assistant(
@@ -729,7 +717,29 @@ class ToolsData:
                         child_handle,
                         "pause",
                     ):
-                        await child_handle.pause()  # type: ignore[attr-defined]
+                        # Check if pause was already forwarded via _synthesize_mirrored_helper_calls
+                        # to avoid duplicate dispatch
+                        already_forwarded = False
+                        try:
+                            for rec in reversed(_log):
+                                if rec.get("method", "").lower().strip() == "pause":
+                                    if str(info.call_id) in rec.get("forwarded_to", []):
+                                        already_forwarded = True
+                                    break  # Only check the most recent pause event
+                        except Exception:
+                            pass
+                        if not already_forwarded:
+                            await child_handle.pause()  # type: ignore[attr-defined]
+                            # Mark as forwarded so we don't dispatch again
+                            try:
+                                for rec in reversed(_log):
+                                    if rec.get("method", "").lower().strip() == "pause":
+                                        rec.setdefault("forwarded_to", []).append(
+                                            str(info.call_id),
+                                        )
+                                        break
+                            except Exception:
+                                pass
                 except Exception:
                     pass
                 try:
@@ -737,9 +747,30 @@ class ToolsData:
                         child_handle,
                         "stop",
                     ):
-                        maybe = child_handle.stop()  # type: ignore[attr-defined]
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
+                        # Check if stop was already forwarded via _synthesize_mirrored_helper_calls
+                        already_forwarded = False
+                        try:
+                            for rec in reversed(_log):
+                                if rec.get("method", "").lower().strip() == "stop":
+                                    if str(info.call_id) in rec.get("forwarded_to", []):
+                                        already_forwarded = True
+                                    break
+                        except Exception:
+                            pass
+                        if not already_forwarded:
+                            maybe = child_handle.stop()  # type: ignore[attr-defined]
+                            if asyncio.iscoroutine(maybe):
+                                asyncio.create_task(maybe)
+                            # Mark as forwarded
+                            try:
+                                for rec in reversed(_log):
+                                    if rec.get("method", "").lower().strip() == "stop":
+                                        rec.setdefault("forwarded_to", []).append(
+                                            str(info.call_id),
+                                        )
+                                        break
+                            except Exception:
+                                pass
                 except Exception:
                     pass
         except Exception:
@@ -797,3 +828,7 @@ class ToolsData:
         self.save_task(nested_task, metadata)
         if h_up_q is not None:
             self.clarification_channels[info.call_id] = (h_up_q, h_down_q)
+        # Refresh dynamic helpers immediately now that handle is available
+        if self._on_handle_adopted is not None:
+            with suppress(Exception):
+                self._on_handle_adopted(nested_task)

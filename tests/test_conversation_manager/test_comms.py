@@ -6,8 +6,12 @@ Tests for communication flows (SMS, email, calls, etc.)
 """
 
 import pytest
+
+pytestmark = pytest.mark.eval
+
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.helpers import (
+    contacts,
     capture_outgoing_email,
     capture_outgoing_phone_call,
     capture_outgoing_sms,
@@ -18,25 +22,7 @@ from tests.test_conversation_manager.helpers import (
     send_incoming_sms,
     send_incoming_unify_message,
 )
-from unity.conversation_manager.new_events import PhoneCallEnded, UnifyCallEnded
-
-
-contacts = [
-    {
-        "contact_id": 0,
-        "first_name": "Test",
-        "surname": "Assistant",
-        "email_address": "assistant@test.com",
-        "phone_number": "+15555551234",
-    },
-    {
-        "contact_id": 1,
-        "first_name": "Test",
-        "surname": "Contact",
-        "email_address": "test@contact.com",
-        "phone_number": "+15555551111",
-    },
-]
+from unity.conversation_manager.events import PhoneCallEnded, UnifyCallEnded
 
 
 @pytest.mark.asyncio
@@ -322,7 +308,7 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_phone_call_flow(test_redis_client, event_capture):
+async def test_phone_call(test_redis_client, event_capture):
     """Test phone call flow."""
     # Clear any events from initialization
     event_capture.clear()
@@ -480,7 +466,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_call_flow(test_redis_client, event_capture):
+async def test_unify_call(test_redis_client, event_capture):
     """Test unify call flow."""
     # Clear any events from initialization
     event_capture.clear()

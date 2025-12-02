@@ -6,10 +6,9 @@ from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import load_asset_image, PNG_BLUE_B64
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_frame_handling_should_drop_frames_when_queue_is_full(caplog):
+async def test_drops_frames_when_queue_full(caplog):
     """Tests that frames are proactively dropped when the processing queue is backlogged."""
     manager = ScreenShareManager()
     await manager.start()
@@ -31,7 +30,7 @@ async def test_frame_handling_should_drop_frames_when_queue_is_full(caplog):
         ("button_active_before.png", "button_active_after.png"),
     ],
 )
-async def test_vision_should_detect_significant_changes(
+async def test_should_detect_significant_changes(
     manager: ScreenShareManager,
     image_pair,
 ):
@@ -52,7 +51,7 @@ async def test_vision_should_detect_significant_changes(
         ("cursor_move_before.png", "cursor_move_after.png"),
     ],
 )
-async def test_vision_should_ignore_insignificant_changes(
+async def test_should_ignore_insignificant_changes(
     manager: ScreenShareManager,
     image_pair,
 ):
@@ -66,7 +65,7 @@ async def test_vision_should_ignore_insignificant_changes(
 @pytest.mark.vision
 @_handle_project
 @pytest.mark.asyncio
-async def test_vision_should_ignore_identical_images(manager):
+async def test_should_ignore_identical_images(manager):
     """Tests that identical images are not considered a significant change."""
     img = load_asset_image("modal_before.png")
     assert not manager._is_significant_visual_change(img, img.copy())

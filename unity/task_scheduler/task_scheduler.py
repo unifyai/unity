@@ -18,8 +18,10 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable, Tuple
 from typing import Literal, overload
 from dataclasses import dataclass
+from functools import cached_property
 
 
+from ..common.tool_spec import read_only
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     short_id,
@@ -38,6 +40,7 @@ from .types.repetition import RepeatPattern, Frequency, Weekday
 from .types.task import TaskBase, Task
 from .types.activated_by import ActivatedBy
 from .types.queue_plan import QueuePlan
+from ..common.metrics_utils import reduce_logs
 
 # ------------------------------------------------------------------ #
 #  Local type aliases                                                 #
@@ -77,11 +80,12 @@ from .activation_ops import detach_from_queue_for_activation
 from .reintegration import ReintegrationManager
 from ..common.filter_utils import normalize_filter_expr
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
-from .llm import new_llm_client
+from ..common.llm_client import new_llm_client
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 # Sentinel for optional-argument presence detection
@@ -106,6 +110,33 @@ class TaskScheduler(BaseTaskScheduler):
         "status not in ('completed','cancelled','failed') and "
         "schedule.get('prev_task') is None"
     )
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Tasks",
+                description=(
+                    "List of all tasks with their name, description, status, "
+                    "schedule, deadline, repeat pattern, priority **and** "
+                    "`instance_id` which tracks multiple executions of the "
+                    "same logical task."
+                ),
+                fields=model_to_fields(Task),
+                unique_keys={"task_id": "int", "instance_id": "int"},
+                auto_counting={
+                    "task_id": None,
+                    "instance_id": "task_id",
+                },
+                foreign_keys=[
+                    {
+                        "name": "entrypoint",
+                        "references": "Functions.function_id",  # TODO: change to the actual context
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                ],
+            ),
+        ]
 
     # ------------------------------------------------------------------ #
     #  Decorator – uniform ManagerMethod logging                          #
@@ -198,6 +229,7 @@ class TaskScheduler(BaseTaskScheduler):
                 self._search_tasks,
                 self._get_queue,
                 self._get_queue_for_task,
+                self._reduce,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
             **methods_to_tool_dict(
@@ -239,16 +271,7 @@ class TaskScheduler(BaseTaskScheduler):
         self.add_tools("update", update_tools)
 
         # active task
-        if actor is None:
-            # Allow tests to override default simulated duration via env var
-            try:
-                _dur_env = os.environ.get("UNITY_SIM_ACTOR_DURATION")
-                _duration = float(_dur_env) if _dur_env is not None else 20.0
-            except Exception:
-                _duration = 20.0
-            self._actor = SimulatedActor(duration=_duration)
-        else:
-            self._actor = actor
+        self.__actor = actor
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
@@ -268,7 +291,7 @@ class TaskScheduler(BaseTaskScheduler):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TaskScheduler."
-        self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
+        self._ctx = ContextRegistry.get_context(self, "Tasks")
 
         # Install storage adapter and ensure context/fields exist
         self._provision_storage()
@@ -308,25 +331,23 @@ class TaskScheduler(BaseTaskScheduler):
         # this cache remains coherent without extra backend reads between tool calls.
         self._num_tasks_cached: Optional[int] = None
 
+    @cached_property
+    def _actor(self) -> BaseActor:
+        if self.__actor is None:
+            # Allow tests to override default simulated duration via env var
+            try:
+                _dur_env = os.environ.get("UNITY_SIM_ACTOR_DURATION")
+                _duration = float(_dur_env) if _dur_env is not None else 20.0
+            except Exception:
+                _duration = 20.0
+            self.__actor = SimulatedActor(duration=_duration)
+        return self.__actor
+
     # ------------------------------ Provisioning ----------------------------- #
     def _provision_storage(self) -> None:
         """Ensure Tasks context, schema and local view exist (idempotent)."""
         # Install storage adapter and ensure context/fields exist
         self._store = TasksStore(self._ctx)
-        self._store.ensure_context(
-            unique_keys={"task_id": "int", "instance_id": "int"},
-            auto_counting={
-                "task_id": None,
-                "instance_id": "task_id",
-            },
-            description=(
-                "List of all tasks with their name, description, status, "
-                "schedule, deadline, repeat pattern, priority **and** "
-                "`instance_id` which tracks multiple executions of the "
-                "same logical task."
-            ),
-            fields=model_to_fields(Task),
-        )
 
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)
@@ -3611,8 +3632,6 @@ class TaskScheduler(BaseTaskScheduler):
     # Small internal helpers
     # ────────────────────────────────────────────────────────────────────
 
-    # moved to unity/task_scheduler/llm.py as new_llm_client
-
     # ------------------------------------------------------------------ #
     #  Queue plan + checkpoints (shared helpers exposed as tools)        #
     # ------------------------------------------------------------------ #
@@ -3738,8 +3757,14 @@ class TaskScheduler(BaseTaskScheduler):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_tasks on the first step; auto thereafter."""
-        if step_index < 1 and "search_tasks" in current_tools:
+        """Require search_tasks on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search_tasks" in current_tools
+        ):
             return (
                 "required",
                 {"search_tasks": current_tools["search_tasks"]},
@@ -3751,8 +3776,14 @@ class TaskScheduler(BaseTaskScheduler):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require ask on the first step; auto thereafter."""
-        if step_index < 1 and "ask" in current_tools:
+        """Require ask on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
@@ -3761,8 +3792,10 @@ class TaskScheduler(BaseTaskScheduler):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_tasks/ask_image/attach_image_raw; auto thereafter."""
-        if step_index < 1:
+        """On step 0, require one of search_tasks/ask_image/attach_image_raw (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
             allowed_first_turn: Dict[str, Any] = {}
             for name in ("search_tasks", "ask_image", "attach_image_raw"):
                 if name in current_tools:
@@ -4163,6 +4196,59 @@ class TaskScheduler(BaseTaskScheduler):
                 # Defensive fallback; a failed metric read should not crash tools
                 self._num_tasks_cached = 0
         return int(self._num_tasks_cached)
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over the Tasks table in the current context.
+
+        Parameters
+        ----------
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric task fields to aggregate (for example
+            ``\"task_id\"``, ``\"queue_id\"``, or numeric custom columns). A
+            single column name returns a scalar; a list of column names
+            computes the metric independently per key and returns a
+            ``{key -> value}`` mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) in the same Python syntax as
+            the ``_filter_tasks`` tool. When a string, the expression is applied
+            uniformly; when a dict, each key maps to its own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional task field(s) to group by (for example ``\"status\"`` or
+            ``\"queue_id\"``). Use a single column name for one grouping level,
+            or a list such as ``[\"status\", \"queue_id\"]`` to group
+            hierarchically in that order. When provided, the result becomes a
+            nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric` behaviour.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the Tasks context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        return reduce_logs(
+            context=self._ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
 
     # ----------------------------- Read helpers ----------------------------- #
     def _read_rows_by_ids(

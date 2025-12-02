@@ -19,7 +19,6 @@ def provision_storage(self) -> None:
         description="List of contacts, with all contact details stored.",
         fields=model_to_fields(Contact),
     )
-    self._store.ensure_context()
 
     # Prefill known custom fields once to include any preexisting non-private columns
     try:

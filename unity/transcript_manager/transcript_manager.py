@@ -54,6 +54,9 @@ from .images import (
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from ..common.context_registry import ContextRegistry, TableContext
+from ..common.model_to_fields import model_to_fields
+from ..common.metrics_utils import reduce_logs
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -64,6 +67,50 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
     _MSG_EMB = "_content_emb"
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Transcripts",
+                description="List of all timestamped messages sent between all contacts across all mediums.",
+                fields=model_to_fields(Message),
+                unique_keys={"message_id": "int"},
+                auto_counting={"message_id": None},
+                foreign_keys=[
+                    {
+                        "name": "sender_id",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "receiver_ids[*]",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "exchange_id",
+                        "references": "Exchanges.exchange_id",
+                        "on_delete": "CASCADE",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "images[*].raw_image_ref.image_id",
+                        "references": "Images.image_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                ],
+            ),
+            TableContext(
+                name="Exchanges",
+                description="One row per conversation exchange/thread with optional metadata.",
+                fields=model_to_fields(Exchange),
+                unique_keys={"exchange_id": "int"},
+                auto_counting={"exchange_id": None},
+            ),
+        ]
 
     # ──────────────────────────────────────────────────────────────────────
     #  Construction & tool registration
@@ -92,6 +139,7 @@ class TranscriptManager(BaseTranscriptManager):
             **methods_to_tool_dict(
                 self._filter_messages,
                 self._search_messages,
+                self._reduce,
                 include_class_name=False,
             ),
         }
@@ -115,14 +163,8 @@ class TranscriptManager(BaseTranscriptManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
-        if read_ctx:
-            self._transcripts_ctx = f"{read_ctx}/Transcripts"
-        else:
-            self._transcripts_ctx = "Transcripts"
-        if read_ctx:
-            self._exchanges_ctx = f"{read_ctx}/Exchanges"
-        else:
-            self._exchanges_ctx = "Exchanges"
+        self._transcripts_ctx = ContextRegistry.get_context(self, "Transcripts")
+        self._exchanges_ctx = ContextRegistry.get_context(self, "Exchanges")
 
         # Image support: lazy-safe image manager and image-aware tools
         _ensure_image_manager(self)
@@ -609,6 +651,58 @@ class TranscriptManager(BaseTranscriptManager):
         return _search_messages_impl(self, references=references, k=k)
 
     @read_only
+    def _reduce(
+        self,
+        *,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over the primary transcripts/messages table.
+
+        Parameters
+        ----------
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric message fields to aggregate (for example
+            ``\"message_id\"`` or duration/length columns). A single column name
+            returns a scalar; a list of column names computes the metric
+            independently per key and returns a ``{key -> value}`` mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) in the same Python syntax as
+            :py:meth:`_filter_messages`. When a string, the expression is applied
+            uniformly; when a dict, each key maps to its own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional message field(s) to group by, for example ``\"medium\"`` or
+            ``\"sender_id\"``. Use a single column name for one grouping level,
+            or a list such as ``[\"medium\", \"sender_id\"]`` to group
+            hierarchically in that order. When provided, the result becomes a
+            nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric`.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the transcripts context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        return reduce_logs(
+            context=self._transcripts_ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
+
+    @read_only
     def _filter_messages(
         self,
         *,
@@ -671,7 +765,7 @@ class TranscriptManager(BaseTranscriptManager):
         # ── 1.  Bulk update all *sender_id* occurrences ────────────────────
         sender_log_ids = unify.get_logs(
             context=self._transcripts_ctx,
-            filter=f"sender_id == {original_contact_id}",
+            filter=f"sender_id is not None and sender_id == {original_contact_id}",
             return_ids_only=True,
         )
         if sender_log_ids:
@@ -1058,6 +1152,29 @@ class TranscriptManager(BaseTranscriptManager):
                 "exchange_id must NOT be provided when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
             )
 
+        # 3) Create Exchange row FIRST to satisfy FK constraint
+        exchange_log = unify.log(
+            context=self._exchanges_ctx,
+            metadata=dict(exchange_initial_metadata or {}),
+            medium=str(payload.get("medium", "")),
+            new=True,
+            mutable=True,
+            params={},
+        )
+
+        # Extract the assigned exchange_id
+        try:
+            exid = int(exchange_log.entries["exchange_id"])
+        except Exception as exc:  # noqa: BLE001 – precise error context
+            raise RuntimeError(
+                "Created exchange lacks an assigned exchange_id.",
+            ) from exc
+        if exid < 0:
+            raise RuntimeError("Created exchange has an unassigned exchange_id.")
+
+        # 4) Add exchange_id to payload and create message SECOND
+        payload["exchange_id"] = exid
+
         created_model = Message(**payload)
         entries = created_model.to_post_json()
 
@@ -1068,53 +1185,6 @@ class TranscriptManager(BaseTranscriptManager):
             mutable=True,
             params={},
         )
-
-        persisted_payload = {k: log.entries.get(k) for k in Message.model_fields.keys()}
-        if persisted_payload.get("message_id") is None:
-            persisted_payload.pop("message_id", None)
-        if persisted_payload.get("exchange_id") is None:
-            persisted_payload.pop("exchange_id", None)
-
-        created = Message(**persisted_payload)
-
-        # 3) Ensure the new exchange_id is present
-        try:
-            exid = int(getattr(created, "exchange_id"))
-        except Exception as exc:  # noqa: BLE001 – precise error context
-            raise RuntimeError(
-                "Created message lacks an assigned exchange_id.",
-            ) from exc
-        if exid < 0:
-            raise RuntimeError("Created message has an unassigned exchange_id.")
-
-        # 4) Ensure the Exchanges row exists and optionally set initial metadata
-        try:
-            row_ids = unify.get_logs(
-                context=self._exchanges_ctx,
-                filter=f"exchange_id == {exid}",
-                return_ids_only=True,
-            )
-            if row_ids:
-                if exchange_initial_metadata is not None:
-                    unify.update_logs(
-                        logs=row_ids,
-                        context=self._exchanges_ctx,
-                        entries={"metadata": dict(exchange_initial_metadata)},
-                        overwrite=True,
-                    )
-            else:
-                unify.log(
-                    context=self._exchanges_ctx,
-                    exchange_id=exid,
-                    metadata=dict(exchange_initial_metadata or {}),
-                    medium=str(getattr(created, "medium", "")),
-                    new=True,
-                    mutable=True,
-                    params={},
-                )
-        except Exception:
-            # Non-fatal: do not fail the message creation due to metadata upsert
-            pass
 
         return exid
 
@@ -1140,12 +1210,14 @@ class TranscriptManager(BaseTranscriptManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_messages/ask_image/attach_image_raw; auto thereafter.
+        """On step 0, require one of search_messages/ask_image/attach_image_raw (if enabled); auto thereafter.
 
         Encourages the model to either begin with a semantic query over transcripts
         or explicitly use the image helpers when visual context is supplied.
         """
-        if step_index < 1:
+        from unity.settings import SETTINGS
+
+        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
             allowed_first_turn: Dict[str, Any] = {}
             for name in ("search_messages", "ask_image", "attach_image_raw"):
                 if name in current_tools:

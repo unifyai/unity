@@ -53,6 +53,7 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.async_tool_loop import SteerableToolHandle
 from pydantic import BaseModel, Field
 
 # Added for direct logging of generated messages
@@ -670,7 +671,6 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
 
     • ``--voice / -v``        – enable voice capture & TTS
     • ``--debug / -d``        – verbose tool logs (reasoning steps)
-    • ``--traced / -t``       – wrap manager calls in Unify tracing
     • ``--project_name / -p`` – Unify *project / context* name (default: "Sandbox")
     • ``--overwrite / -o``    – delete any existing data for *project_name*
                                  before seeding
@@ -689,12 +689,6 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         "-d",
         action="store_true",
         help="verbose tool logs (reasoning steps)",
-    )
-    parser.add_argument(
-        "--traced",
-        "-t",
-        action="store_true",
-        help="include Unify tracing",
     )
     parser.add_argument(
         "--project_name",
@@ -2022,9 +2016,6 @@ class TranscriptGenerator:
     ----------
     endpoint
         Chat-completion model identifier (same format used across sandboxes).
-    traced
-        Forwarded to :class:`unify.AsyncUnify` so unit-tests can inspect
-        detailed traces when needed.
     stateful
         Re-use the underlying client across multiple ``generate`` calls –
         handy when chaining several transcripts together inside higher-level
@@ -2035,12 +2026,10 @@ class TranscriptGenerator:
         self,
         *,
         endpoint: str = DEFAULT_MODEL,
-        traced: bool = True,
         stateful: bool = True,
         in_conversation_manager: bool = False,
     ) -> None:
         self._endpoint = endpoint
-        self._traced = traced
         self._stateful = stateful
         self._tm = TranscriptManager()
         self._in_cm = in_conversation_manager
@@ -2511,7 +2500,6 @@ class TranscriptGenerator:
                 "update_contacts": self._tm._contact_manager.update,
             },
             endpoint=self._endpoint,
-            traced=self._traced,
             stateful=self._stateful,
         )
 
@@ -2892,7 +2880,7 @@ def parse_per_task_guidance(text: str) -> dict[int, str]:
     - Extract concise guidance strings (no rephrasing of unrelated text).
     - Ignore non-guidance content.
     """
-    import unify as _unify
+    from unity.common.llm_client import new_llm_client
 
     if not text:
         return {}
@@ -2908,11 +2896,9 @@ def parse_per_task_guidance(text: str) -> dict[int, str]:
     )
 
     try:
-        judge = _unify.Unify(
-            "gpt-5@openai",
+        judge = new_llm_client(
+            async_client=False,
             response_format=_PerTaskGuidancePayload,
-            reasoning_effort="high",
-            service_tier="priority",
         )
         payload = _PerTaskGuidancePayload.model_validate_json(
             judge.set_system_message(sys_msg).generate(text),

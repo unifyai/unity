@@ -42,43 +42,37 @@ class TasksStore:
         auto_counting: Dict[str, Optional[str]],
         description: str,
         fields: Dict[str, str],
+        foreign_keys: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
         Ensure the Tasks context exists with the requested fields.
 
         If the context already exists, any missing fields are created.
+        Idempotent: tolerates pre-existing contexts and concurrent creation.
         """
-        if self._ctx not in unify.get_contexts():
+        # Idempotent creation: try to create, tolerate if already exists
+        try:
             unify.create_context(
                 self._ctx,
                 unique_keys=unique_keys,
                 auto_counting=auto_counting,
                 description=description,
+                foreign_keys=foreign_keys,
             )
-            unify.create_fields(fields, context=self._ctx)
-            # Refresh the local fields cache from the backend using the
-            # canonical 'data_type' representation.
-            try:
-                existing = unify.get_fields(context=self._ctx) or {}
-            except Exception:
-                existing = {}
-            try:
-                normalised = {
-                    k: (v.get("data_type") if isinstance(v, dict) else str(v))
-                    for k, v in existing.items()
-                }
-            except Exception:
-                normalised = {k: str(v) for k, v in existing.items()}
-            self.__dict__["fields"] = normalised
-            return
+        except Exception:
+            pass  # Already exists or transient failure
 
+        # Ensure all required fields exist (idempotent per-field)
         try:
             existing = unify.get_fields(context=self._ctx) or {}
         except Exception:
             existing = {}
         missing = {k: v for k, v in fields.items() if k not in existing}
         if missing:
-            unify.create_fields(missing, context=self._ctx)
+            try:
+                unify.create_fields(missing, context=self._ctx)
+            except Exception:
+                pass  # Fields already exist or transient failure
         # Refresh the local fields cache from the backend so we only ever
         # read the canonical 'data_type' representation.
         try:

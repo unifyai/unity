@@ -571,6 +571,7 @@ def build_ask_prompt(
         tools,
         "search",
     )  # picks the basic semantic search, not joins
+    reduce_fname = _tool_name(tools, "reduce")
     request_clar_fname = _tool_name(tools, "request_clarification")
 
     _require_tools(
@@ -706,6 +707,10 @@ def build_ask_prompt(
             "─ Filtering (exact/boolean; not semantic) ─",
             f'• Equality: `{filter_fname}(tables="Products", filter="sku == \'ABC-123\'")`',
             f'• Range:    `{filter_fname}(tables="Sales", filter="year >= 2023 and units > 1000")`',
+            "",
+            "─ Numeric aggregations ─",
+            f"• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
+            f"  `{reduce_fname}(table=\"Sales\", metric='sum', keys='units', group_by='region')`",
             "",
             "Anti-patterns to avoid",
             "---------------------",

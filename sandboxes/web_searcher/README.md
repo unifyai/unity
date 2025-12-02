@@ -34,7 +34,6 @@ This sandbox re‑uses the common helper in `sandboxes/utils.py`, so it shares t
 ```
 --voice / -v        Enable voice capture (Deepgram) + TTS playback (Cartesia)
 --debug / -d        Show full reasoning steps of every tool‑loop
---traced / -t       Wrap manager calls with unify.traced for detailed logs
 --project_name / -p Name of the Unify project/context (default: "Sandbox")
 --overwrite / -o    Delete any existing data for the chosen project before start
 --project_version   Roll back to a specific project commit (int index)
@@ -106,7 +105,7 @@ k (default 5)> 3
 - id=3 name='Medium (Personal)' host='medium.com' gated=True subscribed=True
 
 Login to my Medium subscription article and summarize
-[ask] → (resolves Website and uses _search_gated_website)
+[ask] → (resolves Website and uses _gated_website_search)
 ```
 
 Logging and debugging

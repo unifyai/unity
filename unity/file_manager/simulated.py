@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import functools
 import threading
 from typing import List, Dict, Any, Optional, Union
@@ -11,7 +10,7 @@ from typing import List, Dict, Any, Optional, Union
 import unify
 from .base import BaseFileManager, BaseGlobalFileManager
 from ..common.async_tool_loop import SteerableToolHandle
-from ..common.llm_client import new_llm_client
+from ..common.llm_client import new_llm_client, get_cache_setting
 from .prompt_builders import (
     build_file_manager_ask_prompt,
     build_file_manager_ask_about_file_prompt,
@@ -958,6 +957,45 @@ class SimulatedFileManager(BaseFileManager):
             simulation_guidance=getattr(self, "_simulation_guidance", None),
         )
 
+    def reduce(
+        self,
+        *,
+        table: Optional[str] = None,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Simulated counterpart of the FileManager.reduce tool.
+
+        The simulated file manager stores file metadata in-memory only; this
+        method computes deterministic placeholder metrics with the same return
+        shapes as the concrete implementation:
+
+        * Single key, no grouping  → scalar.
+        * Multiple keys, no grouping → ``dict[key -> scalar]``.
+        * With grouping             → nested ``dict[group -> value or dict]``.
+        """
+
+        def _scalar(k: str) -> float:
+            base = len(self._files) or 1
+            return float(base + len(str(k)))
+
+        key_list: list[str] = [keys] if isinstance(keys, str) else list(keys)
+
+        if group_by is None:
+            if isinstance(keys, str):
+                return _scalar(keys)
+            return {k: _scalar(k) for k in key_list}
+
+        groups: list[str] = (
+            [group_by] if isinstance(group_by, str) else [str(g) for g in group_by]
+        )
+        if isinstance(keys, str):
+            return {g: _scalar(keys) for g in groups}
+        return {g: {k: _scalar(k) for k in key_list} for g in groups}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Simulated GlobalFileManager
@@ -975,8 +1013,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         self._managers: List[BaseFileManager] = list(managers)
         self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            cache=get_cache_setting(),
             stateful=True,
         )
 
