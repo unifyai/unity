@@ -135,9 +135,9 @@ async def test_handle_pause_and_resume(monkeypatch):
     orig_pause = SimulatedActorHandle.pause
 
     @functools.wraps(orig_pause)
-    def _patched_pause(self):  # type: ignore[override]
+    async def _patched_pause(self):  # type: ignore[override]
         counts["pause"] += 1
-        return orig_pause(self)
+        return await orig_pause(self)
 
     monkeypatch.setattr(
         SimulatedActorHandle,
@@ -149,9 +149,9 @@ async def test_handle_pause_and_resume(monkeypatch):
     orig_resume = SimulatedActorHandle.resume
 
     @functools.wraps(orig_resume)
-    def _patched_resume(self):  # type: ignore[override]
+    async def _patched_resume(self):  # type: ignore[override]
         counts["resume"] += 1
-        return orig_resume(self)
+        return await orig_resume(self)
 
     monkeypatch.setattr(
         SimulatedActorHandle,
@@ -163,12 +163,12 @@ async def test_handle_pause_and_resume(monkeypatch):
     actor = SimulatedActor(steps=3)
     handle = await actor.act("Summarise all open opportunities.")
 
-    pause_reply = handle.pause()
+    pause_reply = await handle.pause()
     assert "pause" in pause_reply.lower()
 
     res = await _assert_blocks_while_paused(handle.result())
 
-    resume_reply = handle.resume()
+    resume_reply = await handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
 
     answer = await asyncio.wait_for(res, timeout=DEFAULT_TIMEOUT)
@@ -206,7 +206,7 @@ async def test_pause_freezes_duration():
 
     # Give the worker thread a moment to start, then pause quickly
     await asyncio.sleep(0.05)
-    handle.pause()
+    await handle.pause()
 
     # While paused, wait longer than the total duration; it should NOT complete
     res = asyncio.create_task(handle.result())
@@ -218,7 +218,7 @@ async def test_pause_freezes_duration():
     # Resume and ensure it doesn't complete immediately; some time should elapse
     loop = asyncio.get_event_loop()
     t0 = loop.time()
-    handle.resume()
+    await handle.resume()
     answer = await asyncio.wait_for(res, timeout=2)
     elapsed_after_resume = loop.time() - t0
     assert isinstance(answer, str) and answer.strip()
@@ -370,7 +370,7 @@ async def test_stop_while_paused_finishes_immediately():
 
     # Pause quickly to freeze the worker thread
     await asyncio.sleep(0.05)
-    handle.pause()
+    await handle.pause()
 
     # Give the worker enough time to enter the paused wait state before stopping
     await asyncio.sleep(0.2)

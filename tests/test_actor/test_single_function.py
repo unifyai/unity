@@ -13,35 +13,24 @@ from tests.helpers import _handle_project
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Fixtures
+# Helper functions to create test functions inside @_handle_project context
 # ────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def function_manager():
-    """Provide a fresh FunctionManager for each test."""
-    fm = FunctionManager()
-    yield fm
-    fm.clear()
-
-
-@pytest.fixture
-def simple_sync_function(function_manager):
+def _create_sync_function(fm: FunctionManager) -> dict:
     """Add a simple synchronous function to the FunctionManager."""
     implementation = '''
 def greet_user(name: str = "World") -> str:
     """Greets a user by name."""
     return f"Hello, {name}!"
 '''
-    result = function_manager.add_functions(implementations=[implementation])
-    assert result.get("greet_user") == "added"
-
-    functions = function_manager.list_functions(include_implementations=True)
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("greet_user") in ("added", "skipped: already exists")
+    functions = fm.list_functions(include_implementations=True)
     return functions["greet_user"]
 
 
-@pytest.fixture
-def simple_async_function(function_manager):
+def _create_async_function(fm: FunctionManager) -> dict:
     """Add a simple async function to the FunctionManager."""
     implementation = '''
 async def async_greeting(name: str = "World") -> str:
@@ -50,15 +39,13 @@ async def async_greeting(name: str = "World") -> str:
     await asyncio.sleep(0.01)
     return f"Async hello, {name}!"
 '''
-    result = function_manager.add_functions(implementations=[implementation])
-    assert result.get("async_greeting") == "added"
-
-    functions = function_manager.list_functions(include_implementations=True)
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("async_greeting") in ("added", "skipped: already exists")
+    functions = fm.list_functions(include_implementations=True)
     return functions["async_greeting"]
 
 
-@pytest.fixture
-def slow_function(function_manager):
+def _create_slow_function(fm: FunctionManager) -> dict:
     """Add a slow function that can be cancelled."""
     implementation = '''
 async def slow_task() -> str:
@@ -67,25 +54,22 @@ async def slow_task() -> str:
     await asyncio.sleep(10)
     return "Completed slowly"
 '''
-    result = function_manager.add_functions(implementations=[implementation])
-    assert result.get("slow_task") == "added"
-
-    functions = function_manager.list_functions(include_implementations=True)
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("slow_task") in ("added", "skipped: already exists")
+    functions = fm.list_functions(include_implementations=True)
     return functions["slow_task"]
 
 
-@pytest.fixture
-def failing_function(function_manager):
+def _create_failing_function(fm: FunctionManager) -> dict:
     """Add a function that raises an error."""
     implementation = '''
 def failing_task() -> str:
     """A task that always fails."""
     raise ValueError("Intentional test failure")
 '''
-    result = function_manager.add_functions(implementations=[implementation])
-    assert result.get("failing_task") == "added"
-
-    functions = function_manager.list_functions(include_implementations=True)
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("failing_task") in ("added", "skipped: already exists")
+    functions = fm.list_functions(include_implementations=True)
     return functions["failing_task"]
 
 
@@ -96,11 +80,14 @@ def failing_task() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_sync_function_by_id(function_manager, simple_sync_function):
+async def test_execute_sync_function_by_id():
     """Execute a sync function by its ID."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -117,11 +104,14 @@ async def test_execute_sync_function_by_id(function_manager, simple_sync_functio
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_async_function_by_id(function_manager, simple_async_function):
+async def test_execute_async_function_by_id():
     """Execute an async function by its ID."""
+    fm = FunctionManager()
+    simple_async_function = _create_async_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_async_function["function_id"]
@@ -138,11 +128,14 @@ async def test_execute_async_function_by_id(function_manager, simple_async_funct
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_function_by_description(function_manager, simple_sync_function):
+async def test_execute_function_by_description():
     """Execute a function found by semantic search."""
+    fm = FunctionManager()
+    _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     # Search by description instead of ID
@@ -158,11 +151,14 @@ async def test_execute_function_by_description(function_manager, simple_sync_fun
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_function_default_args(function_manager, simple_sync_function):
+async def test_execute_function_default_args():
     """Execute a function with default arguments."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -183,11 +179,13 @@ async def test_execute_function_default_args(function_manager, simple_sync_funct
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_function_not_found_by_id(function_manager):
+async def test_function_not_found_by_id():
     """Error when function ID doesn't exist."""
+    fm = FunctionManager()
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     with pytest.raises(ValueError, match="No function found with ID"):
@@ -199,12 +197,14 @@ async def test_function_not_found_by_id(function_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_function_not_found_by_description(function_manager):
+async def test_function_not_found_by_description():
     """Error when no function matches description (with primitives excluded)."""
+    fm = FunctionManager()
     # Don't add any functions
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     with pytest.raises(ValueError, match="No function found matching"):
@@ -213,11 +213,14 @@ async def test_function_not_found_by_description(function_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_function_execution_error(function_manager, failing_function):
+async def test_function_execution_error():
     """Handle errors during function execution."""
+    fm = FunctionManager()
+    failing_function = _create_failing_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = failing_function["function_id"]
@@ -239,11 +242,14 @@ async def test_function_execution_error(function_manager, failing_function):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_pause_is_noop(function_manager, simple_sync_function):
+async def test_handle_pause_is_noop():
     """Pause should be a no-op that returns acknowledgment."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -262,11 +268,14 @@ async def test_handle_pause_is_noop(function_manager, simple_sync_function):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_resume_is_noop(function_manager, simple_sync_function):
+async def test_handle_resume_is_noop():
     """Resume should be a no-op that returns acknowledgment."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -286,11 +295,14 @@ async def test_handle_resume_is_noop(function_manager, simple_sync_function):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_interject_is_noop(function_manager, simple_sync_function):
+async def test_handle_interject_is_noop():
     """Interject should be a no-op that returns acknowledgment."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -311,11 +323,14 @@ async def test_handle_interject_is_noop(function_manager, simple_sync_function):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_stop_cancels_execution(function_manager, slow_function):
+async def test_handle_stop_cancels_execution():
     """Stop should cancel a running function."""
+    fm = FunctionManager()
+    slow_function = _create_slow_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = slow_function["function_id"]
@@ -335,11 +350,14 @@ async def test_handle_stop_cancels_execution(function_manager, slow_function):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_ask_returns_status(function_manager, simple_async_function):
+async def test_handle_ask_returns_status():
     """Ask should return information about the function status."""
+    fm = FunctionManager()
+    simple_async_function = _create_async_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_async_function["function_id"]
@@ -364,11 +382,14 @@ async def test_handle_ask_returns_status(function_manager, simple_async_function
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_done_property(function_manager, simple_sync_function):
+async def test_handle_done_property():
     """done() should reflect completion status."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -384,11 +405,14 @@ async def test_handle_done_property(function_manager, simple_sync_function):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_get_history_is_empty(function_manager, simple_sync_function):
+async def test_handle_get_history_is_empty():
     """get_history() should return empty list for single function."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -405,14 +429,14 @@ async def test_handle_get_history_is_empty(function_manager, simple_sync_functio
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_clarification_queues_are_none(
-    function_manager,
-    simple_sync_function,
-):
+async def test_handle_clarification_queues_are_none():
     """Clarification queues should be None."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     function_id = simple_sync_function["function_id"]
@@ -434,11 +458,13 @@ async def test_handle_clarification_queues_are_none(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_get_primitive_by_name(function_manager):
+async def test_get_primitive_by_name():
     """Should be able to get a primitive by its qualified name."""
+    fm = FunctionManager()
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     primitive_data = actor._get_primitive_by_name("ContactManager.ask")
@@ -450,11 +476,13 @@ async def test_get_primitive_by_name(function_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_get_primitive_by_name_not_found(function_manager):
+async def test_get_primitive_by_name_not_found():
     """Should raise ValueError for unknown primitive name."""
+    fm = FunctionManager()
+
     actor = SingleFunctionActor(
         computer_primitives=None,
-        function_manager=function_manager,
+        function_manager=fm,
     )
 
     with pytest.raises(ValueError, match="No primitive found"):
