@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import inspect
 import functools
 import json
@@ -2100,6 +2101,63 @@ class FunctionManager(BaseFunctionManager):
 
         return python_path
 
+    async def _handle_rpc_call(
+        self,
+        path: str,
+        kwargs: Dict[str, Any],
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+    ) -> Any:
+        """
+        Handle an RPC call from a subprocess.
+
+        Args:
+            path: The RPC path (e.g., "contacts.ask", "computer.click")
+            kwargs: The keyword arguments for the call
+            primitives: The Primitives instance for state manager access
+            computer_primitives: The ComputerPrimitives instance
+
+        Returns:
+            The result of the RPC call
+        """
+        parts = path.split(".", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Invalid RPC path: {path}")
+
+        manager_name, method_name = parts
+
+        # Handle computer primitives
+        if manager_name == "computer":
+            if computer_primitives is None:
+                raise RuntimeError("computer_primitives not available")
+            method = getattr(computer_primitives, method_name, None)
+            if method is None:
+                raise AttributeError(
+                    f"computer_primitives has no method '{method_name}'",
+                )
+            # ComputerPrimitives methods are sync, but we run in async context
+            if asyncio.iscoroutinefunction(method):
+                return await method(**kwargs)
+            return method(**kwargs)
+
+        # Handle state manager primitives
+        if primitives is None:
+            raise RuntimeError("primitives not available")
+
+        manager = getattr(primitives, manager_name, None)
+        if manager is None:
+            raise AttributeError(f"primitives has no manager '{manager_name}'")
+
+        method = getattr(manager, method_name, None)
+        if method is None:
+            raise AttributeError(
+                f"primitives.{manager_name} has no method '{method_name}'",
+            )
+
+        if asyncio.iscoroutinefunction(method):
+            return await method(**kwargs)
+        return method(**kwargs)
+
     async def execute_in_venv(
         self,
         *,
@@ -2107,6 +2165,8 @@ class FunctionManager(BaseFunctionManager):
         implementation: str,
         call_kwargs: Optional[Dict[str, Any]] = None,
         is_async: bool = True,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Execute a function implementation in a custom virtual environment.
@@ -2114,7 +2174,7 @@ class FunctionManager(BaseFunctionManager):
         This method:
         1. Ensures the venv is prepared (lazy creation on first use)
         2. Spawns a subprocess with the venv's Python interpreter
-        3. Sends the function implementation and kwargs via stdin
+        3. Handles bidirectional RPC for primitives and computer_primitives
         4. Returns the result from the subprocess
 
         Args:
@@ -2122,6 +2182,8 @@ class FunctionManager(BaseFunctionManager):
             implementation: The function source code.
             call_kwargs: Keyword arguments to pass to the function.
             is_async: Whether the function is async (default True).
+            primitives: The Primitives instance for RPC access to state managers.
+            computer_primitives: The ComputerPrimitives instance for RPC access.
 
         Returns:
             Dict with keys: result, error, stdout, stderr
@@ -2130,24 +2192,26 @@ class FunctionManager(BaseFunctionManager):
             ValueError: If venv_id does not exist.
             RuntimeError: If execution fails.
         """
-        import asyncio
-
         call_kwargs = call_kwargs or {}
 
         # Ensure venv is ready
         python_path = await self.prepare_venv(venv_id=venv_id)
         runner_path = self._get_venv_runner_path(venv_id)
 
-        # Prepare input
-        input_data = json.dumps(
-            {
-                "implementation": implementation,
-                "call_kwargs": call_kwargs,
-                "is_async": is_async,
-            },
+        # Prepare initial execution request
+        execute_msg = (
+            json.dumps(
+                {
+                    "type": "execute",
+                    "implementation": implementation,
+                    "call_kwargs": call_kwargs,
+                    "is_async": is_async,
+                },
+            )
+            + "\n"
         )
 
-        # Execute in subprocess
+        # Execute in subprocess with bidirectional communication
         process = await asyncio.create_subprocess_exec(
             str(python_path),
             str(runner_path),
@@ -2156,24 +2220,120 @@ class FunctionManager(BaseFunctionManager):
             stderr=asyncio.subprocess.PIPE,
         )
 
-        stdout, stderr = await process.communicate(input=input_data.encode())
+        # Send initial execution request
+        process.stdin.write(execute_msg.encode())
+        await process.stdin.drain()
 
-        # Parse output
-        if process.returncode != 0:
-            return {
-                "result": None,
-                "error": f"Subprocess failed with code {process.returncode}: {stderr.decode()}",
-                "stdout": stdout.decode(),
-                "stderr": stderr.decode(),
-            }
+        # Handle bidirectional communication
+        stderr_output = []
+
+        async def read_stderr():
+            """Read stderr in background."""
+            while True:
+                line = await process.stderr.readline()
+                if not line:
+                    break
+                stderr_output.append(line.decode())
+
+        stderr_task = asyncio.create_task(read_stderr())
 
         try:
-            result = json.loads(stdout.decode())
-            return result
-        except json.JSONDecodeError as e:
+            while True:
+                # Read next message from subprocess
+                line = await process.stdout.readline()
+                if not line:
+                    # Process ended without sending complete message
+                    await stderr_task
+                    return {
+                        "result": None,
+                        "error": "Subprocess ended unexpectedly",
+                        "stdout": "",
+                        "stderr": "".join(stderr_output),
+                    }
+
+                try:
+                    msg = json.loads(line.decode().strip())
+                except json.JSONDecodeError as e:
+                    continue  # Skip malformed lines
+
+                msg_type = msg.get("type")
+
+                if msg_type == "rpc_call":
+                    # Handle RPC call from subprocess
+                    request_id = msg.get("id")
+                    path = msg.get("path", "")
+                    rpc_kwargs = msg.get("kwargs", {})
+
+                    try:
+                        result = await self._handle_rpc_call(
+                            path=path,
+                            kwargs=rpc_kwargs,
+                            primitives=primitives,
+                            computer_primitives=computer_primitives,
+                        )
+                        response = (
+                            json.dumps(
+                                {
+                                    "type": "rpc_result",
+                                    "id": request_id,
+                                    "result": self._make_json_serializable(result),
+                                },
+                            )
+                            + "\n"
+                        )
+                    except Exception as e:
+                        response = (
+                            json.dumps(
+                                {
+                                    "type": "rpc_error",
+                                    "id": request_id,
+                                    "error": str(e),
+                                },
+                            )
+                            + "\n"
+                        )
+
+                    process.stdin.write(response.encode())
+                    await process.stdin.drain()
+
+                elif msg_type == "complete":
+                    # Subprocess finished
+                    await stderr_task
+                    return {
+                        "result": msg.get("result"),
+                        "error": msg.get("error"),
+                        "stdout": msg.get("stdout", ""),
+                        "stderr": msg.get("stderr", "") + "".join(stderr_output),
+                    }
+
+        except Exception as e:
+            stderr_task.cancel()
+            try:
+                await stderr_task
+            except asyncio.CancelledError:
+                pass
             return {
                 "result": None,
-                "error": f"Failed to parse subprocess output: {e}",
-                "stdout": stdout.decode(),
-                "stderr": stderr.decode(),
+                "error": f"RPC error: {e}",
+                "stdout": "",
+                "stderr": "".join(stderr_output),
             }
+        finally:
+            # Ensure process is terminated
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    process.kill()
+
+    def _make_json_serializable(self, obj: Any) -> Any:
+        """Convert an object to a JSON-serializable form."""
+        if obj is None or isinstance(obj, (bool, int, float, str)):
+            return obj
+        if isinstance(obj, (list, tuple)):
+            return [self._make_json_serializable(item) for item in obj]
+        if isinstance(obj, dict):
+            return {str(k): self._make_json_serializable(v) for k, v in obj.items()}
+        # For other types, convert to string representation
+        return str(obj)

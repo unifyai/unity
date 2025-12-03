@@ -346,7 +346,11 @@ class SingleFunctionActor(BaseActor):
         venv_id: int,
         call_kwargs: Dict[str, Any],
     ) -> Any:
-        """Execute a function in a custom virtual environment subprocess."""
+        """Execute a function in a custom virtual environment subprocess.
+
+        The subprocess has access to both `primitives` and `computer_primitives`
+        via RPC calls back to the main process.
+        """
         logger.info(
             f"Executing function '{name}' in custom venv (ID: {venv_id})",
         )
@@ -354,12 +358,19 @@ class SingleFunctionActor(BaseActor):
         # Determine if the function is async by checking the implementation
         is_async = "async def" in implementation
 
-        # Execute in the custom venv
+        # Get primitives for RPC access
+        from unity.function_manager.primitives import Primitives
+
+        primitives = Primitives()
+
+        # Execute in the custom venv with RPC support
         result = await self._function_manager.execute_in_venv(
             venv_id=venv_id,
             implementation=implementation,
             call_kwargs=call_kwargs,
             is_async=is_async,
+            primitives=primitives,
+            computer_primitives=self._computer_primitives,
         )
 
         # Log any captured output
