@@ -149,7 +149,8 @@ class IngestConfig(BaseModel):
     )
 
     # Business context specifications for enriching table contexts with descriptions
-    business_contexts: List["BusinessContextSpec"] = Field(default_factory=list)
+    # Uses BusinessContextsConfig with global_rules, file_contexts (with file_rules), and table_contexts (with table_rules)
+    business_contexts: Optional["BusinessContextsConfig"] = None
 
 
 # --------------------------- Business Context ----------------------------- #
@@ -159,33 +160,48 @@ class TableBusinessContextSpec(BaseModel):
     """Table-level business context specification for enriching a single table context with descriptions.
 
     - table: exact table label (required for matching)
-    - column_descriptions: mapping of column name → description
     - table_description: optional description for the table context itself
+    - column_descriptions: mapping of column name → description
+    - table_rules: rules about interpreting multiple columns within this table
     """
 
     table: str
-    column_descriptions: Dict[str, str] = Field(default_factory=dict)
+    table_rules: List[str] = Field(default_factory=list)
     table_description: Optional[str] = None
+    column_descriptions: Dict[str, str] = Field(default_factory=dict)
 
 
-class BusinessContextSpec(BaseModel):
-    """Business context specification for enriching table contexts with descriptions.
+class FileBusinessContextSpec(BaseModel):
+    """File-level business context specification for enriching table contexts with descriptions.
 
     - file_path: exact file path (required for matching)
-    - tables: list of table specs for this file (at least one required)
+    - file_rules: rules about interpreting data across multiple tables in this file
+    - table_contexts: list of table specs for this file (at least one required)
     """
 
     file_path: str
-    tables: List[TableBusinessContextSpec] = Field(min_length=1)
+    file_rules: List[str] = Field(default_factory=list)
+    table_contexts: List[TableBusinessContextSpec] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_tables_not_empty(self) -> "BusinessContextSpec":
-        """Ensure tables list is not empty."""
-        if not self.tables:
+    def validate_table_contexts_not_empty(self) -> "FileBusinessContextSpec":
+        """Ensure table_contexts list is not empty."""
+        if not self.table_contexts:
             raise ValueError(
-                "BusinessContextSpec must have at least one table specification",
+                "FileBusinessContextSpec must have at least one table specification",
             )
         return self
+
+
+class BusinessContextsConfig(BaseModel):
+    """Top-level business contexts configuration with hierarchical rules support.
+
+    - global_rules: rules about interpreting data across multiple files
+    - file_contexts: list of file-level business context specs
+    """
+
+    global_rules: List[str] = Field(default_factory=list)
+    file_contexts: List[FileBusinessContextSpec] = Field(default_factory=list)
 
 
 # ------------------------------ Embeddings -------------------------------- #
@@ -240,10 +256,7 @@ class EmbeddingsConfig(BaseModel):
     strategy:
         - "off": disable embeddings
         - "after": run embeddings after ingest (classic flow)
-        - "along": ingest and embed in chunks within a single file loop
-        - "auto": choose between "after" and "along" using `large_threshold`
-    large_threshold:
-        Size heuristic (total_records or total table rows) used when strategy == "auto".
+        - "along": ingest and embed in chunks within a single file loop (non-blocking)
     hooks_per_chunk:
         When True, run pre/post embed hooks for each chunk in along mode.
     file_specs:
@@ -251,8 +264,7 @@ class EmbeddingsConfig(BaseModel):
         Each FileEmbeddingSpec can target multiple tables within a file.
     """
 
-    strategy: Literal["off", "after", "along", "auto"] = "auto"
-    large_threshold: int = 2000
+    strategy: Literal["off", "after", "along"] = "after"
     hooks_per_chunk: bool = True
     file_specs: List[FileEmbeddingSpec] = Field(default_factory=list)
 
@@ -295,13 +307,53 @@ class OutputConfig(BaseModel):
 
 
 class DiagnosticsConfig(BaseModel):
-    """Controls optional pipeline diagnostics output (stdout).
+    """Controls optional pipeline diagnostics output.
 
-    - enable_progress: when True, emit human-friendly progress prints for
-      ingest/embed steps, including chunk counters where applicable.
+    - enable_progress: when True, emit progress events for ingest/embed steps.
+    - progress_mode: selects the progress reporter type:
+        - "json_file": append JSON-lines to progress_file (auto-generated if not provided)
+        - "callback": invoke a user-provided callback
+        - "off": disable progress reporting
+    - progress_file: path for JSON-lines output when progress_mode is "json_file".
+      If not provided, auto-generates: ./pipeline_progress_{timestamp}.jsonl
+    - verbosity: controls the detail level of progress events:
+        - "low" (default): minimal events (file_path, phase, status, timestamp)
+        - "medium": detailed (include chunk numbers, row counts, table labels, durations)
+        - "high": verbose (all metadata plus intermediate step details)
     """
 
     enable_progress: bool = False
+    progress_mode: Literal["json_file", "callback", "off"] = "json_file"
+    progress_file: Optional[str] = None
+    verbosity: Literal["low", "medium", "high"] = "low"
+
+
+class ExecutionConfig(BaseModel):
+    """Controls pipeline execution behavior.
+
+    - parallel_files: when True, process multiple files concurrently.
+      Defaults to False for safe sequential processing.
+    - max_file_workers: maximum concurrent file processing tasks when parallel.
+    - max_embed_workers: maximum concurrent embedding tasks per file.
+    """
+
+    parallel_files: bool = False
+    max_file_workers: int = 4
+    max_embed_workers: int = 8
+
+
+class RetryConfig(BaseModel):
+    """Controls retry behavior for failed operations.
+
+    - max_retries: maximum retry attempts for failed tasks (0 = no retries).
+    - retry_delay_seconds: base delay between retries (with exponential backoff).
+    - fail_fast: when True, stop pipeline on first failure without processing
+      remaining files/tasks.
+    """
+
+    max_retries: int = 3
+    retry_delay_seconds: float = 3.0
+    fail_fast: bool = False
 
 
 def resolve_callables(names_or_callables: Iterable[Any]) -> List[Callable]:
@@ -337,7 +389,7 @@ class FilePipelineConfig(BaseModel):
 
     Keep this as the single entry point. Extend the grouped sub-configs as
     needed instead of growing many small models. Defaults preserve current
-    behavior (per-file layout, no embeddings, modest parser batch size).
+    behavior (per-file layout, sequential processing, modest parser batch size).
 
     Can be instantiated with defaults or loaded from a JSON file using `from_file()`.
     Supports partial configs when loading from file - only define what you need,
@@ -350,6 +402,8 @@ class FilePipelineConfig(BaseModel):
     plugins: PluginsConfig = PluginsConfig()
     output: OutputConfig = OutputConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    execution: ExecutionConfig = ExecutionConfig()
+    retry: RetryConfig = RetryConfig()
 
     @classmethod
     def from_file(cls, path: str) -> "FilePipelineConfig":
@@ -395,6 +449,8 @@ class FilePipelineConfig(BaseModel):
             plugins: Optional[Dict[str, Any]] = None
             output: Optional[Dict[str, Any]] = None
             diagnostics: Optional[Dict[str, Any]] = None
+            execution: Optional[Dict[str, Any]] = None
+            retry: Optional[Dict[str, Any]] = None
 
         # Validate JSON structure
         config_file = _FilePipelineConfigFile.model_validate(data)
@@ -414,23 +470,56 @@ class FilePipelineConfig(BaseModel):
             ingest_data = config_file.ingest
             for key, value in ingest_data.items():
                 if key == "business_contexts":
-                    # Convert dicts to BusinessContextSpec instances with nested TableBusinessContextSpec
-                    business_contexts = []
-                    for bc_dict in value:
-                        # Extract tables list and convert each to TableBusinessContextSpec
-                        tables_data = bc_dict.get("tables", [])
-                        table_specs = [
-                            TableBusinessContextSpec(**table_dict)
-                            for table_dict in tables_data
-                        ]
-                        # Create BusinessContextSpec with file_path and tables
-                        business_contexts.append(
-                            BusinessContextSpec(
-                                file_path=bc_dict["file_path"],
-                                tables=table_specs,
-                            ),
+                    # New structure: business_contexts is a dict with global_rules and file_contexts
+                    if isinstance(value, dict):
+                        # Parse new structure: {global_rules: [...], file_contexts: [...]}
+                        global_rules = value.get("global_rules", [])
+                        file_contexts_data = value.get("file_contexts", [])
+                        file_contexts = []
+                        for fc_dict in file_contexts_data:
+                            # Extract table_contexts and convert each to TableBusinessContextSpec
+                            table_contexts_data = fc_dict.get("table_contexts", [])
+                            table_specs = [
+                                TableBusinessContextSpec(**tc_dict)
+                                for tc_dict in table_contexts_data
+                            ]
+                            # Create FileBusinessContextSpec with file_path, file_rules, and table_contexts
+                            file_contexts.append(
+                                FileBusinessContextSpec(
+                                    file_path=fc_dict["file_path"],
+                                    file_rules=fc_dict.get("file_rules", []),
+                                    table_contexts=table_specs,
+                                ),
+                            )
+                        cfg.ingest.business_contexts = BusinessContextsConfig(
+                            global_rules=global_rules,
+                            file_contexts=file_contexts,
                         )
-                    cfg.ingest.business_contexts = business_contexts
+                    else:
+                        # Legacy support: business_contexts was a list (deprecated)
+                        # Convert to new structure with empty global_rules
+                        file_contexts = []
+                        for bc_dict in value:
+                            # Support both old "tables" and new "table_contexts" keys
+                            table_contexts_data = bc_dict.get(
+                                "table_contexts",
+                                bc_dict.get("tables", []),
+                            )
+                            table_specs = [
+                                TableBusinessContextSpec(**tc_dict)
+                                for tc_dict in table_contexts_data
+                            ]
+                            file_contexts.append(
+                                FileBusinessContextSpec(
+                                    file_path=bc_dict["file_path"],
+                                    file_rules=bc_dict.get("file_rules", []),
+                                    table_contexts=table_specs,
+                                ),
+                            )
+                        cfg.ingest.business_contexts = BusinessContextsConfig(
+                            global_rules=[],
+                            file_contexts=file_contexts,
+                        )
                 elif hasattr(cfg.ingest, key):
                     setattr(cfg.ingest, key, value)
 
@@ -439,8 +528,6 @@ class FilePipelineConfig(BaseModel):
             embed_data = config_file.embed
             if "strategy" in embed_data:
                 cfg.embed.strategy = embed_data["strategy"]
-            if "large_threshold" in embed_data:
-                cfg.embed.large_threshold = embed_data["large_threshold"]
             if "hooks_per_chunk" in embed_data:
                 cfg.embed.hooks_per_chunk = embed_data["hooks_per_chunk"]
             if "file_specs" in embed_data:
@@ -489,5 +576,33 @@ class FilePipelineConfig(BaseModel):
                 cfg.diagnostics.enable_progress = config_file.diagnostics[
                     "enable_progress"
                 ]
+            if "progress_mode" in config_file.diagnostics:
+                cfg.diagnostics.progress_mode = config_file.diagnostics["progress_mode"]
+            if "progress_file" in config_file.diagnostics:
+                cfg.diagnostics.progress_file = config_file.diagnostics["progress_file"]
+            if "verbosity" in config_file.diagnostics:
+                cfg.diagnostics.verbosity = config_file.diagnostics["verbosity"]
+
+        # Execution config
+        if config_file.execution:
+            if "parallel_files" in config_file.execution:
+                cfg.execution.parallel_files = config_file.execution["parallel_files"]
+            if "max_file_workers" in config_file.execution:
+                cfg.execution.max_file_workers = config_file.execution[
+                    "max_file_workers"
+                ]
+            if "max_embed_workers" in config_file.execution:
+                cfg.execution.max_embed_workers = config_file.execution[
+                    "max_embed_workers"
+                ]
+
+        # Retry config
+        if config_file.retry:
+            if "max_retries" in config_file.retry:
+                cfg.retry.max_retries = config_file.retry["max_retries"]
+            if "retry_delay_seconds" in config_file.retry:
+                cfg.retry.retry_delay_seconds = config_file.retry["retry_delay_seconds"]
+            if "fail_fast" in config_file.retry:
+                cfg.retry.fail_fast = config_file.retry["fail_fast"]
 
         return cfg
