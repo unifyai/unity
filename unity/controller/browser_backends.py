@@ -510,7 +510,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         url,
                         json=payload,
                         headers=headers,
-                        timeout=300,
+                        timeout=1000,
                     ) as resp:
                         if resp.status >= 400:
                             try:
