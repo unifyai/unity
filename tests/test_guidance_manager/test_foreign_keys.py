@@ -294,7 +294,7 @@ def test_fk_function_ids_valid_reference():
     fm.add_functions(implementations=[src1, src2])
 
     # Get function IDs
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_ids = sorted([int(f.entries["function_id"]) for f in funcs])
     assert len(func_ids) == 2
 
@@ -326,7 +326,7 @@ def test_fk_function_ids_set_null_on_delete():
         fm.add_functions(implementations=src)
 
     # Get function IDs
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_ids = sorted([int(f.entries["function_id"]) for f in funcs])
     assert len(func_ids) == 3
     f1, f2, f3 = func_ids
@@ -391,7 +391,7 @@ def test_fk_combined_images_and_functions():
     # Create function
     src = "def demo():\n    return 'demo'\n"
     fm.add_functions(implementations=src)
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_id = int(funcs[0].entries["function_id"])
 
     # Create guidance with both

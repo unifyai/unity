@@ -308,7 +308,7 @@ def test_function_guidance_bidirectional_cascade():
 
     # Get function ID
     func_logs = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter="name == 'setup_system'",
         return_ids_only=True,
     )
@@ -316,14 +316,17 @@ def test_function_guidance_bidirectional_cascade():
 
     # Update function to reference both guidance entries
     unify.update_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         logs=func_logs[0],
         entries={"guidance_ids": [g_map["Setup Guide"], g_map["Usage Guide"]]},
         overwrite=True,
     )
 
     # Get function ID
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id", "guidance_ids"])
+    funcs = unify.get_logs(
+        context=fm._compositional_ctx,
+        from_fields=["function_id", "guidance_ids"],
+    )
     func_id = int(funcs[0].entries["function_id"])
 
     # Update guidance entries to reference the function (using unify.update_logs)
@@ -343,7 +346,7 @@ def test_function_guidance_bidirectional_cascade():
     # Verify bidirectional linkage
     # Function → Guidance
     func_data = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter=f"function_id == {func_id}",
         from_fields=["guidance_ids"],
     )
@@ -364,7 +367,7 @@ def test_function_guidance_bidirectional_cascade():
 
     # Verify removed from function's guidance_ids array (CASCADE behavior)
     func_after = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter=f"function_id == {func_id}",
         from_fields=["guidance_ids"],
     )
@@ -416,7 +419,7 @@ def test_delete_function_cascades_tasks_guidance():
     src = "def worker():\n    return 'work'\n"
     fm.add_functions(implementations=src)
 
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_id = int(funcs[0].entries["function_id"])
 
     # Create task using this function
@@ -552,7 +555,7 @@ def test_complex_fk_workflow():
     # Step 3: Create function
     src = "def process():\n    return 'processed'\n"
     fm.add_functions(implementations=src)
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_id = int(funcs[0].entries["function_id"])
 
     # Step 4: Create guidance with images and function reference
@@ -753,7 +756,7 @@ def test_circular_fk_deletion_safety():
     # Create function
     src = "def circular():\n    return 'loop'\n"
     fm.add_functions(implementations=src)
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_id = int(funcs[0].entries["function_id"])
 
     # Create guidance referencing function
@@ -763,12 +766,12 @@ def test_circular_fk_deletion_safety():
 
     # Update function to reference guidance (circular reference)
     func_logs = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter=f"function_id == {func_id}",
         return_ids_only=True,
     )
     unify.update_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         logs=func_logs[0],
         entries={"guidance_ids": [guidance_id]},
         overwrite=True,
@@ -776,7 +779,7 @@ def test_circular_fk_deletion_safety():
 
     # Verify circular reference exists
     func_data = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter=f"function_id == {func_id}",
         from_fields=["guidance_ids"],
     )
