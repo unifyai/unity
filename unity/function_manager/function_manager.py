@@ -11,6 +11,7 @@ from ..common.search_utils import table_search_top_k
 from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
 from .types.meta import FunctionsMeta
+from .types.venv import VirtualEnv
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..file_manager.managers.local import LocalFileManager as FileManager
@@ -106,6 +107,13 @@ class FunctionManager(BaseFunctionManager):
     class Config:
         required_contexts = [
             TableContext(
+                name="Functions/VirtualEnvs",
+                description="Virtual environment configurations (pyproject.toml content).",
+                fields=model_to_fields(VirtualEnv),
+                unique_keys={"venv_id": "int"},
+                auto_counting={"venv_id": None},
+            ),
+            TableContext(
                 name="Functions/Compositional",
                 description="User-defined functions with auto-incrementing IDs.",
                 fields=model_to_fields(Function),
@@ -116,6 +124,12 @@ class FunctionManager(BaseFunctionManager):
                         "name": "guidance_ids[*]",
                         "references": "Guidance.guidance_id",
                         "on_delete": "CASCADE",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "venv_id",
+                        "references": "Functions/VirtualEnvs.venv_id",
+                        "on_delete": "SET NULL",
                         "on_update": "CASCADE",
                     },
                 ],
@@ -173,6 +187,7 @@ class FunctionManager(BaseFunctionManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FunctionManager."
+        self._venvs_ctx = ContextRegistry.get_context(self, "Functions/VirtualEnvs")
         self._compositional_ctx = ContextRegistry.get_context(
             self,
             "Functions/Compositional",
@@ -471,6 +486,11 @@ class FunctionManager(BaseFunctionManager):
             pass
 
         try:
+            unify.delete_context(self._venvs_ctx)
+        except Exception:
+            pass
+
+        try:
             unify.delete_context(self._meta_ctx)
         except Exception:
             pass
@@ -483,6 +503,7 @@ class FunctionManager(BaseFunctionManager):
             pass
 
         # Force re-provisioning
+        ContextRegistry.refresh(self, "Functions/VirtualEnvs")
         ContextRegistry.refresh(self, "Functions/Compositional")
         ContextRegistry.refresh(self, "Functions/Primitives")
         ContextRegistry.refresh(self, "Functions/Meta")
@@ -1350,3 +1371,163 @@ class FunctionManager(BaseFunctionManager):
                 },
             )
         return {"attached_count": len(images), "images": images}
+
+    # ------------------------------------------------------------------ #
+    #  Virtual Environment Management                                    #
+    # ------------------------------------------------------------------ #
+
+    def add_venv(self, *, venv: str) -> int:
+        """
+        Add a new virtual environment configuration.
+
+        Args:
+            venv: The pyproject.toml content as a string.
+
+        Returns:
+            The auto-assigned venv_id.
+        """
+        logs = unify.create_logs(
+            context=self._venvs_ctx,
+            entries=[{"venv": venv}],
+        )
+        # create_logs returns a list of Log objects; extract venv_id from entries
+        if logs and hasattr(logs[0], "entries"):
+            venv_id = logs[0].entries.get("venv_id")
+            if venv_id is not None:
+                return venv_id
+        raise RuntimeError("Failed to retrieve venv_id after creation")
+
+    def get_venv(self, *, venv_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a virtual environment by its ID.
+
+        Args:
+            venv_id: The unique identifier of the virtual environment.
+
+        Returns:
+            Dict with venv_id and venv content, or None if not found.
+        """
+        logs = unify.get_logs(
+            context=self._venvs_ctx,
+            filter=f"venv_id == {venv_id}",
+            limit=1,
+            exclude_fields=list_private_fields(self._venvs_ctx),
+        )
+        if not logs:
+            return None
+        return logs[0].entries
+
+    def list_venvs(self) -> List[Dict[str, Any]]:
+        """
+        List all virtual environments.
+
+        Returns:
+            List of dicts, each with venv_id and venv content.
+        """
+        logs = unify.get_logs(
+            context=self._venvs_ctx,
+            exclude_fields=list_private_fields(self._venvs_ctx),
+        )
+        return [lg.entries for lg in logs]
+
+    def delete_venv(self, *, venv_id: int) -> bool:
+        """
+        Delete a virtual environment by its ID.
+
+        Functions referencing this venv will have their venv_id set to None
+        (falling back to the default environment) via the foreign key cascade.
+
+        Args:
+            venv_id: The unique identifier of the virtual environment.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        logs = unify.get_logs(
+            context=self._venvs_ctx,
+            filter=f"venv_id == {venv_id}",
+            limit=1,
+        )
+        if not logs:
+            return False
+        unify.delete_logs(
+            context=self._venvs_ctx,
+            logs=[logs[0].id],
+        )
+        return True
+
+    def update_venv(self, *, venv_id: int, venv: str) -> bool:
+        """
+        Update the content of an existing virtual environment.
+
+        Args:
+            venv_id: The unique identifier of the virtual environment.
+            venv: The new pyproject.toml content.
+
+        Returns:
+            True if updated, False if not found.
+        """
+        logs = unify.get_logs(
+            context=self._venvs_ctx,
+            filter=f"venv_id == {venv_id}",
+            limit=1,
+        )
+        if not logs:
+            return False
+        unify.update_logs(
+            context=self._venvs_ctx,
+            logs=[logs[0].id],
+            entries={"venv": venv},
+            overwrite=True,
+        )
+        return True
+
+    def set_function_venv(
+        self,
+        *,
+        function_id: int,
+        venv_id: Optional[int],
+    ) -> bool:
+        """
+        Set the virtual environment for a function.
+
+        Args:
+            function_id: The function to update.
+            venv_id: The venv_id to associate, or None for default environment.
+
+        Returns:
+            True if updated, False if function not found.
+        """
+        log = self._get_log_by_function_id(
+            function_id=function_id,
+            raise_if_missing=False,
+        )
+        if log is None:
+            return False
+        unify.update_logs(
+            context=self._compositional_ctx,
+            logs=[log.id],
+            entries={"venv_id": venv_id},
+            overwrite=True,
+        )
+        return True
+
+    def get_function_venv(self, *, function_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the virtual environment associated with a function.
+
+        Args:
+            function_id: The function to query.
+
+        Returns:
+            The venv dict if the function has one, None if using default,
+            or raises ValueError if function not found.
+        """
+        log = self._get_log_by_function_id(
+            function_id=function_id,
+            raise_if_missing=True,
+        )
+        venv_id = log.entries.get("venv_id")
+        if venv_id is None:
+            return None
+        return self.get_venv(venv_id=venv_id)
