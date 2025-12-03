@@ -16,7 +16,7 @@ async def test_parse_return_modes(file_manager, tmp_path: Path):
     from unity.file_manager.types import FilePipelineConfig
 
     # compact (default) → typed model
-    res_compact = file_manager.parse(str(p))
+    res_compact = file_manager.ingest_files(str(p))
     assert str(p) in res_compact
     compact_item = res_compact[str(p)]
     # Either Pydantic model or dict; compact should be model
@@ -27,7 +27,7 @@ async def test_parse_return_modes(file_manager, tmp_path: Path):
     assert hasattr(compact_item, "metrics"), "compact mode should include metrics"
 
     # full → raw dict (heavy fields present)
-    res_full = file_manager.parse(
+    res_full = file_manager.ingest_files(
         str(p),
         config=FilePipelineConfig(output={"return_mode": "full"}),
     )
@@ -39,7 +39,7 @@ async def test_parse_return_modes(file_manager, tmp_path: Path):
     assert "file_format" in full_item
 
     # none → minimal stub
-    res_none = file_manager.parse(
+    res_none = file_manager.ingest_files(
         str(p),
         config=FilePipelineConfig(output={"return_mode": "none"}),
     )
@@ -59,7 +59,7 @@ async def test_ask_about_file_with_response_format(file_manager, tmp_path: Path)
     # Ensure file is parseable/indexed first (no-op for local absolute path)
     from unity.file_manager.types import FilePipelineConfig
 
-    file_manager.parse(
+    file_manager.ingest_files(
         str(p),
         config=FilePipelineConfig(output={"return_mode": "compact"}),
     )

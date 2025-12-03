@@ -129,9 +129,12 @@ async def _seed_sample(
     # Optionally parse to ingest
     try:
         cfg = FilePipelineConfig(output={"return_mode": parse_return_mode})
-        # parse in batches to ensure per-file contexts exist
-        fm.parse([str(p) for p in sample_dir.iterdir() if p.is_file()], config=cfg)
-        print(f"🧩 Parsed sample files with return_mode={parse_return_mode}.")
+        # ingest in batches to ensure per-file contexts exist
+        fm.ingest_files(
+            [str(p) for p in sample_dir.iterdir() if p.is_file()],
+            config=cfg,
+        )
+        print(f"🧩 Ingested sample files with return_mode={parse_return_mode}.")
     except Exception as exc:
         print(f"⚠️  Parsing failed (continuing): {exc}")
 
@@ -266,7 +269,7 @@ async def _dispatch_with_context(
 
                 return "noop", _Noop(), None, None
             cfg = FilePipelineConfig()
-            res = fm.parse(targets, config=cfg)
+            res = fm.ingest_files(targets, config=cfg)
             # Print a compact summary
             try:
                 print(

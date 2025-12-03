@@ -11,8 +11,9 @@ import pytest
 from tests.helpers import _handle_project
 from unity.file_manager.types import (
     FilePipelineConfig,
-    BusinessContextSpec,
     TableBusinessContextSpec,
+    FileBusinessContextSpec,
+    BusinessContextsConfig,
 )
 
 
@@ -29,24 +30,29 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
 
     # Parse file with business context to enrich table/column descriptions
     cfg = FilePipelineConfig()
-    cfg.ingest.business_contexts = [
-        BusinessContextSpec(
-            file_path=display_name,
-            tables=[
-                TableBusinessContextSpec(
-                    table="people",  # CSV table name derived from filename
-                    column_descriptions={
-                        "Name": "Person's full name",
-                        "Age": "Person's age in years",
-                        "City": "City where the person lives",
-                    },
-                    table_description="People directory with basic contact information",
-                ),
-            ],
-        ),
-    ]
+    cfg.ingest.business_contexts = BusinessContextsConfig(
+        global_rules=[],
+        file_contexts=[
+            FileBusinessContextSpec(
+                file_path=display_name,
+                file_rules=[],
+                table_contexts=[
+                    TableBusinessContextSpec(
+                        table="people",  # CSV table name derived from filename
+                        table_rules=[],
+                        column_descriptions={
+                            "Name": "Person's full name",
+                            "Age": "Person's age in years",
+                            "City": "City where the person lives",
+                        },
+                        table_description="People directory with basic contact information",
+                    ),
+                ],
+            ),
+        ],
+    )
 
-    result = file_manager.parse(display_name, config=cfg)
+    result = file_manager.ingest_files(display_name, config=cfg)
     _item = result[display_name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
     assert _item["status"] == "success"
@@ -92,34 +98,41 @@ async def test_xlsx_multi_tab_per_table_context(file_manager, tmp_path: Path):
     # Create config file with business contexts for multiple tables
     config_data = {
         "ingest": {
-            "business_contexts": [
-                {
-                    "file_path": str(retail) if retail.exists() else "",
-                    "tables": [
-                        {
-                            "table": "Sales",
-                            "column_descriptions": {
-                                "Product": "Product name or SKU",
-                                "Quantity": "Number of units sold",
+            "business_contexts": {
+                "global_rules": [],
+                "file_contexts": [
+                    {
+                        "file_path": str(retail) if retail.exists() else "",
+                        "file_rules": [],
+                        "table_contexts": [
+                            {
+                                "table": "Sales",
+                                "table_rules": [],
+                                "column_descriptions": {
+                                    "Product": "Product name or SKU",
+                                    "Quantity": "Number of units sold",
+                                },
+                                "table_description": "Sales transactions data",
                             },
-                            "table_description": "Sales transactions data",
-                        },
-                    ],
-                },
-                {
-                    "file_path": str(workforce) if workforce.exists() else "",
-                    "tables": [
-                        {
-                            "table": "Employees",
-                            "column_descriptions": {
-                                "Name": "Employee full name",
-                                "Department": "Department assignment",
+                        ],
+                    },
+                    {
+                        "file_path": str(workforce) if workforce.exists() else "",
+                        "file_rules": [],
+                        "table_contexts": [
+                            {
+                                "table": "Employees",
+                                "table_rules": [],
+                                "column_descriptions": {
+                                    "Name": "Employee full name",
+                                    "Department": "Department assignment",
+                                },
+                                "table_description": "Employee directory",
                             },
-                            "table_description": "Employee directory",
-                        },
-                    ],
-                },
-            ],
+                        ],
+                    },
+                ],
+            },
         },
     }
     config_file = tmp_path / "multi_table_config.json"
@@ -131,7 +144,7 @@ async def test_xlsx_multi_tab_per_table_context(file_manager, tmp_path: Path):
         if path.exists():
             display_name = str(path)
             # Use config with business context
-            res = file_manager.parse(display_name, config=cfg)
+            res = file_manager.ingest_files(display_name, config=cfg)
             _item = res[display_name]
             _item = _item if isinstance(_item, dict) else _item.model_dump()
             assert _item["status"] == "success"
@@ -167,23 +180,28 @@ async def test_csv_with_business_context_from_file(file_manager, tmp_path: Path)
     # Create config file with business context
     config_data = {
         "ingest": {
-            "business_contexts": [
-                {
-                    "file_path": display_name,
-                    "tables": [
-                        {
-                            "table": "products",
-                            "column_descriptions": {
-                                "ProductID": "Unique product identifier",
-                                "Name": "Product display name",
-                                "Price": "Retail price in USD",
-                                "Stock": "Available inventory quantity",
+            "business_contexts": {
+                "global_rules": [],
+                "file_contexts": [
+                    {
+                        "file_path": display_name,
+                        "file_rules": [],
+                        "table_contexts": [
+                            {
+                                "table": "products",
+                                "table_rules": [],
+                                "column_descriptions": {
+                                    "ProductID": "Unique product identifier",
+                                    "Name": "Product display name",
+                                    "Price": "Retail price in USD",
+                                    "Stock": "Available inventory quantity",
+                                },
+                                "table_description": "Product catalog with pricing and inventory",
                             },
-                            "table_description": "Product catalog with pricing and inventory",
-                        },
-                    ],
-                },
-            ],
+                        ],
+                    },
+                ],
+            },
         },
     }
     config_file = tmp_path / "products_config.json"
@@ -193,15 +211,17 @@ async def test_csv_with_business_context_from_file(file_manager, tmp_path: Path)
     cfg = FilePipelineConfig.from_file(str(config_file))
 
     # Parse with config
-    result = file_manager.parse(display_name, config=cfg)
+    result = file_manager.ingest_files(display_name, config=cfg)
     _item = result[display_name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
     assert _item["status"] == "success"
 
     # Verify business context was loaded
-    assert len(cfg.ingest.business_contexts) == 1
-    assert cfg.ingest.business_contexts[0].file_path == display_name
-    assert len(cfg.ingest.business_contexts[0].tables) == 1
-    table_spec = cfg.ingest.business_contexts[0].tables[0]
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert fc.file_path == display_name
+    assert len(fc.table_contexts) == 1
+    table_spec = fc.table_contexts[0]
     assert table_spec.table == "products"
     assert "ProductID" in table_spec.column_descriptions

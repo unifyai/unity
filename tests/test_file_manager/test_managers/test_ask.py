@@ -29,7 +29,7 @@ async def test_ask_with_mocked_llm(file_manager, supported_file_examples: dict):
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = str(example_data["path"])  # absolute path; no import needed
 
-    file_manager.parse(display_name)
+    file_manager.ingest_files(display_name)
 
     # Mock the async unify client
     with patch(
@@ -74,7 +74,7 @@ async def test_ask_with_reasoning_steps(file_manager, supported_file_examples: d
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = str(example_data["path"])  # absolute path
 
-    file_manager.parse(display_name)
+    file_manager.ingest_files(display_name)
 
     # Mock the async unify client
     with patch(
@@ -116,7 +116,7 @@ async def test_ask_with_clarification_queues(
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = str(example_data["path"])  # absolute path
 
-    file_manager.parse(display_name)
+    file_manager.ingest_files(display_name)
 
     # Create clarification queues
     up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -161,7 +161,7 @@ async def test_ask_with_rolling_summary(file_manager, supported_file_examples: d
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = str(example_data["path"])  # absolute path
 
-    file_manager.parse(display_name)
+    file_manager.ingest_files(display_name)
 
     # Mock the async unify client
     with patch(
@@ -202,7 +202,7 @@ async def test_ask_about_integration(file_manager, fm_root, tmp_path: Path):
     file_content = "This file is about the history of artificial intelligence."
     file_path.write_text(file_content)
     # Parse by absolute path to add to Unify logs before ask_about_file
-    fm.parse(str(file_path))
+    fm.ingest_files(str(file_path))
 
     instruction = f"Summarize the file {file_path}."
     handle = await fm.ask_about_file(str(file_path), instruction)
@@ -232,7 +232,7 @@ async def test_ask_multiple_integration(file_manager, fm_root, tmp_path: Path):
     name2 = str(file2_path)
 
     # Parse the files to add them to Unify logs before ask
-    fm.parse([name1, name2])
+    fm.ingest_files([name1, name2])
 
     instruction = f"Compare and contrast the documents {name1} and {name2}."
     handle = await fm.ask(instruction)
@@ -257,7 +257,7 @@ async def test_ask_about_triggers_filter_join_via_loop(
     p = tmp_path / "join_src.txt"
     p.write_text("seed to create file record")
     name = str(p)
-    fm.parse(name)
+    fm.ingest_files(name)
 
     # Track tool invocations
     calls = {"filter_join": 0}
@@ -312,7 +312,7 @@ async def test_ask_about_triggers_search_multi_join_via_loop(
     p = tmp_path / "multi_join_src.txt"
     p.write_text("seed")
     name = str(p)
-    fm.parse(name)
+    fm.ingest_files(name)
 
     calls = {"search_multi_join": 0}
 

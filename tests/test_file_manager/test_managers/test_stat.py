@@ -23,7 +23,7 @@ async def test_stat_reports_canonical_uri_and_existence(tmp_path, file_manager):
     assert isinstance(s1.get("canonical_uri"), (str, type(None)))
 
     # 2) After parse: indexed exists
-    fm.parse(rel)
+    fm.ingest_files(rel)
     s2 = fm.stat(rel)
     assert s2["filesystem_exists"] is True
     assert s2["indexed_exists"] is True

@@ -19,7 +19,7 @@ async def test_parse_single(file_manager, supported_file_examples: dict):
     from unity.file_manager.types import FilePipelineConfig
 
     # Request full mode to assert heavy fields like 'records'
-    result = file_manager.parse(
+    result = file_manager.ingest_files(
         display_name,
         config=FilePipelineConfig(output={"return_mode": "full"}),
     )
@@ -45,7 +45,7 @@ async def test_parse_multiple(file_manager, supported_file_examples: dict):
 
     # Parse all files
     # Compact is default; coerce to dict for assertions
-    results = file_manager.parse(display_names)
+    results = file_manager.ingest_files(display_names)
 
     assert len(results) == len(display_names)
     for display_name in display_names:
@@ -68,7 +68,7 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
     cfg = FilePipelineConfig(
         parse=ParseConfig(parser_kwargs={"max_chunk_size": 100, "chunk_overlap": 20}),
     )
-    result = file_manager.parse(display_name, config=cfg)
+    result = file_manager.ingest_files(display_name, config=cfg)
 
     assert display_name in result
     item = result[display_name]
@@ -86,7 +86,7 @@ async def test_parse_empty(file_manager, sample_files: Path):
     from unity.file_manager.types import FilePipelineConfig
 
     # Request full mode to test 'records' semantics on empty file
-    result = file_manager.parse(
+    result = file_manager.ingest_files(
         display_name,
         config=FilePipelineConfig(output={"return_mode": "full"}),
     )
@@ -119,7 +119,7 @@ async def test_parse_supported(file_manager, supported_file_examples: dict):
     from unity.file_manager.types import FilePipelineConfig
 
     for display_name in display_names:
-        result = file_manager.parse(
+        result = file_manager.ingest_files(
             display_name,
             config=FilePipelineConfig(output={"return_mode": "full"}),
         )
@@ -160,7 +160,7 @@ async def test_parse_multiple_supported(
     # Parse all files at once
     from unity.file_manager.types import FilePipelineConfig
 
-    result = file_manager.parse(
+    result = file_manager.ingest_files(
         display_names,
         config=FilePipelineConfig(output={"return_mode": "full"}),
     )

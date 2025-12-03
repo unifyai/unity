@@ -33,8 +33,8 @@ async def test_ask_calls_global_manager(tmp_path):
     (fm_root / "a.txt").write_text("alpha", encoding="utf-8")
 
     local = LocalFileManager(str(fm_root))
-    # Parse to ensure records exist for retrieval (root-relative)
-    local.parse("a.txt")
+    # Ingest to ensure records exist for retrieval (root-relative)
+    local.ingest_files("a.txt")
 
     gfm = GlobalFileManager([local])
     cond = SimulatedConductor(global_file_manager=gfm)
@@ -80,8 +80,8 @@ async def test_organize_calls_global_manager(tmp_path):
     (fm_root / "tmp" / "old.log").write_text("old", encoding="utf-8")
 
     local = LocalFileManager(str(fm_root))
-    # Parse to create index rows (root-relative identifiers)
-    local.parse(
+    # Ingest to create index rows (root-relative identifiers)
+    local.ingest_files(
         ["docs/notes.txt", "invoices/jan.xlsx", "tmp/old.log"],
     )  # relative to root
     gfm = GlobalFileManager([local])

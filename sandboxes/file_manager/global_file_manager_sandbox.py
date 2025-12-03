@@ -169,7 +169,10 @@ async def _seed_sample_all(
                             continue
             print(f"📁 Imported {len(added)} sample files into '{alias}'.")
             cfg = FilePipelineConfig(output={"return_mode": return_mode})
-            mgr.parse([str(p) for p in sample_dir.iterdir() if p.is_file()], config=cfg)
+            mgr.ingest_files(
+                [str(p) for p in sample_dir.iterdir() if p.is_file()],
+                config=cfg,
+            )
             total += len(added)
         except Exception as exc:
             print(f"⚠️  Seeding failed for '{alias}': {exc}")

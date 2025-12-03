@@ -19,7 +19,7 @@ def test_txt_parsing(parser: DoclingParser, supported_format_files):
     """Test that .txt files are parsed correctly."""
     # Parse simple text
     txt_files = supported_format_files[".txt"]["files"]
-    document = parser.parse(txt_files["simple"])
+    document = parser.ingest_files(txt_files["simple"])
     result = document.to_dict()
 
     assert result["processing_status"] == "completed"
@@ -33,7 +33,7 @@ def test_txt_parsing(parser: DoclingParser, supported_format_files):
 def test_multi_paragraph_parsing(parser: DoclingParser, supported_format_files):
     """Test parsing of multi-paragraph documents."""
     txt_files = supported_format_files[".txt"]["files"]
-    document = parser.parse(txt_files["multi_paragraph"])
+    document = parser.ingest_files(txt_files["multi_paragraph"])
     result = document.to_dict()
 
     assert result["processing_status"] == "completed"
@@ -62,7 +62,7 @@ def test_multi_paragraph_parsing(parser: DoclingParser, supported_format_files):
 def test_special_characters(parser: DoclingParser, supported_format_files):
     """Test handling of special characters."""
     txt_files = supported_format_files[".txt"]["files"]
-    document = parser.parse(txt_files["special_chars"])
+    document = parser.ingest_files(txt_files["special_chars"])
     result = document.to_dict()
 
     assert result["processing_status"] == "completed"
@@ -118,7 +118,7 @@ def test_various_text_formats(parser: DoclingParser, supported_format_files):
         if file_ext in supported_format_files:
             format_info = supported_format_files[file_ext]
             file_path = format_info["files"]["simple"]
-            document = parser.parse(file_path)
+            document = parser.ingest_files(file_path)
             result = document.to_dict()
 
             assert result["processing_status"] == "completed"
@@ -140,7 +140,7 @@ def test_empty_file(parser: DoclingParser, tmp_path: Path):
     empty_file = tmp_path / "empty.txt"
     empty_file.write_text("", encoding="utf-8")
 
-    document = parser.parse(empty_file)
+    document = parser.ingest_files(empty_file)
 
     assert document.processing_status == "completed"
     assert document.full_text == ""
@@ -155,7 +155,7 @@ def test_large_text(parser: DoclingParser, tmp_path: Path):
     large_file = tmp_path / "large.txt"
     large_file.write_text("\n\n".join(paragraphs), encoding="utf-8")
 
-    document = parser.parse(large_file)
+    document = parser.ingest_files(large_file)
 
     assert document.processing_status == "completed"
     assert document.metadata.total_words > 1000
@@ -175,7 +175,7 @@ def test_large_text(parser: DoclingParser, tmp_path: Path):
 def test_metadata(parser: DoclingParser, supported_format_files):
     """Test that parser metadata is correctly set."""
     txt_files = supported_format_files[".txt"]["files"]
-    document = parser.parse(txt_files["simple"])
+    document = parser.ingest_files(txt_files["simple"])
     result = document.to_dict()
 
     metadata = result["metadata"]

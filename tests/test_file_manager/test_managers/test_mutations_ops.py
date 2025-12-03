@@ -16,7 +16,7 @@ def test_rename_updates_index_and_contexts(file_manager, tmp_path: Path):
     p.write_text("hello")
     src = str(p)
 
-    res = fm.parse(src, config=FilePipelineConfig())
+    res = fm.ingest_files(src, config=FilePipelineConfig())
     item = res[src]
     item = item if isinstance(item, dict) else item.model_dump()
     assert item.get("status") == "success"
@@ -46,7 +46,7 @@ def test_move_updates_index_and_contexts(file_manager, tmp_path: Path):
     src_path.write_text("hello")
     src = str(src_path)
 
-    fm.parse(src, config=FilePipelineConfig())
+    fm.ingest_files(src, config=FilePipelineConfig())
 
     new_dir = tmp_path / "sub"
     new_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +67,7 @@ def test_delete_removes_index_row(file_manager, tmp_path: Path):
     p = tmp_path / "delete_me.txt"
     p.write_text("bye")
     name = str(p)
-    fm.parse(name, config=FilePipelineConfig())
+    fm.ingest_files(name, config=FilePipelineConfig())
 
     rows = fm._filter_files(filter=f"file_path == '{name}'")
     assert rows and rows[0].get("file_id") is not None
@@ -88,7 +88,7 @@ def test_delete_using_file_path(file_manager, tmp_path: Path):
     p = tmp_path / "delete_by_path.txt"
     p.write_text("delete me by path")
     name = str(p)
-    fm.parse(name, config=FilePipelineConfig())
+    fm.ingest_files(name, config=FilePipelineConfig())
 
     rows_before = fm._filter_files(filter=f"file_path == '{name}'")
     assert len(rows_before) >= 1

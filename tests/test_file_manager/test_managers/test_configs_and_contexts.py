@@ -15,8 +15,9 @@ from unity.file_manager.types import (
     EmbeddingsConfig,
     FileEmbeddingSpec,
     TableEmbeddingSpec,
-    BusinessContextSpec,
+    FileBusinessContextSpec,
     TableBusinessContextSpec,
+    BusinessContextsConfig,
     OutputConfig,
     DiagnosticsConfig,
     PluginsConfig,
@@ -31,7 +32,7 @@ def test_per_file_contexts_created(file_manager, tmp_path: Path):
     p.write_text("Simple content for per-file context test.")
     name = str(p)
 
-    res = fm.parse(name)
+    res = fm.ingest_files(name)
     _item = res[name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
     assert _item["status"] == "success"
@@ -64,7 +65,7 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
     cfg = FilePipelineConfig(
         ingest=IngestConfig(mode="unified", unified_label="Docs"),
     )
-    res = fm.parse([n1, n2], config=cfg)
+    res = fm.ingest_files([n1, n2], config=cfg)
     _i1 = res[n1]
     _i1 = _i1 if isinstance(_i1, dict) else _i1.model_dump()
     _i2 = res[n2]
@@ -80,27 +81,31 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
     assert "/Content" in str(ov["Docs"]["Content"].get("context", ""))
 
 
-@pytest.mark.asyncio
+@pytest.mark.unit
 @_handle_project
-async def test_parse_async_batching_and_kwargs(file_manager, tmp_path: Path):
+def test_ingest_files_batching_and_kwargs(file_manager, tmp_path: Path):
+    """Test ingest_files with batch size and parser kwargs configuration."""
     fm = file_manager
     fm.clear()
     paths = []
     names = []
     for i in range(3):
-        p = tmp_path / f"async_{i}.txt"
+        p = tmp_path / f"batch_{i}.txt"
         p.write_text(f"Row {i}")
         paths.append(p)
         names.append(str(p))
 
     cfg = FilePipelineConfig(parse=ParseConfig(batch_size=2, parser_kwargs={}))
-    results = []
-    async for r in fm.parse_async(names, config=cfg):
-        results.append(r if isinstance(r, dict) else r.model_dump())
+    results = fm.ingest_files(names, config=cfg)
 
     assert len(results) == 3
-    assert all(r.get("status") in ("success", "error") for r in results)
-    assert any(r.get("status") == "success" for r in results)
+    for path, result in results.items():
+        r = result if isinstance(result, dict) else result.model_dump()
+        assert r.get("status") in ("success", "error")
+    assert any(
+        (r if isinstance(r, dict) else r.model_dump()).get("status") == "success"
+        for r in results.values()
+    )
 
 
 @_handle_project
@@ -131,7 +136,7 @@ def test_embedding_specs_smoke(file_manager, tmp_path: Path):
         ),
     )
 
-    res = fm.parse(name, config=cfg)
+    res = fm.ingest_files(name, config=cfg)
     _item = res[name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
     assert _item["status"] == "success"
@@ -149,7 +154,7 @@ def test_table_ingest_toggle_off_skips_tables_contexts(file_manager, tmp_path: P
     name = str(p)
 
     cfg = FilePipelineConfig(ingest=IngestConfig(table_ingest=False))
-    res = fm.parse(name, config=cfg)
+    res = fm.ingest_files(name, config=cfg)
     _item = res[name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
     assert _item["status"] == "success"
@@ -244,32 +249,62 @@ def test_table_business_context_spec():
         table="Sheet1",
         column_descriptions={"col1": "Description 1", "col2": "Description 2"},
         table_description="Table description",
+        table_rules=["Rule 1 about multiple columns", "Rule 2"],
     )
     assert table_spec.table == "Sheet1"
     assert len(table_spec.column_descriptions) == 2
     assert table_spec.table_description == "Table description"
+    assert len(table_spec.table_rules) == 2
+    assert table_spec.table_rules[0] == "Rule 1 about multiple columns"
 
 
-def test_business_context_spec():
-    """Test BusinessContextSpec creation and validation with multiple tables."""
+@pytest.mark.unit
+def test_file_business_context_spec():
+    """Test FileBusinessContextSpec creation and validation with multiple tables."""
     table_spec1 = TableBusinessContextSpec(
         table="Sheet1",
         column_descriptions={"col1": "Description 1"},
         table_description="Table 1 description",
+        table_rules=["Table 1 rule"],
     )
     table_spec2 = TableBusinessContextSpec(
         table="Sheet2",
         column_descriptions={"col2": "Description 2"},
         table_description="Table 2 description",
     )
-    bc = BusinessContextSpec(
+    fc = FileBusinessContextSpec(
         file_path="/path/to/file.xlsx",
-        tables=[table_spec1, table_spec2],
+        file_rules=["File-level rule about cross-table data"],
+        table_contexts=[table_spec1, table_spec2],
     )
-    assert bc.file_path == "/path/to/file.xlsx"
-    assert len(bc.tables) == 2
-    assert bc.tables[0].table == "Sheet1"
-    assert bc.tables[1].table == "Sheet2"
+    assert fc.file_path == "/path/to/file.xlsx"
+    assert len(fc.file_rules) == 1
+    assert len(fc.table_contexts) == 2
+    assert fc.table_contexts[0].table == "Sheet1"
+    assert fc.table_contexts[1].table == "Sheet2"
+
+
+@pytest.mark.unit
+def test_business_contexts_config():
+    """Test BusinessContextsConfig with global_rules and file_contexts."""
+    table_spec = TableBusinessContextSpec(
+        table="Sheet1",
+        column_descriptions={"col1": "Description 1"},
+        table_rules=["Table rule"],
+    )
+    file_context = FileBusinessContextSpec(
+        file_path="/path/to/file.xlsx",
+        file_rules=["File rule"],
+        table_contexts=[table_spec],
+    )
+    config = BusinessContextsConfig(
+        global_rules=["Global rule 1", "Global rule 2"],
+        file_contexts=[file_context],
+    )
+    assert len(config.global_rules) == 2
+    assert len(config.file_contexts) == 1
+    assert config.file_contexts[0].file_path == "/path/to/file.xlsx"
+    assert len(config.file_contexts[0].table_contexts) == 1
 
 
 def test_config_from_file_empty(tmp_path: Path):
@@ -304,9 +339,57 @@ def test_config_from_file_partial(tmp_path: Path):
 
 
 def test_config_from_file_business_contexts(tmp_path: Path):
-    """Test loading config with business contexts."""
+    """Test loading config with business contexts (new structure)."""
     import json
 
+    config_data = {
+        "ingest": {
+            "business_contexts": {
+                "global_rules": ["Global rule 1", "Global rule 2"],
+                "file_contexts": [
+                    {
+                        "file_path": "/path/to/file.xlsx",
+                        "file_rules": ["File-level rule"],
+                        "table_contexts": [
+                            {
+                                "table": "Sheet1",
+                                "column_descriptions": {
+                                    "col1": "Description 1",
+                                    "col2": "Description 2",
+                                },
+                                "table_description": "Table description",
+                                "table_rules": ["Table rule 1", "Table rule 2"],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    }
+    config_file = tmp_path / "business_contexts.json"
+    config_file.write_text(json.dumps(config_data))
+
+    cfg = FilePipelineConfig.from_file(str(config_file))
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.global_rules) == 2
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert fc.file_path == "/path/to/file.xlsx"
+    assert len(fc.file_rules) == 1
+    assert len(fc.table_contexts) == 1
+    table_spec = fc.table_contexts[0]
+    assert table_spec.table == "Sheet1"
+    assert table_spec.column_descriptions["col1"] == "Description 1"
+    assert table_spec.table_description == "Table description"
+    assert len(table_spec.table_rules) == 2
+
+
+@pytest.mark.unit
+def test_config_from_file_business_contexts_legacy(tmp_path: Path):
+    """Test loading config with legacy business contexts (list format)."""
+    import json
+
+    # Legacy format: business_contexts as a list
     config_data = {
         "ingest": {
             "business_contexts": [
@@ -317,7 +400,6 @@ def test_config_from_file_business_contexts(tmp_path: Path):
                             "table": "Sheet1",
                             "column_descriptions": {
                                 "col1": "Description 1",
-                                "col2": "Description 2",
                             },
                             "table_description": "Table description",
                         },
@@ -326,18 +408,20 @@ def test_config_from_file_business_contexts(tmp_path: Path):
             ],
         },
     }
-    config_file = tmp_path / "business_contexts.json"
+    config_file = tmp_path / "business_contexts_legacy.json"
     config_file.write_text(json.dumps(config_data))
 
     cfg = FilePipelineConfig.from_file(str(config_file))
-    assert len(cfg.ingest.business_contexts) == 1
-    bc = cfg.ingest.business_contexts[0]
-    assert bc.file_path == "/path/to/file.xlsx"
-    assert len(bc.tables) == 1
-    table_spec = bc.tables[0]
-    assert table_spec.table == "Sheet1"
-    assert table_spec.column_descriptions["col1"] == "Description 1"
-    assert table_spec.table_description == "Table description"
+    # Legacy format should be converted to new structure
+    assert cfg.ingest.business_contexts is not None
+    assert (
+        len(cfg.ingest.business_contexts.global_rules) == 0
+    )  # No global rules in legacy
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert fc.file_path == "/path/to/file.xlsx"
+    assert len(fc.table_contexts) == 1
+    assert fc.table_contexts[0].table == "Sheet1"
 
 
 def test_config_from_file_embed_specs(tmp_path: Path):
@@ -458,17 +542,21 @@ def test_config_from_file_full(tmp_path: Path):
             "mode": "unified",
             "unified_label": "FullTest",
             "table_rows_batch_size": 3000,
-            "business_contexts": [
-                {
-                    "file_path": "/path/to/file.xlsx",
-                    "tables": [
-                        {
-                            "table": "Sheet1",
-                            "column_descriptions": {"col1": "Desc1"},
-                        },
-                    ],
-                },
-            ],
+            "business_contexts": {
+                "global_rules": ["Global rule"],
+                "file_contexts": [
+                    {
+                        "file_path": "/path/to/file.xlsx",
+                        "file_rules": [],
+                        "table_contexts": [
+                            {
+                                "table": "Sheet1",
+                                "column_descriptions": {"col1": "Desc1"},
+                            },
+                        ],
+                    },
+                ],
+            },
         },
         "embed": {
             "strategy": "after",
@@ -502,7 +590,8 @@ def test_config_from_file_full(tmp_path: Path):
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "full"
     assert cfg.diagnostics.enable_progress is True
-    assert len(cfg.ingest.business_contexts) == 1
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
     assert len(cfg.embed.file_specs) == 1
 
 
@@ -557,34 +646,42 @@ def test_business_context_applied_during_ingestion(file_manager, tmp_path: Path)
     fm = file_manager
     fm.clear()
 
-    # Create config file with business context
+    # Create config file with business context (new structure)
     config_data = {
         "ingest": {
-            "business_contexts": [
-                {
-                    "file_path": "test_file.xlsx",
-                    "tables": [
-                        {
-                            "table": "Sheet1",
-                            "column_descriptions": {
-                                "Name": "Person's full name",
-                                "Age": "Person's age in years",
+            "business_contexts": {
+                "global_rules": [],
+                "file_contexts": [
+                    {
+                        "file_path": "test_file.xlsx",
+                        "file_rules": [],
+                        "table_contexts": [
+                            {
+                                "table": "Sheet1",
+                                "column_descriptions": {
+                                    "Name": "Person's full name",
+                                    "Age": "Person's age in years",
+                                },
+                                "table_description": "Test table with person data",
+                                "table_rules": ["Rule about Name and Age columns"],
                             },
-                            "table_description": "Test table with person data",
-                        },
-                    ],
-                },
-            ],
+                        ],
+                    },
+                ],
+            },
         },
     }
     config_file = tmp_path / "test_config.json"
     config_file.write_text(json.dumps(config_data))
 
     cfg = FilePipelineConfig.from_file(str(config_file))
-    assert len(cfg.ingest.business_contexts) == 1
-    assert cfg.ingest.business_contexts[0].file_path == "test_file.xlsx"
-    assert len(cfg.ingest.business_contexts[0].tables) == 1
-    assert cfg.ingest.business_contexts[0].tables[0].table == "Sheet1"
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert fc.file_path == "test_file.xlsx"
+    assert len(fc.table_contexts) == 1
+    assert fc.table_contexts[0].table == "Sheet1"
+    assert len(fc.table_contexts[0].table_rules) == 1
 
 
 @_handle_project
@@ -731,21 +828,26 @@ def test_config_all_sections_populated(tmp_path: Path):
             "unified_label": "AllSectionsTest",
             "table_rows_batch_size": 5000,
             "content_rows_batch_size": 3000,
-            "business_contexts": [
-                {
-                    "file_path": "/full/path/to/file.xlsx",
-                    "tables": [
-                        {
-                            "table": "MainSheet",
-                            "column_descriptions": {
-                                "id": "Unique identifier",
-                                "name": "Item name",
+            "business_contexts": {
+                "global_rules": ["Cross-file rule 1"],
+                "file_contexts": [
+                    {
+                        "file_path": "/full/path/to/file.xlsx",
+                        "file_rules": ["File-level rule"],
+                        "table_contexts": [
+                            {
+                                "table": "MainSheet",
+                                "column_descriptions": {
+                                    "id": "Unique identifier",
+                                    "name": "Item name",
+                                },
+                                "table_description": "Main data table",
+                                "table_rules": ["Table rule 1", "Table rule 2"],
                             },
-                            "table_description": "Main data table",
-                        },
-                    ],
-                },
-            ],
+                        ],
+                    },
+                ],
+            },
         },
         "embed": {
             "strategy": "after",
@@ -793,7 +895,13 @@ def test_config_all_sections_populated(tmp_path: Path):
     assert cfg.ingest.mode == "unified"
     assert cfg.ingest.unified_label == "AllSectionsTest"
     assert cfg.ingest.table_rows_batch_size == 5000
-    assert len(cfg.ingest.business_contexts) == 1
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.global_rules) == 1
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert len(fc.file_rules) == 1
+    assert len(fc.table_contexts) == 1
+    assert len(fc.table_contexts[0].table_rules) == 2
 
     # Verify embed
     assert cfg.embed.strategy == "after"
@@ -845,25 +953,30 @@ def test_complete_pipeline_with_business_context_and_consolidated_embeddings(
         "ingest": {
             "mode": "per_file",
             "table_rows_batch_size": 1000,
-            "business_contexts": [
-                {
-                    "file_path": display_name,
-                    "tables": [
-                        {
-                            "table": "sales_data",
-                            "column_descriptions": {
-                                "OrderID": "Unique order identifier",
-                                "Customer": "Customer company name",
-                                "Product": "Product name or SKU",
-                                "Quantity": "Number of units ordered",
-                                "Price": "Unit price in USD",
-                                "Date": "Order date in YYYY-MM-DD format",
+            "business_contexts": {
+                "global_rules": [],
+                "file_contexts": [
+                    {
+                        "file_path": display_name,
+                        "file_rules": [],
+                        "table_contexts": [
+                            {
+                                "table": "sales_data",
+                                "column_descriptions": {
+                                    "OrderID": "Unique order identifier",
+                                    "Customer": "Customer company name",
+                                    "Product": "Product name or SKU",
+                                    "Quantity": "Number of units ordered",
+                                    "Price": "Unit price in USD",
+                                    "Date": "Order date in YYYY-MM-DD format",
+                                },
+                                "table_description": "Sales order transactions with customer and product details",
+                                "table_rules": [],
                             },
-                            "table_description": "Sales order transactions with customer and product details",
-                        },
-                    ],
-                },
-            ],
+                        ],
+                    },
+                ],
+            },
         },
         "embed": {
             "strategy": "along",
@@ -895,10 +1008,12 @@ def test_complete_pipeline_with_business_context_and_consolidated_embeddings(
     cfg = FilePipelineConfig.from_file(str(config_file))
 
     # Verify config loaded correctly
-    assert len(cfg.ingest.business_contexts) == 1
-    assert cfg.ingest.business_contexts[0].file_path == display_name
-    assert len(cfg.ingest.business_contexts[0].tables) == 1
-    table_spec = cfg.ingest.business_contexts[0].tables[0]
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert fc.file_path == display_name
+    assert len(fc.table_contexts) == 1
+    table_spec = fc.table_contexts[0]
     assert table_spec.table == "sales_data"
     assert len(table_spec.column_descriptions) == 6
 
@@ -913,7 +1028,7 @@ def test_complete_pipeline_with_business_context_and_consolidated_embeddings(
     ]
 
     # Parse file with config
-    result = fm.parse(display_name, config=cfg)
+    result = fm.ingest_files(display_name, config=cfg)
     _item = result[display_name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
     assert _item["status"] == "success"
@@ -948,25 +1063,30 @@ def test_excel_with_business_context_and_multiple_column_embeddings(
     config_data = {
         "ingest": {
             "table_rows_batch_size": 2000,
-            "business_contexts": [
-                {
-                    "file_path": display_name,
-                    "tables": [
-                        {
-                            "table": "inventory",
-                            "column_descriptions": {
-                                "SKU": "Stock Keeping Unit - unique product identifier",
-                                "ProductName": "Display name of the product",
-                                "Category": "Product category classification",
-                                "StockLevel": "Current inventory quantity available",
-                                "UnitPrice": "Price per unit in USD",
-                                "Supplier": "Supplier company name",
+            "business_contexts": {
+                "global_rules": [],
+                "file_contexts": [
+                    {
+                        "file_path": display_name,
+                        "file_rules": [],
+                        "table_contexts": [
+                            {
+                                "table": "inventory",
+                                "column_descriptions": {
+                                    "SKU": "Stock Keeping Unit - unique product identifier",
+                                    "ProductName": "Display name of the product",
+                                    "Category": "Product category classification",
+                                    "StockLevel": "Current inventory quantity available",
+                                    "UnitPrice": "Price per unit in USD",
+                                    "Supplier": "Supplier company name",
+                                },
+                                "table_description": "Inventory management table tracking product stock levels and pricing",
+                                "table_rules": [],
                             },
-                            "table_description": "Inventory management table tracking product stock levels and pricing",
-                        },
-                    ],
-                },
-            ],
+                        ],
+                    },
+                ],
+            },
         },
         "embed": {
             "strategy": "along",
@@ -1004,23 +1124,24 @@ def test_excel_with_business_context_and_multiple_column_embeddings(
     assert len(cfg.embed.file_specs) == 1
     file_spec = cfg.embed.file_specs[0]
     assert len(file_spec.tables) == 1
-    table_spec = file_spec.tables[0]
-    assert len(table_spec.source_columns) == 3
-    assert len(table_spec.target_columns) == 3
-    assert table_spec.source_columns == ["ProductName", "Category", "Supplier"]
+    embed_table_spec = file_spec.tables[0]
+    assert len(embed_table_spec.source_columns) == 3
+    assert len(embed_table_spec.target_columns) == 3
+    assert embed_table_spec.source_columns == ["ProductName", "Category", "Supplier"]
 
     # Verify business context
-    assert len(cfg.ingest.business_contexts) == 1
-    bc = cfg.ingest.business_contexts[0]
-    assert bc.file_path == display_name
-    assert len(bc.tables) == 1
-    table_spec = bc.tables[0]
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert fc.file_path == display_name
+    assert len(fc.table_contexts) == 1
+    table_spec = fc.table_contexts[0]
     assert table_spec.table == "inventory"
     assert "SKU" in table_spec.column_descriptions
     assert table_spec.table_description is not None
 
     # Parse with config
-    result = fm.parse(display_name, config=cfg)
+    result = fm.ingest_files(display_name, config=cfg)
     _item = result[display_name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
     assert _item["status"] == "success"
@@ -1028,7 +1149,7 @@ def test_excel_with_business_context_and_multiple_column_embeddings(
 
 @_handle_project
 def test_multiple_tables_per_file_business_context(file_manager, tmp_path: Path):
-    """Test BusinessContextSpec with multiple tables per file."""
+    """Test FileBusinessContextSpec with multiple tables per file."""
     import json
 
     fm = file_manager
@@ -1045,29 +1166,34 @@ def test_multiple_tables_per_file_business_context(file_manager, tmp_path: Path)
     # Create config with multiple tables for the same file
     config_data = {
         "ingest": {
-            "business_contexts": [
-                {
-                    "file_path": display_name,
-                    "tables": [
-                        {
-                            "table": "multi_table",
-                            "column_descriptions": {
-                                "ID": "Unique identifier",
-                                "Name": "Item name",
-                                "Value": "Numeric value",
+            "business_contexts": {
+                "global_rules": [],
+                "file_contexts": [
+                    {
+                        "file_path": display_name,
+                        "file_rules": ["Cross-table rule for this file"],
+                        "table_contexts": [
+                            {
+                                "table": "multi_table",
+                                "column_descriptions": {
+                                    "ID": "Unique identifier",
+                                    "Name": "Item name",
+                                    "Value": "Numeric value",
+                                },
+                                "table_description": "Main data table",
+                                "table_rules": ["Table-specific rule"],
                             },
-                            "table_description": "Main data table",
-                        },
-                        {
-                            "table": "Summary",
-                            "column_descriptions": {
-                                "Total": "Sum of all values",
+                            {
+                                "table": "Summary",
+                                "column_descriptions": {
+                                    "Total": "Sum of all values",
+                                },
+                                "table_description": "Summary statistics",
                             },
-                            "table_description": "Summary statistics",
-                        },
-                    ],
-                },
-            ],
+                        ],
+                    },
+                ],
+            },
         },
     }
     config_file = tmp_path / "multi_table_config.json"
@@ -1075,12 +1201,15 @@ def test_multiple_tables_per_file_business_context(file_manager, tmp_path: Path)
 
     cfg = FilePipelineConfig.from_file(str(config_file))
 
-    # Verify multiple tables in single BusinessContextSpec
-    assert len(cfg.ingest.business_contexts) == 1
-    bc = cfg.ingest.business_contexts[0]
-    assert bc.file_path == display_name
-    assert len(bc.tables) == 2
-    assert bc.tables[0].table == "multi_table"
-    assert bc.tables[1].table == "Summary"
-    assert "ID" in bc.tables[0].column_descriptions
-    assert "Total" in bc.tables[1].column_descriptions
+    # Verify multiple tables in single FileBusinessContextSpec
+    assert cfg.ingest.business_contexts is not None
+    assert len(cfg.ingest.business_contexts.file_contexts) == 1
+    fc = cfg.ingest.business_contexts.file_contexts[0]
+    assert fc.file_path == display_name
+    assert len(fc.file_rules) == 1
+    assert len(fc.table_contexts) == 2
+    assert fc.table_contexts[0].table == "multi_table"
+    assert fc.table_contexts[1].table == "Summary"
+    assert "ID" in fc.table_contexts[0].column_descriptions
+    assert "Total" in fc.table_contexts[1].column_descriptions
+    assert len(fc.table_contexts[0].table_rules) == 1

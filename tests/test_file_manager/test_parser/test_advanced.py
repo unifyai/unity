@@ -38,7 +38,7 @@ async def test_with_llm_enrichment_mock(supported_format_files):
             },
         )
 
-        doc = parser.parse(txt_file)
+        doc = parser.ingest_files(txt_file)
 
         # Should have called LLM for enrichment if LLM enrichment is implemented
         # For now, just check that parsing succeeded
@@ -58,7 +58,7 @@ async def test_fallback_when_docling_unavailable(supported_format_files):
     with patch("unity.file_manager.parser.docling_parser.DOCLING_AVAILABLE", False):
         parser = DoclingParser(use_llm_enrichment=False)
         txt_files = supported_format_files[".txt"]["files"]
-        doc = parser.parse(txt_files["simple"])
+        doc = parser.ingest_files(txt_files["simple"])
 
         # Should still parse using fallback
         assert doc.document_id is not None
@@ -77,7 +77,7 @@ async def test_error_handling_corrupt_file(tmp_path: Path):
 
     # Should either parse with errors or raise appropriate exception
     try:
-        doc = parser.parse(corrupt_file)
+        doc = parser.ingest_files(corrupt_file)
         # If it succeeds, check it handled the binary data
         assert doc.metadata.mime_type is not None
         assert doc.metadata.file_format is not None
@@ -101,7 +101,7 @@ async def test_with_very_long_lines(tmp_path: Path):
     long_line = "A" * 10000  # 10K character line
     long_file.write_text(long_line, encoding="utf-8")
 
-    doc = parser.parse(long_file)
+    doc = parser.ingest_files(long_file)
 
     # Should chunk properly
     assert len(doc.sections) >= 1
@@ -126,7 +126,7 @@ async def test_sentence_splitting_edge_cases(tmp_path: Path):
         encoding="utf-8",
     )
 
-    doc = parser.parse(edge_file)
+    doc = parser.ingest_files(edge_file)
 
     # Get all sentences
     sentences = []
@@ -153,7 +153,7 @@ async def test_with_mixed_encodings(tmp_path: Path):
     utf16_file.write_text("UTF-16 content: 你好世界", encoding="utf-16")
 
     # Parser should handle encoding detection or fail gracefully
-    doc = parser.parse(utf16_file)
+    doc = parser.ingest_files(utf16_file)
     # UTF-16 file may not be parsed correctly by a simple text parser
     # The test should check that it either parses correctly OR fails gracefully
     assert doc.processing_status in ["completed", "failed"]
@@ -182,7 +182,7 @@ async def test_memory_efficiency(tmp_path: Path):
             f.write(chunk + "\n\n")
 
     # Parse should complete without memory issues
-    doc = parser.parse(large_file)
+    doc = parser.ingest_files(large_file)
 
     # Should have multiple sections/chunks
     assert len(doc.sections) >= 1
@@ -235,7 +235,7 @@ async def test_metadata_extraction(tmp_path: Path):
 
     stat = os.stat(test_file)
 
-    doc = parser.parse(test_file)
+    doc = parser.ingest_files(test_file)
 
     # Check metadata
     assert doc.metadata.file_name == "metadata_test.txt"

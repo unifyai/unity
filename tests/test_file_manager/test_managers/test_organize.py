@@ -27,7 +27,7 @@ async def test_rename(file_manager, tmp_path: Path):
     assert not fm.exists("renamed_file.txt")
 
     # Parse the file to add it to Unify logs before organize
-    fm.parse(display_name)
+    fm.ingest_files(display_name)
 
     instruction = f"Rename the file {display_name} to renamed_file.txt."
     before_state = {"files": fm.list()}
@@ -65,7 +65,7 @@ async def test_move(file_manager, fm_root: Path, tmp_path: Path):
     assert fm.exists(display_name)
 
     # Parse the file to add it to Unify logs before organize
-    fm.parse(display_name)
+    fm.ingest_files(display_name)
 
     instruction = f"Move the file {display_name} into the 'move_destination' folder."
     before_state = {"files": fm.list()}
@@ -101,7 +101,7 @@ async def test_delete(file_manager, tmp_path: Path):
     assert fm.exists(display_name)
 
     # Parse the file to add it to Unify logs so we can query for file_id
-    fm.parse(display_name)
+    fm.ingest_files(display_name)
 
     rows = fm._filter_files(filter=f"file_path == '{display_name}'")
     file_id = rows[0].get("file_id")

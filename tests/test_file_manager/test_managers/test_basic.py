@@ -54,7 +54,7 @@ async def test_import_directory(file_manager, sample_files: Path):
     # Parse all files in the directory by absolute path; ensure existence and success
     files = [str(p) for p in sample_files.iterdir() if p.is_file()]
     assert files, "No files found in sample_files fixture"
-    res = fm.parse(files)
+    res = fm.ingest_files(files)
     for f in files:
         assert fm.exists(f)
         assert f in res
@@ -70,7 +70,7 @@ async def test_public_import(file_manager, sample_files: Path):
     sample_file = next(sample_files.iterdir())
     display_name = str(sample_file)
     # Parse by absolute path and verify success/existence
-    res = fm.parse(display_name)
+    res = fm.ingest_files(display_name)
     assert display_name in res
     assert fm.exists(display_name)
 
@@ -81,7 +81,7 @@ async def test_public_import_directory(file_manager, sample_files: Path):
     fm = file_manager
     files = [str(p) for p in sample_files.iterdir() if p.is_file()]
     assert files
-    res = fm.parse(files)
+    res = fm.ingest_files(files)
     for f in files:
         assert fm.exists(f)
         assert f in res
@@ -99,7 +99,7 @@ async def test_import_unique_names_batch(file_manager, tmp_path: Path):
     (dir2 / "test.txt").write_text("File 2")
     name1 = str(dir1 / "test.txt")
     name2 = str(dir2 / "test.txt")
-    fm.parse([name1, name2])
+    fm.ingest_files([name1, name2])
     assert fm.exists(name1)
     assert fm.exists(name2)
 
@@ -134,7 +134,7 @@ async def test_exists_nonexistent(file_manager):
 async def test_import_nonexistent_directory(file_manager):
     fm = file_manager
     # Parsing from a nonexistent directory should surface as not found errors
-    res = fm.parse(["/nonexistent/directory/x.txt"])
+    res = fm.ingest_files(["/nonexistent/directory/x.txt"])
     assert "/nonexistent/directory/x.txt" in res
     _item = res["/nonexistent/directory/x.txt"]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
@@ -145,7 +145,7 @@ async def test_import_nonexistent_directory(file_manager):
 @_handle_project
 async def test_parse_nonexistent(file_manager):
     fm = file_manager
-    result = fm.parse("nonexistent.txt")
+    result = fm.ingest_files("nonexistent.txt")
     assert "nonexistent.txt" in result
     _item = result["nonexistent.txt"]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
@@ -161,7 +161,7 @@ async def test_filter_by_content_id_dict(file_manager, supported_file_examples: 
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = str(example_data["path"])  # absolute path
     # Parse file to create per-file Content rows
-    fm.parse(display_name)
+    fm.ingest_files(display_name)
     # Use file_path directly instead of legacy root from tables_overview
     # Filter for the document row using dict-based content_id
     rows = fm._filter_files(
@@ -183,7 +183,7 @@ async def test_parse_multiple_mixed(file_manager, supported_file_examples: dict)
     fm = file_manager
     filename, example_data = next(iter(supported_file_examples.items()))
     existing = str(example_data["path"])  # absolute path
-    results = fm.parse([existing, "nonexistent.txt"])
+    results = fm.ingest_files([existing, "nonexistent.txt"])
     assert len(results) == 2
     _ex_item = results[existing]
     _ex_item = _ex_item if isinstance(_ex_item, dict) else _ex_item.model_dump()

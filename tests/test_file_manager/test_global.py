@@ -24,7 +24,7 @@ async def test_basic_ask_and_organize(
     f1 = "g_a.txt"
     f2 = "g_b.txt"
     # Parse the files to add them to Unify logs for retrieval operations
-    local.parse([f1, f2])
+    local.ingest_files([f1, f2])
 
     gfm = global_file_manager
 
@@ -93,7 +93,7 @@ async def test_organize_rename_and_move(
     b = "move_me.txt"
 
     # Parse the files to add them to Unify logs before organize
-    local.parse([a, b])
+    local.ingest_files([a, b])
 
     # Explicit rename via organize prompt
     instruction1 = f"In /local, rename '{a}' to 'renamed.txt' only."
@@ -187,7 +187,7 @@ async def test_organize_delete(
     assert local.exists(filename)
 
     # Parse the file to add it to Unify logs so we can query for file_id
-    local.parse(filename)
+    local.ingest_files(filename)
 
     # Get the file_id
     rows = local._filter_files(filter=f"file_path == '{filename}'")

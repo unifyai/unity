@@ -63,7 +63,8 @@ def _signal_handler(signum, _frame):
     def _force_exit():
         if _shutdown_requested:
             print("⏳ Graceful shutdown timed out – forcing exit.")
-            sys.exit(1)
+            # Use os._exit() instead of sys.exit() to forcefully terminate from a thread
+            os._exit(1)
 
     _t = threading.Timer(10.0, _force_exit)
     _t.daemon = True
@@ -92,16 +93,17 @@ async def _main_async() -> None:
     parser = build_cli_parser("RepairsAgent sandbox")
     args = parser.parse_args()
 
-    # Activate project per requirement
-    activate_project("Repairs", overwrite=False)
+    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
+
+    activate_project(args.project_name, args.overwrite)
 
     # Optional version rollback (mirror intranet sandbox semantics)
     if args.project_version != -1:
-        commits = unify.get_project_commits("Repairs")
+        commits = unify.get_project_commits(args.project_name)
         if commits:
             try:
                 target = commits[args.project_version]
-                unify.rollback_project("Repairs", target["commit_hash"])
+                unify.rollback_project(args.project_name, target["commit_hash"])
                 LG.info("[version] Rolled back to commit %s", target["commit_hash"])
             except IndexError:
                 LG.warning(
@@ -128,14 +130,16 @@ async def _main_async() -> None:
         )
         _wait_tts_end()
 
-    print(_commands_help())
     chat_history: List[Dict[str, str]] = []
     global _loop_ref, _shutdown_event
     _loop_ref = asyncio.get_running_loop()
     _shutdown_event = asyncio.Event()
 
-    while True:
+    while not _shutdown_requested:
         try:
+            if _shutdown_event.is_set():
+                print("\n👋 Shutdown requested, exiting…")
+                break
             print()
             print(_commands_help())
             print()
@@ -170,8 +174,8 @@ async def _main_async() -> None:
             # Save project snapshot
             if raw.lower() in {"save_project", "sp"}:
                 commit_hash = unify.commit_project(
-                    "Repairs",
-                    commit_message=f"Repairs sandbox save {datetime.utcnow().isoformat()}",
+                    args.project_name,
+                    commit_message=f"{args.project_name} sandbox save {datetime.utcnow().isoformat()}",
                 ).get("commit_hash")
                 print(f"💾 Project saved at commit {commit_hash}")
                 if args.voice:

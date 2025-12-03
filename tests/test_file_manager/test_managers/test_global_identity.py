@@ -25,8 +25,8 @@ async def test_global_identity_filter_and_tools(tmp_path: Path):
     f2.write_text("identity other")
 
     # Ingest f1 into both managers
-    fm_rooted.parse("ident_main.txt")  # root-relative
-    fm_rootless.parse(str(f1))  # absolute
+    fm_rooted.ingest_files("ident_main.txt")  # root-relative
+    fm_rootless.ingest_files(str(f1))  # absolute
 
     # Build a GlobalFileManager over both
     gfm = GlobalFileManager([fm_rooted, fm_rootless])

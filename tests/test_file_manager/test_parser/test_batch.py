@@ -192,7 +192,7 @@ async def test_batch_consistent_with_single(parser, supported_format_files):
     ]
 
     # Parse individually
-    individual_docs = [parser.parse(f) for f in files]
+    individual_docs = [parser.ingest_files(f) for f in files]
 
     # Parse as batch
     batch_docs = parser.parse_batch(files)

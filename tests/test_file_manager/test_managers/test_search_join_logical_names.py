@@ -20,7 +20,7 @@ def test_filter_join_with_logical_names(file_manager, tmp_path: Path):
     b.write_text("header1,header3\nA1,C1\nX2,C2\n")
 
     fa, fb = str(a), str(b)
-    fm.parse([fa, fb], config=FilePipelineConfig())
+    fm.ingest_files([fa, fb], config=FilePipelineConfig())
 
     # Use file_path directly instead of legacy root from tables_overview
     # We will join Content contexts by a trivial select; this is a smoke test for file_path resolution
