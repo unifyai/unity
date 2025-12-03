@@ -718,7 +718,7 @@ class DoclingParser(GenericParser[Document]):
                 },
             )
 
-        def _post_process(**data) -> Document:
+        def _post_convert(**data) -> Document:
             conv_res = data["conv_res"]
             src_path = data.get("src_path")
             original_path = data.get("original_path", src_path)
@@ -792,9 +792,9 @@ class DoclingParser(GenericParser[Document]):
         # Execute post-processing (parallel with fallback)
         built_supported: list[Document]
         if parallelize_post:
-            built_supported = _safe_map("Batch Post-Process", tasks, _post_process)
+            built_supported = _safe_map("Batch Post-Convert", tasks, _post_convert)
         else:
-            built_supported = [_post_process(**t) for t in tasks]
+            built_supported = [_post_convert(**t) for t in tasks]
 
         # Parse unsupported indices individually (reuse existing parse)
         built_unsupported: dict[int, Document] = {}
