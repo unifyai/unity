@@ -9,7 +9,7 @@ from unity.actor.hierarchical_actor import (
     VerificationAssessment,
     _HierarchicalHandleState,
 )
-from unity.actor.computer_primitives import ComputerPrimitives
+from unity.function_manager.primitives import ComputerPrimitives
 from unity.controller.browser import Browser
 from unity.function_manager.function_manager import FunctionManager
 import unity.actor.hierarchical_actor as hierarchical_actor_module

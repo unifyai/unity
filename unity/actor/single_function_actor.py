@@ -24,7 +24,7 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import get_primitive_callable
 
 from ..task_scheduler.base import BaseActiveTask
-from .computer_primitives import ComputerPrimitives
+from unity.function_manager.primitives import ComputerPrimitives
 from .base import BaseActor, BaseActorHandle
 
 logger = logging.getLogger(__name__)
