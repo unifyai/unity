@@ -1,6 +1,7 @@
 import ast
 import inspect
 import functools
+import json
 import os
 import logging
 from pathlib import Path
@@ -1531,3 +1532,221 @@ class FunctionManager(BaseFunctionManager):
         if venv_id is None:
             return None
         return self.get_venv(venv_id=venv_id)
+
+    # ------------------------------------------------------------------ #
+    #  Virtual Environment Execution Support                             #
+    # ------------------------------------------------------------------ #
+
+    def _get_venv_base_dir(self) -> Path:
+        """Get the base directory for all custom venvs.
+
+        The path includes the Unify context name to ensure isolation between
+        different assistants/users and during parallel test runs.
+        """
+        # Get current context for isolation
+        ctx = unify.get_active_context()
+        ctx_name = ctx.get("read") or ctx.get("write") or "default"
+        # Sanitize context name for filesystem use
+        safe_ctx = ctx_name.replace("/", "_").replace("\\", "_")
+        return Path.home() / ".unity" / "venvs" / safe_ctx
+
+    def _get_venv_dir(self, venv_id: int) -> Path:
+        """Get the directory for a specific venv."""
+        return self._get_venv_base_dir() / str(venv_id)
+
+    def _get_venv_python(self, venv_id: int) -> Path:
+        """Get the path to the Python interpreter for a venv."""
+        return self._get_venv_dir(venv_id) / ".venv" / "bin" / "python"
+
+    def _get_venv_runner_path(self, venv_id: int) -> Path:
+        """Get the path to the runner script for a venv."""
+        return self._get_venv_dir(venv_id) / "venv_runner.py"
+
+    def _get_runner_script_content(self) -> str:
+        """Get the content of the standalone runner script."""
+        runner_path = Path(__file__).parent / "venv_runner.py"
+        return runner_path.read_text()
+
+    def is_venv_ready(self, *, venv_id: int) -> bool:
+        """
+        Check if a virtual environment is ready for execution.
+
+        Args:
+            venv_id: The venv to check.
+
+        Returns:
+            True if the venv exists and is synced, False otherwise.
+        """
+        venv_data = self.get_venv(venv_id=venv_id)
+        if venv_data is None:
+            return False
+
+        venv_dir = self._get_venv_dir(venv_id)
+        pyproject_path = venv_dir / "pyproject.toml"
+        python_path = self._get_venv_python(venv_id)
+        runner_path = self._get_venv_runner_path(venv_id)
+
+        # Check if all required files exist
+        if not pyproject_path.exists() or not python_path.exists():
+            return False
+
+        # Check if pyproject.toml content matches (normalize line endings)
+        stored_content = venv_data["venv"].strip()
+        disk_content = pyproject_path.read_text().strip()
+        if disk_content != stored_content:
+            return False
+
+        # Check if runner script exists
+        if not runner_path.exists():
+            return False
+
+        return True
+
+    async def prepare_venv(self, *, venv_id: int) -> Path:
+        """
+        Ensure a virtual environment is created and synced.
+
+        This method is idempotent - if the venv already exists and is up-to-date,
+        it returns immediately. Otherwise, it creates/updates the venv.
+
+        Args:
+            venv_id: The venv to prepare.
+
+        Returns:
+            Path to the Python interpreter in the venv.
+
+        Raises:
+            ValueError: If the venv_id does not exist.
+            RuntimeError: If venv creation fails.
+        """
+        venv_data = self.get_venv(venv_id=venv_id)
+        if venv_data is None:
+            raise ValueError(f"VirtualEnv with ID {venv_id} not found")
+
+        venv_content = venv_data["venv"]
+        venv_dir = self._get_venv_dir(venv_id)
+        pyproject_path = venv_dir / "pyproject.toml"
+        python_path = self._get_venv_python(venv_id)
+        runner_path = self._get_venv_runner_path(venv_id)
+
+        # Check if already ready
+        needs_sync = False
+        if pyproject_path.exists():
+            if pyproject_path.read_text().strip() != venv_content.strip():
+                needs_sync = True
+                logger.info(f"Venv {venv_id}: pyproject.toml changed, re-syncing")
+        else:
+            needs_sync = True
+            logger.info(f"Venv {venv_id}: creating new venv")
+
+        if needs_sync or not python_path.exists():
+            # Create directory and write pyproject.toml
+            venv_dir.mkdir(parents=True, exist_ok=True)
+            pyproject_path.write_text(venv_content)
+
+            # Run uv sync
+            logger.info(f"Venv {venv_id}: running 'uv sync'...")
+            import asyncio
+
+            process = await asyncio.create_subprocess_exec(
+                "uv",
+                "sync",
+                cwd=str(venv_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                error_msg = stderr.decode() if stderr else stdout.decode()
+                raise RuntimeError(
+                    f"Failed to sync venv {venv_id}: {error_msg}",
+                )
+
+            logger.info(f"Venv {venv_id}: sync complete")
+
+        # Ensure runner script is present and up-to-date
+        runner_content = self._get_runner_script_content()
+        if not runner_path.exists() or runner_path.read_text() != runner_content:
+            runner_path.write_text(runner_content)
+            logger.info(f"Venv {venv_id}: runner script installed")
+
+        return python_path
+
+    async def execute_in_venv(
+        self,
+        *,
+        venv_id: int,
+        implementation: str,
+        call_kwargs: Optional[Dict[str, Any]] = None,
+        is_async: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Execute a function implementation in a custom virtual environment.
+
+        This method:
+        1. Ensures the venv is prepared (lazy creation on first use)
+        2. Spawns a subprocess with the venv's Python interpreter
+        3. Sends the function implementation and kwargs via stdin
+        4. Returns the result from the subprocess
+
+        Args:
+            venv_id: The virtual environment to use.
+            implementation: The function source code.
+            call_kwargs: Keyword arguments to pass to the function.
+            is_async: Whether the function is async (default True).
+
+        Returns:
+            Dict with keys: result, error, stdout, stderr
+
+        Raises:
+            ValueError: If venv_id does not exist.
+            RuntimeError: If execution fails.
+        """
+        import asyncio
+
+        call_kwargs = call_kwargs or {}
+
+        # Ensure venv is ready
+        python_path = await self.prepare_venv(venv_id=venv_id)
+        runner_path = self._get_venv_runner_path(venv_id)
+
+        # Prepare input
+        input_data = json.dumps(
+            {
+                "implementation": implementation,
+                "call_kwargs": call_kwargs,
+                "is_async": is_async,
+            },
+        )
+
+        # Execute in subprocess
+        process = await asyncio.create_subprocess_exec(
+            str(python_path),
+            str(runner_path),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await process.communicate(input=input_data.encode())
+
+        # Parse output
+        if process.returncode != 0:
+            return {
+                "result": None,
+                "error": f"Subprocess failed with code {process.returncode}: {stderr.decode()}",
+                "stdout": stdout.decode(),
+                "stderr": stderr.decode(),
+            }
+
+        try:
+            result = json.loads(stdout.decode())
+            return result
+        except json.JSONDecodeError as e:
+            return {
+                "result": None,
+                "error": f"Failed to parse subprocess output: {e}",
+                "stdout": stdout.decode(),
+                "stderr": stderr.decode(),
+            }

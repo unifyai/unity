@@ -294,11 +294,34 @@ class SingleFunctionActor(BaseActor):
         """Execute a user-defined function with the given data."""
         implementation = function_data.get("implementation")
         name = function_data.get("name")
+        venv_id = function_data.get("venv_id")
 
         if not implementation:
             raise ValueError(f"Function '{name}' has no implementation")
 
-        # Create execution environment
+        # Check if function should run in a custom venv
+        if venv_id is not None:
+            return await self._execute_in_custom_venv(
+                implementation=implementation,
+                name=name,
+                venv_id=venv_id,
+                call_kwargs=call_kwargs,
+            )
+
+        # Default: execute in-process
+        return await self._execute_in_process(
+            implementation=implementation,
+            name=name,
+            call_kwargs=call_kwargs,
+        )
+
+    async def _execute_in_process(
+        self,
+        implementation: str,
+        name: str,
+        call_kwargs: Dict[str, Any],
+    ) -> Any:
+        """Execute a function in the current process (default behavior)."""
         globals_dict = self._create_execution_globals()
 
         # Compile and exec the function definition
@@ -315,6 +338,43 @@ class SingleFunctionActor(BaseActor):
             return await fn(**call_kwargs)
         else:
             return fn(**call_kwargs)
+
+    async def _execute_in_custom_venv(
+        self,
+        implementation: str,
+        name: str,
+        venv_id: int,
+        call_kwargs: Dict[str, Any],
+    ) -> Any:
+        """Execute a function in a custom virtual environment subprocess."""
+        logger.info(
+            f"Executing function '{name}' in custom venv (ID: {venv_id})",
+        )
+
+        # Determine if the function is async by checking the implementation
+        is_async = "async def" in implementation
+
+        # Execute in the custom venv
+        result = await self._function_manager.execute_in_venv(
+            venv_id=venv_id,
+            implementation=implementation,
+            call_kwargs=call_kwargs,
+            is_async=is_async,
+        )
+
+        # Log any captured output
+        if result.get("stdout"):
+            logger.debug(f"Function '{name}' stdout: {result['stdout']}")
+        if result.get("stderr"):
+            logger.warning(f"Function '{name}' stderr: {result['stderr']}")
+
+        # Handle errors
+        if result.get("error"):
+            raise RuntimeError(
+                f"Function '{name}' failed in venv {venv_id}: {result['error']}",
+            )
+
+        return result.get("result")
 
     async def act(
         self,
