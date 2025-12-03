@@ -1618,7 +1618,8 @@ class _ActionProviderProxy:
                 interaction_str,
                 magnitude_logs,
             )
-            interactions_log.append(interaction_to_cache)
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_cache)
 
             try:
                 url = await self._real_action_provider.browser.get_current_url()
@@ -1997,11 +1998,17 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
                     entrypoint_func_data = search_results[0]
                     entrypoint_code = entrypoint_func_data.get("implementation")
                     entrypoint_name = entrypoint_func_data.get("name")
+                    entrypoint_verify = entrypoint_func_data.get("verify", True)
 
                     if not entrypoint_code or not entrypoint_name:
                         raise ValueError(
                             f"Invalid function data for entrypoint {self.entrypoint}.",
                         )
+
+                    # Skip verification for entrypoint wrapper if verify=False
+                    if not entrypoint_verify:
+                        self.functions_skip_verify.add(entrypoint_name)
+                        # self.functions_skip_verify.add("main_plan")
 
                     # Build argument string for entrypoint call from plan-provided args/kwargs
                     def _render_value(v: Any) -> str:
@@ -4069,7 +4076,7 @@ class HierarchicalActor(BaseActor):
         headless: bool = False,
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
-        timeout: Optional[int] = 300,
+        timeout: Optional[int] = 1000,
         browser_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
