@@ -9,7 +9,7 @@ from unity.actor.hierarchical_actor import (
     VerificationAssessment,
     _HierarchicalHandleState,
 )
-from unity.actor.action_provider import ActionProvider
+from unity.actor.computer_primitives import ComputerPrimitives
 from unity.controller.browser import Browser
 from unity.function_manager.function_manager import FunctionManager
 import unity.actor.hierarchical_actor as hierarchical_actor_module
@@ -38,11 +38,11 @@ def mock_browser():
 
 
 @pytest.fixture
-def mock_action_provider(mock_browser):
-    """Provides a mock ActionProvider which holds our mock_browser."""
-    provider = MagicMock(spec=ActionProvider)
+def mock_computer_primitives(mock_browser):
+    """Provides a mock ComputerPrimitives which holds our mock_browser."""
+    provider = MagicMock(spec=ComputerPrimitives)
     provider.browser = mock_browser
-    # Add aliases for browser methods to match the real ActionProvider
+    # Add aliases for browser methods to match the real ComputerPrimitives
     provider.browser_act = mock_browser.act
     provider.browser_observe = mock_browser.observe
     provider.close = AsyncMock()
@@ -50,15 +50,15 @@ def mock_action_provider(mock_browser):
 
 
 @pytest.fixture
-def actor(mock_function_manager, mock_action_provider, monkeypatch):
+def actor(mock_function_manager, mock_computer_primitives, monkeypatch):
     """
-    Provides a HierarchicalActor instance where the real ActionProvider
+    Provides a HierarchicalActor instance where the real ComputerPrimitives
     has been replaced by our mock *before* initialization.
     """
     monkeypatch.setattr(
         hierarchical_actor_module,
-        "ActionProvider",
-        lambda *args, **kwargs: mock_action_provider,
+        "ComputerPrimitives",
+        lambda *args, **kwargs: mock_computer_primitives,
     )
 
     p = HierarchicalActor(function_manager=mock_function_manager, headless=True)
@@ -71,7 +71,7 @@ def actor(mock_function_manager, mock_action_provider, monkeypatch):
 @pytest.mark.asyncio
 async def test_dynamic_implementation(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -95,7 +95,7 @@ async def main_plan():
 @verify
 async def sign_in():
     '''Signs the user in.'''
-    await action_provider.browser_act("Click the sign-in button")
+    await computer_primitives.browser_act("Click the sign-in button")
 """
 
     successful_verification_json = (
@@ -127,11 +127,13 @@ async def sign_in():
 
     # 3. The assertion now checks that the 'act' method was called
     #    on the MOCK BROWSER HANDLE, not the controller.
-    mock_action_provider.browser_act.assert_called_once_with("Click the sign-in button")
+    mock_computer_primitives.browser_act.assert_called_once_with(
+        "Click the sign-in button",
+    )
 
     # 4. The source code check is updated to look for the new pattern.
     assert "raise NotImplementedError" not in plan.plan_source_code
-    assert "action_provider.browser_act" in plan.plan_source_code
+    assert "computer_primitives.browser_act" in plan.plan_source_code
 
     # 5. The action log reflects the successful execution flow.
     action_log_str = " ".join(plan.action_log)
@@ -143,7 +145,7 @@ async def sign_in():
 @pytest.mark.asyncio
 async def test_verification_and_tactical_replanning(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -155,16 +157,16 @@ async def test_verification_and_tactical_replanning(
 @verify
 async def find_email():
     '''Finds an email on the page.'''
-    await action_provider.browser_act("Scroll to the footer") # Flawed initial attempt
-    return await action_provider.browser_observe("Find the email address")
+    await computer_primitives.browser_act("Scroll to the footer") # Flawed initial attempt
+    return await computer_primitives.browser_observe("Find the email address")
 """
 
     reimplemented_find_email_code = """
 @verify
 async def find_email():
     '''Finds an email on the page.'''
-    await action_provider.browser_act("Click on the 'Contact Us' link") # Corrected attempt
-    return await action_provider.browser_observe("Find the email address")
+    await computer_primitives.browser_act("Click on the 'Contact Us' link") # Corrected attempt
+    return await computer_primitives.browser_observe("Find the email address")
 """
 
     main_plan_code = f"""
@@ -227,7 +229,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_strategic_replanning_escalation(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -239,7 +241,7 @@ async def test_strategic_replanning_escalation(
 @verify
 async def child_task():
     '''A child task that will fail strategically.'''
-    await action_provider.browser_act("Perform an impossible action.")
+    await computer_primitives.browser_act("Perform an impossible action.")
     return "This should not be reached."
 """
 
@@ -313,7 +315,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_full_plan_modification_and_correction(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -325,9 +327,9 @@ async def test_full_plan_modification_and_correction(
 @verify
 async def main_plan():
     '''Initial plan to go to site A and click B.'''
-    await action_provider.browser_act("Navigate to site A")
+    await computer_primitives.browser_act("Navigate to site A")
     # Plan will be paused and modified after this point
-    await action_provider.browser_act("Click button B")
+    await computer_primitives.browser_act("Click button B")
     return "Finished at site A."
 """
 
@@ -335,8 +337,8 @@ async def main_plan():
 @verify
 async def main_plan():
     '''Modified plan to go to site C and click D.'''
-    await action_provider.browser_act("Navigate to site C")
-    await action_provider.browser_act("Click button D")
+    await computer_primitives.browser_act("Navigate to site C")
+    await computer_primitives.browser_act("Click button D")
     return "Finished at site C."
 """
 
@@ -344,13 +346,13 @@ async def main_plan():
 @verify
 async def course_correction_main():
     '''Navigates to the correct starting site for the new plan.'''
-    await action_provider.browser_act("Navigate to site C")
+    await computer_primitives.browser_act("Navigate to site C")
 """
 
     # Create an event to deterministically pause the plan's execution.
     plan_is_paused_event = asyncio.Event()
     mock_act = AsyncMock()
-    monkeypatch.setattr(mock_action_provider, "browser_act", mock_act)
+    monkeypatch.setattr(mock_computer_primitives, "browser_act", mock_act)
 
     # Configure a side effect for the mock handle to pause the plan.
     async def act_side_effect(instruction: str):
@@ -363,7 +365,7 @@ async def course_correction_main():
         # Default behavior for any other action (e.g., in the modified plan).
         return f"Action '{instruction}' completed."
 
-    mock_action_provider.browser_act.side_effect = act_side_effect
+    mock_computer_primitives.browser_act.side_effect = act_side_effect
 
     # Mock the LLM calls
     monkeypatch.setattr(
@@ -393,7 +395,7 @@ async def course_correction_main():
 
     # Wait until the first 'act' call completes. This ensures the plan is
     # now running and paused inside the second 'act' call, waiting on our event.
-    while mock_action_provider.browser_act.call_count < 1:
+    while mock_computer_primitives.browser_act.call_count < 1:
         await asyncio.sleep(0.01)
 
     # Now that the plan is paused in the RUNNING state, modify it.
@@ -408,10 +410,10 @@ async def course_correction_main():
 
     # 2. The course correction script should have been called.
     actor._generate_course_correction_script.assert_called_once()
-    mock_action_provider.browser_act.assert_any_call("Navigate to site C")
+    mock_computer_primitives.browser_act.assert_any_call("Navigate to site C")
 
     # 3. The final plan execution should reflect the new goal.
-    mock_action_provider.browser_act.assert_any_call("Click button D")
+    mock_computer_primitives.browser_act.assert_any_call("Click button D")
 
     # 4. The final result should be from the modified plan.
     assert plan._state == _HierarchicalHandleState.COMPLETED
@@ -420,7 +422,7 @@ async def course_correction_main():
 @pytest.mark.asyncio
 async def test_failed_plan_modification_rollback(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -431,7 +433,7 @@ async def test_failed_plan_modification_rollback(
     original_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("Do original task")
+    await computer_primitives.browser_act("Do original task")
     return "Original task done."
 """
     # Mock initial generation
@@ -471,7 +473,7 @@ async def main_plan():
     assert "Do original task" in plan.plan_source_code
 
     # 3. The plan should have continued and completed the original task.
-    mock_action_provider.browser_act.assert_called_with("Do original task")
+    mock_computer_primitives.browser_act.assert_called_with("Do original task")
     assert plan._state == _HierarchicalHandleState.COMPLETED
 
     # 4. Check the action log for the rollback message.
@@ -482,7 +484,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_fatal_error_in_verification(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -493,7 +495,7 @@ async def test_fatal_error_in_verification(
     plan_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("Do something")
+    await computer_primitives.browser_act("Do something")
 """
     monkeypatch.setattr(
         actor,
@@ -517,7 +519,7 @@ async def main_plan():
     await plan.result()
 
     # --- Assert ---
-    mock_action_provider.browser_act.assert_called_once_with("Do something")
+    mock_computer_primitives.browser_act.assert_called_once_with("Do something")
     assert plan._state == _HierarchicalHandleState.ERROR
     assert "fatal_error" in " ".join(plan.action_log)
     assert "Unrecoverable error" in " ".join(plan.action_log)
@@ -587,7 +589,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_exploratory_mode_with_clarification(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -601,7 +603,7 @@ async def test_exploratory_mode_with_clarification(
 @verify
 async def main_plan():
     '''A plan generated from exploration.'''
-    await action_provider.browser_act("Navigate to example.com based on user input.")
+    await computer_primitives.browser_act("Navigate to example.com based on user input.")
     return "Plan complete."
     """
     expected_summary = "Based on user input, the target website is example.com."
@@ -676,7 +678,7 @@ async def main_plan():
     assert "Starting interactive exploratory phase" in action_log_str
     assert "Exploration: Asking for clarification" in action_log_str
     assert f"Exploration Summary: {expected_summary}" in action_log_str
-    mock_action_provider.browser_act.assert_called_once_with(
+    mock_computer_primitives.browser_act.assert_called_once_with(
         "Navigate to example.com based on user input.",
     )
 
@@ -684,7 +686,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_user_initiated_stop(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -692,14 +694,14 @@ async def test_user_initiated_stop(
     """
     # --- Arrange ---
     pause_event = asyncio.Event()
-    mock_action_provider.browser_act.side_effect = (
+    mock_computer_primitives.browser_act.side_effect = (
         pause_event.wait
     )  # This will wait forever
 
     plan_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("long running action")
+    await computer_primitives.browser_act("long running action")
 """
     actor._generate_initial_plan = AsyncMock(return_value=plan_code)
     actor._check_state_against_goal = AsyncMock(
@@ -723,7 +725,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_user_initiated_pause_and_resume(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -736,12 +738,12 @@ async def test_user_initiated_pause_and_resume(
         await pause_event.wait()
         return "Action completed after resume."
 
-    mock_action_provider.browser_act.side_effect = act_side_effect
+    mock_computer_primitives.browser_act.side_effect = act_side_effect
 
     plan_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("long running action")
+    await computer_primitives.browser_act("long running action")
     return "Done"
 """
     actor._generate_initial_plan = AsyncMock(return_value=plan_code)
@@ -780,7 +782,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_nested_dynamic_implementation(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -814,7 +816,7 @@ async def parent_task():
     implemented_child = """
 @verify
 async def child_task():
-    await action_provider.browser_act("Perform the final child action.")
+    await computer_primitives.browser_act("Perform the final child action.")
 """
 
     # Mock the LLM calls to provide the sequence of implementations
@@ -851,7 +853,7 @@ async def child_task():
     assert parent_impl_index < child_impl_index
 
     # 3. The final child action should have been called on the handle.
-    mock_action_provider.browser_act.assert_called_once_with(
+    mock_computer_primitives.browser_act.assert_called_once_with(
         "Perform the final child action.",
     )
 
@@ -859,7 +861,7 @@ async def child_task():
 @pytest.mark.asyncio
 async def test_modify_plan_while_paused(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -877,17 +879,17 @@ async def test_modify_plan_while_paused(
         # The new plan's action will pass through here without waiting.
         return "New action completed."
 
-    mock_action_provider.browser_act.side_effect = act_side_effect
+    mock_computer_primitives.browser_act.side_effect = act_side_effect
 
     initial_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("long running action")
+    await computer_primitives.browser_act("long running action")
 """
     modified_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("new action after pause")
+    await computer_primitives.browser_act("new action after pause")
 """
 
     monkeypatch.setattr(
@@ -934,7 +936,7 @@ async def main_plan():
 
     # 2. The plan should complete successfully with the new action.
     assert plan._state == _HierarchicalHandleState.COMPLETED
-    mock_action_provider.browser_act.assert_any_call("new action after pause")
+    mock_computer_primitives.browser_act.assert_any_call("new action after pause")
 
     # 3. The action log should show the pause before the modification.
     log_str = " ".join(plan.action_log)
@@ -979,7 +981,7 @@ async def test_invalid_code_generation_handling(
 @pytest.mark.asyncio
 async def test_failed_course_correction_triggers_rollback(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -990,18 +992,18 @@ async def test_failed_course_correction_triggers_rollback(
     initial_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("original action")
+    await computer_primitives.browser_act("original action")
     return "Original done."
 """
     modified_code = """
 @verify
 async def main_plan():
-    await action_provider.browser_act("modified action")
+    await computer_primitives.browser_act("modified action")
 """
     correction_script = """
 @verify
 async def course_correction_main():
-    await action_provider.browser_act("correction action")
+    await computer_primitives.browser_act("correction action")
 """
 
     # Mock the various generation steps
@@ -1053,14 +1055,14 @@ async def course_correction_main():
 
     # 3. The plan should have rolled back and completed the ORIGINAL task.
     assert "original action" in plan.plan_source_code
-    mock_action_provider.browser_act.assert_called_with("original action")
+    mock_computer_primitives.browser_act.assert_called_with("original action")
     assert plan._state == _HierarchicalHandleState.COMPLETED
 
 
 @pytest.mark.asyncio
 async def test_dynamic_implementation_relies_on_cache(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -1073,7 +1075,7 @@ async def test_dynamic_implementation_relies_on_cache(
 @verify
 async def step_A():
     '''This step will run and be cached on the first pass.'''
-    await action_provider.browser_act("Performing Step A")
+    await computer_primitives.browser_act("Performing Step A")
     return "Step A is done."
 
 @verify
@@ -1093,7 +1095,7 @@ async def main_plan():
 @verify
 async def step_B_stub():
     '''This is the new implementation for Step B.'''
-    await action_provider.browser_act("Performing NEWLY IMPLEMENTED Step B")
+    await computer_primitives.browser_act("Performing NEWLY IMPLEMENTED Step B")
     return "Step B is now done."
 """
 
@@ -1121,7 +1123,7 @@ async def step_B_stub():
     #    executed exactly once, checking the mock handle.
     step_a_calls = [
         c
-        for c in mock_action_provider.browser_act.call_args_list
+        for c in mock_computer_primitives.browser_act.call_args_list
         if c == call("Performing Step A")
     ]
     assert (
@@ -1129,16 +1131,16 @@ async def step_B_stub():
     ), "The action for step_A should only have been called once."
 
     # 3. Ensure the newly implemented step was also called.
-    mock_action_provider.browser_act.assert_any_call(
+    mock_computer_primitives.browser_act.assert_any_call(
         "Performing NEWLY IMPLEMENTED Step B",
     )
-    assert mock_action_provider.browser_act.call_count == 2
+    assert mock_computer_primitives.browser_act.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_skip_cache_lifecycle(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -1151,7 +1153,7 @@ async def test_skip_cache_lifecycle(
 @verify
 async def repeatable_task(param: str):
     '''A task that can be called multiple times.'''
-    await action_provider.browser_act(f"Performing task for {param}")
+    await computer_primitives.browser_act(f"Performing task for {param}")
 
 @verify
 async def main_plan():
@@ -1164,7 +1166,7 @@ async def main_plan():
 @verify
 async def repeatable_task(param: str):
     '''A modified task that does something new.'''
-    await action_provider.browser_act(f"Performing NEW task for {param}")
+    await computer_primitives.browser_act(f"Performing NEW task for {param}")
 
 @verify
 async def main_plan():
@@ -1182,7 +1184,7 @@ async def main_plan():
         return f"Action '{instruction}' completed."
 
     # The mock side effect is on the handle.
-    mock_action_provider.browser_act.side_effect = act_side_effect
+    mock_computer_primitives.browser_act.side_effect = act_side_effect
 
     # Mock the actor's dependencies
     monkeypatch.setattr(
@@ -1213,7 +1215,7 @@ async def main_plan():
     await asyncio.sleep(0.1)
 
     # --- Assert 1: State Before Modification ---
-    assert mock_action_provider.browser_act.call_count == 2
+    assert mock_computer_primitives.browser_act.call_count == 2
     assert len(plan.completed_functions) == 1
     key_a = ("repeatable_task", frozenset([("param", "A")]))
     assert key_a in plan.completed_functions
@@ -1227,8 +1229,8 @@ async def main_plan():
     # --- Assert 2: State After Modification ---
     assert "modified and resumed successfully" in modification_result
     assert plan._state == _HierarchicalHandleState.COMPLETED
-    assert mock_action_provider.browser_act.call_count == 3
-    mock_action_provider.browser_act.assert_called_with("Performing NEW task for A")
+    assert mock_computer_primitives.browser_act.call_count == 3
+    mock_computer_primitives.browser_act.assert_called_with("Performing NEW task for A")
     assert len(plan.completed_functions) == 2
 
 
@@ -1236,7 +1238,7 @@ async def main_plan():
 async def test_reuses_skills_from_function_manager(
     actor: HierarchicalActor,
     mock_function_manager: MagicMock,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -1251,7 +1253,7 @@ async def test_reuses_skills_from_function_manager(
 @verify
 async def navigate_to_linkedin():
     '''Navigates the browser to the main LinkedIn homepage.'''
-    await action_provider.browser_act("Go to linkedin.com")
+    await computer_primitives.browser_act("Go to linkedin.com")
 """
     navigate_skill_code = textwrap.dedent(navigate_skill_code).strip()
     navigate_skill_dict = {
@@ -1319,7 +1321,7 @@ async def main_plan():
     assert navigate_skill_code in prompt_capture["initial_plan_prompt"]
 
     # 3. The action from within the retrieved skill should have been executed.
-    mock_action_provider.browser_act.assert_any_call("Go to linkedin.com")
+    mock_computer_primitives.browser_act.assert_any_call("Go to linkedin.com")
 
     # 4. The plan should complete.
     assert plan._state == _HierarchicalHandleState.COMPLETED
@@ -1328,7 +1330,7 @@ async def main_plan():
 @pytest.mark.asyncio
 async def test_sandbox_supports_pydantic_classes(
     actor: HierarchicalActor,
-    mock_action_provider: MagicMock,
+    mock_computer_primitives: MagicMock,
     monkeypatch,
 ):
     """
@@ -1441,7 +1443,7 @@ async def test_pydantic_with_browser():
         page_title: str = Field(description="Title of the page")
 
     # Simulate observing page structure
-    observation = await action_provider.browser_observe(
+    observation = await computer_primitives.browser_observe(
         "Check for login elements on the page",
         response_format=PageElements
     )
@@ -1513,7 +1515,7 @@ async def main_plan():
     )
 
     # Mock browser observation to return a simple string
-    mock_action_provider.browser_observe.return_value = "Mock observation result"
+    mock_computer_primitives.browser_observe.return_value = "Mock observation result"
 
     # --- Act ---
     monkeypatch.setattr(actor, "_should_explore", AsyncMock(return_value=False))
@@ -1535,7 +1537,7 @@ async def main_plan():
     assert "Verification for main_plan: ok" in action_log_str
 
     # 3. Browser observation with Pydantic should have been called
-    mock_action_provider.browser_observe.assert_called_once()
-    call_args = mock_action_provider.browser_observe.call_args
+    mock_computer_primitives.browser_observe.assert_called_once()
+    call_args = mock_computer_primitives.browser_observe.call_args
     assert "login elements" in call_args[0][0]
     assert "response_format" in call_args[1]

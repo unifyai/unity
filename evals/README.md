@@ -9,7 +9,7 @@ The `generate_initial_plans.py` script generates fully-implemented Python plans 
 ## Features
 
 - **No Stub Generation**: All functions are fully implemented (no `NotImplementedError`)
-- **Automatic Setup**: Adds required imports and `action_provider` initialization
+- **Automatic Setup**: Adds required imports and `computer_primitives` initialization
 - **Multiple Format Support**: Handles various JSONL task formats
 - **Batch Processing**: Process multiple tasks from JSONL files
 - **Web Navigation Support**: Enhanced prompts for browser automation tasks
@@ -66,8 +66,8 @@ python evals/generate_initial_plans.py evals/patchedTasks.jsonl -o evals/patched
 ## Output
 
 Each generated plan is saved as a separate Python file with:
-- Full imports (asyncio, re, pydantic, typing, ActionProvider)
-- Initialized `action_provider = ActionProvider()`
+- Full imports (asyncio, re, pydantic, typing, ComputerPrimitives)
+- Initialized `computer_primitives = ComputerPrimitives()`
 - Fully implemented async functions
 - Proper error handling and structured data extraction
 
@@ -96,12 +96,12 @@ import asyncio
 import re
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from unity.actor.action_provider import ActionProvider
+from unity.actor.computer_primitives import ComputerPrimitives
 ```
 
 2. **Action Provider Initialization**:
 ```python
-action_provider = ActionProvider()
+computer_primitives = ComputerPrimitives()
 ```
 
 3. **Main Entry Point**:
@@ -112,8 +112,8 @@ async def main_plan():
 
 4. **Browser Navigation** (for web tasks):
 ```python
-await action_provider.act("Navigate to https://...")
-await action_provider.observe("What elements are visible?")
+await computer_primitives.act("Navigate to https://...")
+await computer_primitives.observe("What elements are visible?")
 ```
 
 5. **Structured Data Extraction**:
@@ -125,7 +125,7 @@ class ProductInfo(BaseModel):
 
 ## Troubleshooting
 
-If plans are missing imports or `action_provider` initialization:
+If plans are missing imports or `computer_primitives` initialization:
 1. Check that you're using the latest version of the script
 2. Verify the `post_process_generated_code` function is being called
 3. Check the generation logs in `evals/plan_generation.log`

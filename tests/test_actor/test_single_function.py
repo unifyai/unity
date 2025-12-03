@@ -99,7 +99,7 @@ def failing_task() -> str:
 async def test_execute_sync_function_by_id(function_manager, simple_sync_function):
     """Execute a sync function by its ID."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -120,7 +120,7 @@ async def test_execute_sync_function_by_id(function_manager, simple_sync_functio
 async def test_execute_async_function_by_id(function_manager, simple_async_function):
     """Execute an async function by its ID."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -141,7 +141,7 @@ async def test_execute_async_function_by_id(function_manager, simple_async_funct
 async def test_execute_function_by_description(function_manager, simple_sync_function):
     """Execute a function found by semantic search."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -161,7 +161,7 @@ async def test_execute_function_by_description(function_manager, simple_sync_fun
 async def test_execute_function_default_args(function_manager, simple_sync_function):
     """Execute a function with default arguments."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -186,7 +186,7 @@ async def test_execute_function_default_args(function_manager, simple_sync_funct
 async def test_function_not_found_by_id(function_manager):
     """Error when function ID doesn't exist."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -203,7 +203,7 @@ async def test_function_not_found_by_description(function_manager):
     """Error when no function matches description (with primitives excluded)."""
     # Don't add any functions
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -216,7 +216,7 @@ async def test_function_not_found_by_description(function_manager):
 async def test_function_execution_error(function_manager, failing_function):
     """Handle errors during function execution."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -242,7 +242,7 @@ async def test_function_execution_error(function_manager, failing_function):
 async def test_handle_pause_is_noop(function_manager, simple_sync_function):
     """Pause should be a no-op that returns acknowledgment."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -265,7 +265,7 @@ async def test_handle_pause_is_noop(function_manager, simple_sync_function):
 async def test_handle_resume_is_noop(function_manager, simple_sync_function):
     """Resume should be a no-op that returns acknowledgment."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -289,7 +289,7 @@ async def test_handle_resume_is_noop(function_manager, simple_sync_function):
 async def test_handle_interject_is_noop(function_manager, simple_sync_function):
     """Interject should be a no-op that returns acknowledgment."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -314,7 +314,7 @@ async def test_handle_interject_is_noop(function_manager, simple_sync_function):
 async def test_handle_stop_cancels_execution(function_manager, slow_function):
     """Stop should cancel a running function."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -338,7 +338,7 @@ async def test_handle_stop_cancels_execution(function_manager, slow_function):
 async def test_handle_ask_returns_status(function_manager, simple_async_function):
     """Ask should return information about the function status."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -367,7 +367,7 @@ async def test_handle_ask_returns_status(function_manager, simple_async_function
 async def test_handle_done_property(function_manager, simple_sync_function):
     """done() should reflect completion status."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -387,7 +387,7 @@ async def test_handle_done_property(function_manager, simple_sync_function):
 async def test_handle_get_history_is_empty(function_manager, simple_sync_function):
     """get_history() should return empty list for single function."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -411,7 +411,7 @@ async def test_handle_clarification_queues_are_none(
 ):
     """Clarification queues should be None."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -437,7 +437,7 @@ async def test_handle_clarification_queues_are_none(
 async def test_get_primitive_by_name(function_manager):
     """Should be able to get a primitive by its qualified name."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 
@@ -453,7 +453,7 @@ async def test_get_primitive_by_name(function_manager):
 async def test_get_primitive_by_name_not_found(function_manager):
     """Should raise ValueError for unknown primitive name."""
     actor = SingleFunctionActor(
-        action_provider=None,
+        computer_primitives=None,
         function_manager=function_manager,
     )
 

@@ -26,23 +26,23 @@ async def login_to_website(
         expectation (str): The expected state of the page after a successful login.
     """
     print(f"Navigating to {url} to log in.")
-    await action_provider.navigate(url)  # type: ignore
+    await computer_primitives.navigate(url)  # type: ignore
     await asyncio.sleep(2)  # Wait for page to load
 
     print(f"Entering username into '{username_field}'.")
-    await action_provider.act(  # type: ignore
+    await computer_primitives.act(  # type: ignore
         f"Type '{username}' into the {username_field}",
         expectation=f"The text '{username}' should be visible in the {username_field}.",
     )
 
     print(f"Entering password into '{password_field}'.")
-    await action_provider.act(  # type: ignore
+    await computer_primitives.act(  # type: ignore
         f"Type '{password}' into the {password_field}",
         expectation="The password should be entered in the password field.",
     )
 
     print(f"Clicking the '{submit_button}'.")
-    await action_provider.act(  # type: ignore
+    await computer_primitives.act(  # type: ignore
         f"Click the {submit_button}",
         expectation=expectation,
     )
@@ -66,10 +66,10 @@ async def search_and_extract_links(
         List[str]: A list of URLs from the search results.
     """
     print(f"Navigating to {search_engine_url} to search for '{query}'.")
-    await action_provider.navigate(search_engine_url)  # type: ignore
+    await computer_primitives.navigate(search_engine_url)  # type: ignore
     await asyncio.sleep(2)
 
-    await action_provider.act(  # type: ignore
+    await computer_primitives.act(  # type: ignore
         f"Type '{query}' into the search bar and press Enter",
         expectation="A search results page should be displayed.",
     )
@@ -84,7 +84,7 @@ async def search_and_extract_links(
     SearchResults.model_rebuild()
 
     print(f"Extracting the top {num_links} links.")
-    extracted_data = await action_provider.observe(  # type: ignore
+    extracted_data = await computer_primitives.observe(  # type: ignore
         f"Extract the top {num_links} search result links.",
         response_format=SearchResults,
     )
@@ -106,7 +106,7 @@ async def summarize_text(text_to_summarize: str, length: str = "one paragraph") 
         str: The summarized text.
     """
     print(f"Summarizing text to {length}...")
-    summary = await action_provider.reason(  # type: ignore
+    summary = await computer_primitives.reason(  # type: ignore
         request=f"Summarize the following text in {length}. Respond with only the summary.",
         context=text_to_summarize,
     )
@@ -131,7 +131,7 @@ async def translate_text(text_to_translate: str, target_language: str) -> str:
 
     Translation.model_rebuild()
 
-    result = await action_provider.reason(  # type: ignore
+    result = await computer_primitives.reason(  # type: ignore
         request=f"Translate the following text into {target_language}. Respond with only the translation.",
         context=text_to_translate,
         response_format=Translation,

@@ -4,7 +4,7 @@ A minimal actor that executes a single function or primitive.
 This actor is useful for:
 - Testing that stored functions work correctly
 - Deploying rigid, pre-defined workflows with no interactive elements
-- Integration testing of the function/action_provider pipeline
+- Integration testing of the function/computer_primitives pipeline
 - Executing action primitives (state manager methods) directly
 
 The actor can execute either user-defined functions from the FunctionManager
@@ -24,7 +24,7 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import get_primitive_callable
 
 from ..task_scheduler.base import BaseActiveTask
-from .action_provider import ActionProvider
+from .computer_primitives import ComputerPrimitives
 from .base import BaseActor, BaseActorHandle
 
 logger = logging.getLogger(__name__)
@@ -199,7 +199,7 @@ class SingleFunctionActor(BaseActor):
 
     def __init__(
         self,
-        action_provider: Optional[ActionProvider] = None,
+        computer_primitives: Optional[ComputerPrimitives] = None,
         function_manager: Optional[FunctionManager] = None,
         headless: bool = True,
         browser_mode: str = "magnitude",
@@ -210,19 +210,19 @@ class SingleFunctionActor(BaseActor):
         Initialize the SingleFunctionActor.
 
         Args:
-            action_provider: Optional existing ActionProvider. If not provided,
+            computer_primitives: Optional existing ComputerPrimitives. If not provided,
                            one will be created with the given parameters.
             function_manager: Optional FunctionManager instance. If not provided,
                             uses the singleton.
             headless: Whether to run browser in headless mode.
             browser_mode: Browser backend mode ("magnitude" or "legacy").
-            agent_mode: Agent mode for ActionProvider.
+            agent_mode: Agent mode for ComputerPrimitives.
             agent_server_url: URL for the agent server.
         """
-        if action_provider is not None:
-            self._action_provider = action_provider
+        if computer_primitives is not None:
+            self._computer_primitives = computer_primitives
         else:
-            self._action_provider = ActionProvider(
+            self._computer_primitives = ComputerPrimitives(
                 headless=headless,
                 browser_mode=browser_mode,
                 agent_mode=agent_mode,
@@ -265,7 +265,7 @@ class SingleFunctionActor(BaseActor):
     def _create_execution_globals(self) -> Dict[str, Any]:
         """Create the globals dict for function execution."""
         globals_dict = create_execution_globals()
-        globals_dict["action_provider"] = self._action_provider
+        globals_dict["computer_primitives"] = self._computer_primitives
         return globals_dict
 
     async def _execute_primitive(
@@ -276,7 +276,7 @@ class SingleFunctionActor(BaseActor):
         """Execute a primitive (state manager method)."""
         name = primitive_data.get("name")
 
-        fn = get_primitive_callable(primitive_data, self._action_provider)
+        fn = get_primitive_callable(primitive_data, self._computer_primitives)
         if fn is None:
             raise ValueError(f"Could not resolve primitive '{name}' to a callable")
 
@@ -402,8 +402,8 @@ class SingleFunctionActor(BaseActor):
 
     async def close(self):
         """Clean up resources."""
-        if self._action_provider:
+        if self._computer_primitives:
             try:
-                self._action_provider.browser.stop()
+                self._computer_primitives.browser.stop()
             except Exception:
                 pass

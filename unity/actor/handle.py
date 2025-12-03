@@ -58,7 +58,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         persist: bool = False,
         custom_system_prompt: str | None = None,
         tool_policy: Optional[Callable] = None,
-        action_provider: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ):
         self._initial_task_description = task_description
@@ -88,7 +88,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._timeout = timeout
         self._persist = persist
         self._tool_policy = tool_policy
-        self._action_provider = action_provider
+        self._computer_primitives = computer_primitives
 
         self._client = AsyncUnify(
             "claude-4.5-sonnet@anthropic",
@@ -506,9 +506,9 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                 "content": f"--- Main Task History ---\n{json.dumps(current_context_to_share, indent=2)}",
             },
         ]
-        if self._action_provider and self._action_provider.browser:
+        if self._computer_primitives and self._computer_primitives.browser:
             try:
-                screenshot = await self._action_provider.browser.get_screenshot()
+                screenshot = await self._computer_primitives.browser.get_screenshot()
                 if isinstance(screenshot, str):
                     screenshot_b64 = screenshot
                 else:

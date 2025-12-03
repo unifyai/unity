@@ -30,10 +30,10 @@ async def search_website_for_info(
     url = (website or "").strip()
     if url and not (url.startswith("http://") or url.startswith("https://")):
         url = f"https://{url}"
-    await action_provider.navigate(url)
+    await computer_primitives.navigate(url)
 
     try:
-        sm = action_provider.secret_manager
+        sm = computer_primitives.secret_manager
         names = []
         for sid in credentials or []:
             try:
@@ -53,15 +53,17 @@ async def search_website_for_info(
         for nm in names:
             hints.append(f"use ${{{nm}}} for {nm}")
         hints_text = "; ".join(hints)
-        hints_text = await action_provider.secret_manager.from_placeholder(hints_text)
-        await action_provider.act(
+        hints_text = await computer_primitives.secret_manager.from_placeholder(
+            hints_text,
+        )
+        await computer_primitives.act(
             (
                 "If a login is required for this site, complete the sign-in form using the available secret placeholders; "
                 f"{hints_text}. Do not echo raw values. After logging in, confirm you are authenticated and can access gated pages."
             ),
         )
     else:
-        await action_provider.act(
+        await computer_primitives.act(
             "If a login screen appears and credentials are required, indicate that no usable credentials were resolved and continue with public content.",
         )
 
@@ -91,7 +93,7 @@ async def search_website_for_info(
 
     all_content_parts = []
     visited_urls = set()
-    url_after_login = await action_provider.get_content(format="markdown")
+    url_after_login = await computer_primitives.get_content(format="markdown")
     url_after_login = url_after_login.get("url", url)
 
     # Loop through each search query
@@ -99,10 +101,10 @@ async def search_website_for_info(
         print(f"[WS] Searching for: {search_query}")
 
         # Navigate back to homepage for each new query
-        await action_provider.navigate(url_after_login)
+        await computer_primitives.navigate(url_after_login)
 
         # Step 1: Find and use the site's search functionality
-        await action_provider.act(
+        await computer_primitives.act(
             f"Look for a search box or search icon. Try home page if not found. If you find one, use it to search for: '{search_query}'. "
             "Use plain words only for general searches — do not use special syntax, operators, or quotes. "
             "If location search is involved, use town names, and filter distance within reasonable range if applicable. "
@@ -112,7 +114,7 @@ async def search_website_for_info(
 
         # Step 2: Get all links from the search results page
         print("[WS] Extracting links from search results...")
-        links_result = await action_provider.get_links(same_domain=True)
+        links_result = await computer_primitives.get_links(same_domain=True)
         links = links_result.get("links", [])
         print(f"[WS] Found {len(links)} links for query: {search_query}")
 
@@ -139,16 +141,18 @@ async def search_website_for_info(
 
             try:
                 print(f"[WS] Navigating to: {href[:80]}...")
-                await action_provider.navigate(href)
+                await computer_primitives.navigate(href)
 
                 # Check for and solve any captcha if present
-                await action_provider.act(
+                await computer_primitives.act(
                     "If you see a CAPTCHA, cookie consent, or access verification prompt, solve or dismiss it. "
                     "Otherwise, do nothing and confirm the page content is visible.",
                 )
 
                 # Get raw content in markdown format (no LLM overhead)
-                content_result = await action_provider.get_content(format="markdown")
+                content_result = await computer_primitives.get_content(
+                    format="markdown",
+                )
                 page_url = content_result.get("url", href)
                 title = content_result.get("title", "") or link_text
                 raw_content = content_result.get("content", "")
