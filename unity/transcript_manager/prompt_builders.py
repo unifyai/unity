@@ -143,7 +143,7 @@ def build_ask_prompt(
    `{filter_messages_fname}(filter="medium == 'email' and timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'", limit=100)`
 
  ─ Numeric aggregations ─
- • For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.
+ • For numeric reduction metrics (count, sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.
    `{reduce_fname}(metric='sum', keys='message_id', group_by='medium')`
 
  ─ Images (vision) ─

@@ -139,7 +139,7 @@ Examples
   `{filter_contacts_fname}(filter="first_name is not None and 'dan' in first_name.lower()")`
 
 ─ Numeric aggregations ─
-• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.
+• For numeric reduction metrics (count, sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.
   `{reduce_fname}(metric='mean', keys='age', group_by='city')`
 
 Anti‑patterns to avoid
