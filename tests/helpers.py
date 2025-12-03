@@ -8,6 +8,7 @@ from os import sep
 from pathlib import Path
 from typing import Any, Callable, List
 from unity.events.event_bus import EVENT_BUS
+from unity.common.context_registry import ContextRegistry
 
 from tests.settings import SETTINGS
 
@@ -168,6 +169,8 @@ def _handle_project(
                     relative=False,
                     skip_create=skip_ctx_create,
                 )
+                # Clear cached contexts so managers pick up the new active context
+                ContextRegistry.clear()
                 EVENT_BUS.clear(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
                 # global pytest_sessionstart hook was bypassed (e.g. when
@@ -223,6 +226,8 @@ def _handle_project(
                     relative=False,
                     skip_create=skip_ctx_create,
                 )
+                # Clear cached contexts so managers pick up the new active context
+                ContextRegistry.clear()
                 EVENT_BUS.clear(delete_contexts=False)
                 # Ensure EVENT_BUS has been initialised – in case the
                 # global pytest_sessionstart hook was bypassed (e.g. when
