@@ -405,9 +405,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     def cleanup(self):
         """Clean up any running call processes"""
-        print(f"Marking job {self.job_name} done")
         self.call_manager.cleanup_call_proc()
         if self.job_name and self.assistant_id:
+            print(f"Marking job {self.job_name} done")
             debug_logger.mark_job_done(self.job_name)
         self.stop.set()
 
