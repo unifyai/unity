@@ -1325,6 +1325,7 @@ class FunctionManager(BaseFunctionManager):
                 "docstring": log.entries["docstring"],
                 "guidance_ids": log.entries.get("guidance_ids", []),
                 "verify": log.entries.get("verify", True),
+                "venv_id": log.entries.get("venv_id"),
             }
             if include_implementations:
                 data["implementation"] = log.entries["implementation"]
