@@ -37,7 +37,7 @@ from unity.actor.base import (
     BaseActorHandle,
 )
 from unity.task_scheduler.base import BaseActiveTask
-from unity.actor.computer_primitives import ComputerPrimitives
+from unity.function_manager.primitives import ComputerPrimitives
 import unity.actor.prompt_builders as prompt_builders
 from unity.controller.browser_backends import BrowserAgentError, MagnitudeBrowserBackend
 from unity.common._async_tool.loop_config import (

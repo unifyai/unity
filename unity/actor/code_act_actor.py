@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Callable, Awaitable
 
 from unity.actor.base import BaseActor
 from unity.actor.handle import ActorHandle
-from unity.actor.computer_primitives import ComputerPrimitives
+from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
