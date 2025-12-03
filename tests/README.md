@@ -478,6 +478,8 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
   ./.kill_failed.sh -n    # Dry run - show what would be killed
   ```
 
+  > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/`. Logs are persisted there, so keeping sessions open just clutters `tmux ls`. Run `./.kill_failed.sh` after investigating failures.
+
 - **Kill a single session** once a test finishes:
 
   ```bash

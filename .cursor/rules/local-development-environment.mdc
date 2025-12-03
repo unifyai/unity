@@ -44,6 +44,12 @@ tests/.parallel_run.sh --wait tests/
 - Do **NOT** inspect `tmux` panes directly.
 - **ALWAYS** read the corresponding log file in `.pytest_logs/` for the failed session (e.g., `.pytest_logs/x_❌_tests-contact_manager-test_api.txt`).
 
+### Cleanup (REQUIRED)
+- **ALWAYS** kill failed tmux sessions after extracting failure info from `.pytest_logs/`.
+- Logs are persisted in `.pytest_logs/`; keeping sessions open is unnecessary and clutters `tmux ls`.
+- Run: `tests/.kill_failed.sh` to kill all failed sessions (those prefixed with `x ❌`).
+- Alternatively, kill specific sessions: `tmux kill-session -t "<session-name>"`.
+
 ### Permissions
 - Use `required_permissions: ['all']` to ensure access to `.env` and log files.
 
