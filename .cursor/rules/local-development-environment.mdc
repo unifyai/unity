@@ -10,13 +10,42 @@ globs: **/*.py, **/*.toml, .git/hooks/*
 - Do not use global python or other system interpreters.
 
 ## Running Tests
-- **Command**: `tests/.parallel_run.sh --wait [path]`
-- **Method**: This script runs tests in parallel `tmux` sessions, logs output to `.pytest_logs/<session>.txt`, and waits for completion.
-- **Failure Handling**:
-  - If the script exits with code 1, failures were detected.
-  - Do **NOT** inspect `tmux` panes directly.
-  - **ALWAYS** read the corresponding log file in `.pytest_logs/` for the failed session (e.g., `.pytest_logs/x_❌_tests-contact_manager-test_api.txt`).
-- **Permissions**: Use `required_permissions: ['all']` to ensure access to `.env` and log files.
+
+### Choosing the Right Command
+
+**CRITICAL: Use `-t` for test runs on a small number of test files, to avoid blocking the chat for many minutes where `-t` would enable much faster completion, without cluttering with excess tmux panes (as would be the case for a large number of test files).**
+
+| Scenario | Command |
+|----------|---------|
+| **1-20 tests** (single file, few files, or specific tests) | `tests/.parallel_run.sh -t --wait [path]` |
+| **Many files/directories** (20+ tests across many files) | `tests/.parallel_run.sh --wait [path]` |
+
+**Why this matters:**
+- Without `-t`: One tmux session per *file*. If a file has 15 tests, they run serially (10+ min wait).
+- With `-t`: One tmux session per *test*. All 15 tests run concurrently (~1 min wait).
+
+**Examples:**
+```bash
+# Single test file with multiple tests → USE -t
+tests/.parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
+
+# Specific test functions → USE -t
+tests/.parallel_run.sh -t --wait tests/test_foo.py::test_one tests/test_bar.py::test_two
+
+# Small directory (< 20 tests total) → USE -t
+tests/.parallel_run.sh -t --wait tests/test_actor/
+
+# Large test suite (entire tests/ directory) → omit -t to avoid hundreds of sessions
+tests/.parallel_run.sh --wait tests/
+```
+
+### Failure Handling
+- If the script exits with code 1, failures were detected.
+- Do **NOT** inspect `tmux` panes directly.
+- **ALWAYS** read the corresponding log file in `.pytest_logs/` for the failed session (e.g., `.pytest_logs/x_❌_tests-contact_manager-test_api.txt`).
+
+### Permissions
+- Use `required_permissions: ['all']` to ensure access to `.env` and log files.
 
 ## Pre-commit Hooks
 - The `pre-commit` tool is installed in the project `dev` dependencies.
