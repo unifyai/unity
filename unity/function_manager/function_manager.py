@@ -20,6 +20,7 @@ from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
 from .primitives import collect_primitives, compute_primitives_hash
+from .custom_functions import collect_custom_functions, compute_custom_functions_hash
 
 
 logger = logging.getLogger(__name__)
@@ -196,8 +197,9 @@ class FunctionManager(BaseFunctionManager):
         self._primitives_ctx = ContextRegistry.get_context(self, "Functions/Primitives")
         self._meta_ctx = ContextRegistry.get_context(self, "Functions/Meta")
 
-        # Track whether primitives have been synced this session
+        # Track whether primitives and custom functions have been synced this session
         self._primitives_synced = False
+        self._custom_functions_synced = False
 
         # ------------------------------------------------------------------ #
         #  File system mirroring (functions folder under FileManager root)    #
@@ -500,6 +502,7 @@ class FunctionManager(BaseFunctionManager):
         try:
             self._next_id = None
             self._primitives_synced = False
+            self._custom_functions_synced = False
         except Exception:
             pass
 
@@ -646,6 +649,195 @@ class FunctionManager(BaseFunctionManager):
         self._store_primitives_hash(expected_hash)
 
         self._primitives_synced = True
+        return True
+
+    # ------------------------------------------------------------------ #
+    #  Custom Functions Sync                                              #
+    # ------------------------------------------------------------------ #
+
+    def _get_stored_custom_functions_hash(self) -> str:
+        """Retrieve the stored custom functions hash from the Meta context."""
+        try:
+            logs = unify.get_logs(
+                context=self._meta_ctx,
+                filter="meta_id == 1",
+                limit=1,
+            )
+            if logs:
+                return logs[0].entries.get("custom_functions_hash", "")
+        except Exception as e:
+            logger.warning(f"Failed to retrieve custom functions hash: {e}")
+        return ""
+
+    def _store_custom_functions_hash(self, hash_value: str) -> None:
+        """Store the custom functions hash in the Meta context."""
+        try:
+            logs = unify.get_logs(
+                context=self._meta_ctx,
+                filter="meta_id == 1",
+                limit=1,
+            )
+            if logs:
+                unify.update_logs(
+                    context=self._meta_ctx,
+                    logs=[logs[0].id],
+                    entries={"custom_functions_hash": hash_value},
+                    overwrite=True,
+                )
+            else:
+                # Create the meta row if it doesn't exist
+                unify.create_logs(
+                    context=self._meta_ctx,
+                    entries=[{"meta_id": 1, "custom_functions_hash": hash_value}],
+                )
+        except Exception as e:
+            logger.warning(f"Failed to store custom functions hash: {e}")
+
+    def _get_custom_functions_from_db(self) -> Dict[str, Dict[str, Any]]:
+        """Get all custom functions from the database (those with custom_hash set)."""
+        logs = unify.get_logs(
+            context=self._compositional_ctx,
+            filter="custom_hash != None",
+            exclude_fields=list_private_fields(self._compositional_ctx),
+        )
+        return {
+            lg.entries.get("name"): lg.entries for lg in logs if lg.entries.get("name")
+        }
+
+    def _delete_custom_function_by_name(self, name: str) -> bool:
+        """Delete a custom function by name."""
+        logs = unify.get_logs(
+            context=self._compositional_ctx,
+            filter=f"name == '{name}' and custom_hash != None",
+            limit=1,
+        )
+        if not logs:
+            return False
+        unify.delete_logs(
+            context=self._compositional_ctx,
+            logs=[logs[0].id],
+        )
+        return True
+
+    def _update_custom_function(
+        self,
+        function_id: int,
+        data: Dict[str, Any],
+    ) -> None:
+        """Update an existing custom function."""
+        log = self._get_log_by_function_id(
+            function_id=function_id,
+            raise_if_missing=True,
+        )
+        # Update all fields except function_id (preserve it)
+        update_data = {k: v for k, v in data.items() if k != "function_id"}
+        unify.update_logs(
+            context=self._compositional_ctx,
+            logs=[log.id],
+            entries=update_data,
+            overwrite=True,
+        )
+
+    def _insert_custom_function(self, data: Dict[str, Any]) -> int:
+        """Insert a new custom function."""
+        # Remove function_id if present - let it be auto-assigned
+        insert_data = {k: v for k, v in data.items() if k != "function_id"}
+        logs = unify.create_logs(
+            context=self._compositional_ctx,
+            entries=[insert_data],
+        )
+        if logs and hasattr(logs[0], "entries"):
+            return logs[0].entries.get("function_id")
+        return -1
+
+    def sync_custom_functions(self) -> bool:
+        """
+        Ensure custom functions in the database match source definitions.
+
+        Scans the custom/ folder for functions decorated with @custom_function
+        and syncs them to Functions/Compositional. Uses per-function hash
+        comparison to minimize database writes.
+
+        Behavior:
+        - New functions: inserted with auto-assigned function_id
+        - Changed functions: updated in place (preserves function_id)
+        - Deleted functions (in source): deleted from database
+        - User-added functions with same name: overwritten by source version
+
+        Returns:
+            True if sync was performed, False if already up-to-date.
+        """
+        if self._custom_functions_synced:
+            return False
+
+        # Collect source-defined custom functions
+        source_functions = collect_custom_functions()
+        expected_hash = compute_custom_functions_hash()
+        current_hash = self._get_stored_custom_functions_hash()
+
+        # Quick check: if aggregate hash matches, skip detailed sync
+        if current_hash == expected_hash:
+            logger.debug("Custom functions hash matches, skipping sync")
+            self._custom_functions_synced = True
+            return False
+
+        logger.info(
+            f"Custom functions hash mismatch "
+            f"(current={current_hash}, expected={expected_hash}), syncing...",
+        )
+
+        # Get existing custom functions from DB
+        db_functions = self._get_custom_functions_from_db()
+
+        # Track what we've processed
+        processed_names: Set[str] = set()
+
+        # Sync each source function
+        for name, source_data in source_functions.items():
+            processed_names.add(name)
+
+            if name in db_functions:
+                db_entry = db_functions[name]
+                # Check if hash changed
+                if db_entry.get("custom_hash") != source_data["custom_hash"]:
+                    logger.info(f"Updating custom function: {name}")
+                    self._update_custom_function(
+                        function_id=db_entry["function_id"],
+                        data=source_data,
+                    )
+                else:
+                    logger.debug(f"Custom function unchanged: {name}")
+            else:
+                # Check if there's a user-added function with same name
+                # (no custom_hash) - if so, we need to delete it first
+                existing = unify.get_logs(
+                    context=self._compositional_ctx,
+                    filter=f"name == '{name}'",
+                    limit=1,
+                )
+                if existing:
+                    logger.info(
+                        f"Overwriting user-added function with custom: {name}",
+                    )
+                    unify.delete_logs(
+                        context=self._compositional_ctx,
+                        logs=[existing[0].id],
+                    )
+
+                # Insert new custom function
+                logger.info(f"Inserting custom function: {name}")
+                self._insert_custom_function(source_data)
+
+        # Delete functions that are in DB but not in source
+        for name in db_functions:
+            if name not in processed_names:
+                logger.info(f"Deleting removed custom function: {name}")
+                self._delete_custom_function_by_name(name)
+
+        # Store the new hash
+        self._store_custom_functions_hash(expected_hash)
+
+        self._custom_functions_synced = True
         return True
 
     def list_primitives(self) -> Dict[str, Dict[str, Any]]:
