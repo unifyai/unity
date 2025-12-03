@@ -200,7 +200,7 @@ async def test_function_not_found_by_id(function_manager):
 @pytest.mark.asyncio
 @_handle_project
 async def test_function_not_found_by_description(function_manager):
-    """Error when no function matches description."""
+    """Error when no function matches description (with primitives excluded)."""
     # Don't add any functions
     actor = SingleFunctionActor(
         action_provider=None,
@@ -208,7 +208,7 @@ async def test_function_not_found_by_description(function_manager):
     )
 
     with pytest.raises(ValueError, match="No function found matching"):
-        await actor.act(description="do something impossible")
+        await actor.act(description="do something impossible", include_primitives=False)
 
 
 @pytest.mark.asyncio
@@ -425,3 +425,37 @@ async def test_handle_clarification_queues_are_none(
     assert handle.clarification_down_q is None
 
     await handle.result()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 5. Primitive lookup tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_get_primitive_by_name(function_manager):
+    """Should be able to get a primitive by its qualified name."""
+    actor = SingleFunctionActor(
+        action_provider=None,
+        function_manager=function_manager,
+    )
+
+    primitive_data = actor._get_primitive_by_name("ContactManager.ask")
+
+    assert primitive_data["name"] == "ContactManager.ask"
+    assert primitive_data.get("is_primitive") is True
+    assert "argspec" in primitive_data
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_get_primitive_by_name_not_found(function_manager):
+    """Should raise ValueError for unknown primitive name."""
+    actor = SingleFunctionActor(
+        action_provider=None,
+        function_manager=function_manager,
+    )
+
+    with pytest.raises(ValueError, match="No primitive found"):
+        actor._get_primitive_by_name("NonExistent.method")

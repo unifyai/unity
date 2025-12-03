@@ -10,12 +10,14 @@ from ..common.embed_utils import list_private_fields
 from ..common.search_utils import table_search_top_k
 from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
+from .types.meta import FunctionsMeta
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..file_manager.managers.local import LocalFileManager as FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
+from .primitives import collect_primitives, compute_primitives_hash
 
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,12 @@ class FunctionManager(BaseFunctionManager):
                     },
                 ],
             ),
+            TableContext(
+                name="Functions/Meta",
+                description="Metadata for the Functions context (primitives sync state).",
+                fields=model_to_fields(FunctionsMeta),
+                unique_keys={"meta_id": "int"},
+            ),
         ]
 
     # ------------------------------------------------------------------ #
@@ -153,6 +161,10 @@ class FunctionManager(BaseFunctionManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FunctionManager."
         self._ctx = ContextRegistry.get_context(self, "Functions")
+        self._meta_ctx = ContextRegistry.get_context(self, "Functions/Meta")
+
+        # Track whether primitives have been synced this session
+        self._primitives_synced = False
 
         # ------------------------------------------------------------------ #
         #  File system mirroring (functions folder under FileManager root)    #
@@ -436,14 +448,21 @@ class FunctionManager(BaseFunctionManager):
         except Exception:
             pass
 
+        try:
+            unify.delete_context(self._meta_ctx)
+        except Exception:
+            pass
+
         # Reset any manager-local counters or caches
         try:
             self._next_id = None
+            self._primitives_synced = False
         except Exception:
             pass
 
         # Force re-provisioning
         ContextRegistry.refresh(self, "Functions")
+        ContextRegistry.refresh(self, "Functions/Meta")
 
         # Verify visibility before proceeding
         try:
@@ -457,6 +476,166 @@ class FunctionManager(BaseFunctionManager):
                     _time.sleep(0.05)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ #
+    #  Primitives sync                                                   #
+    # ------------------------------------------------------------------ #
+
+    def _get_stored_primitives_hash(self) -> Optional[str]:
+        """Retrieve the primitives hash from the Meta context."""
+        try:
+            logs = unify.get_logs(
+                context=self._meta_ctx,
+                filter="meta_id == 1",
+                limit=1,
+            )
+            if logs:
+                return logs[0].entries.get("primitives_hash")
+        except Exception:
+            pass
+        return None
+
+    def _store_primitives_hash(self, hash_value: str) -> None:
+        """Store the primitives hash in the Meta context."""
+        try:
+            logs = unify.get_logs(
+                context=self._meta_ctx,
+                filter="meta_id == 1",
+                limit=1,
+            )
+            if logs:
+                unify.update_logs(
+                    logs=[logs[0].id],
+                    context=self._meta_ctx,
+                    entries={"primitives_hash": hash_value},
+                    overwrite=True,
+                )
+            else:
+                unify.create_logs(
+                    context=self._meta_ctx,
+                    entries=[{"meta_id": 1, "primitives_hash": hash_value}],
+                )
+        except Exception as e:
+            logger.warning(f"Failed to store primitives hash: {e}")
+
+    def _delete_all_primitives(self) -> None:
+        """Delete all primitive rows from the Functions context."""
+        try:
+            # Use name pattern matching as a workaround for boolean filter issues
+            # Primitives always have qualified names like "ClassName.method"
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter="'.' in name and function_id == None",
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            if logs:
+                unify.delete_logs(
+                    context=self._ctx,
+                    logs=[lg.id for lg in logs],
+                )
+                logger.debug(f"Deleted {len(logs)} primitive rows")
+        except Exception as e:
+            logger.warning(f"Failed to delete primitives: {e}")
+
+    def _insert_primitives(self, primitives: Dict[str, Dict[str, Any]]) -> None:
+        """Insert primitive rows into the Functions context."""
+        if not primitives:
+            return
+
+        entries = []
+        for name, data in primitives.items():
+            entry = {
+                "name": data["name"],
+                "function_id": None,
+                "argspec": data["argspec"],
+                "docstring": data["docstring"],
+                "embedding_text": data["embedding_text"],
+                "implementation": None,
+                "calls": [],
+                "precondition": None,
+                "verify": False,
+                "is_primitive": True,
+                "guidance_ids": [],
+                "primitive_class": data.get("primitive_class"),
+                "primitive_method": data.get("primitive_method"),
+            }
+            entries.append(entry)
+
+        try:
+            unify.create_logs(
+                context=self._ctx,
+                entries=entries,
+                batched=True,
+            )
+            logger.info(f"Inserted {len(entries)} primitives")
+        except Exception as e:
+            logger.error(f"Failed to insert primitives: {e}")
+
+    def sync_primitives(self) -> bool:
+        """
+        Ensure primitives in the database match current Python definitions.
+
+        Uses hash comparison to avoid unnecessary writes. Safe to call
+        multiple times; will only perform sync if primitives have changed.
+
+        Returns:
+            True if sync was performed, False if already up-to-date.
+        """
+        if self._primitives_synced:
+            return False
+
+        expected = collect_primitives()
+        expected_hash = compute_primitives_hash(expected)
+
+        current_hash = self._get_stored_primitives_hash()
+
+        if current_hash == expected_hash:
+            logger.debug("Primitives hash matches, skipping sync")
+            self._primitives_synced = True
+            return False
+
+        logger.info(
+            f"Primitives hash mismatch (current={current_hash}, expected={expected_hash}), syncing...",
+        )
+        self._delete_all_primitives()
+        self._insert_primitives(expected)
+        self._store_primitives_hash(expected_hash)
+
+        self._primitives_synced = True
+        return True
+
+    def list_primitives(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Return a mapping of primitive name to primitive metadata.
+
+        Returns primitives from the database. Call sync_primitives() first
+        to ensure the database is up-to-date.
+
+        Returns:
+            Dict mapping primitive name to metadata dict.
+        """
+        entries: Dict[str, Dict[str, Any]] = {}
+        try:
+            # Use name pattern matching as a workaround for boolean filter issues
+            # Primitives always have qualified names like "ClassName.method"
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter="'.' in name and function_id == None",
+                exclude_fields=list_private_fields(self._ctx),
+            )
+            for log in logs:
+                data = {
+                    "name": log.entries["name"],
+                    "argspec": log.entries.get("argspec", ""),
+                    "docstring": log.entries.get("docstring", ""),
+                    "is_primitive": True,
+                    "primitive_class": log.entries.get("primitive_class"),
+                    "primitive_method": log.entries.get("primitive_method"),
+                }
+                entries[log.entries["name"]] = data
+        except Exception as e:
+            logger.warning(f"Failed to list primitives: {e}")
+        return entries
 
     # 1. Add / register ------------------------------------------------- #
 
@@ -934,14 +1113,39 @@ class FunctionManager(BaseFunctionManager):
         *,
         query: str,
         n: int = 5,
+        include_primitives: bool = True,
     ) -> List[Dict[str, Any]]:
+        """
+        Search for functions by semantic similarity to a natural-language query.
+
+        Args:
+            query: Natural-language text describing the desired function(s).
+            n: Number of similar results to return.
+            include_primitives: If True (default), sync and include primitives
+                in the search results alongside user-defined functions.
+
+        Returns:
+            Up to n results ordered by similarity, including both user functions
+            and primitives (if include_primitives=True).
+        """
+        if include_primitives:
+            self.sync_primitives()
+
         allowed_fields = list(Function.model_fields.keys())
+
+        # Build row filter to optionally exclude primitives
+        # Use name pattern matching as workaround for boolean filter issues
+        row_filter = (
+            None if include_primitives else "not ('.' in name and function_id == None)"
+        )
+
         rows = table_search_top_k(
             context=self._ctx,
             references={"embedding_text": query},
             k=n,
             allowed_fields=allowed_fields,
-            unique_id_field="function_id",
+            unique_id_field="name",  # Use name since function_id is None for primitives
+            row_filter=row_filter,
         )
         return rows
 

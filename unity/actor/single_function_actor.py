@@ -1,10 +1,14 @@
 """
-A minimal actor that executes a single function from the FunctionManager.
+A minimal actor that executes a single function or primitive.
 
 This actor is useful for:
 - Testing that stored functions work correctly
 - Deploying rigid, pre-defined workflows with no interactive elements
 - Integration testing of the function/action_provider pipeline
+- Executing action primitives (state manager methods) directly
+
+The actor can execute either user-defined functions from the FunctionManager
+or action primitives (like ContactManager.ask, TaskScheduler.execute, etc.).
 """
 
 import asyncio
@@ -17,6 +21,7 @@ from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_l
 from unity.common.llm_client import new_llm_client
 from unity.common.sandbox_utils import create_sandbox_globals
 from unity.function_manager.function_manager import FunctionManager
+from unity.function_manager.primitives import get_primitive_callable
 
 from ..task_scheduler.base import BaseActiveTask
 from .action_provider import ActionProvider
@@ -37,11 +42,13 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
     def __init__(
         self,
         function_name: str,
-        function_id: int,
+        function_id: Optional[int],
         execution_task: asyncio.Task,
+        is_primitive: bool = False,
     ):
         self._function_name = function_name
         self._function_id = function_id
+        self._is_primitive = is_primitive
         self._execution_task = execution_task
         self._completion_event = asyncio.Event()
         self._result_str: Optional[str] = None
@@ -122,9 +129,10 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
     async def ask(self, question: str) -> SteerableToolHandle:
         """Returns a simple response about the function status."""
         client = new_llm_client()
+        id_info = f"(primitive)" if self._is_primitive else f"(ID: {self._function_id})"
         client.set_system_message(
             f"You are reporting on the status of a function execution. "
-            f"The function '{self._function_name}' (ID: {self._function_id}) is currently running. "
+            f"The function '{self._function_name}' {id_info} is currently running. "
             f"Respond briefly to the user's question.",
         )
 
@@ -177,15 +185,16 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
 
 class SingleFunctionActor(BaseActor):
     """
-    A minimal actor that executes a single function from the FunctionManager.
+    A minimal actor that executes a single function or primitive.
 
     This actor is designed for:
     - Testing stored functions
     - Deploying rigid, pre-defined workflows
     - Cases where interactive steering is not needed
+    - Executing action primitives (state manager methods) directly
 
-    The actor finds and executes a single function, either by explicit ID
-    or by semantic search matching the description.
+    The actor finds and executes a single function or primitive, either by
+    explicit ID/name or by semantic search matching the description.
     """
 
     def __init__(
@@ -223,18 +232,31 @@ class SingleFunctionActor(BaseActor):
         self._function_manager = function_manager or FunctionManager()
 
     def _get_function_by_id(self, function_id: int) -> Dict[str, Any]:
-        """Get a function by its ID."""
+        """Get a user-defined function by its ID (not for primitives)."""
         functions = self._function_manager.list_functions(include_implementations=True)
         for name, data in functions.items():
             if data.get("function_id") == function_id:
                 return {"name": name, **data}
         raise ValueError(f"No function found with ID {function_id}")
 
-    def _search_function(self, description: str) -> Dict[str, Any]:
-        """Search for the best matching function by description."""
+    def _get_primitive_by_name(self, primitive_name: str) -> Dict[str, Any]:
+        """Get a primitive by its qualified name (e.g., 'ContactManager.ask')."""
+        self._function_manager.sync_primitives()
+        primitives = self._function_manager.list_primitives()
+        if primitive_name not in primitives:
+            raise ValueError(f"No primitive found with name '{primitive_name}'")
+        return primitives[primitive_name]
+
+    def _search_function(
+        self,
+        description: str,
+        include_primitives: bool = True,
+    ) -> Dict[str, Any]:
+        """Search for the best matching function or primitive by description."""
         results = self._function_manager.search_functions_by_similarity(
             query=description,
             n=1,
+            include_primitives=include_primitives,
         )
         if not results:
             raise ValueError(f"No function found matching description: {description}")
@@ -272,12 +294,30 @@ class SingleFunctionActor(BaseActor):
 
         return globals_dict
 
+    async def _execute_primitive(
+        self,
+        primitive_data: Dict[str, Any],
+        **call_kwargs,
+    ) -> Any:
+        """Execute a primitive (state manager method)."""
+        name = primitive_data.get("name")
+
+        fn = get_primitive_callable(primitive_data, self._action_provider)
+        if fn is None:
+            raise ValueError(f"Could not resolve primitive '{name}' to a callable")
+
+        # Call the primitive
+        if inspect.iscoroutinefunction(fn):
+            return await fn(**call_kwargs)
+        else:
+            return fn(**call_kwargs)
+
     async def _execute_function(
         self,
         function_data: Dict[str, Any],
         **call_kwargs,
     ) -> Any:
-        """Execute a function with the given data."""
+        """Execute a user-defined function with the given data."""
         implementation = function_data.get("implementation")
         name = function_data.get("name")
 
@@ -290,10 +330,11 @@ class SingleFunctionActor(BaseActor):
         # Compile and exec the function definition
         exec(implementation, globals_dict)
 
-        # Get the function object
-        fn = globals_dict.get(name)
+        # Get the function object - for user functions, use the short name
+        short_name = name.split(".")[-1] if "." in name else name
+        fn = globals_dict.get(short_name)
         if fn is None:
-            raise ValueError(f"Function '{name}' not found after execution")
+            raise ValueError(f"Function '{short_name}' not found after execution")
 
         # Call the function
         if inspect.iscoroutinefunction(fn):
@@ -306,6 +347,8 @@ class SingleFunctionActor(BaseActor):
         description: str,
         *,
         function_id: Optional[int] = None,
+        primitive_name: Optional[str] = None,
+        include_primitives: bool = True,
         call_kwargs: Optional[Dict[str, Any]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -313,14 +356,17 @@ class SingleFunctionActor(BaseActor):
         **kwargs,
     ) -> SingleFunctionActorHandle:
         """
-        Execute a single function from the FunctionManager.
+        Execute a single function or primitive.
 
         Args:
             description: Natural language description of what to do.
-                        Used for semantic search if function_id not provided.
+                        Used for semantic search if function_id/primitive_name not provided.
             function_id: Optional explicit function ID to execute.
                         If provided, skips the search step.
-            call_kwargs: Optional keyword arguments to pass to the function.
+            primitive_name: Optional explicit primitive name (e.g., 'ContactManager.ask').
+                           If provided, skips the search step.
+            include_primitives: If True (default), include primitives in semantic search.
+            call_kwargs: Optional keyword arguments to pass to the function/primitive.
             _parent_chat_context: Ignored (no conversation context needed).
             _clarification_up_q: Ignored (no clarifications).
             _clarification_down_q: Ignored (no clarifications).
@@ -329,37 +375,55 @@ class SingleFunctionActor(BaseActor):
             A SingleFunctionActorHandle for monitoring the execution.
 
         Raises:
-            ValueError: If no matching function is found.
+            ValueError: If no matching function or primitive is found.
         """
         call_kwargs = call_kwargs or {}
 
-        # Find the function
-        if function_id is not None:
+        # Find the function or primitive
+        if primitive_name is not None:
+            # Explicit primitive by name
+            function_data = self._get_primitive_by_name(primitive_name)
+            logger.info(
+                f"SingleFunctionActor: Executing primitive '{primitive_name}'",
+            )
+        elif function_id is not None:
+            # Explicit user-defined function by ID
             function_data = self._get_function_by_id(function_id)
             logger.info(
                 f"SingleFunctionActor: Executing function ID {function_id} "
                 f"({function_data.get('name')})",
             )
         else:
-            function_data = self._search_function(description)
+            # Search by description (may return function or primitive)
+            function_data = self._search_function(
+                description,
+                include_primitives=include_primitives,
+            )
             logger.info(
-                f"SingleFunctionActor: Found function '{function_data.get('name')}' "
+                f"SingleFunctionActor: Found '{function_data.get('name')}' "
                 f"for description: '{description}'",
             )
 
         function_name = function_data.get("name", "unknown")
-        fid = function_data.get("function_id", -1)
+        is_primitive = function_data.get("is_primitive", False)
+        fid = function_data.get("function_id")
 
-        # Create the execution task
-        execution_task = asyncio.create_task(
-            self._execute_function(function_data, **call_kwargs),
-        )
+        # Create the execution task based on type
+        if is_primitive:
+            execution_task = asyncio.create_task(
+                self._execute_primitive(function_data, **call_kwargs),
+            )
+        else:
+            execution_task = asyncio.create_task(
+                self._execute_function(function_data, **call_kwargs),
+            )
 
         # Return the handle
         return SingleFunctionActorHandle(
             function_name=function_name,
             function_id=fid,
             execution_task=execution_task,
+            is_primitive=is_primitive,
         )
 
     async def close(self):

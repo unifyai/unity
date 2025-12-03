@@ -1,0 +1,295 @@
+"""
+Tests for action primitives in FunctionManager.
+
+Tests the primitives registry, sync mechanism, and semantic search
+that includes both user-defined functions and action primitives.
+"""
+
+import pytest
+
+from unity.function_manager.function_manager import FunctionManager
+from unity.function_manager.primitives import (
+    collect_primitives,
+    compute_primitives_hash,
+)
+from unity.common.context_registry import ContextRegistry
+from tests.helpers import _handle_project
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Fixtures
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def function_manager_factory():
+    """
+    Factory fixture that creates FunctionManager instances.
+
+    Returns a callable that creates a FunctionManager. This ensures the
+    FunctionManager is instantiated AFTER @_handle_project sets up the
+    test-specific context, providing proper isolation for parallel tests.
+    """
+    managers = []
+
+    def _create():
+        # Forget only FunctionManager's cached contexts to ensure we get
+        # fresh contexts for this test's active context (set by @_handle_project)
+        ContextRegistry.forget(FunctionManager, "Functions")
+        ContextRegistry.forget(FunctionManager, "Functions/Meta")
+        fm = FunctionManager()
+        managers.append(fm)
+        return fm
+
+    yield _create
+
+    # Cleanup all created managers
+    for fm in managers:
+        try:
+            fm.clear()
+        except Exception:
+            pass
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 1. Primitives collection tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_collect_primitives_returns_expected_methods():
+    """collect_primitives() should return metadata for registered methods."""
+    primitives = collect_primitives()
+
+    # Should have collected at least some primitives
+    assert len(primitives) > 0
+
+    # Check that expected primitives are present
+    # These are from the PRIMITIVE_SOURCES registry
+    expected_names = ["ContactManager.ask", "TaskScheduler.execute"]
+    for name in expected_names:
+        assert name in primitives, f"Expected primitive '{name}' not found"
+
+
+def test_collect_primitives_has_required_fields():
+    """Each primitive should have the required metadata fields."""
+    primitives = collect_primitives()
+
+    for name, data in primitives.items():
+        assert "name" in data
+        assert "argspec" in data
+        assert "docstring" in data
+        assert "embedding_text" in data
+        assert data.get("is_primitive") is True
+        assert "primitive_class" in data
+        assert "primitive_method" in data
+
+
+def test_collect_primitives_has_docstrings():
+    """Primitives should have non-empty docstrings (from base class)."""
+    primitives = collect_primitives()
+
+    # At least some primitives should have docstrings
+    with_docstrings = [
+        name for name, data in primitives.items() if data.get("docstring", "").strip()
+    ]
+    assert (
+        len(with_docstrings) > 0
+    ), "Expected at least some primitives to have docstrings"
+
+
+def test_compute_primitives_hash_is_stable():
+    """Hash should be deterministic for the same primitives."""
+    primitives = collect_primitives()
+
+    hash1 = compute_primitives_hash(primitives)
+    hash2 = compute_primitives_hash(primitives)
+
+    assert hash1 == hash2
+    assert len(hash1) == 16  # 16 hex chars
+
+
+def test_compute_primitives_hash_changes_on_modification():
+    """Hash should change if primitives metadata changes."""
+    primitives = collect_primitives()
+    original_hash = compute_primitives_hash(primitives)
+
+    # Modify a docstring
+    modified = dict(primitives)
+    first_key = next(iter(modified))
+    modified[first_key] = dict(modified[first_key])
+    modified[first_key]["docstring"] = "MODIFIED DOCSTRING"
+
+    modified_hash = compute_primitives_hash(modified)
+
+    assert original_hash != modified_hash
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 2. FunctionManager primitives sync tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+def test_sync_primitives_inserts_rows(function_manager_factory):
+    """sync_primitives() should insert primitive rows into the Functions context."""
+    function_manager = function_manager_factory()
+
+    # Initially no primitives
+    primitives_before = function_manager.list_primitives()
+
+    # Sync primitives
+    did_sync = function_manager.sync_primitives()
+    assert did_sync is True
+
+    # Now should have primitives
+    primitives_after = function_manager.list_primitives()
+    assert len(primitives_after) > 0
+
+
+@_handle_project
+def test_sync_primitives_is_idempotent(function_manager_factory):
+    """Calling sync_primitives() twice should not duplicate rows."""
+    function_manager = function_manager_factory()
+
+    # First sync
+    function_manager.sync_primitives()
+    count1 = len(function_manager.list_primitives())
+
+    # Reset the session flag to force re-check
+    function_manager._primitives_synced = False
+
+    # Second sync (should be no-op since hash matches)
+    did_sync = function_manager.sync_primitives()
+    assert did_sync is False  # No sync needed
+
+    count2 = len(function_manager.list_primitives())
+    assert count1 == count2
+
+
+@_handle_project
+def test_list_primitives_returns_primitive_metadata(function_manager_factory):
+    """list_primitives() should return primitive metadata."""
+    function_manager = function_manager_factory()
+
+    function_manager.sync_primitives()
+    primitives = function_manager.list_primitives()
+
+    for name, data in primitives.items():
+        assert data.get("is_primitive") is True
+        assert "argspec" in data
+        assert "docstring" in data
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 3. Semantic search with primitives tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+def test_search_includes_primitives_by_default(function_manager_factory):
+    """search_functions_by_similarity should include primitives by default."""
+    function_manager = function_manager_factory()
+
+    # Search for something that should match a primitive
+    results = function_manager.search_functions_by_similarity(
+        query="ask a question to the contact manager",
+        n=5,
+    )
+
+    # Should have results (primitives get synced automatically)
+    assert len(results) > 0
+
+    # At least one result should be a primitive
+    has_primitive = any(r.get("is_primitive") for r in results)
+    assert has_primitive, "Expected at least one primitive in search results"
+
+
+@_handle_project
+def test_search_can_exclude_primitives(function_manager_factory):
+    """search_functions_by_similarity can exclude primitives."""
+    function_manager = function_manager_factory()
+
+    # First sync primitives so they exist
+    function_manager.sync_primitives()
+
+    # Add a user function
+    implementation = '''
+def ask_contact_question(question: str) -> str:
+    """Ask a question about contacts."""
+    return f"Asked: {question}"
+'''
+    function_manager.add_functions(implementations=[implementation])
+
+    # Search excluding primitives
+    results = function_manager.search_functions_by_similarity(
+        query="ask question about contacts",
+        n=10,
+        include_primitives=False,
+    )
+
+    # Should not have any primitives
+    has_primitive = any(r.get("is_primitive") for r in results)
+    assert not has_primitive, "Expected no primitives when include_primitives=False"
+
+
+@_handle_project
+def test_search_ranks_functions_and_primitives_together(function_manager_factory):
+    """Search should return both functions and primitives ranked by relevance."""
+    function_manager = function_manager_factory()
+
+    # Add a user function related to contacts
+    implementation = '''
+def update_contact_email(contact_id: int, email: str) -> str:
+    """Update a contact's email address."""
+    return f"Updated contact {contact_id} email to {email}"
+'''
+    function_manager.add_functions(implementations=[implementation])
+
+    # Search for contact-related functionality
+    results = function_manager.search_functions_by_similarity(
+        query="update contact information",
+        n=10,
+    )
+
+    # Should have both user functions and primitives
+    user_funcs = [r for r in results if not r.get("is_primitive")]
+    primitives = [r for r in results if r.get("is_primitive")]
+
+    assert len(user_funcs) > 0, "Expected at least one user function"
+    assert len(primitives) > 0, "Expected at least one primitive"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 4. Clear and re-sync tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+def test_clear_removes_primitives(function_manager_factory):
+    """clear() should remove primitives along with user functions."""
+    function_manager = function_manager_factory()
+
+    function_manager.sync_primitives()
+    assert len(function_manager.list_primitives()) > 0
+
+    function_manager.clear()
+
+    # After clear, primitives should be gone (until next sync)
+    # Note: list_primitives doesn't trigger sync, so should be empty
+    primitives = function_manager.list_primitives()
+    assert len(primitives) == 0
+
+
+@_handle_project
+def test_sync_after_clear_restores_primitives(function_manager_factory):
+    """Syncing after clear should restore primitives."""
+    function_manager = function_manager_factory()
+
+    function_manager.sync_primitives()
+    count_before = len(function_manager.list_primitives())
+
+    function_manager.clear()
+    function_manager.sync_primitives()
+
+    count_after = len(function_manager.list_primitives())
+    assert count_after == count_before

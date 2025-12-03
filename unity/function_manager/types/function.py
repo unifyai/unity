@@ -5,18 +5,30 @@ from typing import List, Optional, Dict, Any
 class Function(BaseModel):
     """
     Represents a single Python function stored in the FunctionManager.
+
+    Functions can be either user-defined (with implementation source code) or
+    primitives (action methods from state managers with no stored implementation).
     """
 
-    function_id: int = Field(..., description="Unique identifier for the function.")
+    function_id: Optional[int] = Field(
+        None,
+        description=(
+            "Unique identifier for the function. "
+            "None for primitives (they use name as identifier)."
+        ),
+    )
     name: str = Field(..., description="The name of the function.")
     argspec: str = Field(
         ...,
         description="The function's signature, e.g., '(x: int, y: int) -> int'.",
     )
     docstring: str = Field("", description="The docstring of the function.")
-    implementation: str = Field(
-        ...,
-        description="The full source code of the function.",
+    implementation: Optional[str] = Field(
+        None,
+        description=(
+            "The full source code of the function. "
+            "None for primitives (implementation lives in Python class)."
+        ),
     )
     calls: List[str] = Field(
         [],
@@ -46,4 +58,23 @@ class Function(BaseModel):
             "If True, the Actor may check initial/final states or logs to ensure success. "
             "If verification fails, the Actor may reimplement and overwrite the function in the 'Functions' store."
         ),
+    )
+
+    # Primitive-specific fields
+    is_primitive: bool = Field(
+        False,
+        description=(
+            "Whether this is an action primitive (state manager method) rather than "
+            "a user-defined function. Primitives have no stored implementation."
+        ),
+    )
+
+    primitive_class: Optional[str] = Field(
+        None,
+        description="Fully-qualified class path for primitive execution routing.",
+    )
+
+    primitive_method: Optional[str] = Field(
+        None,
+        description="Method name on the primitive class.",
     )
