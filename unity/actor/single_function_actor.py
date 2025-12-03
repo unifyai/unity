@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional
 
 from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_loop
 from unity.common.llm_client import new_llm_client
-from unity.common.sandbox_utils import create_execution_globals
+from unity.function_manager.execution_env import create_execution_globals
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import get_primitive_callable
 
