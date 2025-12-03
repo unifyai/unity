@@ -1752,7 +1752,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         metric : str
             Reduction metric to compute. Supported values (case-insensitive) are
             ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
-            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+            ``\"max\"``, ``\"median\"``, ``\"mode\"``, and ``\"count\"``.
         keys : str | list[str]
             One or more numeric columns in ``table`` to aggregate. A single
             column name returns a scalar; a list of column names computes the

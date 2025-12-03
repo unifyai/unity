@@ -8,6 +8,7 @@ from .filter_utils import normalize_filter_expr
 
 
 SUPPORTED_REDUCTION_METRICS: set[str] = {
+    "count",
     "sum",
     "mean",
     "var",
@@ -60,7 +61,7 @@ def reduce_logs(
     metric : str
         Reduction metric to compute. Supported values (case-insensitive) are:
         ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
-        ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        ``\"max\"``, ``\"median\"``, ``\"mode\"``, and ``\"count\"``.
     keys : str | list[str]
         Field name(s) to compute the metric for. A single column name (string)
         produces a scalar result (when ``group_by`` is not used); a list of
