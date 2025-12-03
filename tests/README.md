@@ -444,7 +444,14 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 
   As tests start, sessions show a `? ⏳` prefix. They flip to `o ✅` or `x ❌` when pytest exits. Successful sessions auto-close ~10s later.
 
-- **Kill a session** once a test finishes:
+- **Kill all failed sessions** at once:
+
+  ```bash
+  ./.kill_failed.sh       # Kill all sessions starting with "x"
+  ./.kill_failed.sh -n    # Dry run - show what would be killed
+  ```
+
+- **Kill a single session** once a test finishes:
 
   ```bash
   tmux kill-session -t <session-name>
