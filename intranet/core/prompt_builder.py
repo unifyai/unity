@@ -7,6 +7,7 @@ import json
 import textwrap
 from typing import List, Dict, Any, Optional
 from unity.common.prompt_helpers import now
+from unity.common.business_context import BusinessContextPayload
 
 
 # Enhanced metadata extraction prompt for new parser
@@ -116,17 +117,17 @@ def build_intranet_ask_instructions(*, generate_follow_up: bool = False) -> str:
     return text
 
 
-def build_repairs_ask_instructions(business_payload: Dict[str, Any]) -> str:
+def build_repairs_ask_instructions(
+    business_data: Dict[str, Any],
+) -> BusinessContextPayload:
     """
-    Build business-context instructions for the Midland Heart Repairs data analyst agent.
+    Build BusinessContextPayload for the Midland Heart Repairs data analyst agent.
 
-    The returned string is appended to the FileManager.ask system prompt as a cohesive
-    "Business context" section. It provides:
-    - Domain/role framing
-    - Data sources overview (multiple files and tables)
-    - Which columns are pre‑embedded and thus allowed targets for semantic search tools
-    - Hierarchical business rules (global, file-level, table-level)
-    - Compact JSON describing columns (name, description) and samples per table
+    Returns a structured BusinessContextPayload with:
+    - role_description: Primary identity (data analyst for Midland Heart)
+    - domain_rules: Data sources, schemas, join logic, business rules
+    - response_guidelines: Citation format, confidence scores, output style
+    - retrieval_hints: Domain-specific query patterns
     """
 
     def _dump(obj: Any) -> str:
@@ -135,8 +136,8 @@ def build_repairs_ask_instructions(business_payload: Dict[str, Any]) -> str:
         except Exception:
             return str(obj)
 
-    files = business_payload.get("files", {})
-    global_rules = business_payload.get("global_rules", [])
+    files = business_data.get("files", {})
+    global_rules = business_data.get("global_rules", [])
 
     # Build per-file sections
     file_sections: List[str] = []
@@ -206,42 +207,71 @@ def build_repairs_ask_instructions(business_payload: Dict[str, Any]) -> str:
             "",
         ]
 
-    return "\n".join(
+    # LAYER 1: Role description (appears FIRST in final prompt)
+    role_description = (
+        "You are an expert data analyst for Midland Heart (Housing Association).\n"
+        "You work with historical housing repairs jobs and vehicle telematics data\n"
+        "covering July–September 2025. Your goal is to answer questions about\n"
+        "repairs, operative activity, journey efficiency, and visit verification\n"
+        "using the available datasets."
+    )
+
+    # LAYER 3: Domain rules (schemas, join logic, data sources)
+    domain_rules = "\n".join(
         [
-            "Role and dataset",
-            "-----------------",
-            "• You are an expert data analyst for Midland Heart (Housing Association) working with historical housing repairs jobs and telematics data for the last quarter (July–September 2025).",
-            "• You have access to two primary data sources:",
+            "Data sources",
+            "------------",
+            "You have access to two primary data sources:",
             "  1. **Repairs Data**: Works orders, job tickets, operative assignments, completion statuses, and visit tracking.",
             "  2. **Telematics Data**: Vehicle trip logs showing operative movements, travel times, distances, and locations.",
             "",
-            "Cross-referencing guidance",
-            "--------------------------",
+            "Cross-referencing rules",
+            "-----------------------",
             "• To match repairs jobs with telematics trips:",
             "  - Use `OperativeWhoCompletedJob` (repairs) ↔ `Vehicle` (telematics) — Vehicle contains registration + operative full name.",
             "  - Use `FullAddress` (repairs) ↔ `Start location` / `End location` (telematics) for location matching.",
             "  - Use date/time fields to correlate visits: `ArrivedOnSite`/`CompletedVisit` (repairs) ↔ `Departure`/`Arrival` (telematics).",
-            "• Telematics tables are split by month (July, August, September 2025).",
             "",
             "Pre‑embedded semantic search targets",
             "-------------------------------------",
-            "• Only use the following columns as semantic search targets (already embedded):",
+            "Only use the following columns as semantic search targets (already embedded):",
             _dump(list(set(all_searchable))),
             "",
             *global_rules_section,
-            "Data sources",
-            "------------",
             *file_sections,
-            "",
-            "Answering guidance",
-            "------------------",
-            "• Provide a concise, evidence‑grounded answer.",
-            "• When cross-referencing repairs and telematics, explain the matching criteria used.",
-            "• List the reproducible steps in a very human-friendly way (no tool names or jargon — only the high-level human-readable actions you took).",
-            "• Include citations to the data used (file, table, columns/values).",
-            "• If insufficient evidence exists, say so clearly; do not invent values.",
-            "• Include a confidence score in [0,1] reflecting the reliability of the retrieved evidence.",
         ],
+    )
+
+    # LAYER 4: Response guidelines (output format, citations, tone)
+    response_guidelines = "\n".join(
+        [
+            "• Provide a concise, evidence‑grounded answer first.",
+            "• When cross-referencing repairs and telematics, explain the matching criteria used.",
+            "• List the reproducible steps in human-friendly language (no tool names or jargon).",
+            "• Include citations to the data used: [file, table, columns/values].",
+            "• If insufficient evidence exists, say so clearly; do not invent values.",
+            "• Include a confidence score in [0,1] reflecting the reliability of the evidence.",
+        ],
+    )
+
+    # Optional: Retrieval hints
+    retrieval_hints = "\n".join(
+        [
+            "Domain-specific retrieval hints",
+            "-------------------------------",
+            "• Telematics tables are split by month (July_2025, August_2025, September_2025).",
+            "  Choose the month based on the relevant date.",
+            "• When verifying a specific visit:",
+            "  - Filter repairs by JobTicketReference or FullAddress and date.",
+            "  - Filter or search telematics by Vehicle and matching date range.",
+        ],
+    )
+
+    return BusinessContextPayload(
+        role_description=role_description,
+        domain_rules=domain_rules.strip(),
+        response_guidelines=response_guidelines.strip(),
+        retrieval_hints=retrieval_hints.strip(),
     )
 
 
