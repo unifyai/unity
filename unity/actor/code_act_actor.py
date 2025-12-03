@@ -63,7 +63,7 @@ class CodeExecutionSandbox:
             computer_primitives: An instance of ComputerPrimitives to be injected into the
                              sandbox's global state, making browser tools available.
         """
-        from unity.common.sandbox_utils import create_execution_globals
+        from unity.function_manager.execution_env import create_execution_globals
 
         self.global_state: Dict[str, Any] = create_execution_globals()
         if computer_primitives:

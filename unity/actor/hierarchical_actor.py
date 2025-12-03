@@ -4526,7 +4526,7 @@ class HierarchicalActor(BaseActor):
 
     def _create_sandbox_globals(self) -> Dict[str, Any]:
         """Creates safe, sandboxed globals for plan execution."""
-        from ..common.sandbox_utils import create_execution_globals
+        from unity.function_manager.execution_env import create_execution_globals
 
         return create_execution_globals()
 

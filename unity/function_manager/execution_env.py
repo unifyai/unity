@@ -1,15 +1,23 @@
 """
-Shared utilities for creating sandboxed execution environments.
+Utilities for creating function execution environments.
+
+Provides controlled global namespaces for executing user-defined and
+compositional functions with:
+- Safe built-in functions (excluding dangerous ones like eval, exec, open)
+- Common standard library modules (asyncio, re, json, datetime, collections)
+- Typing module and common type hints
+- Pydantic support (if available)
+- Access to primitives (state managers, computer use)
 """
 
 import asyncio
-import re
-import json
-import datetime
 import collections
-import typing
-from typing import Dict, Any
+import datetime
 import functools
+import json
+import re
+import typing
+from typing import Any, Dict
 
 try:
     import pydantic
@@ -23,9 +31,9 @@ except ImportError:
     HAS_PYDANTIC = False
 
 
-def create_sandbox_globals() -> Dict[str, Any]:
+def create_base_globals() -> Dict[str, Any]:
     """
-    Creates a dictionary of safe, sandboxed global functions for code execution.
+    Creates a dictionary of safe global functions for code execution.
 
     This provides a controlled environment with:
     - Safe built-in functions (excluding dangerous ones like eval, exec, open)
@@ -145,7 +153,7 @@ def create_execution_globals() -> Dict[str, Any]:
     """
     Creates execution globals for running stored functions.
 
-    Extends create_sandbox_globals() with the `primitives` object, which
+    Extends create_base_globals() with the `primitives` object, which
     provides lazy access to all primitive operations (state managers,
     computer use, etc.).
 
@@ -156,7 +164,7 @@ def create_execution_globals() -> Dict[str, Any]:
     Returns:
         A dictionary of globals for function execution, including `primitives`.
     """
-    globals_dict = create_sandbox_globals()
+    globals_dict = create_base_globals()
 
     # Import Primitives here to avoid circular imports at module load time
     from unity.function_manager.primitives import Primitives
@@ -165,3 +173,7 @@ def create_execution_globals() -> Dict[str, Any]:
     globals_dict["primitives"] = Primitives()
 
     return globals_dict
+
+
+# Backward compatibility aliases
+create_sandbox_globals = create_base_globals

@@ -10,7 +10,7 @@ from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
 from ..common.embed_utils import list_private_fields
 from ..common.search_utils import table_search_top_k
-from ..common.sandbox_utils import create_sandbox_globals
+from .execution_env import create_base_globals
 from .types.function import Function
 from .types.meta import FunctionsMeta
 from .types.venv import VirtualEnv
@@ -1208,7 +1208,7 @@ class FunctionManager(BaseFunctionManager):
 
                 all_calls = self._collect_function_calls(node)
                 self._validate_function_calls(name, all_calls, temp_names)
-                namespace = create_sandbox_globals()
+                namespace = create_base_globals()
                 exec(source, namespace)
                 fn_obj = namespace[name]
                 signature = str(inspect.signature(fn_obj))
@@ -1547,7 +1547,7 @@ class FunctionManager(BaseFunctionManager):
                     if nm2 != name:
                         # Skip mismatched names; keep 1:1 name↔file mapping
                         continue
-                    namespace = create_sandbox_globals()
+                    namespace = create_base_globals()
                     exec(file_text, namespace)
                     fn_obj = namespace[name]
                     signature = str(inspect.signature(fn_obj))
