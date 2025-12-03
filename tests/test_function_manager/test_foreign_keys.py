@@ -44,7 +44,7 @@ def test_fk_guidance_ids_valid_reference():
 
     # Get the function log
     func_logs = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter="name == 'setup_demo'",
         return_ids_only=True,
     )
@@ -52,14 +52,17 @@ def test_fk_guidance_ids_valid_reference():
 
     # Update with guidance_ids
     unify.update_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         logs=func_logs[0],
         entries={"guidance_ids": g_ids},
         overwrite=True,
     )
 
     # Verify function was created with guidance_ids
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id", "guidance_ids"])
+    funcs = unify.get_logs(
+        context=fm._compositional_ctx,
+        from_fields=["function_id", "guidance_ids"],
+    )
     assert len(funcs) == 1
     stored_guidance_ids = funcs[0].entries.get("guidance_ids", [])
     assert sorted(stored_guidance_ids) == g_ids
@@ -88,7 +91,7 @@ def test_fk_guidance_ids_set_null_on_delete():
 
     # Get the function log
     func_logs = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter="name == 'complex_setup'",
         return_ids_only=True,
     )
@@ -96,14 +99,17 @@ def test_fk_guidance_ids_set_null_on_delete():
 
     # Update with guidance_ids
     unify.update_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         logs=func_logs[0],
         entries={"guidance_ids": [g1, g2, g3]},
         overwrite=True,
     )
 
     # Verify function has all three guidance_ids
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id", "guidance_ids"])
+    funcs = unify.get_logs(
+        context=fm._compositional_ctx,
+        from_fields=["function_id", "guidance_ids"],
+    )
     assert len(funcs) == 1
     assert sorted(funcs[0].entries["guidance_ids"]) == [g1, g2, g3]
 
@@ -112,7 +118,7 @@ def test_fk_guidance_ids_set_null_on_delete():
 
     # Verify g2 was removed from function.guidance_ids (SET NULL behavior)
     funcs_after = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         from_fields=["function_id", "guidance_ids"],
     )
     assert len(funcs_after) == 1
@@ -131,7 +137,10 @@ def test_fk_guidance_ids_empty_array():
     fm.add_functions(implementations=src)
 
     # Verify function was created with empty guidance_ids
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id", "guidance_ids"])
+    funcs = unify.get_logs(
+        context=fm._compositional_ctx,
+        from_fields=["function_id", "guidance_ids"],
+    )
     assert len(funcs) == 1
     assert funcs[0].entries.get("guidance_ids", []) == []
 
@@ -157,7 +166,7 @@ def test_fk_guidance_ids_multiple_deletes():
 
     # Get the function log
     func_logs = unify.get_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         filter="name == 'mega_func'",
         return_ids_only=True,
     )
@@ -165,7 +174,7 @@ def test_fk_guidance_ids_multiple_deletes():
 
     # Update with guidance_ids
     unify.update_logs(
-        context=fm._ctx,
+        context=fm._compositional_ctx,
         logs=func_logs[0],
         entries={"guidance_ids": g_ids},
         overwrite=True,
@@ -176,7 +185,10 @@ def test_fk_guidance_ids_multiple_deletes():
         gm._delete_guidance(guidance_id=gid)
 
     # Verify only last 2 remain in function.guidance_ids
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id", "guidance_ids"])
+    funcs = unify.get_logs(
+        context=fm._compositional_ctx,
+        from_fields=["function_id", "guidance_ids"],
+    )
     assert len(funcs) == 1
     remaining = sorted(funcs[0].entries.get("guidance_ids", []))
     assert remaining == g_ids[3:]  # Only last 2 should remain

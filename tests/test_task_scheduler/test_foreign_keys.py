@@ -38,7 +38,10 @@ def test_entrypoint_valid_reference():
     fm.add_functions(implementations=src)
 
     # Get function ID
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id", "name"])
+    funcs = unify.get_logs(
+        context=fm._compositional_ctx,
+        from_fields=["function_id", "name"],
+    )
     assert len(funcs) == 1
     func_id = int(funcs[0].entries["function_id"])
 
@@ -69,7 +72,7 @@ def test_entrypoint_set_null_on_delete():
     fm.add_functions(implementations=src)
 
     # Get function ID
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_id = int(funcs[0].entries["function_id"])
 
     # Create task with this function as entrypoint
@@ -108,7 +111,7 @@ def test_entrypoint_null_does_not_break_scheduler_init():
     fm.add_functions(implementations=src)
 
     # Get function ID
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_id = int(funcs[0].entries["function_id"])
 
     # Create task with entrypoint
@@ -190,7 +193,7 @@ def test_entrypoint_clone_after_set_null():
     # Create function
     src = "def cloneable():\n    return 'clone me'\n"
     fm.add_functions(implementations=src)
-    funcs = unify.get_logs(context=fm._ctx, from_fields=["function_id"])
+    funcs = unify.get_logs(context=fm._compositional_ctx, from_fields=["function_id"])
     func_id = int(funcs[0].entries["function_id"])
 
     # Create recurring task with entrypoint

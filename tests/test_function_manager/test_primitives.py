@@ -3,6 +3,10 @@ Tests for action primitives in FunctionManager.
 
 Tests the primitives registry, sync mechanism, and semantic search
 that includes both user-defined functions and action primitives.
+
+Primitives are stored in a separate context (Functions/Primitives) with
+stable explicit function_id values, while user-defined functions are in
+Functions/Compositional with auto-incrementing IDs.
 """
 
 import pytest
@@ -33,9 +37,10 @@ def function_manager_factory():
     managers = []
 
     def _create():
-        # Forget only FunctionManager's cached contexts to ensure we get
+        # Forget FunctionManager's cached contexts to ensure we get
         # fresh contexts for this test's active context (set by @_handle_project)
-        ContextRegistry.forget(FunctionManager, "Functions")
+        ContextRegistry.forget(FunctionManager, "Functions/Compositional")
+        ContextRegistry.forget(FunctionManager, "Functions/Primitives")
         ContextRegistry.forget(FunctionManager, "Functions/Meta")
         fm = FunctionManager()
         managers.append(fm)
@@ -71,7 +76,7 @@ def test_collect_primitives_returns_expected_methods():
 
 
 def test_collect_primitives_has_required_fields():
-    """Each primitive should have the required metadata fields."""
+    """Each primitive should have the required metadata fields including function_id."""
     primitives = collect_primitives()
 
     for name, data in primitives.items():
@@ -82,6 +87,27 @@ def test_collect_primitives_has_required_fields():
         assert data.get("is_primitive") is True
         assert "primitive_class" in data
         assert "primitive_method" in data
+        # New: primitives now have explicit integer function_ids
+        assert "function_id" in data
+        assert isinstance(data["function_id"], int)
+
+
+def test_collect_primitives_has_stable_ids():
+    """Primitive function_ids should be stable based on PRIMITIVE_SOURCES order."""
+    primitives = collect_primitives()
+
+    # Verify IDs are sequential and start at 0
+    ids = sorted([p["function_id"] for p in primitives.values()])
+    assert ids[0] == 0, "First primitive ID should be 0"
+
+    # Verify no duplicate IDs
+    assert len(ids) == len(set(ids)), "Primitive IDs should be unique"
+
+    # Verify specific primitives have expected IDs based on PRIMITIVE_SOURCES order
+    # ContactManager.ask should be ID 0 (first method of first class)
+    # ContactManager.update should be ID 1 (second method of first class)
+    assert primitives["ContactManager.ask"]["function_id"] == 0
+    assert primitives["ContactManager.update"]["function_id"] == 1
 
 
 def test_collect_primitives_has_docstrings():
@@ -131,7 +157,7 @@ def test_compute_primitives_hash_changes_on_modification():
 
 @_handle_project
 def test_sync_primitives_inserts_rows(function_manager_factory):
-    """sync_primitives() should insert primitive rows into the Functions context."""
+    """sync_primitives() should insert primitive rows into the Primitives context."""
     function_manager = function_manager_factory()
 
     # Initially no primitives
@@ -141,9 +167,13 @@ def test_sync_primitives_inserts_rows(function_manager_factory):
     did_sync = function_manager.sync_primitives()
     assert did_sync is True
 
-    # Now should have primitives
+    # Now should have primitives with integer IDs
     primitives_after = function_manager.list_primitives()
     assert len(primitives_after) > 0
+
+    # Verify they have integer function_ids
+    for name, data in primitives_after.items():
+        assert isinstance(data["function_id"], int)
 
 
 @_handle_project
@@ -168,7 +198,7 @@ def test_sync_primitives_is_idempotent(function_manager_factory):
 
 @_handle_project
 def test_list_primitives_returns_primitive_metadata(function_manager_factory):
-    """list_primitives() should return primitive metadata."""
+    """list_primitives() should return primitive metadata with integer function_ids."""
     function_manager = function_manager_factory()
 
     function_manager.sync_primitives()
@@ -178,6 +208,32 @@ def test_list_primitives_returns_primitive_metadata(function_manager_factory):
         assert data.get("is_primitive") is True
         assert "argspec" in data
         assert "docstring" in data
+        # Verify function_id is an integer (not None)
+        assert "function_id" in data
+        assert isinstance(data["function_id"], int)
+
+
+@_handle_project
+def test_primitives_have_stable_ids_in_database(function_manager_factory):
+    """Primitives stored in database should have consistent IDs across syncs."""
+    function_manager = function_manager_factory()
+
+    # First sync
+    function_manager.sync_primitives()
+    first_sync = function_manager.list_primitives()
+
+    # Clear and re-sync
+    function_manager.clear()
+    function_manager.sync_primitives()
+    second_sync = function_manager.list_primitives()
+
+    # IDs should be identical
+    for name in first_sync:
+        assert name in second_sync, f"Primitive {name} missing after re-sync"
+        assert first_sync[name]["function_id"] == second_sync[name]["function_id"], (
+            f"Primitive {name} ID changed from {first_sync[name]['function_id']} "
+            f"to {second_sync[name]['function_id']}"
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────────

@@ -91,32 +91,45 @@ class _DependencyVisitor(ast.NodeVisitor):
 
 class FunctionManager(BaseFunctionManager):
     """
-    Keeps a catalogue of user-supplied Python functions that can reference
-    one another.  Each function is stored in the `unify` backend so that it
-    can be listed, searched and cleanly deleted (optionally cascading to
-    dependants).
+    Keeps a catalogue of user-supplied Python functions and system primitives.
+
+    User-defined functions are stored in `Functions/Compositional` with auto-incrementing
+    IDs. System primitives (state manager methods) are stored in `Functions/Primitives`
+    with explicit stable IDs that are consistent across all users.
+
+    This separation ensures:
+    - User function IDs are stable (adding/removing primitives doesn't affect them)
+    - Primitive IDs are consistent across all users (based on PRIMITIVE_SOURCES order)
+    - No ID collisions between the two namespaces
     """
 
     class Config:
         required_contexts = [
             TableContext(
-                name="Functions",
-                description="List of functions, with all function details stored.",
+                name="Functions/Compositional",
+                description="User-defined functions with auto-incrementing IDs.",
                 fields=model_to_fields(Function),
                 unique_keys={"function_id": "int"},
                 auto_counting={"function_id": None},
                 foreign_keys=[
                     {
                         "name": "guidance_ids[*]",
-                        "references": "Guidance.guidance_id",  # TODO: change to the actual context
-                        "on_delete": "CASCADE",  # pop on guidance deletion
+                        "references": "Guidance.guidance_id",
+                        "on_delete": "CASCADE",
                         "on_update": "CASCADE",
                     },
                 ],
             ),
             TableContext(
+                name="Functions/Primitives",
+                description="System action primitives with stable explicit IDs.",
+                fields=model_to_fields(Function),
+                unique_keys={"function_id": "int"},
+                # No auto_counting - primitives get explicit IDs from collect_primitives()
+            ),
+            TableContext(
                 name="Functions/Meta",
-                description="Metadata for the Functions context (primitives sync state).",
+                description="Metadata for primitives sync state.",
                 fields=model_to_fields(FunctionsMeta),
                 unique_keys={"meta_id": "int"},
             ),
@@ -160,7 +173,11 @@ class FunctionManager(BaseFunctionManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FunctionManager."
-        self._ctx = ContextRegistry.get_context(self, "Functions")
+        self._compositional_ctx = ContextRegistry.get_context(
+            self,
+            "Functions/Compositional",
+        )
+        self._primitives_ctx = ContextRegistry.get_context(self, "Functions/Primitives")
         self._meta_ctx = ContextRegistry.get_context(self, "Functions/Meta")
 
         # Track whether primitives have been synced this session
@@ -354,9 +371,9 @@ class FunctionManager(BaseFunctionManager):
         raise_if_missing: bool = True,
     ) -> Optional[unify.Log]:
         logs = unify.get_logs(
-            context=self._ctx,
+            context=self._compositional_ctx,
             filter=f"function_id == {function_id}",
-            exclude_fields=list_private_fields(self._ctx),
+            exclude_fields=list_private_fields(self._compositional_ctx),
         )
         if len(logs) == 0:
             if raise_if_missing:
@@ -416,8 +433,8 @@ class FunctionManager(BaseFunctionManager):
             return
         try:
             logs = unify.get_logs(
-                context=self._ctx,
-                exclude_fields=list_private_fields(self._ctx),
+                context=self._compositional_ctx,
+                exclude_fields=list_private_fields(self._compositional_ctx),
             )
             for lg in logs:
                 name = lg.entries.get("name")
@@ -444,7 +461,12 @@ class FunctionManager(BaseFunctionManager):
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
         try:
-            unify.delete_context(self._ctx)
+            unify.delete_context(self._compositional_ctx)
+        except Exception:
+            pass
+
+        try:
+            unify.delete_context(self._primitives_ctx)
         except Exception:
             pass
 
@@ -461,7 +483,8 @@ class FunctionManager(BaseFunctionManager):
             pass
 
         # Force re-provisioning
-        ContextRegistry.refresh(self, "Functions")
+        ContextRegistry.refresh(self, "Functions/Compositional")
+        ContextRegistry.refresh(self, "Functions/Primitives")
         ContextRegistry.refresh(self, "Functions/Meta")
 
         # Verify visibility before proceeding
@@ -470,7 +493,7 @@ class FunctionManager(BaseFunctionManager):
 
             for _ in range(3):
                 try:
-                    unify.get_fields(context=self._ctx)
+                    unify.get_fields(context=self._compositional_ctx)
                     break
                 except Exception:
                     _time.sleep(0.05)
@@ -519,18 +542,15 @@ class FunctionManager(BaseFunctionManager):
             logger.warning(f"Failed to store primitives hash: {e}")
 
     def _delete_all_primitives(self) -> None:
-        """Delete all primitive rows from the Functions context."""
+        """Delete all rows from the Primitives context."""
         try:
-            # Use name pattern matching as a workaround for boolean filter issues
-            # Primitives always have qualified names like "ClassName.method"
             logs = unify.get_logs(
-                context=self._ctx,
-                filter="'.' in name and function_id == None",
-                exclude_fields=list_private_fields(self._ctx),
+                context=self._primitives_ctx,
+                exclude_fields=list_private_fields(self._primitives_ctx),
             )
             if logs:
                 unify.delete_logs(
-                    context=self._ctx,
+                    context=self._primitives_ctx,
                     logs=[lg.id for lg in logs],
                 )
                 logger.debug(f"Deleted {len(logs)} primitive rows")
@@ -538,7 +558,7 @@ class FunctionManager(BaseFunctionManager):
             logger.warning(f"Failed to delete primitives: {e}")
 
     def _insert_primitives(self, primitives: Dict[str, Dict[str, Any]]) -> None:
-        """Insert primitive rows into the Functions context."""
+        """Insert primitive rows into the Primitives context with explicit IDs."""
         if not primitives:
             return
 
@@ -546,7 +566,9 @@ class FunctionManager(BaseFunctionManager):
         for name, data in primitives.items():
             entry = {
                 "name": data["name"],
-                "function_id": None,
+                "function_id": data[
+                    "function_id"
+                ],  # Explicit stable ID from collect_primitives()
                 "argspec": data["argspec"],
                 "docstring": data["docstring"],
                 "embedding_text": data["embedding_text"],
@@ -563,7 +585,7 @@ class FunctionManager(BaseFunctionManager):
 
         try:
             unify.create_logs(
-                context=self._ctx,
+                context=self._primitives_ctx,
                 entries=entries,
                 batched=True,
             )
@@ -608,23 +630,21 @@ class FunctionManager(BaseFunctionManager):
         """
         Return a mapping of primitive name to primitive metadata.
 
-        Returns primitives from the database. Call sync_primitives() first
-        to ensure the database is up-to-date.
+        Returns primitives from the Primitives context. Call sync_primitives()
+        first to ensure the database is up-to-date.
 
         Returns:
-            Dict mapping primitive name to metadata dict.
+            Dict mapping primitive name to metadata dict (includes function_id).
         """
         entries: Dict[str, Dict[str, Any]] = {}
         try:
-            # Use name pattern matching as a workaround for boolean filter issues
-            # Primitives always have qualified names like "ClassName.method"
             logs = unify.get_logs(
-                context=self._ctx,
-                filter="'.' in name and function_id == None",
-                exclude_fields=list_private_fields(self._ctx),
+                context=self._primitives_ctx,
+                exclude_fields=list_private_fields(self._primitives_ctx),
             )
             for log in logs:
                 data = {
+                    "function_id": log.entries.get("function_id"),
                     "name": log.entries["name"],
                     "argspec": log.entries.get("argspec", ""),
                     "docstring": log.entries.get("docstring", ""),
@@ -788,7 +808,7 @@ class FunctionManager(BaseFunctionManager):
         if entries_to_create:
             try:
                 unify.create_logs(
-                    context=self._ctx,
+                    context=self._compositional_ctx,
                     entries=entries_to_create,
                     batched=True,
                 )
@@ -810,7 +830,7 @@ class FunctionManager(BaseFunctionManager):
             try:
                 unify.update_logs(
                     logs=log_ids_to_update,
-                    context=self._ctx,
+                    context=self._compositional_ctx,
                     entries=entries_to_update,
                     overwrite=True,
                 )
@@ -846,8 +866,8 @@ class FunctionManager(BaseFunctionManager):
 
         entries: Dict[str, Dict[str, Any]] = {}
         for log in unify.get_logs(
-            context=self._ctx,
-            exclude_fields=list_private_fields(self._ctx),
+            context=self._compositional_ctx,
+            exclude_fields=list_private_fields(self._compositional_ctx),
         ):
             data = {
                 "function_id": log.entries["function_id"],
@@ -864,10 +884,10 @@ class FunctionManager(BaseFunctionManager):
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
         logs = unify.get_logs(
-            context=self._ctx,
+            context=self._compositional_ctx,
             filter=f"name == '{function_name}'",
             limit=1,
-            exclude_fields=list_private_fields(self._ctx),
+            exclude_fields=list_private_fields(self._compositional_ctx),
         )
         if not logs:
             return None
@@ -915,8 +935,8 @@ class FunctionManager(BaseFunctionManager):
         else:
             # Multiple functions - build from all logs
             all_logs = unify.get_logs(
-                context=self._ctx,
-                exclude_fields=list_private_fields(self._ctx),
+                context=self._compositional_ctx,
+                exclude_fields=list_private_fields(self._compositional_ctx),
             )
 
             id_to_log = {lg.entries["function_id"]: lg for lg in all_logs}
@@ -948,8 +968,8 @@ class FunctionManager(BaseFunctionManager):
             # Get all logs if not already loaded
             if len(function_ids) == 1:
                 all_logs = unify.get_logs(
-                    context=self._ctx,
-                    exclude_fields=list_private_fields(self._ctx),
+                    context=self._compositional_ctx,
+                    exclude_fields=list_private_fields(self._compositional_ctx),
                 )
                 id_to_log = {lg.entries["function_id"]: lg for lg in all_logs}
                 id_to_name = {
@@ -983,7 +1003,7 @@ class FunctionManager(BaseFunctionManager):
         # Batch delete all functions
         if log_ids_to_delete:
             unify.delete_logs(
-                context=self._ctx,
+                context=self._compositional_ctx,
                 logs=log_ids_to_delete,
             )
 
@@ -1002,11 +1022,11 @@ class FunctionManager(BaseFunctionManager):
 
         normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
-            context=self._ctx,
+            context=self._compositional_ctx,
             filter=normalized,
             offset=offset,
             limit=limit,
-            exclude_fields=list_private_fields(self._ctx),
+            exclude_fields=list_private_fields(self._compositional_ctx),
         )
         return [lg.entries for lg in logs]
 
@@ -1022,8 +1042,8 @@ class FunctionManager(BaseFunctionManager):
         out: Dict[str, str] = {}
         try:
             logs = unify.get_logs(
-                context=self._ctx,
-                exclude_fields=list_private_fields(self._ctx),
+                context=self._compositional_ctx,
+                exclude_fields=list_private_fields(self._compositional_ctx),
             )
             for lg in logs:
                 nm = lg.entries.get("name")
@@ -1049,8 +1069,8 @@ class FunctionManager(BaseFunctionManager):
         try:
             # Build a map of name→(log_id, impl)
             rows = unify.get_logs(
-                context=self._ctx,
-                exclude_fields=list_private_fields(self._ctx),
+                context=self._compositional_ctx,
+                exclude_fields=list_private_fields(self._compositional_ctx),
             )
             name_to_log: Dict[str, Tuple[int, str]] = {}
             for lg in rows:
@@ -1087,7 +1107,7 @@ class FunctionManager(BaseFunctionManager):
                     # Update unify row
                     unify.update_logs(
                         logs=[log_id],
-                        context=self._ctx,
+                        context=self._compositional_ctx,
                         entries={
                             "argspec": signature,
                             "docstring": docstring,
@@ -1128,26 +1148,40 @@ class FunctionManager(BaseFunctionManager):
             Up to n results ordered by similarity, including both user functions
             and primitives (if include_primitives=True).
         """
-        if include_primitives:
-            self.sync_primitives()
-
         allowed_fields = list(Function.model_fields.keys())
 
-        # Build row filter to optionally exclude primitives
-        # Use name pattern matching as workaround for boolean filter issues
-        row_filter = (
-            None if include_primitives else "not ('.' in name and function_id == None)"
-        )
-
-        rows = table_search_top_k(
-            context=self._ctx,
+        # Search user-defined functions in the Compositional context
+        compositional_rows = table_search_top_k(
+            context=self._compositional_ctx,
             references={"embedding_text": query},
             k=n,
             allowed_fields=allowed_fields,
-            unique_id_field="name",  # Use name since function_id is None for primitives
-            row_filter=row_filter,
+            unique_id_field="function_id",
         )
-        return rows
+
+        if not include_primitives:
+            return compositional_rows
+
+        # Sync and search primitives
+        self.sync_primitives()
+
+        primitive_rows = table_search_top_k(
+            context=self._primitives_ctx,
+            references={"embedding_text": query},
+            k=n,
+            allowed_fields=allowed_fields,
+            unique_id_field="function_id",
+        )
+
+        # Merge and sort by the private score column (lower distance = better match)
+        all_rows = compositional_rows + primitive_rows
+        for row in all_rows:
+            for key in row.keys():
+                if key.startswith("_"):
+                    all_rows.sort(key=lambda r, k=key: r.get(k, float("inf")))
+                    return all_rows[:n]
+
+        return all_rows[:n]
 
     # ------------------------------------------------------------------ #
     #  Inverse linkage: Functions → Guidance                              #

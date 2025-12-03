@@ -5,9 +5,14 @@ Action primitives are public methods from state managers (ContactManager.ask,
 TaskScheduler.execute, etc.) that are exposed to the Actor for direct invocation
 or composition within generated Python code.
 
-Primitives are stored in the Functions context alongside user-defined functions,
-distinguished by `is_primitive=True`. They contain argspecs and docstrings but
-no implementation (the implementation lives in the Python class).
+Primitives are stored in a dedicated `Functions/Primitives` context, separate from
+user-defined functions in `Functions/Compositional`. Each primitive receives a
+stable `function_id` based on its position in `PRIMITIVE_SOURCES` - these IDs are
+consistent across all users. User-defined functions have their own auto-incrementing
+ID sequence in their separate context, so the two never collide.
+
+IMPORTANT: PRIMITIVE_SOURCES is append-only. Never reorder or remove entries -
+only add new primitives at the end. This ensures stable IDs across upgrades.
 
 This module also provides the `Primitives` class - the runtime interface for
 accessing primitives from within executed functions. All imports and
@@ -160,20 +165,27 @@ def _get_method_metadata(
 
 def collect_primitives() -> Dict[str, Dict[str, Any]]:
     """
-    Introspect all registered primitives and return their metadata.
+    Introspect all registered primitives and return their metadata with stable IDs.
 
-    Iterates through PRIMITIVE_SOURCES, imports each class, and extracts
-    signature and docstring information for each registered method.
+    Iterates through PRIMITIVE_SOURCES in order, imports each class, and extracts
+    signature and docstring information for each registered method. Each primitive
+    receives an explicit `function_id` based on its sequential position.
+
+    The IDs are stable across all users because they depend only on the order
+    in PRIMITIVE_SOURCES, which is append-only.
 
     Returns:
         Dict mapping qualified_name (e.g. "ContactManager.ask") to primitive
-        metadata suitable for insertion into the Functions context.
+        metadata suitable for insertion into the Functions/Primitives context.
     """
     primitives: Dict[str, Dict[str, Any]] = {}
+    next_id = 0
 
     for class_path, method_names in PRIMITIVE_SOURCES:
         cls = _import_class(class_path)
         if cls is None:
+            # Still increment IDs even for failed imports to maintain stable ordering
+            next_id += len(method_names)
             continue
 
         class_name = class_path.rsplit(".", 1)[1]
@@ -181,9 +193,11 @@ def collect_primitives() -> Dict[str, Dict[str, Any]]:
         for method_name in method_names:
             metadata = _get_method_metadata(cls, method_name, class_name)
             if metadata is not None:
+                metadata["function_id"] = next_id
                 primitives[metadata["name"]] = metadata
+            next_id += 1
 
-    logger.debug(f"Collected {len(primitives)} primitives")
+    logger.debug(f"Collected {len(primitives)} primitives with IDs 0-{next_id - 1}")
     return primitives
 
 
