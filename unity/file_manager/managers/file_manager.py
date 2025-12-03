@@ -24,6 +24,7 @@ from unity.file_manager.prompt_builders import (
     build_file_manager_ask_about_file_prompt,
     build_file_manager_organize_prompt,
 )
+from unity.common.business_context import BusinessContextPayload
 from unity.common.llm_helpers import (
     methods_to_tool_dict,
 )
@@ -152,8 +153,7 @@ class FileManager(BaseFileManager):
         self._BUILTIN_FIELDS: tuple[str, ...] = tuple(FileRecord.model_fields.keys())
 
         # Public tool dictionaries, mirroring other managers
-        # Ask/AskAboutFile tool surfaces (read-only). Ask has the same tools as
-        # ask_about_file, minus low-level adapter byte/open helpers.
+        # Ask/AskAboutFile tool surfaces (read-only). No ingest_files - this is read-only.
         ask_tools: Dict[str, Callable] = methods_to_tool_dict(
             # Retrieval helpers
             self._list_columns,
@@ -163,7 +163,6 @@ class FileManager(BaseFileManager):
             self._reduce,
             # Inventory listing
             self.list,
-            self.ingest_files,
             # Unified stat helper (filesystem vs index)
             self.stat,
             # Delegate to file-scoped Q&A when needed
@@ -183,8 +182,7 @@ class FileManager(BaseFileManager):
         self.add_tools("ask", ask_tools)
         self.add_tools("ask.multi_table", ask_multi_table_tools)
         ask_about_file_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # Read-only helpers
-            self.ingest_files,
+            # Read-only helpers (no ingest_files - this is read-only)
             self.stat,
             self._list_columns,
             self._tables_overview,
@@ -1945,7 +1943,7 @@ class FileManager(BaseFileManager):
         _clarification_up_q: Optional[Any] = None,
         _clarification_down_q: Optional[Any] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
-        business_context: Optional[str] = None,
+        business_payload: Optional[BusinessContextPayload] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:  # type: ignore[override]
         """
@@ -1963,9 +1961,9 @@ class FileManager(BaseFileManager):
             If both provided, enables an interactive clarification tool.
         rolling_summary_in_prompts : bool | None
             Override whether to include rolling activity summaries in system prompts.
-        business_context : str | None
-            Optional domain-specific guidance appended to the system prompt to tailor behaviour
-            for a particular use case. Kept separate from general tool instructions.
+        business_payload : BusinessContextPayload | None
+            Structured domain-specific context (role, rules, guidelines, hints)
+            injected via slot-filling pattern. Business role appears FIRST in prompt.
         _call_id : str | None
             Correlation ID for event logging.
 
@@ -2002,7 +2000,7 @@ class FileManager(BaseFileManager):
             columns=self._list_columns(),
             table_schemas_json=overview_json,
             include_activity=include_activity,
-            business_context=business_context,
+            business_payload=business_payload,
         )
         # TODO: REMOVE - Debug file dump for prompt inspection
         open("system_msg.txt", "w").write(system_msg)
