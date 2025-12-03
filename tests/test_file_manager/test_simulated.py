@@ -192,17 +192,17 @@ async def test_synchronous_operations(simulated_file_manager):
     assert not fm.exists("missing.txt")
 
     # Parse single file
-    result = fm.parse("doc1.txt")
+    result = fm.ingest_files("doc1.txt")
     assert result["doc1.txt"]["status"] == "success"
     assert len(result["doc1.txt"]["records"]) == 1
 
     # Parse multiple files
-    results = fm.parse(["doc1.txt", "doc2.txt"])
+    results = fm.ingest_files(["doc1.txt", "doc2.txt"])
     assert len(results) == 2
     assert all(r["status"] == "success" for r in results.values())
 
     # Parse non-existent file
-    result = fm.parse("missing.txt")
+    result = fm.ingest_files("missing.txt")
     assert result["missing.txt"]["status"] == "error"
 
 

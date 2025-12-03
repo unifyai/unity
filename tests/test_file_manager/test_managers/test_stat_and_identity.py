@@ -13,8 +13,8 @@ def test_extract_filesystem_type_and_safe(file_manager):
     assert fm._extract_filesystem_type("CodeSandbox [abc]") == "CodeSandbox"
     assert fm._extract_filesystem_type("") == "Unknown"
 
-    # _safe compresses and removes path punctuation, preserving tail
-    s = fm._safe("/very/long/path/to/a/Report.v1.2.pdf")
+    # safe compresses and removes path punctuation, preserving tail
+    s = fm.safe("/very/long/path/to/a/Report.v1.2.pdf")
     assert all(c.isalnum() or c in "_-" for c in s)
     assert s.endswith("Report_v1_2_pdf")
 
@@ -39,7 +39,7 @@ async def test_resolve_to_uri_and_stat(tmp_path: Path, file_manager):
     assert s1["indexed_exists"] in (False, True)
 
     # After parse, indexed_exists should be True
-    fm.parse(abs_path)
+    fm.ingest_files(abs_path)
     s2 = fm.stat(abs_path)
     assert s2["filesystem_exists"] is True
     assert s2["indexed_exists"] is True

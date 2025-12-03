@@ -55,7 +55,7 @@ async def test_txt_simple(parser, supported_format_files):
     """Test parsing simple text file."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["simple"]
-    doc = parser.parse(txt_file)
+    doc = parser.ingest_files(txt_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "text/plain"
@@ -77,7 +77,7 @@ async def test_txt_multi_paragraph(parser, supported_format_files):
     """Test parsing multi-paragraph text file."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["multi_paragraph"]
-    doc = parser.parse(txt_file)
+    doc = parser.ingest_files(txt_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "text/plain"
@@ -100,7 +100,7 @@ async def test_txt_special_characters(parser, supported_format_files):
     """Test parsing text file with special characters."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["special_chars"]
-    doc = parser.parse(txt_file)
+    doc = parser.ingest_files(txt_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "text/plain"
@@ -130,7 +130,7 @@ async def test_pdf(parser):
     if not pdf_file.exists():
         pytest.skip("PDF sample file not found")
 
-    doc = parser.parse(pdf_file)
+    doc = parser.ingest_files(pdf_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "application/pdf"
@@ -160,7 +160,7 @@ async def test_docx(parser):
     if not docx_file.exists():
         pytest.skip("DOCX sample file not found")
 
-    doc = parser.parse(docx_file)
+    doc = parser.ingest_files(docx_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == (
@@ -192,7 +192,7 @@ async def test_csv(parser):
     if not csv_file.exists():
         pytest.skip("CSV sample file not found")
 
-    doc = parser.parse(csv_file)
+    doc = parser.ingest_files(csv_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "text/csv"
@@ -291,7 +291,7 @@ async def test_xlsx(parser):
     if not xlsx_file.exists():
         pytest.skip("XLSX sample file not found")
 
-    doc = parser.parse(xlsx_file)
+    doc = parser.ingest_files(xlsx_file)
 
     # Check metadata
     mt = doc.metadata.mime_type.value.lower()
@@ -427,7 +427,7 @@ async def test_empty_txt(parser, supported_format_files):
     """Test parsing an empty text file."""
     txt_files = supported_format_files[".txt"]["files"]
     empty_file = txt_files["empty"]
-    doc = parser.parse(empty_file)
+    doc = parser.ingest_files(empty_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "text/plain"
@@ -461,7 +461,7 @@ async def test_formats_comprehensive(parser):
     # Test PDF if available
     pdf_file = sample_dir / "IT_Department_Policy_Document.pdf"
     if pdf_file.exists():
-        pdf_doc = parser.parse(pdf_file)
+        pdf_doc = parser.ingest_files(pdf_file)
         assert pdf_doc.metadata.mime_type.value == "application/pdf"
         assert pdf_doc.metadata.file_format.value == "pdf"
         assert pdf_doc.processing_status == "completed"
@@ -470,7 +470,7 @@ async def test_formats_comprehensive(parser):
     # Test DOCX if available
     docx_file = sample_dir / "SmartHome_Hub_X200_Technical_Documentation.docx"
     if docx_file.exists():
-        docx_doc = parser.parse(docx_file)
+        docx_doc = parser.ingest_files(docx_file)
         assert docx_doc.metadata.mime_type.value == (
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
@@ -490,7 +490,7 @@ async def test_binary_metadata(parser):
     # Test PDF metadata
     pdf_file = sample_dir / "IT_Department_Policy_Document.pdf"
     if pdf_file.exists():
-        pdf_doc = parser.parse(pdf_file)
+        pdf_doc = parser.ingest_files(pdf_file)
 
         # Check all required metadata fields
         assert pdf_doc.metadata.file_name == "IT_Department_Policy_Document.pdf"
@@ -505,7 +505,7 @@ async def test_binary_metadata(parser):
     # Test DOCX metadata
     docx_file = sample_dir / "SmartHome_Hub_X200_Technical_Documentation.docx"
     if docx_file.exists():
-        docx_doc = parser.parse(docx_file)
+        docx_doc = parser.ingest_files(docx_file)
 
         # Check all required metadata fields
         assert (
@@ -553,7 +553,7 @@ async def test_all_supported_formats_dynamic(
                 file_path = sample_files[0]  # Use first sample file
                 print(f"Testing binary file: {file_path}")
 
-                doc = parser.parse(file_path)
+                doc = parser.ingest_files(file_path)
 
                 # Validate basic structure
                 assert doc.metadata.mime_type.value == format_info["mime_type"]
@@ -571,7 +571,7 @@ async def test_all_supported_formats_dynamic(
             simple_file = format_info["files"]["simple"]
             print(f"Testing text file: {simple_file}")
 
-            doc = parser.parse(simple_file)
+            doc = parser.ingest_files(simple_file)
 
             # Validate metadata
             assert doc.metadata.mime_type.value == format_info["mime_type"]
@@ -613,7 +613,7 @@ async def test_empty_files_all_formats(parser, supported_format_files):
         print(f"\nTesting empty file for format: {fmt}")
         empty_file = format_info["files"]["empty"]
 
-        doc = parser.parse(empty_file)
+        doc = parser.ingest_files(empty_file)
 
         # Should still create valid document
         assert doc.document_id is not None
@@ -651,7 +651,7 @@ async def test_flat_records_all_formats(
         else:
             file_path = format_info["files"]["simple"]
 
-        doc = parser.parse(file_path)
+        doc = parser.ingest_files(file_path)
         records = doc.to_flat_records()
 
         # Validate record structure
@@ -693,7 +693,7 @@ async def test_content_preservation_across_formats(parser, supported_format_file
                 continue
 
             test_file = format_info["files"][variant]
-            doc = parser.parse(test_file)
+            doc = parser.ingest_files(test_file)
             full_text = doc.to_plain_text()
 
             # Should have substantial content
@@ -748,7 +748,7 @@ async def test_metadata_consistency_across_formats(parser, supported_format_file
         else:
             file_path = format_info["files"]["simple"]
 
-        doc = parser.parse(file_path)
+        doc = parser.ingest_files(file_path)
 
         # Check required metadata fields
         assert doc.metadata.mime_type.value == format_info["mime_type"]
@@ -797,7 +797,7 @@ async def test_large_files_performance(
 
         # Time the parsing
         start_time = time.time()
-        doc = parser.parse(large_file)
+        doc = parser.ingest_files(large_file)
         parse_time = time.time() - start_time
 
         # Validate performance
@@ -821,7 +821,7 @@ async def test_csv_simple(parser, supported_format_files):
     """Test parsing simple CSV file with Docling's native support."""
     csv_files = supported_format_files[".csv"]["files"]
     csv_file = csv_files["simple"]
-    doc = parser.parse(csv_file)
+    doc = parser.ingest_files(csv_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "text/csv"
@@ -878,7 +878,7 @@ async def test_csv_complex(parser, supported_format_files):
     """Test parsing complex CSV with quotes and special characters."""
     csv_files = supported_format_files[".csv"]["files"]
     csv_file = csv_files["complex"]
-    doc = parser.parse(csv_file)
+    doc = parser.ingest_files(csv_file)
 
     # Check metadata
     assert doc.metadata.mime_type.value == "text/csv"
@@ -937,7 +937,7 @@ Bob;25;Berlin
 Charlie;35;Madrid"""
     csv_file.write_text(csv_content)
 
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
 
     # Docling should auto-detect semicolon delimiter
     assert doc.processing_status == "completed"
@@ -989,7 +989,7 @@ Mary|Sales|75000
 Steve|HR|65000"""
     csv_file.write_text(csv_content)
 
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
 
     # Docling should auto-detect pipe delimiter
     assert doc.processing_status == "completed"
@@ -1041,7 +1041,7 @@ François,Montréal,Bonjour
 李明,北京,你好"""
     csv_file.write_text(csv_content, encoding="utf-8")
 
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
 
     assert doc.processing_status == "completed"
 
@@ -1093,7 +1093,7 @@ Bob,35,Sydney,Australia
 ,28,Toronto,Canada"""
     csv_file.write_text(csv_content)
 
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
 
     # Should handle empty cells gracefully
     assert doc.processing_status == "completed"
@@ -1150,7 +1150,7 @@ async def test_csv_large_file_performance(parser, tmp_path):
     csv_file.write_text("\n".join(lines))
 
     start_time = time.time()
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
     parse_time = time.time() - start_time
 
     # Should complete in reasonable time (under 10 seconds)
@@ -1173,7 +1173,7 @@ Alice,Engineering,95000
 Bob,Sales,75000"""
     csv_file.write_text(csv_content)
 
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
 
     # Convert to schema rows
     rows = doc.to_schema_rows(document_index=0)
@@ -1231,7 +1231,7 @@ Test,123
 Data,456"""
     csv_file.write_text(csv_content)
 
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
 
     # Check metadata fields
     assert doc.metadata.file_name == "metadata_test.csv"
@@ -1290,7 +1290,7 @@ Gadget,29.99,50
 Gizmo,39.99,75"""
     csv_file.write_text(csv_content)
 
-    doc = parser.parse(str(csv_file))
+    doc = parser.ingest_files(str(csv_file))
 
     # Check document structure
     assert doc.document_id is not None
@@ -1325,7 +1325,7 @@ async def test_workforce_data_xlsx(parser):
     if not xlsx_file.exists():
         pytest.skip("workforce_data.xlsx sample file not found")
 
-    doc = parser.parse(xlsx_file)
+    doc = parser.ingest_files(xlsx_file)
 
     # Check metadata
     mt = doc.metadata.mime_type.value.lower()
@@ -1490,7 +1490,7 @@ async def test_retail_data_xlsx(parser):
     if not xlsx_file.exists():
         pytest.skip("retail_data.xlsx sample file not found")
 
-    doc = parser.parse(xlsx_file)
+    doc = parser.ingest_files(xlsx_file)
 
     # Check metadata
     mt = doc.metadata.mime_type.value.lower()
@@ -1707,7 +1707,7 @@ async def test_xlsx_multiple_sheets(parser, tmp_path):
     wb.save(str(xlsx_file))
 
     # Parse
-    doc = parser.parse(str(xlsx_file))
+    doc = parser.ingest_files(str(xlsx_file))
 
     assert doc.processing_status == "completed"
 
@@ -1801,7 +1801,7 @@ async def test_xlsx_with_formulas(parser, tmp_path):
     wb.save(str(xlsx_file))
 
     # Parse
-    doc = parser.parse(str(xlsx_file))
+    doc = parser.ingest_files(str(xlsx_file))
 
     assert doc.processing_status == "completed"
 
@@ -1864,7 +1864,7 @@ async def test_xlsx_metadata_extraction(parser, tmp_path):
 
     wb.save(str(xlsx_file))
 
-    doc = parser.parse(str(xlsx_file))
+    doc = parser.ingest_files(str(xlsx_file))
 
     # Check all metadata fields
     assert doc.metadata.file_name == "metadata_test.xlsx"

@@ -18,7 +18,7 @@ async def test_ask_exposes_join_tools(file_manager, tmp_path: Path):
     p = tmp_path / "exp.txt"
     p.write_text("some content")
     name = str(p)
-    fm.parse(name)
+    fm.ingest_files(name)
 
     with patch(
         "unity.file_manager.managers.file_manager.start_async_tool_loop",
@@ -45,7 +45,7 @@ async def test_ask_about_file_exposes_join_tools(file_manager, tmp_path: Path):
     p = tmp_path / "exp2.txt"
     p.write_text("other content")
     name = str(p)
-    fm.parse(name)
+    fm.ingest_files(name)
 
     with patch(
         "unity.file_manager.managers.file_manager.start_async_tool_loop",

@@ -15,7 +15,7 @@ def test_filter_multi_join_chain(file_manager, tmp_path: Path):
     p = tmp_path / "mjoin_src.txt"
     p.write_text("seed row for content context")
     name = str(p)
-    fm.parse(name, config=FilePipelineConfig())
+    fm.ingest_files(name, config=FilePipelineConfig())
 
     # Use file_path directly instead of legacy root from tables_overview
     # Chain a two-step multi-join using the same file_path (self-join) as a smoke test
@@ -48,7 +48,7 @@ def test_search_multi_join_chain_backfill(file_manager, tmp_path: Path):
     p = tmp_path / "mjoin_search_src.txt"
     p.write_text("seed row for content context")
     name = str(p)
-    fm.parse(name, config=FilePipelineConfig())
+    fm.ingest_files(name, config=FilePipelineConfig())
 
     # Use file_path directly instead of legacy root from tables_overview
     # No references → backfill path; ensure it does not error and returns a list

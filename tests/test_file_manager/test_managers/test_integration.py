@@ -68,7 +68,7 @@ async def test_parse_all_formats(file_manager, supported_file_examples: dict):
         # Parse the file
         from unity.file_manager.types import FilePipelineConfig
 
-        result = fm.parse(
+        result = fm.ingest_files(
             display_name,
             config=FilePipelineConfig(output={"return_mode": "full"}),
         )
@@ -123,7 +123,7 @@ async def test_parse_errors(file_manager, tmp_path: Path):
     # Parsing should return a result (basic text parsing as fallback)
     from unity.file_manager.types import FilePipelineConfig
 
-    result = fm.parse(
+    result = fm.ingest_files(
         str(bad_file),
         config=FilePipelineConfig(output={"return_mode": "full"}),
     )
@@ -150,7 +150,7 @@ async def test_ask_uses_parse(file_manager, temp_dir: Path):
     files = [str(p) for p in temp_dir.iterdir() if p.is_file()]
 
     # Parse files to add them to Unify logs before ask
-    fm.parse(files)
+    fm.ingest_files(files)
 
     # Ask a trivial question which should rely on parsed content
     name = next(n for n in files if n.endswith(".txt"))
@@ -184,7 +184,7 @@ async def test_content_preservation(file_manager, supported_file_examples: dict)
 
         from unity.file_manager.types import FilePipelineConfig
 
-        result = fm.parse(
+        result = fm.ingest_files(
             display_name,
             config=FilePipelineConfig(output={"return_mode": "full"}),
         )
@@ -224,7 +224,7 @@ async def test_structure_integrity(
         display_name = str(example_data["path"])  # absolute path
         from unity.file_manager.types import FilePipelineConfig
 
-        result = fm.parse(
+        result = fm.ingest_files(
             display_name,
             config=FilePipelineConfig(output={"return_mode": "full"}),
         )

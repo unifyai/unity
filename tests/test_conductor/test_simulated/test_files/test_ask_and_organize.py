@@ -37,7 +37,9 @@ async def test_ask_then_organize_separate(tmp_path):
 
     local = LocalFileManager(str(fm_root))
     # Parse to create index rows (use root-relative identifiers)
-    local.parse(["docs/notes.txt", "reports/q1.pdf", "tmp/log.txt"])  # relative to root
+    local.ingest_files(
+        ["docs/notes.txt", "reports/q1.pdf", "tmp/log.txt"],
+    )  # relative to root
 
     gfm = GlobalFileManager([local])
 

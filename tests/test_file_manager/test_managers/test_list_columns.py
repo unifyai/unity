@@ -17,7 +17,7 @@ def test_list_columns_per_file_content(
     # Pick any available example and parse it
     name, spec = next(iter(supported_file_examples.items()))
     file_path = spec["path"].as_posix()
-    file_manager.parse(file_path)
+    file_manager.ingest_files(file_path)
 
     overview = file_manager._tables_overview(file=file_path)
     # Verify overview has content (for validation)
@@ -49,7 +49,7 @@ def test_list_columns_per_file_table_when_present(
 
     _, spec = chosen
     file_path = spec["path"].as_posix()
-    file_manager.parse(file_path)
+    file_manager.ingest_files(file_path)
 
     overview = file_manager._tables_overview(file=file_path)
     roots = [k for k in overview.keys() if k != "FileRecords"]
