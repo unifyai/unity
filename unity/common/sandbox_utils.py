@@ -139,3 +139,29 @@ def create_sandbox_globals() -> Dict[str, Any]:
         )
 
     return globals_dict
+
+
+def create_execution_globals() -> Dict[str, Any]:
+    """
+    Creates execution globals for running stored functions.
+
+    Extends create_sandbox_globals() with the `primitives` object, which
+    provides lazy access to all primitive operations (state managers,
+    computer use, etc.).
+
+    All primitive imports and instantiations are lazy - only the primitives
+    actually used by a function are loaded. This means functions that don't
+    need computer use won't import browser/desktop infrastructure.
+
+    Returns:
+        A dictionary of globals for function execution, including `primitives`.
+    """
+    globals_dict = create_sandbox_globals()
+
+    # Import Primitives here to avoid circular imports at module load time
+    from unity.function_manager.primitives import Primitives
+
+    # Inject the primitives instance - all access is lazy
+    globals_dict["primitives"] = Primitives()
+
+    return globals_dict
