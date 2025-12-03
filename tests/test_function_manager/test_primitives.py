@@ -39,6 +39,7 @@ def function_manager_factory():
     def _create():
         # Forget FunctionManager's cached contexts to ensure we get
         # fresh contexts for this test's active context (set by @_handle_project)
+        ContextRegistry.forget(FunctionManager, "Functions/VirtualEnvs")
         ContextRegistry.forget(FunctionManager, "Functions/Compositional")
         ContextRegistry.forget(FunctionManager, "Functions/Primitives")
         ContextRegistry.forget(FunctionManager, "Functions/Meta")

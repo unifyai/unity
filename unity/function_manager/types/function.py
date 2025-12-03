@@ -78,3 +78,12 @@ class Function(BaseModel):
         None,
         description="Method name on the primitive class.",
     )
+
+    venv_id: Optional[int] = Field(
+        None,
+        description=(
+            "Optional reference to a VirtualEnv.venv_id specifying which virtual "
+            "environment to use when executing this function. If None, the function "
+            "runs in the project's default environment."
+        ),
+    )
