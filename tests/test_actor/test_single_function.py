@@ -197,18 +197,23 @@ async def test_function_not_found_by_id():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_function_not_found_by_description():
-    """Error when no function matches description (with primitives excluded)."""
+async def test_function_not_found_by_description(monkeypatch):
+    """Error when no function matches description."""
     fm = FunctionManager()
-    # Don't add any functions
 
     actor = SingleFunctionActor(
         computer_primitives=None,
         function_manager=fm,
     )
 
+    # Mock search to return empty results to test the error path
+    def mock_search(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(fm, "search_functions_by_similarity", mock_search)
+
     with pytest.raises(ValueError, match="No function found matching"):
-        await actor.act(description="do something impossible", include_primitives=False)
+        await actor.act(description="anything")
 
 
 @pytest.mark.asyncio
