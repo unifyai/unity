@@ -34,8 +34,8 @@ async def test_organize_runs_on_request(tmp_path):
     )
 
     local = LocalFileManager(str(fm_root))
-    # Parse to create index rows before organizing (root-relative identifiers)
-    local.parse(["docs/notes.txt", "reports/q1.pdf"])  # relative to root
+    # Ingest to create index rows before organizing (root-relative identifiers)
+    local.ingest_files(["docs/notes.txt", "reports/q1.pdf"])  # relative to root
     gfm = GlobalFileManager([local])
 
     cond = SimulatedConductor(

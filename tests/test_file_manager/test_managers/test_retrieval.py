@@ -20,7 +20,7 @@ def test_create_basic(file_manager, tmp_path: Path):
     content = "This document contains notes about hiking trails in the Alps."
     p.write_text(content, encoding="utf-8")
     name = str(p)
-    res = fm.parse(name)
+    res = fm.ingest_files(name)
     assert name in res
     _item = res[name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
@@ -37,7 +37,7 @@ def test_create_with_error(file_manager, tmp_path: Path):
     p = tmp_path / "corrupt_music_score.xyz"
     p.write_text("Failed to parse sheet music", encoding="utf-8")
     name = str(p)
-    res = fm.parse(name)
+    res = fm.ingest_files(name)
     assert name in res
     _item = res[name]
     _item = _item if isinstance(_item, dict) else _item.model_dump()
@@ -71,7 +71,7 @@ def test_search_single_reference_basic(file_manager, tmp_path: Path):
         p = tmp_path / filename
         p.write_text(content, encoding="utf-8")
         name = str(p)
-        fm.parse(name)
+        fm.ingest_files(name)
 
     # Search for chocolate cookies related content
     query = "olympic medals"
@@ -98,7 +98,7 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
         encoding="utf-8",
     )
     n1 = str(p1)
-    fm.parse(n1)
+    fm.ingest_files(n1)
 
     p2 = tmp_path / "theatre_review.docx"
     p2.write_text(
@@ -106,7 +106,7 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
         encoding="utf-8",
     )
     n2 = str(p2)
-    fm.parse(n2)
+    fm.ingest_files(n2)
 
     # Search using both content and metadata
     refs = {"summary": "Shakespeare performances", "file_path": "analysis"}
@@ -154,7 +154,7 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
         p = tmp_path / filename
         p.write_text(content, encoding="utf-8")
         name = str(p)
-        fm.parse(name)
+        fm.ingest_files(name)
 
     # Search for AI/ML content - should rank ml_research.pdf highest
     query = "artificial intelligence machine learning research algorithms"
@@ -201,7 +201,7 @@ def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
         p = tmp_path / filename
         p.write_text(content, encoding="utf-8")
         name = str(p)
-        fm.parse(name)
+        fm.ingest_files(name)
 
     # Search for AI content
     query = "artificial intelligence machine learning algorithms and AI applications"
@@ -246,7 +246,7 @@ def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
         p = tmp_path / filename
         p.write_text(content, encoding="utf-8")
         name = str(p)
-        fm.parse(name)
+        fm.ingest_files(name)
 
     # Search for exact terms that appear in exact_match.pdf
     query = "machine learning artificial intelligence neural networks"
@@ -272,7 +272,7 @@ def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
         p = tmp_path / fname
         p.write_text(text, encoding="utf-8")
         name = str(p)
-        fm.parse(name)
+        fm.ingest_files(name)
 
     # Search with multiple reference columns - signal_in_both should rank highest
     # as it has relevant content in both summary and file path
@@ -321,7 +321,7 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
         p = tmp_path / filename
         p.write_text(content, encoding="utf-8")
         name = str(p)
-        fm.parse(name)
+        fm.ingest_files(name)
 
     # Search for medical AI - should rank medical_ai.pdf first
     medical_query = "artificial intelligence medical diagnosis healthcare clinical"
@@ -354,12 +354,12 @@ def test_filter_basic(file_manager, tmp_path: Path):
     p_ok = tmp_path / "document.pdf"
     p_ok.write_text("PDF content", encoding="utf-8")
     n_ok = str(p_ok)
-    fm.parse(n_ok)
+    fm.ingest_files(n_ok)
 
     p_bad = tmp_path / "spreadsheet.xlsx"
     p_bad.write_text("Parse failed", encoding="utf-8")
     n_bad = str(p_bad)
-    fm.parse(n_bad)
+    fm.ingest_files(n_bad)
 
     # Filter by status
     success_files = fm._filter_files(filter="status == 'success'")
@@ -381,12 +381,12 @@ def test_filter_metadata(file_manager, tmp_path: Path):
     p_large = tmp_path / "large_file.pdf"
     p_large.write_text("Large document content", encoding="utf-8")
     n_large = str(p_large)
-    fm.parse(n_large)
+    fm.ingest_files(n_large)
 
     p_small = tmp_path / "small_file.txt"
     p_small.write_text("Small text content", encoding="utf-8")
     n_small = str(p_small)
-    fm.parse(n_small)
+    fm.ingest_files(n_small)
 
     # Filter by file format
     large_files = fm._filter_files(filter="file_format == 'pdf'")
@@ -403,7 +403,7 @@ def test_search_no_results_backfill(file_manager, tmp_path: Path):
     p = tmp_path / "random_doc.txt"
     p.write_text("Random content about nothing relevant", encoding="utf-8")
     n = str(p)
-    fm.parse(n)
+    fm.ingest_files(n)
 
     # Search for something completely unrelated
     results = fm._search_files(
@@ -425,7 +425,7 @@ def test_list_columns(file_manager, tmp_path: Path):
     p = tmp_path / "test.txt"
     p.write_text("test content", encoding="utf-8")
     n = str(p)
-    fm.parse(n)
+    fm.ingest_files(n)
 
     # Test with types
     cols_with_types = fm._list_columns(include_types=True)

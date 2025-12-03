@@ -130,7 +130,7 @@ async def test_gdrive_source_uri_and_stat_stub():
     assert st_by_id["canonical_uri"] == st_by_path["canonical_uri"]
 
     # Filtering by source_uri should be supported after parse
-    fm.parse("id_123")
+    fm.ingest_files("id_123")
     uri = st_by_id["canonical_uri"]
     rows = fm._filter_files(filter=f"source_uri == '{uri}'")
     assert rows

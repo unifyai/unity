@@ -20,7 +20,7 @@ def test_unified_mode_rename_preserves_unified_content(file_manager, tmp_path: P
     cfg.ingest.unified_label = "UnifiedDocs"
     cfg.ingest.table_ingest = False
 
-    fm.parse(name, config=cfg)
+    fm.ingest_files(name, config=cfg)
 
     # Before rename: file-scoped overview should expose the unified Content key
     ov_before = fm._tables_overview(file=name)
@@ -45,7 +45,7 @@ def test_per_file_mode_move_updates_content_root(file_manager, tmp_path: Path):
     name = str(src)
 
     cfg = FilePipelineConfig()  # default per_file
-    fm.parse(name, config=cfg)
+    fm.ingest_files(name, config=cfg)
 
     # Move into a subfolder
     sub = tmp_path / "sub"

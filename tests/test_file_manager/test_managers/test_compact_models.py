@@ -36,7 +36,7 @@ async def test_parse_compact_returns_typed_models(
             continue  # skip formats without a concrete subclass
 
         display_name = str(example_data["path"])  # absolute path
-        res = file_manager.parse(display_name)  # default compact
+        res = file_manager.ingest_files(display_name)  # default compact
         assert display_name in res
         item = res[display_name]
 

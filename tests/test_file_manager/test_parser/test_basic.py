@@ -62,7 +62,7 @@ async def test_simple_text(parser, supported_format_files):
     """Test parsing a simple text file."""
     txt_files = supported_format_files[".txt"]["files"]
     simple_file = txt_files["simple"]
-    doc = parser.parse(simple_file)
+    doc = parser.ingest_files(simple_file)
 
     # Check document structure
     assert doc.document_id is not None
@@ -88,7 +88,7 @@ async def test_multi_paragraph(parser, supported_format_files):
     """Test parsing text with multiple paragraphs."""
     txt_files = supported_format_files[".txt"]["files"]
     multi_file = txt_files["multi_paragraph"]
-    doc = parser.parse(multi_file)
+    doc = parser.ingest_files(multi_file)
 
     # Should have at least one section
     assert len(doc.sections) >= 1
@@ -115,7 +115,7 @@ async def test_empty_file(parser, supported_format_files):
     """Test parsing an empty file."""
     txt_files = supported_format_files[".txt"]["files"]
     empty_file = txt_files["empty"]
-    doc = parser.parse(empty_file)
+    doc = parser.ingest_files(empty_file)
 
     # Should still create a valid document
     assert doc.document_id is not None
@@ -136,7 +136,7 @@ async def test_special_characters(parser, supported_format_files):
     """Test parsing text with special characters."""
     txt_files = supported_format_files[".txt"]["files"]
     special_file = txt_files["special_chars"]
-    doc = parser.parse(special_file)
+    doc = parser.ingest_files(special_file)
 
     # Check special characters are preserved
     full_text = doc.to_plain_text()
@@ -151,7 +151,7 @@ async def test_special_characters(parser, supported_format_files):
 async def test_nonexistent_file(parser):
     """Test parsing a non-existent file."""
     with pytest.raises(FileNotFoundError):
-        parser.parse(Path("/nonexistent/file.txt"))
+        parser.ingest_files(Path("/nonexistent/file.txt"))
 
 
 @pytest.mark.asyncio
@@ -160,7 +160,7 @@ async def test_flat_records(parser, supported_format_files):
     """Test conversion to flat records format."""
     txt_files = supported_format_files[".txt"]["files"]
     simple_file = txt_files["simple"]
-    doc = parser.parse(simple_file)
+    doc = parser.ingest_files(simple_file)
 
     records = doc.to_flat_records()
 

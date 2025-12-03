@@ -14,7 +14,7 @@ async def test_source_uri_filter_local(file_manager, tmp_path: Path):
     # Create a file under fm root and parse it by absolute path
     p = tmp_path / "ident_a.txt"
     p.write_text("alpha")
-    fm.parse(str(p))
+    fm.ingest_files(str(p))
 
     # Resolve canonical URI via stat
     st = fm.stat(str(p))
@@ -35,7 +35,7 @@ async def test_source_uri_consistency_across_rename_local(file_manager, tmp_path
     # Create file and ingest
     src = tmp_path / "rename_me_ident.txt"
     src.write_text("data")
-    fm.parse(str(src))
+    fm.ingest_files(str(src))
 
     # Capture canonical URI
     before = fm.stat(str(src))
@@ -70,8 +70,8 @@ async def test_root_vs_rootless_parametrized(tmp_path: Path):
     fm_rootless.clear()
 
     # Ingest via both managers
-    fm_rooted.parse("rootless_a.txt")  # root-relative
-    fm_rootless.parse(str(a))
+    fm_rooted.ingest_files("rootless_a.txt")  # root-relative
+    fm_rootless.ingest_files(str(a))
 
     # Both should see the file on their respective surfaces
     st1 = fm_rooted.stat("rootless_a.txt")

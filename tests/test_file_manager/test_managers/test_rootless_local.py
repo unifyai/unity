@@ -18,7 +18,7 @@ async def test_rootless_local_manager_abs_paths(tmp_path, rootless_file_manager)
     s0 = fm.stat(str(a))
     assert s0["filesystem_exists"] is True and s0["indexed_exists"] is False
 
-    fm.parse([str(a), str(b)])
+    fm.ingest_files([str(a), str(b)])
     s1 = fm.stat(str(a))
     s2 = fm.stat(str(b))
     assert s1["filesystem_exists"] is True and s1["indexed_exists"] is True

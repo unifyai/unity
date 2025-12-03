@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from typing import Any, Dict, List
+
 import pytest
-from types import SimpleNamespace
 
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
@@ -9,39 +10,67 @@ from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.types.config import FilePipelineConfig
 
 
+class _MetaStub:
+    def __init__(self, tables: List[Any] | None = None) -> None:
+        self.tables = tables or []
+        self.mime_type = "text/plain"
+        self.parser_name = "Stub"
+        self.processing_time = 0.0
+
+
+class _DocStub:
+    """Minimal document stub for testing."""
+
+    def __init__(
+        self,
+        records: List[Dict[str, Any]] | None = None,
+        file_size: int = 123,
+    ) -> None:
+        self.metadata = _MetaStub()
+        self.processing_status = "completed"
+        self._records = records or []
+        self._file_size = file_size
+
+    def to_parse_result(self, *a, **kw) -> Dict[str, Any]:
+        return {
+            "status": "success",
+            "error": None,
+            "summary": "dummy summary",
+            "file_format": None,
+            "file_size": self._file_size,
+            "total_records": len(self._records),
+            "processing_time": 0.0,
+            "created_at": "2025-01-01T00:00:00Z",
+            "modified_at": "2025-01-01T00:00:00Z",
+            "confidence_score": 1.0,
+            "key_topics": [],
+            "named_entities": {},
+            "content_tags": [],
+            "records": self._records,
+        }
+
+
+@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_path):
     # Start from a clean slate so metrics only see rows created in this test
     file_manager.clear()
 
-    # Manually seed the index and per-file Content via the private _ingest helper,
-    # mirroring what parse() would normally do but with lightweight dummy data.
+    # Seed the index using process_single_file from the executor
+    from unity.file_manager.managers.utils.executor import process_single_file
+
     cfg = FilePipelineConfig()
-    doc = SimpleNamespace(metadata=SimpleNamespace(tables=[]))
-    base_result: dict[str, object] = {
-        "status": "success",
-        "error": None,
-        "summary": "dummy summary",
-        "file_format": None,
-        "file_size": 123,
-        "total_records": 1,
-        "processing_time": 0.0,
-        "created_at": "2025-01-01T00:00:00Z",
-        "modified_at": "2025-01-01T00:00:00Z",
-        "confidence_score": 1.0,
-        "key_topics": [],
-        "named_entities": {},
-        "content_tags": [],
-    }
 
     # Create a couple of dummy files in the FileRecords index
     for i in range(2):
-        result = dict(base_result)
-        file_manager._ingest(
-            file_path=f"dummy_{i}.txt",
+        doc = _DocStub(
+            records=[{"content_type": "text", "content_text": f"content_{i}"}],
+        )
+        process_single_file(
+            file_manager,
             document=doc,
-            result=result,
+            file_path=f"dummy_{i}.txt",
             config=cfg,
         )
 
@@ -114,33 +143,22 @@ async def test_ask_uses_reduce_for_numeric_aggregation(
     # Start from a clean slate so metrics only see rows created in this test
     file_manager.clear()
 
-    # Manually seed the index via the private _ingest helper
-    cfg = FilePipelineConfig()
-    doc = SimpleNamespace(metadata=SimpleNamespace(tables=[]))
-    base_result: dict[str, object] = {
-        "status": "success",
-        "error": None,
-        "summary": "dummy summary",
-        "file_format": None,
-        "file_size": 123,
-        "total_records": 1,
-        "processing_time": 0.0,
-        "created_at": "2025-01-01T00:00:00Z",
-        "modified_at": "2025-01-01T00:00:00Z",
-        "confidence_score": 1.0,
-        "key_topics": [],
-        "named_entities": {},
-        "content_tags": [],
-    }
+    # Seed the index using process_single_file from the executor
+    from unity.file_manager.managers.utils.executor import process_single_file
 
-    # Create a couple of dummy files in the FileRecords index
+    cfg = FilePipelineConfig()
+
+    # Create a couple of dummy files in the FileRecords index with varying file sizes
     for i in range(3):
-        result = dict(base_result)
-        result["file_size"] = 100 + i * 50  # Varying file sizes
-        file_manager._ingest(
-            file_path=f"dummy_{i}.txt",
+        file_size = 100 + i * 50  # Varying file sizes
+        doc = _DocStub(
+            records=[{"content_type": "text", "content_text": f"content_{i}"}],
+            file_size=file_size,
+        )
+        process_single_file(
+            file_manager,
             document=doc,
-            result=result,
+            file_path=f"dummy_{i}.txt",
             config=cfg,
         )
 
