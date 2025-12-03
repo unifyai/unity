@@ -1,7 +1,7 @@
 """
-Tests for custom function collection and synchronization.
+Tests for custom function and venv collection and synchronization.
 
-Tests the auto-sync mechanism for functions defined in the custom/ folder.
+Tests the auto-sync mechanism for functions and venvs defined in the custom/ folder.
 """
 
 import pytest
@@ -10,6 +10,8 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.custom_functions import (
     collect_custom_functions,
     compute_custom_functions_hash,
+    collect_custom_venvs,
+    compute_custom_venvs_hash,
 )
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
@@ -47,7 +49,7 @@ def function_manager_factory():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 1. Collection Tests
+# 1. Function Collection Tests
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -112,7 +114,45 @@ def test_compute_custom_functions_hash_is_deterministic():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 2. Sync Tests
+# 2. Venv Collection Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_collect_custom_venvs_finds_toml_files():
+    """collect_custom_venvs should find .toml files in the venvs folder."""
+    venvs = collect_custom_venvs()
+
+    # Should have found the example venv
+    assert "example_minimal" in venvs
+
+
+def test_collect_custom_venvs_has_required_fields():
+    """Collected venvs should have all required metadata fields."""
+    venvs = collect_custom_venvs()
+
+    assert "example_minimal" in venvs
+    venv = venvs["example_minimal"]
+
+    # Check required fields
+    assert "name" in venv
+    assert venv["name"] == "example_minimal"
+    assert "venv" in venv
+    assert "[project]" in venv["venv"]
+    assert "custom_hash" in venv
+    assert len(venv["custom_hash"]) == 16
+
+
+def test_compute_custom_venvs_hash_is_deterministic():
+    """The aggregate venv hash should be deterministic."""
+    hash1 = compute_custom_venvs_hash()
+    hash2 = compute_custom_venvs_hash()
+
+    assert hash1 == hash2
+    assert len(hash1) == 16
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 3. Function Sync Tests
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -205,7 +245,6 @@ async def example_add(a: int, b: int) -> int:
     # Verify user function was added
     functions = fm.list_functions()
     assert "example_add" in functions
-    user_function_id = functions["example_add"]["function_id"]
 
     # Now sync custom functions - should overwrite
     fm.sync_custom_functions()
@@ -244,3 +283,109 @@ async def my_unique_user_function(x: int) -> int:
     functions = fm.list_functions()
     assert "my_unique_user_function" in functions
     assert "example_add" in functions  # Custom function also there
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 4. Venv Sync Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sync_custom_venvs_inserts_new_venvs(function_manager_factory):
+    """sync_custom_venvs should insert new venvs into the DB."""
+    fm = function_manager_factory()
+
+    # Initial sync should insert venvs
+    name_to_id = fm.sync_custom_venvs()
+
+    assert "example_minimal" in name_to_id
+    assert isinstance(name_to_id["example_minimal"], int)
+
+    # Check that venv is in the DB
+    venvs = fm.list_venvs()
+    assert len(venvs) >= 1
+
+    # Find the example_minimal venv
+    example_venv = None
+    for v in venvs:
+        if v.get("name") == "example_minimal":
+            example_venv = v
+            break
+
+    assert example_venv is not None
+    assert "[project]" in example_venv["venv"]
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sync_custom_venvs_is_idempotent(function_manager_factory):
+    """Calling sync_custom_venvs twice should return same mapping."""
+    fm = function_manager_factory()
+
+    # First sync
+    name_to_id_1 = fm.sync_custom_venvs()
+
+    # Second sync (should use cached result)
+    name_to_id_2 = fm.sync_custom_venvs()
+
+    assert name_to_id_1 == name_to_id_2
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sync_custom_venvs_has_custom_hash(function_manager_factory):
+    """Synced custom venvs should have custom_hash field set."""
+    fm = function_manager_factory()
+
+    fm.sync_custom_venvs()
+
+    # Get the full venv data including custom_hash
+    db_venvs = fm._get_custom_venvs_from_db()
+
+    assert "example_minimal" in db_venvs
+    assert db_venvs["example_minimal"]["custom_hash"] is not None
+    assert len(db_venvs["example_minimal"]["custom_hash"]) == 16
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 5. Combined Sync Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sync_custom_syncs_both_venvs_and_functions(function_manager_factory):
+    """sync_custom should sync both venvs and functions."""
+    fm = function_manager_factory()
+
+    # Combined sync
+    fm.sync_custom()
+
+    # Check venvs
+    db_venvs = fm._get_custom_venvs_from_db()
+    assert "example_minimal" in db_venvs
+
+    # Check functions
+    functions = fm.list_functions()
+    assert "example_add" in functions
+    assert "example_uppercase" in functions
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sync_custom_is_idempotent(function_manager_factory):
+    """Calling sync_custom twice should not re-sync if unchanged."""
+    fm = function_manager_factory()
+
+    # First sync
+    result1 = fm.sync_custom()
+    assert result1 is True
+
+    # Reset flags
+    fm._custom_venvs_synced = False
+    fm._custom_functions_synced = False
+
+    # Second sync should skip (hashes match)
+    result2 = fm.sync_custom()
+    assert result2 is False

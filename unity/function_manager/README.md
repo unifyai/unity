@@ -93,115 +93,145 @@ This ensures primitives stay in sync with the codebase while avoiding unnecessar
 
 ---
 
-## Custom Functions (Source-Defined)
+## Custom Functions & Venvs (Source-Defined)
 
-The `custom/` folder enables **forward-deployed engineers** to add client-specific compositional functions directly in source code, which are automatically synchronized to `Functions/Compositional`.
+The `custom/` folder enables **forward-deployed engineers** to add client-specific compositional functions and virtual environments directly in source code, which are automatically synchronized to the database.
 
 ### Why Use This?
 
 When deploying client-specific branches:
-- No need to inject function strings via SQL or API calls
-- Functions are version-controlled alongside the codebase
+- No need to inject function strings or venv configs via SQL or API calls
+- Everything is version-controlled alongside the codebase
 - Changes are automatically detected and synced via hash comparison
 - Easy to audit, review, and distill back into main
 
+### Folder Structure
+
+```
+unity/function_manager/custom/
+├── __init__.py           # @custom_function decorator (don't modify)
+├── functions/            # Custom compositional functions
+│   ├── __init__.py
+│   ├── example.py
+│   └── acme_workflows.py
+└── venvs/                # Custom virtual environments
+    ├── __init__.py
+    ├── example_minimal.toml
+    └── acme_ml.toml
+```
+
 ### Quick Start
 
-1. **Create a Python file** in `unity/function_manager/custom/`
-2. **Decorate functions** with `@custom_function()`
-3. **Commit and push** to the client branch
-4. Functions auto-sync on next `FunctionManager` initialization
+**Step 1: Create a custom venv** (if needed)
+
+```toml
+# custom/venvs/acme_ml.toml
+[project]
+name = "acme-ml"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+]
+```
+
+**Step 2: Create custom functions**
 
 ```python
-# unity/function_manager/custom/acme_workflows.py
+# custom/functions/acme_workflows.py
 from unity.function_manager.custom import custom_function
 
 @custom_function()
 async def acme_data_export(format: str = "csv") -> str:
-    """
-    Export ACME's proprietary data in the specified format.
-
-    Args:
-        format: Output format (csv, json, xlsx)
-
-    Returns:
-        Path to the exported file
-    """
-    # ACME-specific export logic
+    """Export ACME's proprietary data."""
     data = await primitives.knowledge.ask(question="Get all ACME records")
     return f"Exported to /exports/acme.{format}"
 
 
-@custom_function(venv_id=2, verify=False)
+@custom_function(venv_name="acme_ml", verify=False)
 async def acme_ml_inference(input_data: dict) -> dict:
-    """
-    Run inference using ACME's ML model in their custom venv.
-    """
-    import torch  # Available in venv 2
-    # ML inference logic...
+    """Run inference in ACME's ML environment."""
+    import torch  # Available in acme_ml venv
     return {"prediction": "result"}
 
 
 @custom_function(auto_sync=False)
-async def draft_experimental_function():
-    """
-    Work-in-progress function - NOT synced to database.
-    """
+async def draft_function():
+    """Work-in-progress - NOT synced."""
     pass
+```
+
+**Step 3: Sync to database**
+
+```python
+fm = FunctionManager()
+fm.sync_custom()  # Syncs venvs first, then functions
 ```
 
 ### Decorator Options
 
 ```python
 @custom_function(
-    venv_id=1,              # Run in custom virtual environment (default: None)
-    verify=True,            # Actor verifies execution result (default: True)
-    precondition={"url": "..."}, # Required state before execution (default: None)
-    auto_sync=False,        # Exclude from sync entirely (default: True)
+    venv_name="acme_ml",         # Reference to custom/venvs/<name>.toml
+    venv_id=1,                   # Direct venv ID (prefer venv_name for custom venvs)
+    verify=True,                 # Actor verifies execution result
+    precondition={"url": "..."}, # Required state before execution
+    auto_sync=False,             # Exclude from sync entirely
 )
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `venv_id` | `Optional[int]` | `None` | Virtual environment ID for isolated execution |
+| `venv_name` | `Optional[str]` | `None` | Name of custom venv (filename without .toml) |
+| `venv_id` | `Optional[int]` | `None` | Direct venv ID (for non-custom venvs) |
 | `verify` | `bool` | `True` | Whether Actor should verify function execution |
 | `precondition` | `Optional[dict]` | `None` | Required state before function can run |
 | `auto_sync` | `bool` | `True` | Set to `False` to exclude from auto-sync |
 
+**Note:** When `venv_name` is set, it takes precedence over `venv_id`. The name is resolved to an actual `venv_id` during sync.
+
 ### Sync Behavior
 
-| Scenario | Behavior |
-|----------|----------|
-| **New function in source** | Inserted with auto-assigned `function_id` |
-| **Function changed** | Updated in-place (preserves `function_id`) |
-| **Function removed from source** | Deleted from database |
-| **User-added function with same name** | Overwritten by source version |
-| **`auto_sync=False`** | Excluded from sync entirely |
+| Entity | Scenario | Behavior |
+|--------|----------|----------|
+| **Venvs** | New `.toml` in source | Inserted with auto-assigned `venv_id` |
+| **Venvs** | `.toml` changed | Updated in-place (preserves `venv_id`) |
+| **Venvs** | `.toml` removed from source | Deleted from database |
+| **Functions** | New function in source | Inserted with auto-assigned `function_id` |
+| **Functions** | Function changed | Updated in-place (preserves `function_id`) |
+| **Functions** | Function removed from source | Deleted from database |
+| **Both** | User-added with same name | Overwritten by source version |
+| **Both** | `auto_sync=False` / `_` prefix | Excluded from sync entirely |
 
 ### How Sync Works
 
-1. On `FunctionManager` init, `sync_custom_functions()` is available (not called by default)
-2. An aggregate hash of all custom functions is compared against the stored hash
-3. If unchanged, sync is skipped entirely (fast path)
-4. If changed, per-function hashes are compared:
-   - Matching hash → no update (preserves `function_id`)
-   - Different hash → update in place
-   - New function → insert
-   - Removed from source → delete from database
+```python
+fm.sync_custom()  # Recommended: syncs both in correct order
+# OR
+fm.sync_custom_venvs()     # Step 1: returns {name: venv_id} mapping
+fm.sync_custom_functions() # Step 2: uses mapping to resolve venv_name
+```
+
+1. **Venvs synced first** – so `venv_name` can be resolved to `venv_id`
+2. **Aggregate hash compared** – if unchanged, sync is skipped (fast path)
+3. **Per-item hashes compared** – only changed items are updated
+4. **IDs preserved** – updates never change `function_id` or `venv_id`
+5. **Deletions applied** – items removed from source are deleted from DB
 
 ### File Organization
 
-```
-unity/function_manager/custom/
-├── __init__.py           # @custom_function decorator (don't modify)
-├── acme_workflows.py     # Client-specific functions
-├── data_processing.py    # Grouped by domain
-└── _drafts.py            # Files starting with _ are ignored
-```
+| Location | Purpose | Naming |
+|----------|---------|--------|
+| `custom/functions/*.py` | Python files with `@custom_function` decorated functions | Files starting with `_` are ignored |
+| `custom/venvs/*.toml` | pyproject.toml content for venvs | Filename (without `.toml`) becomes the venv name |
 
-- One or multiple functions per file
-- Files starting with `_` are ignored (use for drafts)
-- Functions without `@custom_function` decorator are ignored
+### Explicit Sync (No Auto-Sync)
+
+Syncing is **explicit** – call `fm.sync_custom()` when you want to sync. This is deliberate:
+- Engineers control when sync happens
+- No surprises during development
+- Can test changes before syncing
 
 ---
 
