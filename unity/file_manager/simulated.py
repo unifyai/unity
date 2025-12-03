@@ -453,8 +453,12 @@ class SimulatedFileManager(BaseFileManager):
         """Check if a file exists in simulated storage."""
         return filename in self._files
 
-    def parse(self, filenames) -> Dict[str, Dict[str, Any]]:
-        """Parse files from simulated storage."""
+    def ingest_files(self, filenames, **options) -> Dict[str, Dict[str, Any]]:
+        """
+        Run the complete file processing pipeline: parse, ingest, and embed (simulated).
+
+        This method simulates the full file processing workflow for testing.
+        """
         if isinstance(filenames, str):
             filenames = [filenames]
 
@@ -498,13 +502,6 @@ class SimulatedFileManager(BaseFileManager):
                 }
 
         return results
-
-    async def parse_async(self, filenames):
-        """Async variant of parse that yields per-file results (simulated)."""
-        if isinstance(filenames, str):
-            filenames = [filenames]
-        for name, result in self.parse(filenames).items():
-            yield {**result, "file_path": name}
 
     # --------------------------------------------------------------------- #
     # ask_about_file                                                        #

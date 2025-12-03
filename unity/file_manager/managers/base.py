@@ -60,20 +60,25 @@ class BaseFileManager(BaseStateManager):
         """Return the list of file paths (stable order) for files in this filesystem."""
 
     @abstractmethod
-    def parse(
+    def ingest_files(
         self,
         file_paths: Union[str, List[str]],
         **options: Any,
     ) -> Dict[str, Any]:
         """
-        Parse one or more files and return structured results per file.
+        Run the complete file processing pipeline: parse, ingest, and embed.
+
+        This method orchestrates the full file processing workflow:
+        1. Parse files using the configured parser to extract structured content
+        2. Ingest parsed content into storage contexts (per-file or unified)
+        3. Create embeddings based on the configured strategy (along, after, or off)
 
         Parameters
         ----------
         file_paths : str | list[str]
-            Single file path or a list of file paths to parse.
+            Single file path or a list of file paths to process.
         **options : Any
-            Parser-specific options (forwarded as-is).
+            Pipeline options (forwarded as-is).
 
         Returns
         -------
@@ -83,7 +88,7 @@ class BaseFileManager(BaseStateManager):
 
             - compact (default): a typed Pydantic model (per file type) containing
               reference-first pointers (content_ref, tables_ref) and light metadata.
-            - full: the raw dict returned by the parser's Document.to_parse_result.
+            - full: the raw ParsedFile returned by Document.to_parse_result.
             - none: a minimal stub (file_path, status, error, total_records, file_format).
 
             The concrete model type is format-specific (e.g., ParsedPDF, ParsedXlsx).
@@ -96,12 +101,13 @@ class BaseFileManager(BaseStateManager):
             to `FilePipelineConfig` (unknown keys are ignored).
 
             Key sub-models and fields:
-            - parse.batch_size: int (parse_async parallelism when available)
+            - parse.batch_size: int (parallelism when available)
             - parse.parser_kwargs: dict forwarded to parser.parse/parse_batch
             - ingest.mode: "per_file" | "unified" (destination layout)
             - ingest.allowed_columns: list[str] (column filter)
             - ingest.table_ingest: bool (ingest extracted tables)
-            - embed.strategy/large_threshold/hooks_per_chunk/specs: embedding behaviour
+            - embed.strategy: "along" | "after" | "off" (when to embed)
+            - embed.file_specs: list[FileEmbeddingSpec] (which columns to embed)
             - plugins.pre/post_*: hook lists (dotted names or callables)
             - output.return_mode: "compact" | "full" | "none"
 
@@ -443,22 +449,6 @@ class BaseFileManager(BaseStateManager):
         SteerableToolHandle
             Handle that eventually yields the answer text (and optionally the
             hidden reasoning steps) for this file‑scoped query.
-        """
-
-    # ------------------------------------------------------------------ #
-    # Async parse                                                         #
-    # ------------------------------------------------------------------ #
-    @abstractmethod
-    async def parse_async(
-        self,
-        file_paths: Union[str, List[str]],
-        **options: Any,
-    ) -> Any:
-        """
-        Asynchronously parse one or more files and yield per-file results.
-
-        Implementations should mirror the return modes of parse and may yield
-        compact/full/none results depending on configuration.
         """
 
     # ------------------------------------------------------------------ #
