@@ -6,13 +6,16 @@ Supports document -> section -> paragraph -> sentence hierarchy.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
 from enum import Enum
 
 from pydantic import BaseModel, Field as PydanticField
 from unity.file_manager.parser.types.enums import FileFormat, MimeType
 
 from unity.common.token_utils import has_meaningful_text
+
+if TYPE_CHECKING:
+    from unity.file_manager.types.file import ParsedFile
 
 
 class DocumentMetadataExtraction(BaseModel):
@@ -771,7 +774,7 @@ class Document(BaseModel):
         document_index: int | None = None,
         id_layout: str = "map",
         id_string_format: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> "ParsedFile":
         """
         Build a normalized parse result payload for FileManager consumption.
 
@@ -779,13 +782,15 @@ class Document(BaseModel):
         the FileManager. Keeping it on the Document avoids duplication in the
         manager and ensures it stays aligned with parser output over time.
 
-        Returns a dict with keys:
+        Returns a ParsedFile with attributes:
           - file_path, status, error
           - records, full_text, summary
-          - file_format, mime_type, file_size, total_records, processing_time
+          - file_format, file_size, total_records, processing_time
           - created_at, modified_at
           - confidence_score, key_topics, named_entities, content_tags
         """
+        from unity.file_manager.types.file import ParsedFile
+
         try:
             records: List[Dict[str, Any]] = self.to_schema_rows(
                 auto_counting=auto_counting,
@@ -806,52 +811,53 @@ class Document(BaseModel):
             full_text = ""
 
         meta = getattr(self, "metadata", None)
-        return {
-            "file_path": file_path,
-            "status": "success",
-            "error": None,
-            "records": records,
-            "full_text": full_text,
-            "summary": getattr(self, "summary", None) or "",
-            "file_format": getattr(meta, "file_format", None) if meta else None,
-            "file_size": getattr(meta, "file_size", None) if meta else None,
-            "total_records": len(records),
-            "processing_time": getattr(meta, "processing_time", None) if meta else None,
-            "created_at": getattr(meta, "created_at", None) if meta else None,
-            "modified_at": getattr(meta, "modified_at", None) if meta else None,
-            "confidence_score": (
+        return ParsedFile(
+            file_path=file_path,
+            status="success",
+            error=None,
+            records=records,
+            full_text=full_text,
+            summary=getattr(self, "summary", None) or "",
+            file_format=getattr(meta, "file_format", None) if meta else None,
+            file_size=getattr(meta, "file_size", None) if meta else None,
+            total_records=len(records),
+            processing_time=getattr(meta, "processing_time", None) if meta else None,
+            created_at=getattr(meta, "created_at", None) if meta else None,
+            modified_at=getattr(meta, "modified_at", None) if meta else None,
+            confidence_score=(
                 getattr(meta, "confidence_score", None) if meta else None
             ),
-            "key_topics": getattr(meta, "key_topics", []) if meta else [],
-            "named_entities": getattr(meta, "named_entities", {}) if meta else {},
-            "content_tags": getattr(meta, "content_tags", []) if meta else [],
-        }
+            key_topics=getattr(meta, "key_topics", []) if meta else [],
+            named_entities=getattr(meta, "named_entities", {}) if meta else {},
+            content_tags=getattr(meta, "content_tags", []) if meta else [],
+        )
 
     @staticmethod
-    def error_result(file_path: str, error: str) -> Dict[str, Any]:
+    def error_result(file_path: str, error: str) -> "ParsedFile":
         """
         Build a normalized error payload when parsing/exporting fails before a
         Document exists. Kept alongside to_parse_result for a single API surface.
         """
-        return {
-            "file_path": file_path,
-            "status": "error",
-            "error": error or "Unknown error",
-            "records": [],
-            "full_text": "",
-            "summary": "",
-            "file_format": None,
-            "mime_type": None,
-            "file_size": None,
-            "total_records": 0,
-            "processing_time": None,
-            "created_at": None,
-            "modified_at": None,
-            "confidence_score": None,
-            "key_topics": [],
-            "named_entities": {},
-            "content_tags": [],
-        }
+        from unity.file_manager.types.file import ParsedFile
+
+        return ParsedFile(
+            file_path=file_path,
+            status="error",
+            error=error or "Unknown error",
+            records=[],
+            full_text="",
+            summary="",
+            file_format=None,
+            file_size=None,
+            total_records=0,
+            processing_time=None,
+            created_at=None,
+            modified_at=None,
+            confidence_score=None,
+            key_topics=[],
+            named_entities={},
+            content_tags=[],
+        )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document":
