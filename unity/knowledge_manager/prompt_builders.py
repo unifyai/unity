@@ -709,7 +709,7 @@ def build_ask_prompt(
             f'• Range:    `{filter_fname}(tables="Sales", filter="year >= 2023 and units > 1000")`',
             "",
             "─ Numeric aggregations ─",
-            f"• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
+            f"• For numeric reduction metrics (count, sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
             f"  `{reduce_fname}(table=\"Sales\", metric='sum', keys='units', group_by='region')`",
             "",
             "Anti-patterns to avoid",

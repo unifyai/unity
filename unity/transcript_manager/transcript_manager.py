@@ -670,7 +670,7 @@ class TranscriptManager(BaseTranscriptManager):
         metric : str
             Reduction metric to compute. Supported values (case-insensitive) are
             ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
-            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+            ``\"max\"``, ``\"median\"``, ``\"mode\"``, and ``\"count\"``.
         keys : str | list[str]
             One or more numeric message fields to aggregate (for example
             ``\"message_id\"`` or duration/length columns). A single column name

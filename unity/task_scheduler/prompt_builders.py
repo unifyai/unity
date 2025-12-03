@@ -115,7 +115,7 @@ def build_ask_prompt(
             ),
             "",
             "─ Numeric aggregations ─",
-            f"• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
+            f"• For numeric reduction metrics (count, sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
             f"  `{reduce_fname}(metric='sum', keys='task_id', group_by='status')`",
             "",
             "Anti‑patterns to avoid",
