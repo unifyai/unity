@@ -492,3 +492,282 @@ async def test_get_primitive_by_name_not_found():
 
     with pytest.raises(ValueError, match="No primitive found"):
         actor._get_primitive_by_name("NonExistent.method")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6. Custom venv execution tests
+# ────────────────────────────────────────────────────────────────────────────
+
+# Minimal venv for fast tests
+MINIMAL_VENV_CONTENT = """
+[project]
+name = "test-venv"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+""".strip()
+
+
+def _create_venv_function(fm: FunctionManager, venv_id: int) -> dict:
+    """Add a function that runs in a custom venv."""
+    implementation = f'''
+async def venv_greeting(name: str = "World") -> str:
+    """Greets a user from inside a custom venv."""
+    import asyncio
+    await asyncio.sleep(0.01)
+    return f"Hello from venv, {{name}}!"
+'''
+    # Add function with explicit venv_id
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("venv_greeting") in ("added", "skipped: already exists")
+
+    # Get the function and update its venv_id
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["venv_greeting"]
+    function_id = func_data["function_id"]
+
+    # Update the function to use the venv
+    fm.set_function_venv(function_id=function_id, venv_id=venv_id)
+
+    # Re-fetch to get updated data
+    functions = fm.list_functions(include_implementations=True)
+    return functions["venv_greeting"]
+
+
+def _create_primitives_venv_function(fm: FunctionManager, venv_id: int) -> dict:
+    """Add a function that uses primitives from inside a custom venv."""
+    implementation = '''
+async def ask_contacts_from_venv(question: str) -> str:
+    """Asks the contacts manager a question from inside a venv via RPC."""
+    result = await primitives.contacts.ask(question=question)
+    return f"Got answer: {result}"
+'''
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("ask_contacts_from_venv") in ("added", "skipped: already exists")
+
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["ask_contacts_from_venv"]
+    function_id = func_data["function_id"]
+
+    fm.set_function_venv(function_id=function_id, venv_id=venv_id)
+
+    functions = fm.list_functions(include_implementations=True)
+    return functions["ask_contacts_from_venv"]
+
+
+@pytest.fixture
+def cleanup_venvs():
+    """Fixture to clean up venv directories after tests."""
+    import shutil
+
+    fm = FunctionManager()
+    venv_ids = []
+
+    yield venv_ids
+
+    # Cleanup
+    for venv_id in venv_ids:
+        try:
+            venv_dir = fm._get_venv_dir(venv_id)
+            if venv_dir.exists():
+                shutil.rmtree(venv_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_function_in_custom_venv(cleanup_venvs):
+    """Execute a function in a custom virtual environment via SingleFunctionActor."""
+    fm = FunctionManager()
+
+    # Create a venv
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+    cleanup_venvs.append(venv_id)
+
+    # Create function that uses the venv
+    func_data = _create_venv_function(fm, venv_id)
+    assert func_data["venv_id"] == venv_id
+
+    # Execute via actor
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="greet from venv",
+        function_id=func_data["function_id"],
+        call_kwargs={"name": "VenvUser"},
+    )
+
+    result = await handle.result()
+    assert "Hello from venv, VenvUser!" in result
+    assert handle.done()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_venv_function_by_description(cleanup_venvs):
+    """Find and execute a venv function by semantic search."""
+    fm = FunctionManager()
+
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+    cleanup_venvs.append(venv_id)
+
+    func_data = _create_venv_function(fm, venv_id)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    # Search by description - should find and execute in venv
+    handle = await actor.act(
+        description="greet someone from a virtual environment",
+        call_kwargs={"name": "SearchUser"},
+    )
+
+    result = await handle.result()
+    assert "Hello from venv" in result
+    assert handle.done()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_venv_function_error_handling(cleanup_venvs):
+    """Errors in venv functions should propagate correctly."""
+    fm = FunctionManager()
+
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+    cleanup_venvs.append(venv_id)
+
+    # Create a function that raises an error
+    error_impl = '''
+async def venv_error_function() -> str:
+    """A function that always fails."""
+    raise ValueError("Error from inside venv")
+'''
+    fm.add_functions(implementations=[error_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["venv_error_function"]
+    fm.set_function_venv(function_id=func_data["function_id"], venv_id=venv_id)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="run error function",
+        function_id=func_data["function_id"],
+    )
+
+    result = await handle.result()
+    assert "Error" in result or "failed" in result.lower()
+    assert "Error from inside venv" in result
+    assert handle.done()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_venv_function_with_primitives_rpc(cleanup_venvs):
+    """Function in venv should access primitives via RPC through the actor."""
+    fm = FunctionManager()
+
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+    cleanup_venvs.append(venv_id)
+
+    func_data = _create_primitives_venv_function(fm, venv_id)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="ask contacts from venv",
+        function_id=func_data["function_id"],
+        call_kwargs={"question": "Who are my contacts?"},
+    )
+
+    await handle.result()
+    # The function executed in venv and completed (RPC details tested in test_venv_rpc.py)
+    assert handle.done()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_venv_function_stop_cancels_subprocess(cleanup_venvs):
+    """Stopping a venv function should terminate the subprocess."""
+    fm = FunctionManager()
+
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+    cleanup_venvs.append(venv_id)
+
+    # Create a slow function
+    slow_impl = '''
+async def slow_venv_task() -> str:
+    """A slow task in a venv."""
+    import asyncio
+    await asyncio.sleep(30)
+    return "Completed slowly in venv"
+'''
+    fm.add_functions(implementations=[slow_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["slow_venv_task"]
+    fm.set_function_venv(function_id=func_data["function_id"], venv_id=venv_id)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="slow venv task",
+        function_id=func_data["function_id"],
+    )
+
+    # Wait a bit then stop
+    await asyncio.sleep(0.5)
+    assert not handle.done()
+
+    stop_result = await handle.stop("Test cancellation")
+    assert "stopped" in stop_result.lower()
+    assert handle.done()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_sync_function_in_venv(cleanup_venvs):
+    """Sync functions should also work in custom venvs."""
+    fm = FunctionManager()
+
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+    cleanup_venvs.append(venv_id)
+
+    # Create a sync function
+    sync_impl = '''
+def sync_venv_add(a: int, b: int) -> int:
+    """Add two numbers in a venv."""
+    return a + b
+'''
+    fm.add_functions(implementations=[sync_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["sync_venv_add"]
+    fm.set_function_venv(function_id=func_data["function_id"], venv_id=venv_id)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="add numbers in venv",
+        function_id=func_data["function_id"],
+        call_kwargs={"a": 5, "b": 3},
+    )
+
+    result = await handle.result()
+    assert "8" in result
+    assert handle.done()
