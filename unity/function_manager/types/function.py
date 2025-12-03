@@ -14,7 +14,7 @@ class Function(BaseModel):
         None,
         description=(
             "Unique identifier for the function. "
-            "None for primitives (they use name as identifier)."
+            "Auto-assigned for user functions, explicit stable IDs for primitives."
         ),
     )
     name: str = Field(..., description="The name of the function.")
