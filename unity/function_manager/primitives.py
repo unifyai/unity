@@ -25,7 +25,6 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
-import os
 from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import unify
@@ -41,7 +40,6 @@ if TYPE_CHECKING:
     from unity.web_searcher.web_searcher import WebSearcher
     from unity.skill_manager.skill_manager import SkillManager
     from unity.controller.browser import Browser
-    from unity.conversation_manager.handle import ConversationManagerHandle
 
 logger = logging.getLogger(__name__)
 
@@ -97,50 +95,6 @@ class ComputerPrimitives:
             )
         self._setup_browser_methods()
 
-        self._contact_manager = None
-        self._transcript_manager = None
-        self._knowledge_manager = None
-        self._task_scheduler = None
-        self._conversation_manager = None
-
-    @property
-    def contact_manager(self):
-        """Lazily initialize and return the ContactManager."""
-        if self._contact_manager is None:
-            from unity.contact_manager.contact_manager import ContactManager
-
-            self._contact_manager = ContactManager()
-        return self._contact_manager
-
-    @property
-    def transcript_manager(self):
-        """Lazily initialize and return the TranscriptManager."""
-        if self._transcript_manager is None:
-            from unity.transcript_manager.transcript_manager import TranscriptManager
-
-            self._transcript_manager = TranscriptManager(
-                contact_manager=self.contact_manager,
-            )
-        return self._transcript_manager
-
-    @property
-    def knowledge_manager(self):
-        """Lazily initialize and return the KnowledgeManager."""
-        if self._knowledge_manager is None:
-            from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-
-            self._knowledge_manager = KnowledgeManager()
-        return self._knowledge_manager
-
-    @property
-    def task_scheduler(self):
-        """Lazily initialize and return the TaskScheduler."""
-        if self._task_scheduler is None:
-            from unity.task_scheduler.task_scheduler import TaskScheduler
-
-            self._task_scheduler = TaskScheduler()
-        return self._task_scheduler
-
     @property
     def secret_manager(self):
         """Lazily initialize and return the SecretManager."""
@@ -149,34 +103,6 @@ class ComputerPrimitives:
 
             self._secret_manager = SecretManager()
         return self._secret_manager
-
-    @property
-    def conversation_manager(self) -> "ConversationManagerHandle":
-        """Lazily initialize and return the ConversationManagerHandle."""
-        if self._conversation_manager is None:
-            from unity.conversation_manager.event_broker import get_event_broker
-            from unity.conversation_manager.handle import ConversationManagerHandle
-
-            event_broker = get_event_broker()
-            assistant_id = os.environ.get("ASSISTANT_ID")
-            if not assistant_id:
-                raise RuntimeError(
-                    "ASSISTANT_ID environment variable is not set. "
-                    "Cannot create ConversationManagerHandle.",
-                )
-            from unity.singleton_registry import SingletonRegistry
-            from unity.conversation_manager.conversation_manager import (
-                ConversationManager,
-            )
-
-            cm_instance = SingletonRegistry.get(ConversationManager)
-            self._conversation_manager = ConversationManagerHandle(
-                event_broker=event_broker,
-                conversation_id=assistant_id,
-                contact_id=1,
-                conversation_manager=cm_instance,
-            )
-        return self._conversation_manager
 
     def _setup_browser_methods(self):
         """Dynamically create tool methods without forcing an early backend connection."""
@@ -308,7 +234,7 @@ class ComputerPrimitives:
 
         ### Example 3: Intelligent Question Formulation (Composition)
         Use `reason` to formulate a high-quality, disambiguating question for a user,
-        then pass that question to a communication tool like `computer_primitives.conversation_manager.ask`.
+        then pass that question to `request_clarification` (injected by the Actor at runtime).
 
         ```python
         user_request = "I need help with my account."
@@ -329,8 +255,7 @@ class ComputerPrimitives:
         # "information, or close your account?"
 
         # Now, use the generated question to get the required information.
-        handle = await computer_primitives.conversation_manager.ask(clarifying_question)
-        user_answer = await handle.result()
+        user_answer = await request_clarification(clarifying_question)
         ```
 
         Args:
