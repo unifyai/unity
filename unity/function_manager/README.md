@@ -93,9 +93,122 @@ This ensures primitives stay in sync with the codebase while avoiding unnecessar
 
 ---
 
+## Custom Functions (Source-Defined)
+
+The `custom/` folder enables **forward-deployed engineers** to add client-specific compositional functions directly in source code, which are automatically synchronized to `Functions/Compositional`.
+
+### Why Use This?
+
+When deploying client-specific branches:
+- No need to inject function strings via SQL or API calls
+- Functions are version-controlled alongside the codebase
+- Changes are automatically detected and synced via hash comparison
+- Easy to audit, review, and distill back into main
+
+### Quick Start
+
+1. **Create a Python file** in `unity/function_manager/custom/`
+2. **Decorate functions** with `@custom_function()`
+3. **Commit and push** to the client branch
+4. Functions auto-sync on next `FunctionManager` initialization
+
+```python
+# unity/function_manager/custom/acme_workflows.py
+from unity.function_manager.custom import custom_function
+
+@custom_function()
+async def acme_data_export(format: str = "csv") -> str:
+    """
+    Export ACME's proprietary data in the specified format.
+
+    Args:
+        format: Output format (csv, json, xlsx)
+
+    Returns:
+        Path to the exported file
+    """
+    # ACME-specific export logic
+    data = await primitives.knowledge.ask(question="Get all ACME records")
+    return f"Exported to /exports/acme.{format}"
+
+
+@custom_function(venv_id=2, verify=False)
+async def acme_ml_inference(input_data: dict) -> dict:
+    """
+    Run inference using ACME's ML model in their custom venv.
+    """
+    import torch  # Available in venv 2
+    # ML inference logic...
+    return {"prediction": "result"}
+
+
+@custom_function(auto_sync=False)
+async def draft_experimental_function():
+    """
+    Work-in-progress function - NOT synced to database.
+    """
+    pass
+```
+
+### Decorator Options
+
+```python
+@custom_function(
+    venv_id=1,              # Run in custom virtual environment (default: None)
+    verify=True,            # Actor verifies execution result (default: True)
+    precondition={"url": "..."}, # Required state before execution (default: None)
+    auto_sync=False,        # Exclude from sync entirely (default: True)
+)
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `venv_id` | `Optional[int]` | `None` | Virtual environment ID for isolated execution |
+| `verify` | `bool` | `True` | Whether Actor should verify function execution |
+| `precondition` | `Optional[dict]` | `None` | Required state before function can run |
+| `auto_sync` | `bool` | `True` | Set to `False` to exclude from auto-sync |
+
+### Sync Behavior
+
+| Scenario | Behavior |
+|----------|----------|
+| **New function in source** | Inserted with auto-assigned `function_id` |
+| **Function changed** | Updated in-place (preserves `function_id`) |
+| **Function removed from source** | Deleted from database |
+| **User-added function with same name** | Overwritten by source version |
+| **`auto_sync=False`** | Excluded from sync entirely |
+
+### How Sync Works
+
+1. On `FunctionManager` init, `sync_custom_functions()` is available (not called by default)
+2. An aggregate hash of all custom functions is compared against the stored hash
+3. If unchanged, sync is skipped entirely (fast path)
+4. If changed, per-function hashes are compared:
+   - Matching hash → no update (preserves `function_id`)
+   - Different hash → update in place
+   - New function → insert
+   - Removed from source → delete from database
+
+### File Organization
+
+```
+unity/function_manager/custom/
+├── __init__.py           # @custom_function decorator (don't modify)
+├── acme_workflows.py     # Client-specific functions
+├── data_processing.py    # Grouped by domain
+└── _drafts.py            # Files starting with _ are ignored
+```
+
+- One or multiple functions per file
+- Files starting with `_` are ignored (use for drafts)
+- Functions without `@custom_function` decorator are ignored
+
+---
+
 ## Writing Compositional Functions
 
 Compositional functions are stored with their full source code. They may be created by:
+- **Source-defined** via the `custom/` folder (see above)
 - The Actor generating and saving a function during execution
 - Pre-provisioning functions for a specific user/client
 - Direct API calls to `add_functions()`
