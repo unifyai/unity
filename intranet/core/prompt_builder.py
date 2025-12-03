@@ -123,10 +123,10 @@ def build_repairs_ask_instructions(business_payload: Dict[str, Any]) -> str:
     The returned string is appended to the FileManager.ask system prompt as a cohesive
     "Business context" section. It provides:
     - Domain/role framing
-    - How to discover schema and fetch small samples
+    - Data sources overview (multiple files and tables)
     - Which columns are pre‑embedded and thus allowed targets for semantic search tools
-    - Business rules/definitions
-    - Compact JSON describing columns (name, data_type, optional description) and samples
+    - Hierarchical business rules (global, file-level, table-level)
+    - Compact JSON describing columns (name, description) and samples per table
     """
 
     def _dump(obj: Any) -> str:
@@ -135,39 +135,110 @@ def build_repairs_ask_instructions(business_payload: Dict[str, Any]) -> str:
         except Exception:
             return str(obj)
 
-    schema = business_payload.get("schema", [])
-    searchable_columns = business_payload.get("searchable_columns", [])
-    samples = business_payload.get("samples", {})
-    business_rules = business_payload.get("business_rules", [])
+    files = business_payload.get("files", {})
+    global_rules = business_payload.get("global_rules", [])
+
+    # Build per-file sections
+    file_sections: List[str] = []
+    all_searchable: List[str] = []
+
+    for file_path, file_data in files.items():
+        # Extract file name for display
+        file_name = file_path.split("/")[-1] if "/" in file_path else file_path
+
+        tables = file_data.get("tables", {})
+        file_searchable = file_data.get("searchable_columns", [])
+        file_rules = file_data.get("file_rules", [])
+        all_searchable.extend(file_searchable)
+
+        file_lines = [
+            f"### {file_name}",
+            f"File path: `{file_path}`",
+            f"Searchable columns (embedded): {file_searchable}",
+        ]
+
+        # Add file-level rules if present
+        if file_rules:
+            file_lines.append("")
+            file_lines.append("**File-level rules:**")
+            file_lines.extend([f"  • {r}" for r in file_rules])
+
+        file_lines.append("")
+
+        for table_label, table_data in tables.items():
+            schema = table_data.get("schema", [])
+            samples = table_data.get("samples", [])
+            table_rules = table_data.get("table_rules", [])
+
+            file_lines.extend(
+                [
+                    f"#### Table: {table_label}",
+                    "",
+                ],
+            )
+
+            # Add table-level rules if present
+            if table_rules:
+                file_lines.append("**Table rules:**")
+                file_lines.extend([f"  • {r}" for r in table_rules])
+                file_lines.append("")
+
+            file_lines.extend(
+                [
+                    "Schema:",
+                    _dump(schema),
+                    "",
+                    "Sample rows:",
+                    _dump(samples[:2] if samples else []),
+                    "",
+                ],
+            )
+
+        file_sections.append("\n".join(file_lines))
+
+    # Build the global rules section
+    global_rules_section = []
+    if global_rules:
+        global_rules_section = [
+            "Global business rules (cross-file)",
+            "-----------------------------------",
+            *[f"• {r}" for r in global_rules],
+            "",
+        ]
 
     return "\n".join(
         [
             "Role and dataset",
             "-----------------",
-            "• You are an expert data analyst for Midland Heart (Housing Association) working with historical housing repairs jobs for the last quarter.",
+            "• You are an expert data analyst for Midland Heart (Housing Association) working with historical housing repairs jobs and telematics data for the last quarter (July–September 2025).",
+            "• You have access to two primary data sources:",
+            "  1. **Repairs Data**: Works orders, job tickets, operative assignments, completion statuses, and visit tracking.",
+            "  2. **Telematics Data**: Vehicle trip logs showing operative movements, travel times, distances, and locations.",
+            "",
+            "Cross-referencing guidance",
+            "--------------------------",
+            "• To match repairs jobs with telematics trips:",
+            "  - Use `OperativeWhoCompletedJob` (repairs) ↔ `Vehicle` (telematics) — Vehicle contains registration + operative full name.",
+            "  - Use `FullAddress` (repairs) ↔ `Start location` / `End location` (telematics) for location matching.",
+            "  - Use date/time fields to correlate visits: `ArrivedOnSite`/`CompletedVisit` (repairs) ↔ `Departure`/`Arrival` (telematics).",
+            "• Telematics tables are split by month (July, August, September 2025).",
             "",
             "Pre‑embedded semantic search targets",
             "-------------------------------------",
-            "• Only use the following columns as semantic search targets (already embedded).",
-            _dump(list(searchable_columns)),
+            "• Only use the following columns as semantic search targets (already embedded):",
+            _dump(list(set(all_searchable))),
             "",
-            "Business rules and definitions",
-            "------------------------------",
-            *([f"• {r}" for r in business_rules] if business_rules else []),
-            "",
-            "Columns (name, description)",
-            "---------------------------",
-            _dump(schema),
-            "",
-            "Sample values",
-            "-----------------------------------------------------",
-            _dump(samples),
+            *global_rules_section,
+            "Data sources",
+            "------------",
+            *file_sections,
             "",
             "Answering guidance",
             "------------------",
             "• Provide a concise, evidence‑grounded answer.",
-            "• List the reproducible steps in a very human-friendly way (no tool names or jargon - only the high level human readable actions you took).",
-            "• Include citations to the data used (columns/values used).",
+            "• When cross-referencing repairs and telematics, explain the matching criteria used.",
+            "• List the reproducible steps in a very human-friendly way (no tool names or jargon — only the high-level human-readable actions you took).",
+            "• Include citations to the data used (file, table, columns/values).",
             "• If insufficient evidence exists, say so clearly; do not invent values.",
             "• Include a confidence score in [0,1] reflecting the reliability of the retrieved evidence.",
         ],
