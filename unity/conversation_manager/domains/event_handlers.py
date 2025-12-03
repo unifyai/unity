@@ -42,6 +42,11 @@ class EventHandler:
         return f(event, cm, *args, **kwargs)
 
 
+@EventHandler.register(Ping)
+async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
+    print("ping received - keeping conversation manager alive")
+
+
 CallEvents = Union[
     PhoneCallReceived,
     PhoneCallSent,
