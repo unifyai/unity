@@ -201,7 +201,7 @@ class WebSearcher(BaseWebSearcher):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
-            timeout=900,
+            timeout=1200,
         )
 
         # If the caller requests reasoning steps, wrap the handle's result
@@ -367,7 +367,7 @@ class WebSearcher(BaseWebSearcher):
             parent_chat_context=_parent_chat_context,
             response_format=_response_format,
             tool_policy=self._default_update_tool_policy,
-            timeout=900,
+            timeout=1200,
         )
 
         if _return_reasoning_steps:
