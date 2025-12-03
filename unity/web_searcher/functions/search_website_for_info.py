@@ -91,19 +91,21 @@ async def search_website_for_info(
 
     all_content_parts = []
     visited_urls = set()
+    url_after_login = await action_provider.get_content(format="markdown")
+    url_after_login = url_after_login.get("url", url)
 
     # Loop through each search query
     for search_query in search_queries:
         print(f"[WS] Searching for: {search_query}")
 
         # Navigate back to homepage for each new query
-        # await action_provider.navigate(url)
+        await action_provider.navigate(url_after_login)
 
         # Step 1: Find and use the site's search functionality
         await action_provider.act(
             f"Look for a search box or search icon. Try home page if not found. If you find one, use it to search for: '{search_query}'. "
             "Use plain words only for general searches — do not use special syntax, operators, or quotes. "
-            "If location search is involed, use town names, and filter distance within reasonable range if applicable. "
+            "If location search is involved, use town names, and filter distance within reasonable range if applicable. "
             "If you see '0 results', 'no results found', or an error message, try a simpler/shorter query. "
             "Only if no search functionality exists, navigate to a query-relevant section (e.g., news, articles, deals, etc) instead.",
         )
