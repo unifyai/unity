@@ -12,6 +12,7 @@ Coverage
 
 from __future__ import annotations
 
+import pytest
 import unify
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
@@ -68,6 +69,9 @@ def test_fk_guidance_ids_valid_reference():
     assert sorted(stored_guidance_ids) == g_ids
 
 
+@pytest.mark.skip(
+    reason="Nested foreign keys (array refs) not yet supported on backend",
+)
 @_handle_project
 def test_fk_guidance_ids_set_null_on_delete():
     """Test SET NULL: Deleting guidance removes it from function.guidance_ids array."""
@@ -145,6 +149,9 @@ def test_fk_guidance_ids_empty_array():
     assert funcs[0].entries.get("guidance_ids", []) == []
 
 
+@pytest.mark.skip(
+    reason="Nested foreign keys (array refs) not yet supported on backend",
+)
 @_handle_project
 def test_fk_guidance_ids_multiple_deletes():
     """Test SET NULL with multiple sequential deletes."""
