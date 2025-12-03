@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Union
 
 import unify
 
-from unity.common.context_store import TableStore
-from unity.common.model_to_fields import model_to_fields
-from unity.file_manager.types.file import (
-    FileRecord as FileRow,
-    FileContent as _PerFileContent,
-)
-from unity.file_manager.types.config import TableBusinessContextSpec
+logger = logging.getLogger(__name__)
+
+from ....common.context_store import TableStore
+from ....common.model_to_fields import model_to_fields
+from ...types.file import FileRecord as FileRow, FileContent as _PerFileContent
+from ...types.config import TableBusinessContextSpec
 
 
 def provision_storage(self) -> None:
@@ -101,9 +101,9 @@ def ctx_for_file(self, *, file_path: str) -> str:
 
     Shape: <base>/Files/<alias>/<safe(file_path)>/Content
     """
-    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+    safe = getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
     base = getattr(self, "_per_file_root")
-    return f"{base}/{_safe(file_path)}/Content"
+    return f"{base}/{safe(file_path)}/Content"
 
 
 def ctx_for_file_table(self, *, file_path: str, table: str) -> str:
@@ -111,9 +111,9 @@ def ctx_for_file_table(self, *, file_path: str, table: str) -> str:
 
     Shape: <base>/Files/<alias>/<safe(file_path)>/Tables/<safe(table)>
     """
-    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+    safe = getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
     base = getattr(self, "_per_file_root")
-    return f"{base}/{_safe(file_path)}/Tables/{_safe(table)}"
+    return f"{base}/{safe(file_path)}/Tables/{safe(table)}"
 
 
 # ------------------------ Context provisioners (ensure) ---------------------- #
@@ -187,20 +187,22 @@ def ensure_file_table_context(
         else:
             # Treat as an iterable of column names
             names = list(columns)
-            fields_map = {str(name): {"mutable": True} for name in names}
+            fields_map = {str(name): {"type": "Any", "mutable": True} for name in names}
     elif example_row:
         names = [str(k) for k in example_row.keys()]
-        fields_map = {name: {"mutable": True} for name in names}
+        fields_map = {name: {"type": "Any", "mutable": True} for name in names}
 
     # Apply business context: merge column descriptions into fields_map
     if business_context:
-        column_descriptions = business_context.column_descriptions
+        column_descriptions = business_context.column_descriptions or {}
         for field_name in fields_map:
             if field_name in column_descriptions:
                 desc = column_descriptions[field_name]
-                # Ensure field entry is a dict
+                # Ensure field entry is a dict with required 'type' field
                 if not isinstance(fields_map[field_name], dict):
-                    fields_map[field_name] = {"mutable": True}
+                    fields_map[field_name] = {"type": "Any", "mutable": True}
+                elif "type" not in fields_map[field_name]:
+                    fields_map[field_name]["type"] = "Any"
                 fields_map[field_name]["description"] = desc
 
     # Determine context description
@@ -248,7 +250,7 @@ def _resolve_file_target(self, file: str) -> Dict[str, Any]:
     ingest_mode = "per_file"
     unified_label = None
     table_ingest = True
-    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+    safe = getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
 
     if rows:
         e = rows[0].entries
@@ -256,9 +258,9 @@ def _resolve_file_target(self, file: str) -> Dict[str, Any]:
         unified_label = e.get("unified_label")
         table_ingest = bool(e.get("table_ingest", True))
         root = (
-            _safe(file)
+            safe(file)
             if ingest_mode == "per_file"
-            else _safe(str(unified_label or "Unified"))
+            else safe(str(unified_label or "Unified"))
         )
     else:
         # Treat as a unified label candidate
@@ -274,9 +276,9 @@ def _resolve_file_target(self, file: str) -> Dict[str, Any]:
         if rows2:
             ingest_mode = "unified"
             unified_label = file
-            root = _safe(str(unified_label))
+            root = safe(str(unified_label))
         else:
-            root = _safe(file)
+            root = safe(file)
 
     base = getattr(self, "_per_file_root")
     content_ctx = f"{base}/{root}/Content"
@@ -363,7 +365,7 @@ def tables_overview(
     content_ctx = info.get("content_ctx")
     tables_prefix = info.get("tables_prefix")
     table_ingest = bool(info.get("table_ingest", True))
-    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+    safe = getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
 
     # Always include FileRecords
     out: Dict[str, Dict[str, Any]] = {"FileRecords": {"context": self._ctx}}
@@ -388,7 +390,7 @@ def tables_overview(
         for full, desc in (ctxs or {}).items():
             try:
                 raw = full.split("/Tables/", 1)[-1]
-                key = _safe(raw)
+                key = safe(raw)
                 m[key] = {
                     "context": ctx_for_file_table(self, file_path=root_name, table=raw),  # type: ignore[arg-type]
                     "description": desc,
@@ -398,7 +400,7 @@ def tables_overview(
         return m
 
     if ingest_mode == "per_file":
-        root = _safe(file)
+        root = safe(file)
         out[root] = {"Content": {"context": content_ctx}}
         try:
             cinfo = unify.get_context(content_ctx)
@@ -412,7 +414,7 @@ def tables_overview(
         return out
 
     # unified
-    ulabel = _safe(str(unified_label or "Unified"))
+    ulabel = safe(str(unified_label or "Unified"))
     out[ulabel] = {"Content": {"context": content_ctx}}
     try:
         cinfo = unify.get_context(content_ctx)
@@ -422,7 +424,7 @@ def tables_overview(
     except Exception:
         out[ulabel]["Content"]["description"] = ""
     if table_ingest:
-        leaf = _safe(file)
+        leaf = safe(file)
         # If leaf matches ulabel (file path matches unified label), merge Tables into existing entry
         if leaf == ulabel:
             out[ulabel]["Tables"] = _tables_map(tables_prefix, info.get("target_name"))

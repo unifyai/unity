@@ -72,7 +72,7 @@ def build_compact_parse_model(
             sheet_name = getattr(tbl, "sheet_name", None)
             section_path = getattr(tbl, "section_path", None)
             label = sheet_name or section_path or f"{idx:02d}"
-            label_safe = manager._safe(str(label))
+            label_safe = manager.safe(str(label))
             columns = list(getattr(tbl, "columns", []) or [])[:16]
             row_count = len(getattr(tbl, "rows", []) or [])
             tables_meta.append(
