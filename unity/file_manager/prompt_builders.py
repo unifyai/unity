@@ -91,12 +91,19 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             f"• Paginate scans to control volume: `{filter_files_fname}(filter=..., offset=200, limit=100)`.",
             f"• Semantic search inside a specific context: `{search_files_fname}(references={{'content': 'paymentterms'}}, table='<file_path>', filter=\"file_format == 'pdf'\")`.",
             "",
-            # Result volume management & pagination
-            "Result volume management & pagination",
-            "-------------------------------------",
-            "• Start with conservative limits (e.g., limit=50); increase to 100 only if strictly needed.",
-            f"• Prefer paginating with `offset` instead of raising limits: `{filter_files_fname}(filter=..., offset=0, limit=50)` then step offset by 50.",
-            "• Avoid very large limits (>100); they bloat payloads and the model context.",
+            # Quantitative vs qualitative retrieval strategy
+            "Quantitative vs qualitative retrieval strategy",
+            "----------------------------------------------",
+            "• QUANTITATIVE goals (counts, sums, averages, statistics):",
+            f"  - ALWAYS prefer `{reduce_fname}` with appropriate metric(s), key(s), filter, and group_by.",
+            f"  - `{reduce_fname}` is the fastest, most efficient path to numeric answers.",
+            f"  - Combine multiple `{reduce_fname}` calls if needed (e.g., count + sum for different breakdowns).",
+            "  - Do NOT retrieve raw rows just to count/sum them in-memory; let the backend compute it.",
+            "• QUALITATIVE goals (inspect records, understand content, find examples):",
+            "  - Start with conservative limits: limit ≤ 30 for exploratory queries.",
+            "  - Gradually expand if needed: 30 → 50 → 75 → 100 (absolute max).",
+            "  - NEVER exceed limit=100 under any circumstances.",
+            f"  - Use `offset` for pagination: `{filter_files_fname}(filter=..., offset=0, limit=30)` then step offset by 30.",
             "",
             # Filter discipline & column selection
             "Filter discipline & column selection",
@@ -105,11 +112,31 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "• Do not OR across many similar fields (e.g., several date columns); pick the best single column based on schema/description and question intent.",
             "• Only combine multiple columns when unavoidable; even then keep limits low (<100) and validate with small pages first.",
             "",
-            # Numeric aggregations
-            "Numeric aggregations",
-            "--------------------",
-            f"• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
-            f"  `{reduce_fname}(table='<file_path>.Tables.<label>', metric='sum', keys='amount', group_by='category')`",
+            # Date/time filtering
+            "Date/time filtering (temporal columns: date, time, datetime, timestamp – typed or inferred)",
+            "-----------------------------------------------------------------------------------------",
+            "• Use comparison operators (`>`, `<`, `>=`, `<=`) to define ranges when the exact value is unknown.",
+            "• Examples:",
+            "  - Range filter: `filter=\"created_at >= '2024-01-01' and created_at < '2024-02-01'\"`",
+            "  - After a date: `filter=\"visit_date > '2024-06-15'\"`",
+            "  - Before a date: `filter=\"completed_at <= '2024-12-31'\"`",
+            "• ONLY use equality (`==`) or `in` on temporal columns when you have the EXACT complete value for that field.",
+            "  - Partial or approximate values will NOT match and will return incorrect/empty results.",
+            "  - When in doubt, use upper and/or lower bounds with comparison operators instead.",
+            "",
+            # Numeric aggregations (reduce is the primary tool for quantitative answers)
+            "Numeric aggregations (CRITICAL for quantitative queries)",
+            "--------------------------------------------------------",
+            f"• `{reduce_fname}` is the PRIMARY tool for any quantitative question (count, sum, mean, min, max, median, mode, var, std).",
+            f"• ALWAYS use `{reduce_fname}` instead of filtering rows and computing aggregates in-memory.",
+            f"• Apply filters directly in `{reduce_fname}` to narrow the dataset before aggregation.",
+            f"• Use `group_by` for breakdowns: `{reduce_fname}(table='...', metric='count', keys='id', group_by='category')`",
+            "• Examples:",
+            f"  - Total count: `{reduce_fname}(table='<file_path>.Tables.<label>', metric='count', keys='id')`",
+            f"  - Sum with filter: `{reduce_fname}(table='<file_path>.Tables.<label>', metric='sum', keys='amount', filter=\"status == 'complete'\")`",
+            f"  - Grouped average: `{reduce_fname}(table='<file_path>.Tables.<label>', metric='mean', keys='score', group_by='region')`",
+            f"  - Multiple metrics: call `{reduce_fname}` multiple times with different metrics/keys as needed.",
+            "• If the answer is a number or statistic, `reduce` is almost always the correct choice.",
             "",
             # Dict-based content_id usage
             "Dict-based hierarchical IDs (per-file Content)",
@@ -145,13 +172,16 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "Patterns / Anti‑patterns",
             "-------------------------",
             f"• Pattern: Start with `{tables_overview_fname}` → `{list_columns_fname}` to decide which contexts and columns to use.",
+            f"• Pattern: For quantitative answers (counts, sums, stats), use `{reduce_fname}` directly – do NOT fetch rows to count them.",
             "• Pattern: Prefer semantic search for long text; exact filters for ids/labels.",
-            "• Pattern: Use small limits (50→100 max) with offset-based pagination to manage volume.",
+            "• Pattern: For qualitative exploration, use conservative limits (≤30 initially, max 100) with offset-based pagination.",
             "• Pattern: Choose the minimal set of filter columns based on schema/column descriptions.",
+            "• Anti‑pattern: Fetching rows with filter/search just to count or sum them – use `reduce` instead.",
             "• Anti‑pattern: Hand-constructing raw Unify contexts – always pass `<file_path>` or `<file_path>.Tables.<label>` instead.",
             "• Anti‑pattern: Using substring filters for meaning over long text (prefer semantic search).",
             "• Anti‑pattern: Referencing columns in `result_where` not present in `select`.",
             "• Anti‑pattern: Large limits (>100) that flood the context window; paginate instead.",
+            "• Anti‑pattern: Using `==` or `in` on temporal columns without the exact complete value.",
             "• Anti‑pattern: Careless multi-column OR predicates across similar fields (e.g., several date columns); pick the single best column unless truly necessary.",
         ],
     )
@@ -179,7 +209,7 @@ def build_file_manager_ask_prompt(
 
     exists_fname = _tool_name(tools, "exists")
     stat_fname = _tool_name(tools, "stat")
-    parse_fname = _tool_name(tools, "parse")
+    ingest_files_fname = _tool_name(tools, "ingest_files")
     list_fname = _tool_name(tools, "list")
     filter_files_fname = _tool_name(tools, "filter_files")
     search_files_fname = _tool_name(tools, "search_files")
@@ -190,7 +220,7 @@ def build_file_manager_ask_prompt(
     _require_tools(
         {
             "exists": exists_fname,
-            "parse": parse_fname,
+            "ingest_files": ingest_files_fname,
             "list": list_fname,
         },
         tools,
@@ -293,9 +323,9 @@ def build_file_manager_ask_prompt(
         usage_lines.append(
             f"• `{search_files_fname}(references=..., k=10)` → semantic discovery over indexed fields (e.g., summary, key_topics).",
         )
-    if parse_fname:
+    if ingest_files_fname:
         usage_lines.append(
-            f"• `{parse_fname}(filenames=[...])` → parse then ingest; local files in-place, remote files via temp export (identity unchanged).",
+            f"• `{ingest_files_fname}(filenames=[...])` → parse then ingest; local files in-place, remote files via temp export (identity unchanged).",
         )
     # Options schema dump (for parse config)
     try:
@@ -329,7 +359,7 @@ def build_file_manager_ask_prompt(
     usage_lines += [
         "",
         f"─ Parsing Strategy (IMPORTANT: parsing is expensive) ─",
-        f"• BEFORE calling `{parse_fname}`, check if parsed data already exists using retrieval tools:",
+        f"• BEFORE calling `{ingest_files_fname}`, check if parsed data already exists using retrieval tools:",
     ]
     if filter_files_fname:
         usage_lines.append(
@@ -340,10 +370,10 @@ def build_file_manager_ask_prompt(
             f"  - `{search_files_fname}` to query existing parsed content",
         )
     usage_lines += [
-        f"• ONLY call `{parse_fname}` if:",
+        f"• ONLY call `{ingest_files_fname}` if:",
         "  - No parsed data exists in the system, OR",
         "  - The user explicitly requests parsing",
-        f"• When parsed data exists, prefer search/filter/join tools instead of `{parse_fname}`",
+        f"• When parsed data exists, prefer search/filter/join tools instead of `{ingest_files_fname}`",
         "",
         "─ Filtering the index reliably ─",
         "• Prefer filtering by source_uri (canonical identity) when available.",
@@ -369,11 +399,13 @@ def build_file_manager_ask_prompt(
         "• Prefer one comprehensive join or search call over several micro-calls when feasible.",
         "• When multiple independent checks are needed (e.g., stat on multiple files), plan them and run together.",
         "• Avoid confirmatory re‑queries unless new ambiguity arises.",
-        "• Control result volume: start with limit=50 and paginate with offset; only step to 100 if needed.",
-        "• Avoid large limits (>100) and broad multi‑column filter predicates; choose the minimal relevant columns.",
+        "• For quantitative answers: use `reduce` with filter/group_by – do NOT fetch rows to count/sum them.",
+        "• For qualitative exploration: start with limit ≤ 30, expand gradually (max 100), use offset for pagination.",
+        "• NEVER exceed limit=100 under any circumstances.",
         "",
         "Anti‑patterns to avoid",
         "---------------------",
+        "• Fetching rows just to count or aggregate them – use `reduce` instead.",
         "• Rewriting or normalising user-provided identifiers (paths/URIs).",
         "• Calling parse before checking stat/indexed existence.",
         (
@@ -474,19 +506,19 @@ def build_file_manager_ask_about_file_prompt(
         )
     )
 
-    parse_fname = _tool_name(tools, "parse")
+    ingest_files_fname = _tool_name(tools, "ingest_files")
     stat_fname = _tool_name(tools, "stat")
 
     parse_guidance_lines = []
-    if parse_fname:
+    if ingest_files_fname:
         parse_guidance_lines = [
             "",
             "Parsing Strategy (IMPORTANT: parsing is expensive)",
             "─────────────────────────────────────────────────",
-            f"• Parsing with `{parse_fname}` is compute intensive",
+            f"• Parsing with `{ingest_files_fname}` is compute intensive",
             "• BEFORE parsing, check if you already have the data you need via retrieval tools:",
             "  - Use filter/search/join against existing contexts",
-            f"• ONLY call `{parse_fname}` if:",
+            f"• ONLY call `{ingest_files_fname}` if:",
             "  - You need structured/extracted data that doesn't exist yet, OR",
             "  - The user explicitly requests parsing (e.g., 'parse', 'extract data')",
         ]
@@ -509,9 +541,9 @@ def build_file_manager_ask_about_file_prompt(
         tool_usage_lines.append(
             f"• `{stat_fname}(path_or_uri)` → returns canonical_uri and both existence flags.",
         )
-    if parse_fname:
+    if ingest_files_fname:
         tool_usage_lines.append(
-            f"• `{parse_fname}(filenames=[filename])` → parse then ingest (local in-place; remote via temp export).",
+            f"• `{ingest_files_fname}(filenames=[filename])` → parse then ingest (local in-place; remote via temp export).",
         )
     if _tool_name(tools, "filter_files"):
         tool_usage_lines.append(
@@ -582,8 +614,9 @@ def build_file_manager_ask_about_file_prompt(
         "• Prefer a single comprehensive join/search over many micro-calls when feasible.",
         "• Plan independent checks together (e.g., stat + file-scoped overview) rather than serial drip calls.",
         "• Avoid confirmatory re-queries unless new ambiguity arises.",
-        "• Control result volume: start with limit=50 and paginate via offset; only step to 100 if needed.",
-        "• Avoid large limits (>100) and careless multi‑column filters; pick the minimal relevant columns.",
+        "• For quantitative answers: use `reduce` with filter/group_by – do NOT fetch rows to count/sum them.",
+        "• For qualitative exploration: start with limit ≤ 30, expand gradually (max 100), use offset for pagination.",
+        "• NEVER exceed limit=100 under any circumstances.",
     ]
 
     # Structured extraction block when response_format is present (descriptive guidance)
