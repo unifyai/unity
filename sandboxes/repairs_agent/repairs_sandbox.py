@@ -92,9 +92,6 @@ def _commands_help() -> str:
 async def _main_async() -> None:
     parser = build_cli_parser("RepairsAgent sandbox")
     args = parser.parse_args()
-
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
     activate_project(args.project_name, args.overwrite)
 
     # Optional version rollback (mirror intranet sandbox semantics)
