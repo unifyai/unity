@@ -1,9 +1,11 @@
 """
-Collection and synchronization of custom functions from source code.
+Collection and synchronization of custom functions and venvs from source code.
 
-This module scans the `custom/` folder for Python files containing functions
-decorated with @custom_function, and provides utilities for syncing them
-to the Functions/Compositional context.
+This module scans the `custom/` folder for:
+- Python files in `custom/functions/` containing @custom_function decorated functions
+- TOML files in `custom/venvs/` containing pyproject.toml content
+
+Both are synced to the database with hash-based change detection.
 """
 
 import hashlib
@@ -18,9 +20,94 @@ from .custom import CustomFunctionMetadata
 logger = logging.getLogger(__name__)
 
 
-def _get_custom_folder() -> Path:
-    """Get the path to the custom functions folder."""
+# ────────────────────────────────────────────────────────────────────────────
+# Path Helpers
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _get_custom_base_folder() -> Path:
+    """Get the path to the custom base folder."""
     return Path(__file__).parent / "custom"
+
+
+def _get_custom_functions_folder() -> Path:
+    """Get the path to the custom functions folder."""
+    return _get_custom_base_folder() / "functions"
+
+
+def _get_custom_venvs_folder() -> Path:
+    """Get the path to the custom venvs folder."""
+    return _get_custom_base_folder() / "venvs"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Venv Collection
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _compute_venv_hash(name: str, content: str) -> str:
+    """Compute a hash for a custom venv based on its name and content."""
+    combined = f"{name}\n{content}"
+    return hashlib.sha256(combined.encode()).hexdigest()[:16]
+
+
+def collect_custom_venvs() -> Dict[str, Dict[str, Any]]:
+    """
+    Scan the custom/venvs/ folder and collect all custom venv metadata.
+
+    Returns:
+        Dict mapping venv name (filename without .toml) to metadata dict with keys:
+        - name: str
+        - venv: str (the pyproject.toml content)
+        - custom_hash: str
+    """
+    venvs_folder = _get_custom_venvs_folder()
+    if not venvs_folder.exists():
+        logger.debug("Custom venvs folder does not exist, no custom venvs to collect")
+        return {}
+
+    venvs: Dict[str, Dict[str, Any]] = {}
+
+    # Scan all .toml files in the venvs folder
+    for toml_file in venvs_folder.glob("*.toml"):
+        if toml_file.name.startswith("_"):
+            continue  # Skip private files
+
+        name = toml_file.stem  # Filename without .toml
+        content = toml_file.read_text().strip()
+
+        custom_hash = _compute_venv_hash(name, content)
+
+        venvs[name] = {
+            "name": name,
+            "venv": content,
+            "custom_hash": custom_hash,
+        }
+
+    logger.debug(f"Collected {len(venvs)} custom venvs")
+    return venvs
+
+
+def compute_custom_venvs_hash() -> str:
+    """
+    Compute an aggregate hash of all custom venvs.
+
+    This is used to quickly check if any custom venvs have changed
+    since the last sync, allowing for lazy synchronization.
+    """
+    venvs = collect_custom_venvs()
+    if not venvs:
+        return ""
+
+    # Sort by name for deterministic hash
+    sorted_hashes = [venvs[name]["custom_hash"] for name in sorted(venvs.keys())]
+    combined = "|".join(sorted_hashes)
+    return hashlib.sha256(combined.encode()).hexdigest()[:16]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Function Collection
+# ────────────────────────────────────────────────────────────────────────────
 
 
 def _compute_function_hash(
@@ -28,6 +115,7 @@ def _compute_function_hash(
     argspec: str,
     docstring: str,
     implementation: str,
+    venv_name: Optional[str],
     venv_id: Optional[int],
     verify: bool,
     precondition: Optional[Dict[str, Any]],
@@ -46,7 +134,8 @@ def _compute_function_hash(
         argspec,
         docstring or "",
         implementation,
-        str(venv_id),
+        venv_name or "",
+        str(venv_id) if venv_id is not None else "",
         str(verify),
         json.dumps(precondition, sort_keys=True) if precondition else "",
     ]
@@ -128,7 +217,7 @@ def _extract_functions_from_module(
 
 def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
     """
-    Scan the custom/ folder and collect all custom function metadata.
+    Scan the custom/functions/ folder and collect all custom function metadata.
 
     Returns:
         Dict mapping function name to metadata dict with keys:
@@ -136,21 +225,24 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
         - argspec: str
         - docstring: str
         - implementation: str
-        - venv_id: Optional[int]
+        - venv_name: Optional[str] (for resolution during sync)
+        - venv_id: Optional[int] (direct ID, if specified)
         - verify: bool
         - precondition: Optional[dict]
         - custom_hash: str
         - embedding_text: str
     """
-    custom_folder = _get_custom_folder()
-    if not custom_folder.exists():
-        logger.debug("Custom folder does not exist, no custom functions to collect")
+    functions_folder = _get_custom_functions_folder()
+    if not functions_folder.exists():
+        logger.debug(
+            "Custom functions folder does not exist, no custom functions to collect",
+        )
         return {}
 
     functions: Dict[str, Dict[str, Any]] = {}
 
-    # Scan all .py files in the custom folder
-    for py_file in custom_folder.glob("*.py"):
+    # Scan all .py files in the functions folder
+    for py_file in functions_folder.glob("*.py"):
         if py_file.name.startswith("_"):
             continue  # Skip __init__.py and private files
 
@@ -168,6 +260,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
                 argspec=argspec,
                 docstring=docstring,
                 implementation=implementation,
+                venv_name=metadata.venv_name,
                 venv_id=metadata.venv_id,
                 verify=metadata.verify,
                 precondition=metadata.precondition,
@@ -185,6 +278,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
                 "argspec": argspec,
                 "docstring": docstring,
                 "implementation": implementation,
+                "venv_name": metadata.venv_name,
                 "venv_id": metadata.venv_id,
                 "verify": metadata.verify,
                 "precondition": metadata.precondition,

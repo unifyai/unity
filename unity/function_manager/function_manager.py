@@ -20,7 +20,12 @@ from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
 from .primitives import collect_primitives, compute_primitives_hash
-from .custom_functions import collect_custom_functions, compute_custom_functions_hash
+from .custom_functions import (
+    collect_custom_functions,
+    compute_custom_functions_hash,
+    collect_custom_venvs,
+    compute_custom_venvs_hash,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -197,8 +202,9 @@ class FunctionManager(BaseFunctionManager):
         self._primitives_ctx = ContextRegistry.get_context(self, "Functions/Primitives")
         self._meta_ctx = ContextRegistry.get_context(self, "Functions/Meta")
 
-        # Track whether primitives and custom functions have been synced this session
+        # Track whether primitives, custom venvs, and custom functions have been synced
         self._primitives_synced = False
+        self._custom_venvs_synced = False
         self._custom_functions_synced = False
 
         # ------------------------------------------------------------------ #
@@ -502,6 +508,7 @@ class FunctionManager(BaseFunctionManager):
         try:
             self._next_id = None
             self._primitives_synced = False
+            self._custom_venvs_synced = False
             self._custom_functions_synced = False
         except Exception:
             pass
@@ -750,19 +757,207 @@ class FunctionManager(BaseFunctionManager):
             return logs[0].entries.get("function_id")
         return -1
 
-    def sync_custom_functions(self) -> bool:
+    # ------------------------------------------------------------------ #
+    #  Custom Venvs Sync                                                  #
+    # ------------------------------------------------------------------ #
+
+    def _get_stored_custom_venvs_hash(self) -> str:
+        """Retrieve the stored custom venvs hash from the Meta context."""
+        try:
+            logs = unify.get_logs(
+                context=self._meta_ctx,
+                filter="meta_id == 1",
+                limit=1,
+            )
+            if logs:
+                return logs[0].entries.get("custom_venvs_hash", "")
+        except Exception as e:
+            logger.warning(f"Failed to retrieve custom venvs hash: {e}")
+        return ""
+
+    def _store_custom_venvs_hash(self, hash_value: str) -> None:
+        """Store the custom venvs hash in the Meta context."""
+        try:
+            logs = unify.get_logs(
+                context=self._meta_ctx,
+                filter="meta_id == 1",
+                limit=1,
+            )
+            if logs:
+                unify.update_logs(
+                    context=self._meta_ctx,
+                    logs=[logs[0].id],
+                    entries={"custom_venvs_hash": hash_value},
+                    overwrite=True,
+                )
+            else:
+                unify.create_logs(
+                    context=self._meta_ctx,
+                    entries=[{"meta_id": 1, "custom_venvs_hash": hash_value}],
+                )
+        except Exception as e:
+            logger.warning(f"Failed to store custom venvs hash: {e}")
+
+    def _get_custom_venvs_from_db(self) -> Dict[str, Dict[str, Any]]:
+        """Get all custom venvs from the database (those with custom_hash set)."""
+        logs = unify.get_logs(
+            context=self._venvs_ctx,
+            filter="custom_hash != None",
+            exclude_fields=list_private_fields(self._venvs_ctx),
+        )
+        return {
+            lg.entries.get("name"): lg.entries for lg in logs if lg.entries.get("name")
+        }
+
+    def _delete_custom_venv_by_name(self, name: str) -> bool:
+        """Delete a custom venv by name."""
+        logs = unify.get_logs(
+            context=self._venvs_ctx,
+            filter=f"name == '{name}' and custom_hash != None",
+            limit=1,
+        )
+        if not logs:
+            return False
+        unify.delete_logs(
+            context=self._venvs_ctx,
+            logs=[logs[0].id],
+        )
+        return True
+
+    def _update_custom_venv(self, venv_id: int, data: Dict[str, Any]) -> None:
+        """Update an existing custom venv."""
+        logs = unify.get_logs(
+            context=self._venvs_ctx,
+            filter=f"venv_id == {venv_id}",
+            limit=1,
+        )
+        if not logs:
+            raise ValueError(f"VirtualEnv with ID {venv_id} not found")
+        update_data = {k: v for k, v in data.items() if k != "venv_id"}
+        unify.update_logs(
+            context=self._venvs_ctx,
+            logs=[logs[0].id],
+            entries=update_data,
+            overwrite=True,
+        )
+
+    def _insert_custom_venv(self, data: Dict[str, Any]) -> int:
+        """Insert a new custom venv."""
+        insert_data = {k: v for k, v in data.items() if k != "venv_id"}
+        logs = unify.create_logs(
+            context=self._venvs_ctx,
+            entries=[insert_data],
+        )
+        if logs and hasattr(logs[0], "entries"):
+            return logs[0].entries.get("venv_id")
+        return -1
+
+    def sync_custom_venvs(self) -> Dict[str, int]:
+        """
+        Ensure custom venvs in the database match source definitions.
+
+        Scans the custom/venvs/ folder for .toml files and syncs them
+        to Functions/VirtualEnvs. Uses hash comparison to minimize writes.
+
+        Behavior:
+        - New venvs: inserted with auto-assigned venv_id
+        - Changed venvs: updated in place (preserves venv_id)
+        - Deleted venvs (in source): deleted from database
+        - User-added venvs with same name: overwritten by source version
+
+        Returns:
+            Dict mapping venv name to venv_id (for use by sync_custom_functions).
+        """
+        if self._custom_venvs_synced:
+            # Return existing name→id mapping
+            db_venvs = self._get_custom_venvs_from_db()
+            return {name: v["venv_id"] for name, v in db_venvs.items()}
+
+        source_venvs = collect_custom_venvs()
+        expected_hash = compute_custom_venvs_hash()
+        current_hash = self._get_stored_custom_venvs_hash()
+
+        # Quick check: if aggregate hash matches, skip detailed sync
+        if current_hash == expected_hash:
+            logger.debug("Custom venvs hash matches, skipping sync")
+            self._custom_venvs_synced = True
+            db_venvs = self._get_custom_venvs_from_db()
+            return {name: v["venv_id"] for name, v in db_venvs.items()}
+
+        logger.info(
+            f"Custom venvs hash mismatch "
+            f"(current={current_hash}, expected={expected_hash}), syncing...",
+        )
+
+        db_venvs = self._get_custom_venvs_from_db()
+        processed_names: Set[str] = set()
+        name_to_id: Dict[str, int] = {}
+
+        for name, source_data in source_venvs.items():
+            processed_names.add(name)
+
+            if name in db_venvs:
+                db_entry = db_venvs[name]
+                if db_entry.get("custom_hash") != source_data["custom_hash"]:
+                    logger.info(f"Updating custom venv: {name}")
+                    self._update_custom_venv(
+                        venv_id=db_entry["venv_id"],
+                        data=source_data,
+                    )
+                else:
+                    logger.debug(f"Custom venv unchanged: {name}")
+                name_to_id[name] = db_entry["venv_id"]
+            else:
+                # Check for user-added venv with same name
+                existing = unify.get_logs(
+                    context=self._venvs_ctx,
+                    filter=f"name == '{name}'",
+                    limit=1,
+                )
+                if existing:
+                    logger.info(f"Overwriting user-added venv with custom: {name}")
+                    unify.delete_logs(
+                        context=self._venvs_ctx,
+                        logs=[existing[0].id],
+                    )
+
+                logger.info(f"Inserting custom venv: {name}")
+                new_id = self._insert_custom_venv(source_data)
+                name_to_id[name] = new_id
+
+        # Delete venvs that are in DB but not in source
+        for name in db_venvs:
+            if name not in processed_names:
+                logger.info(f"Deleting removed custom venv: {name}")
+                self._delete_custom_venv_by_name(name)
+
+        self._store_custom_venvs_hash(expected_hash)
+        self._custom_venvs_synced = True
+
+        return name_to_id
+
+    def sync_custom_functions(
+        self,
+        venv_name_to_id: Optional[Dict[str, int]] = None,
+    ) -> bool:
         """
         Ensure custom functions in the database match source definitions.
 
-        Scans the custom/ folder for functions decorated with @custom_function
-        and syncs them to Functions/Compositional. Uses per-function hash
-        comparison to minimize database writes.
+        Scans the custom/functions/ folder for functions decorated with
+        @custom_function and syncs them to Functions/Compositional. Uses
+        per-function hash comparison to minimize database writes.
+
+        Args:
+            venv_name_to_id: Optional mapping from venv name to venv_id.
+                             Used to resolve venv_name in decorators.
+                             If not provided, venv_name resolution is skipped.
 
         Behavior:
         - New functions: inserted with auto-assigned function_id
         - Changed functions: updated in place (preserves function_id)
         - Deleted functions (in source): deleted from database
         - User-added functions with same name: overwritten by source version
+        - venv_name: resolved to venv_id using venv_name_to_id mapping
 
         Returns:
             True if sync was performed, False if already up-to-date.
@@ -786,6 +981,8 @@ class FunctionManager(BaseFunctionManager):
             f"(current={current_hash}, expected={expected_hash}), syncing...",
         )
 
+        venv_name_to_id = venv_name_to_id or {}
+
         # Get existing custom functions from DB
         db_functions = self._get_custom_functions_from_db()
 
@@ -795,6 +992,17 @@ class FunctionManager(BaseFunctionManager):
         # Sync each source function
         for name, source_data in source_functions.items():
             processed_names.add(name)
+
+            # Resolve venv_name to venv_id
+            venv_name = source_data.get("venv_name")
+            if venv_name and venv_name in venv_name_to_id:
+                source_data["venv_id"] = venv_name_to_id[venv_name]
+                logger.debug(
+                    f"Resolved venv_name={venv_name} to "
+                    f"venv_id={source_data['venv_id']} for {name}",
+                )
+            # Remove venv_name from source_data (not stored in DB)
+            source_data.pop("venv_name", None)
 
             if name in db_functions:
                 db_entry = db_functions[name]
@@ -839,6 +1047,33 @@ class FunctionManager(BaseFunctionManager):
 
         self._custom_functions_synced = True
         return True
+
+    def sync_custom(self) -> bool:
+        """
+        Sync all custom venvs and functions from source.
+
+        This is the recommended method for syncing custom definitions.
+        It ensures venvs are synced first (so venv_name can be resolved),
+        then syncs functions.
+
+        Returns:
+            True if any sync was performed, False if everything up-to-date.
+        """
+        # Sync venvs first to get name→id mapping
+        venv_name_to_id = self.sync_custom_venvs()
+
+        # Then sync functions with the mapping
+        functions_changed = self.sync_custom_functions(venv_name_to_id)
+
+        # Return True if venvs were newly synced OR functions changed
+        # (venv sync always returns a dict, not a bool, so check if hash changed)
+        venvs_hash_changed = (
+            self._get_stored_custom_venvs_hash() != compute_custom_venvs_hash()
+            if not self._custom_venvs_synced
+            else False
+        )
+
+        return venvs_hash_changed or functions_changed
 
     def list_primitives(self) -> Dict[str, Dict[str, Any]]:
         """

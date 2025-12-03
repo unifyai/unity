@@ -2,7 +2,7 @@
 Example custom functions for demonstration and testing.
 
 These functions are automatically synced to Functions/Compositional
-when the FunctionManager initializes.
+when sync_custom() or sync_custom_functions() is called.
 """
 
 from unity.function_manager.custom import custom_function

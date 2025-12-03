@@ -1,11 +1,25 @@
 """
-Custom compositional functions that are auto-synced to Functions/Compositional.
+Custom compositional functions and virtual environments for auto-sync.
 
-This folder contains Python files with function definitions that are automatically
-synchronized to the database when the FunctionManager initializes. This enables
-forward-deployed engineers to add client-specific functions directly in source code.
+This module provides the `@custom_function` decorator for marking functions
+that should be automatically synchronized to `Functions/Compositional`.
+
+## Folder Structure
+
+```
+custom/
+├── __init__.py         # This file (decorator + exports)
+├── functions/          # Custom compositional functions
+│   ├── example.py
+│   └── client_workflows.py
+└── venvs/              # Custom virtual environments
+    ├── ml_env.toml
+    └── data_science.toml
+```
 
 ## Usage
+
+### Functions
 
 Define functions with the @custom_function decorator:
 
@@ -17,29 +31,42 @@ async def process_data(input: str) -> str:
     \"\"\"Process the input data.\"\"\"
     return input.upper()
 
-@custom_function(venv_id=1, verify=True, precondition={"url": "https://..."})
+@custom_function(venv_name="ml_env", verify=True)
 async def ml_inference(data: dict) -> dict:
     \"\"\"Run ML inference in a custom venv.\"\"\"
     import torch
     # ...
 ```
 
+### Virtual Environments
+
+Create `.toml` files in `custom/venvs/` with pyproject.toml content:
+
+```toml
+# custom/venvs/ml_env.toml
+[project]
+name = "ml-env"
+version = "0.1.0"
+dependencies = ["torch>=2.0", "transformers>=4.30"]
+```
+
 ## Decorator Options
 
-- `venv_id: Optional[int]` - Run in a custom virtual environment
+- `venv_name: Optional[str]` - Name of custom venv (filename without .toml)
+- `venv_id: Optional[int]` - Direct venv ID (prefer venv_name for custom venvs)
 - `verify: bool = True` - Whether to verify function execution
 - `precondition: Optional[dict]` - Required state before execution
 - `auto_sync: bool = True` - Set to False to exclude from auto-sync
 
 ## Sync Behavior
 
-- Functions are matched by name
+- Venvs are synced first, then functions
+- `venv_name` is resolved to `venv_id` during function sync
 - Hash-based change detection avoids unnecessary updates
-- Local source always wins over user-added functions with same name
-- Functions removed from source are deleted from the database
+- Removed from source = deleted from database
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 
@@ -47,6 +74,7 @@ from typing import Any, Callable, Dict, Optional
 class CustomFunctionMetadata:
     """Metadata attached to a custom function by the decorator."""
 
+    venv_name: Optional[str] = None
     venv_id: Optional[int] = None
     verify: bool = True
     precondition: Optional[Dict[str, Any]] = None
@@ -55,6 +83,7 @@ class CustomFunctionMetadata:
 
 def custom_function(
     *,
+    venv_name: Optional[str] = None,
     venv_id: Optional[int] = None,
     verify: bool = True,
     precondition: Optional[Dict[str, Any]] = None,
@@ -64,21 +93,27 @@ def custom_function(
     Decorator to mark a function for auto-sync to Functions/Compositional.
 
     Args:
-        venv_id: Optional virtual environment ID for isolated execution.
+        venv_name: Name of a custom venv (from custom/venvs/<name>.toml).
+                   Resolved to venv_id during sync. Preferred for custom venvs.
+        venv_id: Direct virtual environment ID. Use for non-custom venvs or
+                 when the ID is known. If both venv_name and venv_id are set,
+                 venv_name takes precedence.
         verify: Whether the Actor should verify function execution (default True).
         precondition: Optional dict specifying required state before execution.
         auto_sync: If False, function is excluded from auto-sync (default True).
 
     Example:
-        @custom_function(venv_id=1)
+        @custom_function(venv_name="ml_env")
         async def my_function(x: int) -> int:
-            '''My function docstring.'''
+            '''Run in the ml_env virtual environment.'''
+            import torch
             return x * 2
     """
 
     def decorator(func: Callable) -> Callable:
         # Attach metadata to the function
         func._custom_function_metadata = CustomFunctionMetadata(
+            venv_name=venv_name,
             venv_id=venv_id,
             verify=verify,
             precondition=precondition,

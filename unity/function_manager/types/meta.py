@@ -1,7 +1,7 @@
 """
 Pydantic model for the Functions/Meta context.
 
-Stores metadata about the primitives and custom functions sync state.
+Stores metadata about the primitives, custom venvs, and custom functions sync state.
 """
 
 from pydantic import BaseModel, Field
@@ -11,7 +11,7 @@ class FunctionsMeta(BaseModel):
     """
     Metadata record for the Functions context.
 
-    Stores sync hashes to detect when primitives or custom functions
+    Stores sync hashes to detect when primitives, custom venvs, or custom functions
     have changed and need re-synchronization.
     """
 
@@ -22,6 +22,10 @@ class FunctionsMeta(BaseModel):
     primitives_hash: str = Field(
         "",
         description="Hash of all primitive signatures and docstrings.",
+    )
+    custom_venvs_hash: str = Field(
+        "",
+        description="Hash of all source-defined custom virtual environments.",
     )
     custom_functions_hash: str = Field(
         "",
