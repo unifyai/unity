@@ -139,7 +139,7 @@ class WebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
-        response_format: Optional[Type[BaseModel]] = None,
+        _response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -197,7 +197,7 @@ class WebSearcher(BaseWebSearcher):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            response_format=response_format,
+            response_format=_response_format,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
@@ -307,7 +307,7 @@ class WebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
-        response_format: Optional[Type[BaseModel]] = None,
+        _response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -365,7 +365,7 @@ class WebSearcher(BaseWebSearcher):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            response_format=response_format,
+            response_format=_response_format,
             tool_policy=self._default_update_tool_policy,
             timeout=900,
         )
