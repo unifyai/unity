@@ -113,11 +113,38 @@ For faster runs, use either:
 
 2. **`.parallel_run.sh`** (better debugging experience—see below)
 
+> **⚡ Speed Tip:** When running a small number of tests (1-20), always use `-t` with `.parallel_run.sh` to run each test in its own tmux session. Without `-t`, tests within the same file run serially, which can block for 10+ minutes unnecessarily. See [Per-Test Mode](#per-test-mode--t-for-maximum-parallelism) below.
+
 ---
 
 ## Parallel Test Runner (`.parallel_run.sh`)
 
 This helper script launches one tmux session per test file (or per test function with `-t`) and runs `pytest` in its own window. It searches recursively and can be restricted to specific folders, files, or tests.
+
+### Per-Test Mode (`-t`) for Maximum Parallelism
+
+**IMPORTANT:** By default, the script creates one tmux session per *file*. If a single file contains 15 tests, they run serially within that session—potentially blocking for 10+ minutes.
+
+Use `-t/--per-test` to create one session per *test function*, enabling full parallelism:
+
+```bash
+# WITHOUT -t: 15 tests in one file run serially (~10 min)
+./.parallel_run.sh --wait tests/test_contact_manager/test_ask.py
+
+# WITH -t: 15 tests run concurrently in 15 sessions (~1 min)
+./.parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
+```
+
+**When to use `-t`:**
+- Running a single test file with multiple tests
+- Running a small number of specific tests
+- Running a small directory (< 20 tests total)
+- Anytime you want maximum speed and don't mind many tmux sessions
+
+**When to omit `-t`:**
+- Running the entire test suite (hundreds of tests)
+- Running many files where per-file grouping helps organization
+- When you prefer fewer, more manageable tmux sessions
 
 ### Why not just pytest-xdist?
 
