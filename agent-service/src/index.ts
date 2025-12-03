@@ -388,7 +388,7 @@ const startDesktop = async (): Promise<BrowserAgent> => {
       prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
       narrate: true,
     });
-    agent.context.setDefaultNavigationTimeout(60000);
+    agent.context.setDefaultNavigationTimeout(90000);
     console.log("✅ Desktop BrowserAgent started successfully.");
     return agent;
   } catch (err) {
@@ -404,7 +404,7 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
       browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
       narrate: true,
     });
-    agent.context.setDefaultNavigationTimeout(60000);
+    agent.context.setDefaultNavigationTimeout(90000);
     console.log("✅ BrowserAgent started successfully.");
     return agent;
   } catch (err) {
