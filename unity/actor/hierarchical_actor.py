@@ -1767,6 +1767,85 @@ class _ComputerPrimitivesProxy:
         return async_wrapper if inspect.iscoroutinefunction(real_attr) else sync_wrapper
 
 
+class _VenvFunctionProxy:
+    """
+    A proxy that wraps venv functions as atomic, opaque callables.
+
+    Venv functions run in a separate subprocess via FunctionManager.execute_in_venv.
+    They are treated like external primitives - visible to the LLM (name, argspec,
+    docstring) but not steppable or verifiable at the code level.
+
+    This allows HierarchicalActor to use venv functions alongside regular functions,
+    while respecting the isolation requirements of custom virtual environments.
+    """
+
+    def __init__(
+        self,
+        function_manager: "FunctionManager",
+        func_data: Dict[str, Any],
+        plan: "HierarchicalActorHandle",
+        primitives: Any,
+        computer_primitives: Any,
+    ):
+        self._function_manager = function_manager
+        self._func_data = func_data
+        self._plan = plan
+        self._primitives = primitives
+        self._computer_primitives = computer_primitives
+        self._name = func_data.get("name", "unknown")
+        self._venv_id = func_data.get("venv_id")
+        self._implementation = func_data.get("implementation", "")
+        self._docstring = func_data.get("docstring", "")
+        self._argspec = func_data.get("argspec", "")
+
+        # Set function metadata for introspection
+        self.__name__ = self._name
+        self.__doc__ = self._docstring
+
+    async def __call__(self, **kwargs) -> Any:
+        """
+        Execute the venv function via subprocess.
+
+        This method is called when the generated plan invokes the function.
+        It uses FunctionManager.execute_in_venv for isolated execution.
+        """
+        # Log the call for verification/debugging
+        call_repr = (
+            f"{self._name}({', '.join(f'{k}={v!r}' for k, v in kwargs.items())})"
+        )
+        self._plan.action_log.append(f"Venv function call: {call_repr}")
+
+        # Determine if function is async (check implementation for 'async def')
+        is_async = "async def " in self._implementation
+
+        try:
+            result = await self._function_manager.execute_in_venv(
+                venv_id=self._venv_id,
+                implementation=self._implementation,
+                call_kwargs=kwargs,
+                is_async=is_async,
+                primitives=self._primitives,
+                computer_primitives=self._computer_primitives,
+            )
+
+            # Log the result
+            if result.get("error"):
+                error_msg = f"Venv function error: {result['error']}"
+                self._plan.action_log.append(error_msg)
+                if result.get("stderr"):
+                    self._plan.action_log.append(f"Stderr: {result['stderr']}")
+                raise RuntimeError(result["error"])
+
+            if result.get("stdout"):
+                self._plan.action_log.append(f"Venv stdout: {result['stdout']}")
+
+            return result.get("result")
+
+        except Exception as e:
+            self._plan.action_log.append(f"Venv function exception: {e}")
+            raise
+
+
 class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
@@ -4605,7 +4684,68 @@ class HierarchicalActor(BaseActor):
             },
         )
 
+        # Inject venv functions as atomic callable proxies
+        # These run in subprocess via execute_in_venv, treated like external primitives
+        await self._inject_venv_function_proxies(plan, computer_primitives)
+
         self._load_plan_module(plan)
+
+    async def _inject_venv_function_proxies(
+        self,
+        plan: HierarchicalActorHandle,
+        computer_primitives: ComputerPrimitives,
+    ):
+        """
+        Inject venv functions as callable proxies into the execution namespace.
+
+        Venv functions (those with venv_id != None) run in isolated subprocess
+        environments. They are treated as atomic, opaque callables - the LLM can
+        see their signature and docstring but cannot step into or verify their code.
+
+        This allows generated plans to call venv functions like any other function,
+        while respecting the isolation requirements of custom virtual environments.
+        """
+        if not self.function_manager:
+            return
+
+        try:
+            # Query all venv functions
+            venv_functions = self.function_manager.search_functions(
+                filter="venv_id != None",
+                limit=1000,
+            )
+
+            if not venv_functions:
+                logger.debug("No venv functions found to inject.")
+                return
+
+            logger.info(f"Injecting {len(venv_functions)} venv function proxies.")
+
+            # Get primitives for RPC access from venv subprocess
+            from unity.function_manager.primitives import Primitives
+
+            primitives = Primitives()
+
+            for func_data in venv_functions:
+                func_name = func_data.get("name")
+                if not func_name:
+                    continue
+
+                # Create proxy that wraps the venv function
+                proxy = _VenvFunctionProxy(
+                    function_manager=self.function_manager,
+                    func_data=func_data,
+                    plan=plan,
+                    primitives=primitives,
+                    computer_primitives=computer_primitives,
+                )
+
+                # Inject into execution namespace
+                plan.execution_namespace[func_name] = proxy
+                logger.debug(f"Injected venv function proxy: {func_name}")
+
+        except Exception as e:
+            logger.warning(f"Failed to inject venv function proxies: {e}")
 
     async def _verify_and_correct_state(
         self,
@@ -5344,6 +5484,15 @@ class HierarchicalActor(BaseActor):
 
             if not library_func_data:
                 continue
+
+            # Skip venv functions - they're injected as callable proxies, not code
+            if library_func_data.get("venv_id") is not None:
+                logger.debug(
+                    f"Skipping venv function '{function_name}' - injected as proxy.",
+                )
+                injected_functions.add(function_name)  # Mark as handled
+                continue
+
             func_code = library_func_data.get("implementation")
             dependencies = library_func_data.get("calls", [])
 
