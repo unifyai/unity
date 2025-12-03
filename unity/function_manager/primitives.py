@@ -8,6 +8,11 @@ or composition within generated Python code.
 Primitives are stored in the Functions context alongside user-defined functions,
 distinguished by `is_primitive=True`. They contain argspecs and docstrings but
 no implementation (the implementation lives in the Python class).
+
+This module also provides the `Primitives` class - the runtime interface for
+accessing primitives from within executed functions. All imports and
+instantiations are lazy, so only the primitives actually used by a function
+are loaded.
 """
 
 from __future__ import annotations
@@ -15,7 +20,18 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from unity.contact_manager.contact_manager import ContactManager
+    from unity.transcript_manager.transcript_manager import TranscriptManager
+    from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+    from unity.task_scheduler.task_scheduler import TaskScheduler
+    from unity.secret_manager.secret_manager import SecretManager
+    from unity.guidance_manager.guidance_manager import GuidanceManager
+    from unity.web_searcher.web_searcher import WebSearcher
+    from unity.skill_manager.skill_manager import SkillManager
+    from unity.actor.action_provider import ActionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -237,3 +253,126 @@ def get_primitive_callable(
     except Exception as e:
         logger.warning(f"Could not instantiate {class_path}: {e}")
         return None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Primitives Runtime Class
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class Primitives:
+    """
+    Runtime interface to all primitives for use within executed functions.
+
+    All imports and instantiations are lazy - only the primitives actually
+    accessed by a function are loaded. This means a function that only uses
+    contacts and transcripts will NOT import or initialize the browser/desktop
+    infrastructure.
+
+    Usage in stored functions:
+        async def my_function():
+            # Only ContactManager is imported/initialized
+            await primitives.contacts.update(text="Add Alice")
+
+            # Only if accessed: browser/desktop infrastructure loaded
+            await primitives.computer.navigate("https://example.com")
+    """
+
+    def __init__(self):
+        # All managers lazily initialized
+        self._contacts: Optional["ContactManager"] = None
+        self._transcripts: Optional["TranscriptManager"] = None
+        self._knowledge: Optional["KnowledgeManager"] = None
+        self._tasks: Optional["TaskScheduler"] = None
+        self._secrets: Optional["SecretManager"] = None
+        self._guidance: Optional["GuidanceManager"] = None
+        self._web: Optional["WebSearcher"] = None
+        self._skills: Optional["SkillManager"] = None
+        self._computer: Optional["ActionProvider"] = None
+
+    @property
+    def contacts(self) -> "ContactManager":
+        """Contact management primitives (ask, update)."""
+        if self._contacts is None:
+            from unity.contact_manager.contact_manager import ContactManager
+
+            self._contacts = ContactManager()
+        return self._contacts
+
+    @property
+    def transcripts(self) -> "TranscriptManager":
+        """Transcript management primitives (ask)."""
+        if self._transcripts is None:
+            from unity.transcript_manager.transcript_manager import TranscriptManager
+
+            self._transcripts = TranscriptManager()
+        return self._transcripts
+
+    @property
+    def knowledge(self) -> "KnowledgeManager":
+        """Knowledge management primitives (ask, update, refactor)."""
+        if self._knowledge is None:
+            from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+
+            self._knowledge = KnowledgeManager()
+        return self._knowledge
+
+    @property
+    def tasks(self) -> "TaskScheduler":
+        """Task scheduling primitives (ask, update, execute)."""
+        if self._tasks is None:
+            from unity.task_scheduler.task_scheduler import TaskScheduler
+
+            self._tasks = TaskScheduler()
+        return self._tasks
+
+    @property
+    def secrets(self) -> "SecretManager":
+        """Secret management primitives (ask, update)."""
+        if self._secrets is None:
+            from unity.secret_manager.secret_manager import SecretManager
+
+            self._secrets = SecretManager()
+        return self._secrets
+
+    @property
+    def guidance(self) -> "GuidanceManager":
+        """Guidance management primitives (ask, update)."""
+        if self._guidance is None:
+            from unity.guidance_manager.guidance_manager import GuidanceManager
+
+            self._guidance = GuidanceManager()
+        return self._guidance
+
+    @property
+    def web(self) -> "WebSearcher":
+        """Web search primitives (ask)."""
+        if self._web is None:
+            from unity.web_searcher.web_searcher import WebSearcher
+
+            self._web = WebSearcher()
+        return self._web
+
+    @property
+    def skills(self) -> "SkillManager":
+        """Skill discovery primitives (ask)."""
+        if self._skills is None:
+            from unity.skill_manager.skill_manager import SkillManager
+
+            self._skills = SkillManager()
+        return self._skills
+
+    @property
+    def computer(self) -> "ActionProvider":
+        """
+        Computer use primitives (navigate, act, observe, query, reason).
+
+        This provides browser and desktop control capabilities. Only imported
+        and initialized when actually accessed, so functions that don't need
+        computer use won't load browser/desktop infrastructure.
+        """
+        if self._computer is None:
+            from unity.actor.action_provider import ActionProvider
+
+            self._computer = ActionProvider()
+        return self._computer

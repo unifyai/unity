@@ -4522,15 +4522,10 @@ class HierarchicalActor(BaseActor):
                 pass
 
     def _create_sandbox_globals(self) -> Dict[str, Any]:
-        """
-        Creates a dictionary of safe, sandboxed global functions for plan execution.
+        """Creates safe, sandboxed globals for plan execution."""
+        from ..common.sandbox_utils import create_execution_globals
 
-        Returns:
-            A dictionary of globals allowed within the execution environment.
-        """
-        from ..common.sandbox_utils import create_sandbox_globals
-
-        return create_sandbox_globals()
+        return create_execution_globals()
 
     async def _prepare_execution_environment(self, plan: HierarchicalActorHandle):
         """

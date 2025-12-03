@@ -63,13 +63,11 @@ class CodeExecutionSandbox:
             action_provider: An instance of ActionProvider to be injected into the
                              sandbox's global state, making browser tools available.
         """
-        self.global_state: Dict[str, Any] = {}
+        from unity.common.sandbox_utils import create_execution_globals
+
+        self.global_state: Dict[str, Any] = create_execution_globals()
         if action_provider:
             self.global_state["action_provider"] = action_provider
-            from pydantic import BaseModel, Field
-
-            self.global_state["BaseModel"] = BaseModel
-            self.global_state["Field"] = Field
 
     async def execute(self, code: str) -> Dict[str, Any]:
         """

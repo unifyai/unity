@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional
 
 from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_loop
 from unity.common.llm_client import new_llm_client
-from unity.common.sandbox_utils import create_sandbox_globals
+from unity.common.sandbox_utils import create_execution_globals
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import get_primitive_callable
 
@@ -264,34 +264,8 @@ class SingleFunctionActor(BaseActor):
 
     def _create_execution_globals(self) -> Dict[str, Any]:
         """Create the globals dict for function execution."""
-        globals_dict = create_sandbox_globals()
-
-        # Inject the action_provider
+        globals_dict = create_execution_globals()
         globals_dict["action_provider"] = self._action_provider
-
-        # Also inject commonly needed managers/utilities that functions might use
-        # This makes the execution environment rich enough for real-world functions
-        try:
-            from unity.contact_manager.contact_manager import ContactManager
-
-            globals_dict["ContactManager"] = ContactManager
-        except ImportError:
-            pass
-
-        try:
-            from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-
-            globals_dict["KnowledgeManager"] = KnowledgeManager
-        except ImportError:
-            pass
-
-        try:
-            from unity.secret_manager.secret_manager import SecretManager
-
-            globals_dict["SecretManager"] = SecretManager
-        except ImportError:
-            pass
-
         return globals_dict
 
     async def _execute_primitive(
