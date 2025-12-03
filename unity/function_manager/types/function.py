@@ -87,3 +87,13 @@ class Function(BaseModel):
             "runs in the project's default environment."
         ),
     )
+
+    # Source-defined custom function tracking
+    custom_hash: Optional[str] = Field(
+        None,
+        description=(
+            "Hash of source-defined custom function for sync detection. "
+            "None for user-added functions or primitives. "
+            "Present for functions defined in the custom/ folder."
+        ),
+    )
