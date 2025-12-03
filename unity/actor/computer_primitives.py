@@ -13,7 +13,7 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.handle import ConversationManagerHandle
 
 
-class ActionProvider:
+class ComputerPrimitives:
     """
     Provides a library of high-level, agentic actions for the HierarchicalActor.
     Each public method is a tool that the actor can incorporate into its generated code.
@@ -211,7 +211,7 @@ class ActionProvider:
         user_message = "I can't access my dashboard and my last payment didn't go through."
 
         # The proxy automatically provides the source for `handle_technical_support`, etc.
-        decision = await action_provider.reason(
+        decision = await computer_primitives.reason(
             request=(
                 "Based on the user's message, I need to choose the correct support category. "
                 "Analyze the available child functions in the provided call stack context "
@@ -244,7 +244,7 @@ class ActionProvider:
 
         raw_text = "The user is Jane Doe, ID number 4815162342."
 
-        structured_data = await action_provider.reason(
+        structured_data = await computer_primitives.reason(
             request="Parse the user's first name, last name, and ID from the text.",
             context=raw_text,
             response_format=UserDetails
@@ -256,13 +256,13 @@ class ActionProvider:
 
         ### Example 3: Intelligent Question Formulation (Composition)
         Use `reason` to formulate a high-quality, disambiguating question for a user,
-        then pass that question to a communication tool like `action_provider.conversation_manager.ask`.
+        then pass that question to a communication tool like `computer_primitives.conversation_manager.ask`.
 
         ```python
         user_request = "I need help with my account."
 
         # Use `reason` to generate the best question based on its look-ahead context.
-        clarifying_question = await action_provider.reason(
+        clarifying_question = await computer_primitives.reason(
             request=(
                 "The user's request is ambiguous. Based on the child functions available "
                 "in my context (e.g., `reset_password`, `update_billing`, `close_account`), "
@@ -277,7 +277,7 @@ class ActionProvider:
         # "information, or close your account?"
 
         # Now, use the generated question to get the required information.
-        handle = await action_provider.conversation_manager.ask(clarifying_question)
+        handle = await computer_primitives.conversation_manager.ask(clarifying_question)
         user_answer = await handle.result()
         ```
 

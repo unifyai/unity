@@ -835,18 +835,18 @@ class MagnitudeBrowserBackend(BrowserBackend):
         ```python
         # The plan queues up all actions and continues its own execution
         # without waiting for the browser to finish each one.
-        await action_provider.act("Type 'testuser' into the username field", wait=False)
-        await action_provider.act("Type 'password123' into the password field", wait=False)
-        await action_provider.act("Click the 'Login' button", wait=False)
+        await computer_primitives.act("Type 'testuser' into the username field", wait=False)
+        await computer_primitives.act("Type 'password123' into the password field", wait=False)
+        await computer_primitives.act("Click the 'Login' button", wait=False)
         ```
 
         ### Blocking Example (`wait=True`, Default)
         Use this when the outcome of an action is required for a subsequent decision in the plan.
         ```python
         # The plan pauses until the button click is complete and the new page has loaded.
-        await action_provider.act("Click the 'Proceed to Checkout' button", wait=True)
+        await computer_primitives.act("Click the 'Proceed to Checkout' button", wait=True)
         # Now that we've waited, we can safely observe the new page state.
-        cart_total = await action_provider.observe("What is the final total?")
+        cart_total = await computer_primitives.observe("What is the final total?")
         ```
 
         Examples:

@@ -108,8 +108,8 @@ def _build_verification_static_prefix() -> str:
         ```python
         async def submit_newsletter_signup(email: str):
             \"\"\"Submits the newsletter signup form with the provided email address.\"\"\"
-            await action_provider.act(f"Type '{{email}}' into the email input field")
-            await action_provider.act("Click the 'Subscribe' button")
+            await computer_primitives.act(f"Type '{{email}}' into the email input field")
+            await computer_primitives.act("Click the 'Subscribe' button")
             return "Signup submitted"
         ```
         - **Agent Trace**:
@@ -139,7 +139,7 @@ def _build_verification_static_prefix() -> str:
         # --- Parent Function (caller) ---
         async def search_and_filter_laptops():
             \"\"\"Searches for laptops and applies price filtering.\"\"\"
-            await action_provider.act("Search for 'laptops' on the website")
+            await computer_primitives.act("Search for 'laptops' on the website")
             # ERROR: Missing navigation step to product catalog page!
             # Should navigate to the product listing page here before filtering
             await apply_price_filter(500)
@@ -148,7 +148,7 @@ def _build_verification_static_prefix() -> str:
         # --- Current Function (under review) ---
         async def apply_price_filter(max_price: int):
             \"\"\"Applies a price filter to the current product listing.\"\"\"
-            result = await action_provider.act(
+            result = await computer_primitives.act(
                 f"Apply a price filter to show only items under ${{max_price}}"
             )
             return result
@@ -165,7 +165,7 @@ def _build_verification_static_prefix() -> str:
         ```json
         {{
             "status": "replan_parent",
-            "reason": "Strategic error: The function's goal is to apply a price filter, but the Agent Trace reveals that the browser is on a search results page, not the product catalog page where filter controls would be available. The Screenshot confirms this - it shows a general search interface with no product listing or filter sidebar. The agent correctly identified that the necessary UI elements are missing through no fault of this function's logic. Root cause: Looking at the Parent Function source code in the Scoped Plan Analysis, `search_and_filter_laptops()` calls `action_provider.act('Search for laptops')` and then *immediately* calls `apply_price_filter(500)` without any navigation step in between. The parent assumes searching will automatically land on a product catalog page with filters, but the trace shows the browser is still on a generic search results page. Fix strategy: The parent function `search_and_filter_laptops()` needs to be replanned to add an explicit navigation step after the search (e.g., `await action_provider.act('Navigate to the laptop products page')` or `await action_provider.act('Click on the laptops category to view the full catalog')`) *before* calling `apply_price_filter()`. The parent must ensure the product grid and filter controls are visible before attempting to apply filters."
+            "reason": "Strategic error: The function's goal is to apply a price filter, but the Agent Trace reveals that the browser is on a search results page, not the product catalog page where filter controls would be available. The Screenshot confirms this - it shows a general search interface with no product listing or filter sidebar. The agent correctly identified that the necessary UI elements are missing through no fault of this function's logic. Root cause: Looking at the Parent Function source code in the Scoped Plan Analysis, `search_and_filter_laptops()` calls `computer_primitives.act('Search for laptops')` and then *immediately* calls `apply_price_filter(500)` without any navigation step in between. The parent assumes searching will automatically land on a product catalog page with filters, but the trace shows the browser is still on a generic search results page. Fix strategy: The parent function `search_and_filter_laptops()` needs to be replanned to add an explicit navigation step after the search (e.g., `await computer_primitives.act('Navigate to the laptop products page')` or `await computer_primitives.act('Click on the laptops category to view the full catalog')`) *before* calling `apply_price_filter()`. The parent must ensure the product grid and filter controls are visible before attempting to apply filters."
         }}
         ```
         **Explanation**: This is a clear case for `replan_parent` vs `reimplement_local`. The Agent Trace shows the agent correctly reasoning about what it was asked to do (apply price filter), correctly scanning for the necessary UI elements (filter controls), and correctly concluding that those elements are absent due to being on the wrong page. The function `apply_price_filter()` itself has no tactical errors - it cannot be "fixed" because the problem lies in the parent's plan. By reviewing the Parent Function source code, we can see the structural flaw: `search_and_filter_laptops()` is missing a navigation step between searching and filtering. The parent failed to establish the correct preconditions (being on the product catalog page with filters) before calling this child function. The enhanced reason clearly identifies the missing line in the parent code and provides a concrete fix strategy (add navigation step).
@@ -188,7 +188,7 @@ def _build_dynamic_implement_static_prefix(tools: Dict[str, Callable]) -> str:
         Static prefix string for implementation prompts (≥2,048 tokens)
     """
     strategy_instruction = _build_shared_strategy_principles()
-    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    tool_usage_instruction = "Use the `computer_primitives` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_dynamic_implement_rules_and_examples(
         tools,
         strategy_instruction,
@@ -292,7 +292,7 @@ def _build_interjection_static_prefix(tools: Dict[str, Callable]) -> str:
                     "patches": [
                         {{
                             "function_name": "B",
-                            "new_code": "async def B(parameter: str):\\n    # step 1\\n    await action_provider.act('Step B1')\\n    # step 2\\n    await action_provider.act('Step B2')\\n    # new step 2.5\\n    await action_provider.act('Newly added Step B2.5')\\n    # step 3\\n    await action_provider.act('Step B3')\\n    # ..."
+                            "new_code": "async def B(parameter: str):\\n    # step 1\\n    await computer_primitives.act('Step B1')\\n    # step 2\\n    await computer_primitives.act('Step B2')\\n    # new step 2.5\\n    await computer_primitives.act('Newly added Step B2.5')\\n    # step 3\\n    await computer_primitives.act('Step B3')\\n    # ..."
                         }}
                     ],
                     "cache": {{
@@ -594,7 +594,7 @@ def _build_shared_strategy_principles() -> str:
         ### 🧠 Strategic Principles for Automation
         To succeed, you must follow these core principles when writing or modifying code.
 
-        1.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals describing the desired outcome. Instead of "click username field," then "type username," then "click login," a single step is better: `await action_provider.act("Log in with username 'test' and password 'pass123'")`.
+        1.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals describing the desired outcome. Instead of "click username field," then "type username," then "click login," a single step is better: `await computer_primitives.act("Log in with username 'test' and password 'pass123'")`.
         2.  **Describe Visually and Functionally**: All browser tools operate on what is *visible*. Describe elements by their text, appearance, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes which you cannot see.
         3.  **Use `observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `observe` with a Pantic `response_format`. This is the most reliable way to gather information before acting.
         4.  **Isolate Core Logic**: When refactoring, identify the central, repeatable process. Omit one-time setup steps (like "open a new tab") from the generalized helper function. The goal is to create a function that represents a meaningful, reusable skill.
@@ -604,28 +604,28 @@ def _build_shared_strategy_principles() -> str:
     )
 
 
-def _build_code_act_rules_and_examples(action_provider) -> str:
+def _build_code_act_rules_and_examples(computer_primitives) -> str:
     """Builds the reusable block of core rules and examples for CodeActActor."""
     all_tools = {}
 
     browser_tools = {
-        "navigate": action_provider.navigate,
-        "act": action_provider.act,
-        "observe": action_provider.observe,
+        "navigate": computer_primitives.navigate,
+        "act": computer_primitives.act,
+        "observe": computer_primitives.observe,
     }
     all_tools.update(browser_tools)
 
     comm_tools = {
-        "send_sms_message": action_provider.send_sms_message,
-        "send_email": action_provider.send_email,
-        "send_whatsapp_message": action_provider.send_whatsapp_message,
-        "start_call": action_provider.start_call,
-        "join_meet": action_provider.join_meet,
+        "send_sms_message": computer_primitives.send_sms_message,
+        "send_email": computer_primitives.send_email,
+        "send_whatsapp_message": computer_primitives.send_whatsapp_message,
+        "start_call": computer_primitives.start_call,
+        "join_meet": computer_primitives.join_meet,
     }
     all_tools.update(comm_tools)
 
-    if hasattr(action_provider, "reason"):
-        all_tools["reason"] = action_provider.reason
+    if hasattr(computer_primitives, "reason"):
+        all_tools["reason"] = computer_primitives.reason
 
     tool_reference = _build_tool_signatures(all_tools)
     handle_apis = _build_handle_apis(all_tools)
@@ -637,14 +637,14 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
 
         1. **Stateful Execution**: Your code is executed in a persistent, stateful REPL-like environment. Variables, functions, and imports defined in one turn are available in all subsequent turns.
 
-        2. **Use `await`**: The execution sandbox is asynchronous. You **MUST** use the `await` keyword for any action_provider operations:
+        2. **Use `await`**: The execution sandbox is asynchronous. You **MUST** use the `await` keyword for any computer_primitives operations:
            ```python
            # ✅ CORRECT: Using await
-           await action_provider.navigate("https://example.com")
-           result = await action_provider.observe("What is the heading?")
+           await computer_primitives.navigate("https://example.com")
+           result = await computer_primitives.observe("What is the heading?")
 
            # ❌ WRONG: Missing await
-           action_provider.navigate("https://example.com")
+           computer_primitives.navigate("https://example.com")
            ```
 
         3. **Imports Inside Code**: All necessary imports must be included in the code you provide:
@@ -654,7 +654,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
            from typing import Optional, List
            ```
 
-        4. **Pydantic for Structured Observation**: When using `action_provider.observe` to extract structured data:
+        4. **Pydantic for Structured Observation**: When using `computer_primitives.observe` to extract structured data:
            ```python
            from pydantic import BaseModel, Field
 
@@ -665,7 +665,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
            # CRITICAL: Call model_rebuild() after defining nested models
            PageInfo.model_rebuild()
 
-           result = await action_provider.observe(
+           result = await computer_primitives.observe(
                "Extract page information",
                response_format=PageInfo
            )
@@ -733,7 +733,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "The first step is to navigate to the website specified in the user's request, which is playwright.dev.",
-                  "code": "await action_provider.navigate('https://playwright.dev/')"
+                  "code": "await computer_primitives.navigate('https://playwright.dev/')"
                 }
               }]
             }
@@ -753,7 +753,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "Great, I'm on the page. Now I'll extract the heading and paragraph text into a structured object for clarity. I'll define a Pydantic model right here in the sandbox.",
-                  "code": "from pydantic import BaseModel, Field\n\nclass PageContent(BaseModel):\n    heading: str = Field(description=\"The main H1 heading of the page\")\n    first_paragraph: str = Field(description=\"The text of the first paragraph under the heading\")\n\nPageContent.model_rebuild()\n\npage_info = await action_provider.observe(\n    \"Extract the main heading and the first paragraph.\",\n    response_format=PageContent\n)\n\nprint(page_info.model_dump_json(indent=2))"
+                  "code": "from pydantic import BaseModel, Field\n\nclass PageContent(BaseModel):\n    heading: str = Field(description=\"The main H1 heading of the page\")\n    first_paragraph: str = Field(description=\"The text of the first paragraph under the heading\")\n\nPageContent.model_rebuild()\n\npage_info = await computer_primitives.observe(\n    \"Extract the main heading and the first paragraph.\",\n    response_format=PageContent\n)\n\nprint(page_info.model_dump_json(indent=2))"
                 }
               }]
             }
@@ -788,7 +788,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "I need to navigate to example.com to get the title.",
-                  "code": "await action_provider.navigate('https://example.com/')"
+                  "code": "await computer_primitives.navigate('https://example.com/')"
                 }
               }]
             }
@@ -803,7 +803,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "I need to get the title. I will use Pydantic, but I'll deliberately forget to call `model_rebuild()` to demonstrate error handling.",
-                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\n\ntitle_info = await action_provider.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info)"
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\n\ntitle_info = await computer_primitives.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info)"
                 }
               }]
             }
@@ -824,7 +824,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "The error message is very clear. I forgot to call `model_rebuild()` on my Pydantic class. I will add that line and retry.",
-                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# CORRECTED: I've added the required model_rebuild() call.\nPageTitle.model_rebuild()\n\ntitle_info = await action_provider.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info.title)"
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# CORRECTED: I've added the required model_rebuild() call.\nPageTitle.model_rebuild()\n\ntitle_info = await computer_primitives.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info.title)"
                 }
               }]
             }
@@ -850,7 +850,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "This is a multi-step task. First, I'll extract all products. I know I'll need to parse prices that might be strings (e.g., '$25.99'), so I'll define a helper function to clean them. This function will persist in the sandbox for later.",
-                  "code": "import re\nfrom pydantic import BaseModel, Field\nfrom typing import List\n\ndef parse_price(price_str: str) -> float:\n    nums = re.findall(r'[\\d.]+', price_str)\n    return float(nums[0]) if nums else 0.0\n\nclass Product(BaseModel):\n    name: str\n    price_text: str = Field(alias=\"price\")\n\nclass ProductList(BaseModel):\n    products: List[Product]\n\nProductList.model_rebuild()\n\nglobal all_products_data\nall_products_data = await action_provider.observe(\n    \"Extract all products with their name and price text\",\n    response_format=ProductList\n)\nprint(f\"Extracted {len(all_products_data.products)} products.\")"
+                  "code": "import re\nfrom pydantic import BaseModel, Field\nfrom typing import List\n\ndef parse_price(price_str: str) -> float:\n    nums = re.findall(r'[\\d.]+', price_str)\n    return float(nums[0]) if nums else 0.0\n\nclass Product(BaseModel):\n    name: str\n    price_text: str = Field(alias=\"price\")\n\nclass ProductList(BaseModel):\n    products: List[Product]\n\nProductList.model_rebuild()\n\nglobal all_products_data\nall_products_data = await computer_primitives.observe(\n    \"Extract all products with their name and price text\",\n    response_format=ProductList\n)\nprint(f\"Extracted {len(all_products_data.products)} products.\")"
                 }
               }]
             }
@@ -895,7 +895,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "I'll start by sending the SMS. The `send_sms_message` tool returns a handle, which I'll await to ensure the message is sent and get a result.",
-                  "code": "sms_handle = await action_provider.send_sms_message(\n    description=\"Text Jane Doe to confirm her appointment for tomorrow at 3 PM.\"\n)\n\nsms_result = await sms_handle.result()\nprint(sms_result)"
+                  "code": "sms_handle = await computer_primitives.send_sms_message(\n    description=\"Text Jane Doe to confirm her appointment for tomorrow at 3 PM.\"\n)\n\nsms_result = await sms_handle.result()\nprint(sms_result)"
                 }
               }]
             }
@@ -914,7 +914,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
                 "name": "execute_python_code",
                 "arguments": {
                   "thought": "The SMS is sent. Now I need to make the phone call. The `start_call` tool also returns a handle. I will store this handle in a global variable so I can interact with it in the next turn.",
-                  "code": "global active_call_handle\nactive_call_handle = action_provider.start_call(\n    phone_number=\"Jane Doe\",\n    purpose=\"Ask about dietary restrictions for a lunch meeting.\"\n)\nprint(f\"Initiated call to Jane Doe. Handle ID: {active_call_handle._loop_id}\")"
+                  "code": "global active_call_handle\nactive_call_handle = computer_primitives.start_call(\n    phone_number=\"Jane Doe\",\n    purpose=\"Ask about dietary restrictions for a lunch meeting.\"\n)\nprint(f\"Initiated call to Jane Doe. Handle ID: {active_call_handle._loop_id}\")"
                 }
               }]
             }
@@ -954,7 +954,7 @@ def _build_code_act_rules_and_examples(action_provider) -> str:
 
 ---
 ### Tools Reference
-Within your code execution, you have access to a global `action_provider` object with these methods:
+Within your code execution, you have access to a global `computer_primitives` object with these methods:
 ```json
 {tool_reference}
 ```
@@ -1055,7 +1055,7 @@ def _build_initial_plan_rules_and_examples(
             # ✅ IMPLEMENT if confident (simple, predictable actions)
             async def navigate_to_shop():
                 \"\"\"Navigate to the shop homepage.\"\"\"
-                await action_provider.navigate("https://shop.example.com")
+                await computer_primitives.navigate("https://shop.example.com")
 
             # ✅ STUB if uncertain (complex extractions, unknown layouts)
             async def extract_shipping_options():
@@ -1064,13 +1064,13 @@ def _build_initial_plan_rules_and_examples(
                 raise NotImplementedError("Extract shipping options from checkout page")
             ```
 
-            **CRITICAL**: **Purity of Stubs**: A stubbed function MUST contain ONLY a `raise NotImplementedError(...)` statement and its docstring. Do not include ANY `await action_provider` calls or other logic inside a stub.
+            **CRITICAL**: **Purity of Stubs**: A stubbed function MUST contain ONLY a `raise NotImplementedError(...)` statement and its docstring. Do not include ANY `await computer_primitives` calls or other logic inside a stub.
 
             ```python
             # ❌ WRONG: Stub with a side-effect
             async def my_stub():
                 "\"\"\"This is a bad stub.\"\"\""
-                await action_provider.navigate("...")  # NEVER DO THIS
+                await computer_primitives.navigate("...")  # NEVER DO THIS
                 raise NotImplementedError("Implement me")
 
             # ✅ CORRECT: A pure stub
@@ -1106,10 +1106,10 @@ def _build_initial_plan_rules_and_examples(
                 pass
             ```
 
-        8.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `action_provider` methods AND any helper functions or skills you call.
+        8.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `computer_primitives` methods AND any helper functions or skills you call.
             ```python
-            # ✅ CORRECT: Awaiting an action_provider method
-            await action_provider.navigate("https://example.com")
+            # ✅ CORRECT: Awaiting an computer_primitives method
+            await computer_primitives.navigate("https://example.com")
 
             # ✅ CORRECT: Awaiting a helper function/skill from the library
             result = await helper_func_1("arg1", "arg2")
@@ -1141,7 +1141,7 @@ def _build_initial_plan_rules_and_examples(
                 ProductList.model_rebuild()
 
                 # Step 5: Use with response_format
-                result = await action_provider.observe(
+                result = await computer_primitives.observe(
                     "Extract all products with details",
                     response_format=ProductList
                 )
@@ -1179,17 +1179,17 @@ def _build_initial_plan_rules_and_examples(
 
         11. **Action Provider Usage:**
             ```python
-            # ❌ WRONG: Don't create or import ActionProvider
-            from some_module import ActionProvider
-            action_provider = ActionProvider()
+            # ❌ WRONG: Don't create or import ComputerPrimitives
+            from some_module import ComputerPrimitives
+            computer_primitives = ComputerPrimitives()
 
             # ❌ WRONG: Don't type hint it
-            def my_func(action_provider: ActionProvider):
+            def my_func(computer_primitives: ComputerPrimitives):
                 pass
 
             # ✅ CORRECT: Use it directly as a global
             async def my_func():
-                await action_provider.navigate("...")
+                await computer_primitives.navigate("...")
             ```
 
          12. **Requesting Clarification:**
@@ -1197,8 +1197,8 @@ def _build_initial_plan_rules_and_examples(
             # ✅ CORRECT: Call as a global function
             destination = await request_clarification("What is your destination city?")
 
-            # ❌ WRONG: Do not call it on action_provider
-            # destination = await action_provider.request_clarification(...)
+            # ❌ WRONG: Do not call it on computer_primitives
+            # destination = await computer_primitives.request_clarification(...)
             ```
         13. **Return the Final Value**: If the last function or skill you call returns a value, your `main_plan` **MUST** capture that value and return it. This ensures the final result of the plan is meaningful.
 
@@ -1232,7 +1232,7 @@ def _build_initial_plan_rules_and_examples(
 
         ---
         ### Tools Reference
-        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to a global `computer_primitives` object with the following methods. You must call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -1263,9 +1263,9 @@ def _build_initial_plan_rules_and_examples(
             # RULE 5: Implemented directly - high confidence action
             print(f"Searching for product: {{product_name}}")
 
-            # RULE 8: Await all async action_provider methods
-            await action_provider.navigate("https://shop.example.com")
-            await action_provider.act(
+            # RULE 8: Await all async computer_primitives methods
+            await computer_primitives.navigate("https://shop.example.com")
+            await computer_primitives.act(
                 f"Type '{{product_name}}' in the search box and press Enter to load search results with products"
             )
 
@@ -1299,7 +1299,7 @@ def _build_initial_plan_rules_and_examples(
 
             # RULE 10: Error handling with re-raise
             try:
-                await action_provider.act(
+                await computer_primitives.act(
                     f"Set price filter from ${{min_price}} to ${{max_price}} to filter products by price range"
                 )
             except Exception as e:
@@ -1330,7 +1330,7 @@ def _build_initial_plan_rules_and_examples(
             CartStatus.model_rebuild()
 
             # RULE 9: Use response_format for structured output
-            cart_info = await action_provider.observe(
+            cart_info = await computer_primitives.observe(
                 "What is the current cart status including item count and total price?",
                 response_format=CartStatus
             )
@@ -1388,7 +1388,7 @@ def _build_initial_plan_rules_and_examples(
             for appt in appointments:
                 try:
                     # RULE 8: Await the async tool
-                    sms_handle = await action_provider.send_sms_message(
+                    sms_handle = await computer_primitives.send_sms_message(
                         f"Text {{appt['phone']}} about appointment at {{appt['time']}} with Dr. {{appt['doctor']}}"
                     )
 
@@ -1419,7 +1419,7 @@ def _build_initial_plan_rules_and_examples(
             from typing import Optional, Dict
 
             # Note: start_call is synchronous
-            call_handle = action_provider.start_call(
+            call_handle = computer_primitives.start_call(
                 phone_number=phone,
                 purpose="Follow-up call to ask specific questions"
             )
@@ -1443,7 +1443,7 @@ def _build_initial_plan_rules_and_examples(
 
             CallAnalysis.model_rebuild()
 
-            analysis = await action_provider.reason(
+            analysis = await computer_primitives.reason(
                 request="Analyze if all questions were answered satisfactorily",
                 context=f"Questions: {{questions}}\\nAnswers: {{answers}}\\nTranscript: {{full_result}}",
                 response_format=CallAnalysis
@@ -1475,7 +1475,7 @@ def _build_initial_plan_rules_and_examples(
 
             # Primary approach: Use the website's export feature
             try:
-                await action_provider.act(
+                await computer_primitives.act(
                     "Click on 'Export Data' button and select JSON format to start the download or display data"
                 )
 
@@ -1487,7 +1487,7 @@ def _build_initial_plan_rules_and_examples(
 
                 ExportedData.model_rebuild()
 
-                data = await action_provider.observe(
+                data = await computer_primitives.observe(
                     "Extract the exported customer data",
                     response_format=ExportedData
                 )
@@ -1512,7 +1512,7 @@ def _build_initial_plan_rules_and_examples(
                     # RULE 9: Always rebuild outermost model
                     CustomerTable.model_rebuild()
 
-                    table_data = await action_provider.observe(
+                    table_data = await computer_primitives.observe(
                         "Extract all customer information from the visible table",
                         response_format=CustomerTable
                     )
@@ -1540,7 +1540,7 @@ def _build_initial_plan_rules_and_examples(
             print("Starting customer data processing workflow")
 
             # Navigate to the system
-            await action_provider.navigate("https://crm.example.com")
+            await computer_primitives.navigate("https://crm.example.com")
 
             # Login (would typically be implemented or stubbed based on confidence)
             await login_to_system("admin", "password123")
@@ -1565,8 +1565,8 @@ def _build_initial_plan_rules_and_examples(
         async def search_for_product() -> str:
             \"\"\"Navigates to an e-commerce site and searches for a specific product.\"\"\"
             print("Navigating to store and searching for 'blue sneakers'.")
-            await action_provider.navigate("https://fakestore.example.com")
-            await action_provider.act(
+            await computer_primitives.navigate("https://fakestore.example.com")
+            await computer_primitives.act(
                 "Type 'blue sneakers' into the search bar and click the search button to show products related to 'blue sneakers'"
             )
             print("Search complete.")
@@ -1594,8 +1594,8 @@ def _build_initial_plan_rules_and_examples(
             #     price: float
             #     review_count: int
             #
-            # await action_provider.navigate(product_url)
-            # details = await action_provider.observe(
+            # await computer_primitives.navigate(product_url)
+            # details = await computer_primitives.observe(
             #     "Extract the price and number of reviews for this product.",
             #     response_format=ProductDetails
             # )
@@ -1651,14 +1651,14 @@ def _build_initial_plan_rules_and_examples(
 
             # --- Primary Approach: Use the website's feature ---
             try:
-                await action_provider.act(
+                await computer_primitives.act(
                     "Click the currency selector and choose 'EUR' to display the price in Euros (€)"
                 )
 
                 class PriceInfo(BaseModel):
                     price_eur: float = Field(description="The price in Euros.")
 
-                observed_price = await action_provider.observe(
+                observed_price = await computer_primitives.observe(
                     "What is the product price in Euros?",
                     response_format=PriceInfo
                 )
@@ -1680,7 +1680,7 @@ def _build_initial_plan_rules_and_examples(
                         f"Provide only the final numeric value."
                     )
 
-                    result = await action_provider.reason(
+                    result = await computer_primitives.reason(
                         request=conversion_request,
                         context=f"The price is ${{product_price_usd}} dollars.",
                         response_format=ConversionResult
@@ -1711,7 +1711,7 @@ def _build_initial_plan_rules_and_examples(
 
             SalesData.model_rebuild()
 
-            result = await action_provider.observe(
+            result = await computer_primitives.observe(
                 "Extract all sales records from the table including product name, quantity, unit price, and date",
                 response_format=SalesData
             )
@@ -1762,7 +1762,7 @@ def _build_initial_plan_rules_and_examples(
             Main plan to extract and analyze sales data.
             \"\"\"
             # Navigate to the sales report page
-            await action_provider.navigate("https://example.com/sales-report")
+            await computer_primitives.navigate("https://example.com/sales-report")
 
             # The result of this step will be cached by the actor
             raw_data = await extract_sales_data_from_page()
@@ -1774,7 +1774,7 @@ def _build_initial_plan_rules_and_examples(
 
             # Use the analysis results for further actions
             if analysis_results['best_product']:
-                await action_provider.act(
+                await computer_primitives.act(
                     f"Search for more information about {{analysis_results['best_product']}} to load the product detail page"
                 )
 
@@ -1881,10 +1881,10 @@ def _build_dynamic_implement_rules_and_examples(
                 return data
             ```
 
-        5.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `action_provider` methods AND any helper functions or skills you call.
+        5.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `computer_primitives` methods AND any helper functions or skills you call.
             ```python
-            # ✅ CORRECT: Awaiting an action_provider method
-            await action_provider.navigate("https://example.com")
+            # ✅ CORRECT: Awaiting an computer_primitives method
+            await computer_primitives.navigate("https://example.com")
 
             # ✅ CORRECT: Awaiting a helper function/skill from the library
             result = await helper_func_1("arg1", "arg2")
@@ -1916,7 +1916,7 @@ def _build_dynamic_implement_rules_and_examples(
                 ProductList.model_rebuild()
 
                 # Step 5: Use with response_format
-                result = await action_provider.observe(
+                result = await computer_primitives.observe(
                     "Extract all products with details",
                     response_format=ProductList
                 )
@@ -1958,18 +1958,18 @@ def _build_dynamic_implement_rules_and_examples(
 
         8.  **Action Provider Usage:** Use directly as global, no imports or type hints.
             ```python
-            # ❌ WRONG: Importing or typing ActionProvider
-            from somewhere import ActionProvider
-            def my_func(action_provider: ActionProvider):
+            # ❌ WRONG: Importing or typing ComputerPrimitives
+            from somewhere import ComputerPrimitives
+            def my_func(computer_primitives: ComputerPrimitives):
                 pass
 
-            # ❌ WRONG: Creating ActionProvider instance
-            action_provider = ActionProvider()
+            # ❌ WRONG: Creating ComputerPrimitives instance
+            computer_primitives = ComputerPrimitives()
 
             # ✅ CORRECT: Use directly as if it exists globally
             async def my_func():
-                result = await action_provider.navigate("https://example.com")
-                data = await action_provider.observe("Get page title")
+                result = await computer_primitives.navigate("https://example.com")
+                data = await computer_primitives.observe("Get page title")
             ```
 
         9. **Requesting Clarification:**
@@ -1977,8 +1977,8 @@ def _build_dynamic_implement_rules_and_examples(
             # ✅ CORRECT: Call as a global function
             destination = await request_clarification("What is your destination city?")
 
-            # ❌ WRONG: Do not call it on action_provider
-            # destination = await action_provider.request_clarification(...)
+            # ❌ WRONG: Do not call it on computer_primitives
+            # destination = await computer_primitives.request_clarification(...)
             ```
         """,
     )
@@ -1995,7 +1995,7 @@ def _build_dynamic_implement_rules_and_examples(
 
         ---
         ### Tools Reference
-        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to a global `computer_primitives` object with the following methods. You must call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -2029,7 +2029,7 @@ def _build_dynamic_implement_rules_and_examples(
             # The send_sms_message tool returns a handle for ongoing interaction
             try:
                 # Await the tool to get the interactive handle
-                sms_handle = await action_provider.send_sms_message(
+                sms_handle = await computer_primitives.send_sms_message(
                     f"Text {{phone_number}} to remind them about their {{appointment_details}}"
                 )
 
@@ -2065,7 +2065,7 @@ def _build_dynamic_implement_rules_and_examples(
             print(f"Starting call to {{phone_number}}")
 
             # Note: start_call is synchronous and returns a Call handle immediately
-            call_handle = action_provider.start_call(
+            call_handle = computer_primitives.start_call(
                 phone_number=phone_number,
                 purpose=f"Confirm appointment on {{appointment_info['date']}} at {{appointment_info['time']}} with Dr. {{appointment_info['doctor']}}"
             )
@@ -2095,7 +2095,7 @@ def _build_dynamic_implement_rules_and_examples(
                 CallSummary.model_rebuild()
 
                 # Analyze the complete call
-                analysis = await action_provider.reason(
+                analysis = await computer_primitives.reason(
                     request="Analyze this phone call transcript and extract key information about the appointment confirmation and any medical information discussed",
                     context=f"Full call transcript: {{full_transcript}}\n\nAllergy question response: {{allergy_info}}",
                     response_format=CallSummary
@@ -2152,7 +2152,7 @@ def _build_dynamic_implement_rules_and_examples(
 
             try:
                 # Use observe with structured output
-                result = await action_provider.observe(
+                result = await computer_primitives.observe(
                     "Extract all products from this search results page. For each product, get the name, "
                     "numeric price (without currency), currency symbol/code, rating if shown, review count if shown, "
                     "stock availability, and image URL if visible. Also note the total number of results if displayed.",
@@ -2208,14 +2208,14 @@ def _build_dynamic_implement_rules_and_examples(
 
             try:
                 # Primary approach: Fill out the payment form
-                await action_provider.act(
+                await computer_primitives.act(
                     f"Fill out the payment form with card ending in {{payment_info['card_number'][-4:]}}, "
                     f"CVV {{payment_info['cvv']}}, expiry {{payment_info['expiry']}}, and billing zip {{payment_info['zip']}}. "
                     f"Then click the 'Place Order' or 'Complete Purchase' button to see the order confirmation page with order number"
                 )
 
                 # Extract confirmation details
-                confirmation = await action_provider.observe(
+                confirmation = await computer_primitives.observe(
                     "Extract the order confirmation number, total amount charged, expected delivery date, and confirmation email address",
                     response_format=OrderConfirmation
                 )
@@ -2236,7 +2236,7 @@ def _build_dynamic_implement_rules_and_examples(
                 try:
                     print("Attempting PayPal checkout as fallback...")
 
-                    await action_provider.act(
+                    await computer_primitives.act(
                         "Click on 'PayPal' or 'Pay with PayPal' option to redirect to PayPal login or show PayPal frame"
                     )
 
@@ -2299,7 +2299,7 @@ def _build_dynamic_implement_rules_and_examples(
             PricingData.model_rebuild()
 
             # Step 1: Extract pricing data from the current page
-            pricing_data = await action_provider.observe(
+            pricing_data = await computer_primitives.observe(
                 f"Extract all competitor pricing information for {{product_name}}. "
                 "Include store name, price, shipping cost if shown, availability status, and rating if available.",
                 response_format=PricingData
@@ -2312,7 +2312,7 @@ def _build_dynamic_implement_rules_and_examples(
 
             # Step 3: Use the analysis to make a decision
             if analysis_result['recommendation'] == 'match_lowest':
-                await action_provider.act(
+                await computer_primitives.act(
                     f"Update our price to {{analysis_result['suggested_price']}} and confirm the price update is successful"
                 )
 
@@ -2408,7 +2408,7 @@ def build_initial_plan_prompt(
     formatted_functions = _format_existing_functions(existing_functions)
     image_context_str = _format_images_for_prompt(images)
 
-    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    tool_usage_instruction = "Use the `computer_primitives` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
 
     rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
@@ -2947,12 +2947,12 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
     rules = textwrap.dedent(
         f"""
         ### 🎯 CRITICAL RULES FOR SCRIPTING
-        1.  **Sequence of Calls**: Your code must be a simple sequence of `await` calls on the `action_provider`. Do not define new functions.
+        1.  **Sequence of Calls**: Your code must be a simple sequence of `await` calls on the `computer_primitives`. Do not define new functions.
         2.  **Await Keyword**: You MUST `await` all `async` tool calls (like `navigate`, `act`, `observe`).
-        3.  **Action Provider**: Use the `action_provider` object directly as if it's a global variable. Do not import or define it.
+        3.  **Action Provider**: Use the `computer_primitives` object directly as if it's a global variable. Do not import or define it.
 
         ### Tools Reference
-        You have access to a global `action_provider` object with the following methods.
+        You have access to a global `computer_primitives` object with the following methods.
         ```json
         {tool_reference}
         ```
@@ -2962,18 +2962,18 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
         # ---
         # Example 1: The agent navigated to the wrong page ('/settings') instead of the user's profile.
         # Goal: Get back to the correct user profile page.
-            await action_provider.navigate("https://example.com/user/123/profile")
+            await computer_primitives.navigate("https://example.com/user/123/profile")
 
         # ---
         # Example 2: The agent opened an unwanted "Share" popup that is now obscuring the page content.
         # Goal: Close the popup to restore view of the underlying page.
-        await action_provider.act("Click the 'X' or 'Close' button on the 'Share this article' popup")
+        await computer_primitives.act("Click the 'X' or 'Close' button on the 'Share this article' popup")
 
         # ---
         # Example 3: The agent typed the wrong address into a form field.
         # Goal: Clear the incorrect text from the 'Street Address' field.
         # Note: The next implementation will handle typing the correct text. This script ONLY restores the state.
-        await action_provider.act("Clear the text in the 'Street Address' field")
+        await computer_primitives.act("Clear the text in the 'Street Address' field")
 
     """,
     )
@@ -3028,10 +3028,10 @@ def build_course_correction_prompt(
             - If a popup or modal appeared that needs to be closed, set `correction_needed` to `true` and write a script to close it.
         3.  **If correction is needed, write `correction_code`.**
             - This must be a simple, self-contained Python script.
-            - Use `action_provider.navigate` or `action_provider.act`.
+            - Use `computer_primitives.navigate` or `computer_primitives.act`.
             - **Goal:** Get from the "Current" state back to the "Last Known Good" state.
-            - **Example:** If the agent is on the wrong page, the script might be `await action_provider.navigate('{last_verified_url}')`.
-            - **Example:** If a popup is open, the script might be `await action_provider.act("Click the 'Close' button on the popup")`.
+            - **Example:** If the agent is on the wrong page, the script might be `await computer_primitives.navigate('{last_verified_url}')`.
+            - **Example:** If a popup is open, the script might be `await computer_primitives.act("Click the 'Close' button on the popup")`.
             - **Keep it simple!** Do not try to re-run the failed function. Only restore the state.
 
         ---
@@ -3101,7 +3101,7 @@ def build_refactor_prompt(
         The complete prompt string for the refactoring LLM call.
     """
     strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
-    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    tool_usage_instruction = "Use the `computer_primitives` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
         strategy_instruction,
@@ -3138,7 +3138,7 @@ def build_refactor_prompt(
         - **CRITICAL STATE-AWARE LOGIC:**
             1.  **Analyze the Start State:** Look at the `action_log` to determine what the initial state of the *original* taught process was (e.g., it started on the homepage at "https://shop.example.com").
             2.  **Compare with Current State:** Compare that required start state with the `Browser's Current URL`. They will likely be different.
-            3.  **Bridge the Gap:** Your `main_plan` must **bridge this state gap**. The very first step in your `main_plan` must be an `action_provider` call to get the browser from its current state to the necessary starting state for your helper functions. This is your "course correction" step.
+            3.  **Bridge the Gap:** Your `main_plan` must **bridge this state gap**. The very first step in your `main_plan` must be an `computer_primitives` call to get the browser from its current state to the necessary starting state for your helper functions. This is your "course correction" step.
             4.  **Execute the Goal:** After the state-setting step, `main_plan` should then call your helper functions in the correct order to fulfill the user's request.
 
         ---
@@ -3156,12 +3156,12 @@ def build_refactor_prompt(
         async def search_for_item(item_name: str):
             \"\"\"Searches for a given item on the site.\"\"\"
             # This skill assumes the browser is on the homepage to find the search bar.
-            await action_provider.act(f"Type '{{item_name}}' into the search bar and press Enter")
+            await computer_primitives.act(f"Type '{{item_name}}' into the search bar and press Enter")
 
         @verify
         async def add_first_item_to_cart():
             \"\"\"Clicks the 'Add to Cart' button for the first search result.\"\"\"
-            await action_provider.act("Click the 'Add to Cart' button for the first item in the list")
+            await computer_primitives.act("Click the 'Add to Cart' button for the first item in the list")
 
         # Part 2: The intelligent `main_plan` orchestrator
         @verify
@@ -3173,7 +3173,7 @@ def build_refactor_prompt(
             # CRITICAL: The agent is on a product page, but `search_for_item`
             # needs to be on the homepage. This is the state-bridging step.
             print("State correction: Navigating back to the homepage to start a new search.")
-            await action_provider.navigate("https://shop.example.com/home")
+            await computer_primitives.navigate("https://shop.example.com/home")
 
             # Now, execute the generalized workflow.
             await search_for_item("keyboards")
@@ -3317,7 +3317,7 @@ def build_proactive_correction_prompt(
         ### Your Task
         Write a `correction_code` snippet to get from the "Current" state to the "Target" state.
         - **Goal:** Your script should perform the necessary actions (e.g., clicking a button, filling a field, navigating) to satisfy the target precondition's `description`.
-        - **Example:** If the current page is a dashboard and the target is "The 'Create New User' dialog must be open," your script should be `await action_provider.act("Click the 'Create New User' button to open the Create New User dialog")`.
+        - **Example:** If the current page is a dashboard and the target is "The 'Create New User' dialog must be open," your script should be `await computer_primitives.act("Click the 'Create New User' button to open the Create New User dialog")`.
         - **Keep it simple!** Only write the code needed to achieve the precondition.
 
         {scripting_rules}

@@ -69,7 +69,7 @@ class _DependencyVisitor(ast.NodeVisitor):
                 called_name = self._assignment_map[func_name]
 
         # Case 2: Method call -> obj.method() - generally ignore for dependency injection
-        # (We assume obj like action_provider is globally available)
+        # (We assume obj like computer_primitives is globally available)
 
         if called_name:
             self.dependencies.add(called_name)
@@ -322,7 +322,7 @@ class FunctionManager(BaseFunctionManager):
 
         Allows:
         - Built-in functions (except dangerous ones)
-        - Any method calls on objects (e.g., action_provider.*, call_handle.*, call.*)
+        - Any method calls on objects (e.g., computer_primitives.*, call_handle.*, call.*)
         - User-defined functions (tracked as dependencies)
 
         Disallows:
@@ -332,7 +332,7 @@ class FunctionManager(BaseFunctionManager):
 
         for called in calls:
             # Allow all method calls (anything with a dot)
-            # This includes action_provider.*, call_handle.*, obj.method(), etc.
+            # This includes computer_primitives.*, call_handle.*, obj.method(), etc.
             if "." in called:
                 continue
 

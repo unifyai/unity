@@ -134,9 +134,11 @@ async def test_manages_lifecycle_jit_interjection(monkeypatch):
         connect_now=False,
     )
 
-    real_actor.action_provider.navigate = AsyncMock(return_value=None)
-    real_actor.action_provider.act = AsyncMock(return_value=None)
-    real_actor.action_provider.observe = AsyncMock(return_value="Mocked Page Heading")
+    real_actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    real_actor.computer_primitives.act = AsyncMock(return_value=None)
+    real_actor.computer_primitives.observe = AsyncMock(
+        return_value="Mocked Page Heading",
+    )
 
     # Avoid starting Chromium/Keychain access during pre/post-state collection
     class _NoKeychainBrowser:
@@ -149,7 +151,7 @@ async def test_manages_lifecycle_jit_interjection(monkeypatch):
         async def get_screenshot(self) -> str:
             return ""
 
-    real_actor.action_provider._browser = _NoKeychainBrowser()
+    real_actor.computer_primitives._browser = _NoKeychainBrowser()
 
     # 2. --- Mock Actor's LLM Dependencies ---
 
@@ -160,7 +162,7 @@ async def test_manages_lifecycle_jit_interjection(monkeypatch):
 
         async def navigate_to_site():
             '''Navigates to the site.'''
-            await action_provider.navigate("https://example.com")
+            await computer_primitives.navigate("https://example.com")
 
         async def observe_heading():
             '''Finds the main heading. This is a stub.'''
@@ -191,7 +193,7 @@ async def test_manages_lifecycle_jit_interjection(monkeypatch):
             async def observe_heading():
                 '''Finds the main heading. (Implemented by JIT)'''
                 print("EXEC: Running JIT-implemented observe_heading")
-                return await action_provider.observe("get main heading")
+                return await computer_primitives.observe("get main heading")
             """,
         ),
     )
@@ -218,7 +220,7 @@ async def test_manages_lifecycle_jit_interjection(monkeypatch):
                         await navigate_to_site()
                         result = await observe_heading()
                         print("EXEC: Running new interjected step")
-                        await action_provider.act("Click Submit Button")
+                        await computer_primitives.act("Click Submit Button")
                         return result
                     """,
                 ),
@@ -326,15 +328,15 @@ async def test_manages_lifecycle_jit_interjection(monkeypatch):
 
     assert any(
         getattr(call, "args", []) and call.args[0] == "https://example.com"
-        for call in real_actor.action_provider.navigate.call_args_list
+        for call in real_actor.computer_primitives.navigate.call_args_list
     ), "navigate was not called with the expected URL"
     assert any(
         getattr(call, "args", []) and call.args[0] == "get main heading"
-        for call in real_actor.action_provider.observe.call_args_list
+        for call in real_actor.computer_primitives.observe.call_args_list
     ), "observe was not called with the expected prompt"
     assert any(
         getattr(call, "args", []) and call.args[0] == "Click Submit Button"
-        for call in real_actor.action_provider.act.call_args_list
+        for call in real_actor.computer_primitives.act.call_args_list
     ), "act was not called with the expected instruction"
 
     assert (
@@ -386,9 +388,11 @@ async def test_multiple_interjections_passthrough(monkeypatch):
         connect_now=False,
     )
 
-    real_actor.action_provider.navigate = AsyncMock(return_value=None)
-    real_actor.action_provider.act = AsyncMock(return_value=None)
-    real_actor.action_provider.observe = AsyncMock(return_value="Mocked Page Heading")
+    real_actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    real_actor.computer_primitives.act = AsyncMock(return_value=None)
+    real_actor.computer_primitives.observe = AsyncMock(
+        return_value="Mocked Page Heading",
+    )
 
     class _NoKeychainBrowser:
         def __init__(self):
@@ -400,14 +404,14 @@ async def test_multiple_interjections_passthrough(monkeypatch):
         async def get_screenshot(self) -> str:
             return ""
 
-    real_actor.action_provider._browser = _NoKeychainBrowser()
+    real_actor.computer_primitives._browser = _NoKeychainBrowser()
 
     CANNED_PLAN = textwrap.dedent(
         """
         from pydantic import BaseModel, Field
 
         async def navigate_to_site():
-            await action_provider.navigate("https://example.com")
+            await computer_primitives.navigate("https://example.com")
 
         async def observe_heading():
             raise NotImplementedError("I need to see the page layout first.")
@@ -435,7 +439,7 @@ async def test_multiple_interjections_passthrough(monkeypatch):
         code=textwrap.dedent(
             """
             async def observe_heading():
-                return await action_provider.observe("get main heading")
+                return await computer_primitives.observe("get main heading")
             """,
         ),
     )
@@ -461,7 +465,7 @@ async def test_multiple_interjections_passthrough(monkeypatch):
                     async def main_plan():
                         await navigate_to_site()
                         result = await observe_heading()
-                        await action_provider.act("Click Submit Button")
+                        await computer_primitives.act("Click Submit Button")
                         return result
                     """,
                 ),
@@ -480,8 +484,8 @@ async def test_multiple_interjections_passthrough(monkeypatch):
                     async def main_plan():
                         await navigate_to_site()
                         result = await observe_heading()
-                        await action_provider.act("Click Submit Button")
-                        await action_provider.act("Click Continue Button")
+                        await computer_primitives.act("Click Submit Button")
+                        await computer_primitives.act("Click Continue Button")
                         return result
                     """,
                 ),
@@ -609,9 +613,11 @@ async def test_interject_mid_think_no_duplicates(monkeypatch):
         connect_now=False,
     )
 
-    real_actor.action_provider.navigate = AsyncMock(return_value=None)
-    real_actor.action_provider.act = AsyncMock(return_value=None)
-    real_actor.action_provider.observe = AsyncMock(return_value="Mocked Page Heading")
+    real_actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    real_actor.computer_primitives.act = AsyncMock(return_value=None)
+    real_actor.computer_primitives.observe = AsyncMock(
+        return_value="Mocked Page Heading",
+    )
 
     class _NoKeychainBrowser:
         def __init__(self):
@@ -623,12 +629,12 @@ async def test_interject_mid_think_no_duplicates(monkeypatch):
         async def get_screenshot(self) -> str:
             return ""
 
-    real_actor.action_provider._browser = _NoKeychainBrowser()
+    real_actor.computer_primitives._browser = _NoKeychainBrowser()
 
     CANNED_PLAN = textwrap.dedent(
         """
         async def navigate_to_site():
-            await action_provider.navigate("https://example.com")
+            await computer_primitives.navigate("https://example.com")
 
         async def observe_heading():
             raise NotImplementedError
@@ -656,7 +662,7 @@ async def test_interject_mid_think_no_duplicates(monkeypatch):
         code=textwrap.dedent(
             """
             async def observe_heading():
-                return await action_provider.observe("get main heading")
+                return await computer_primitives.observe("get main heading")
             """,
         ),
     )
@@ -682,7 +688,7 @@ async def test_interject_mid_think_no_duplicates(monkeypatch):
                     async def main_plan():
                         await navigate_to_site()
                         result = await observe_heading()
-                        await action_provider.act("Click Submit Button")
+                        await computer_primitives.act("Click Submit Button")
                         return result
                     """,
                 ),
@@ -791,9 +797,11 @@ async def test_clarification_passthrough(monkeypatch):
         connect_now=False,
     )
 
-    real_actor.action_provider.navigate = AsyncMock(return_value=None)
-    real_actor.action_provider.act = AsyncMock(return_value=None)
-    real_actor.action_provider.observe = AsyncMock(return_value="Mocked Page Heading")
+    real_actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    real_actor.computer_primitives.act = AsyncMock(return_value=None)
+    real_actor.computer_primitives.observe = AsyncMock(
+        return_value="Mocked Page Heading",
+    )
 
     class _NoKeychainBrowser:
         def __init__(self):
@@ -805,7 +813,7 @@ async def test_clarification_passthrough(monkeypatch):
         async def get_screenshot(self) -> str:
             return ""
 
-    real_actor.action_provider._browser = _NoKeychainBrowser()
+    real_actor.computer_primitives._browser = _NoKeychainBrowser()
 
     CANNED_PLAN = textwrap.dedent(
         """
@@ -898,9 +906,11 @@ async def test_handle_ask_passthrough(monkeypatch):
         connect_now=False,
     )
 
-    real_actor.action_provider.navigate = AsyncMock(return_value=None)
-    real_actor.action_provider.act = AsyncMock(return_value=None)
-    real_actor.action_provider.observe = AsyncMock(return_value="Mocked Page Heading")
+    real_actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    real_actor.computer_primitives.act = AsyncMock(return_value=None)
+    real_actor.computer_primitives.observe = AsyncMock(
+        return_value="Mocked Page Heading",
+    )
 
     class _NoKeychainBrowser:
         def __init__(self):
@@ -912,12 +922,12 @@ async def test_handle_ask_passthrough(monkeypatch):
         async def get_screenshot(self) -> str:
             return ""
 
-    real_actor.action_provider._browser = _NoKeychainBrowser()
+    real_actor.computer_primitives._browser = _NoKeychainBrowser()
 
     CANNED_PLAN = textwrap.dedent(
         """
         async def main_plan():
-            await action_provider.navigate("https://example.com")
+            await computer_primitives.navigate("https://example.com")
             return "ready"
         """,
     )

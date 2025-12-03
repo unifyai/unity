@@ -1844,7 +1844,7 @@ class ControlPanel(tk.Tk):
         max_retries: int = 5,
     ) -> str:
         """
-        Implementation of scroll_until_visible that replicates ActionProvider's functionality
+        Implementation of scroll_until_visible that replicates ComputerPrimitives's functionality
         using controller's act and observe methods.
         """
 

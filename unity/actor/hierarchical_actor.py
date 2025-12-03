@@ -37,7 +37,7 @@ from unity.actor.base import (
     BaseActorHandle,
 )
 from unity.task_scheduler.base import BaseActiveTask
-from unity.actor.action_provider import ActionProvider
+from unity.actor.computer_primitives import ComputerPrimitives
 import unity.actor.prompt_builders as prompt_builders
 from unity.controller.browser_backends import BrowserAgentError, MagnitudeBrowserBackend
 from unity.common._async_tool.loop_config import (
@@ -328,7 +328,7 @@ class CourseCorrectionDecision(BaseModel):
     )
     correction_code: Optional[str] = Field(
         None,
-        description="A short, self-contained Python script using the 'action_provider' to restore the browser state. This should only be provided if correction_needed is True. The script must be a single code block and contain no functions, only a sequence of `await action_provider...` calls.",
+        description="A short, self-contained Python script using the 'computer_primitives' to restore the browser state. This should only be provided if correction_needed is True. The script must be a single code block and contain no functions, only a sequence of `await computer_primitives...` calls.",
     )
 
 
@@ -950,7 +950,7 @@ class PlanSanitizer(ast.NodeTransformer):
             return self.generic_visit(node)
 
         call = node.value.value
-        is_tool_call = "action_provider" in self._call_to_label(call) or (
+        is_tool_call = "computer_primitives" in self._call_to_label(call) or (
             isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
         )
 
@@ -967,7 +967,7 @@ class PlanSanitizer(ast.NodeTransformer):
         call = node.value
         label = self._call_to_label(call)
 
-        if "action_provider" in label or (
+        if "computer_primitives" in label or (
             isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
         ):
             new_call = self._make_call_node(
@@ -1001,7 +1001,7 @@ class PlanSanitizer(ast.NodeTransformer):
             return self.generic_visit(node)
 
         call = node.value.value
-        is_tool_call = "action_provider" in self._call_to_label(call) or (
+        is_tool_call = "computer_primitives" in self._call_to_label(call) or (
             isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
         )
 
@@ -1299,7 +1299,7 @@ class _SteerableToolHandleProxy:
 
                 try:
                     url = (
-                        await self._plan._get_action_provider().browser.get_current_url()
+                        await self._plan._get_computer_primitives().browser.get_current_url()
                     )
                 except Exception:
                     url = None
@@ -1335,7 +1335,7 @@ class _SteerableToolHandleProxy:
 
                 try:
                     url = (
-                        await self._plan._get_action_provider().browser.get_current_url()
+                        await self._plan._get_computer_primitives().browser.get_current_url()
                     )
                 except Exception:
                     url = None
@@ -1415,18 +1415,18 @@ class _SteerableToolHandleProxy:
         )
 
 
-class _ActionProviderProxy:
+class _ComputerPrimitivesProxy:
     """
-    A generic proxy that wraps the real ActionProvider to intercept all tool
+    A generic proxy that wraps the real ComputerPrimitives to intercept all tool
     calls, apply idempotency caching, and log them for verification.
     """
 
     def __init__(
         self,
-        real_action_provider: ActionProvider,
+        real_computer_primitives: ComputerPrimitives,
         plan: "HierarchicalActorHandle",
     ):
-        self._real_action_provider = real_action_provider
+        self._real_computer_primitives = real_computer_primitives
         self._plan = plan
 
     def __getattr__(self, name: str) -> Any:
@@ -1434,7 +1434,7 @@ class _ActionProviderProxy:
         This magic method is called whenever an attribute (like a tool method)
         is accessed on the proxy instance.
         """
-        real_attr = getattr(self._real_action_provider, name)
+        real_attr = getattr(self._real_computer_primitives, name)
         if name == "conversation_manager" and isinstance(
             real_attr,
             ConversationManagerHandle,
@@ -1494,7 +1494,7 @@ class _ActionProviderProxy:
 
             interactions_log = current_interaction_sink_var.get()
             self._plan.runtime.action_counter += 1
-            tool_name = f"action_provider.{name}"
+            tool_name = f"computer_primitives.{name}"
 
             if DIAGNOSTIC_MODE:
                 run_id = current_run_id_var.get()
@@ -1558,7 +1558,7 @@ class _ActionProviderProxy:
             )
             logger.debug(f"{diag_prefix} CACHE MISS for key: {cache_key}")
 
-            backend = self._real_action_provider.browser.backend
+            backend = self._real_computer_primitives.browser.backend
             is_magnitude = isinstance(backend, MagnitudeBrowserBackend)
             magnitude_logs = []
 
@@ -1622,7 +1622,7 @@ class _ActionProviderProxy:
                 interactions_log.append(interaction_to_cache)
 
             try:
-                url = await self._real_action_provider.browser.get_current_url()
+                url = await self._real_computer_primitives.browser.get_current_url()
             except Exception:
                 url = None
 
@@ -1639,7 +1639,7 @@ class _ActionProviderProxy:
             if meta["impure"]:
                 try:
                     post_screenshot = (
-                        await self._real_action_provider.browser.get_screenshot()
+                        await self._real_computer_primitives.browser.get_screenshot()
                     )
                     meta["post_state_screenshot"] = post_screenshot
                 except Exception as e:
@@ -1669,7 +1669,7 @@ class _ActionProviderProxy:
 
             interactions_log = current_interaction_sink_var.get()
             self._plan.runtime.action_counter += 1
-            tool_name = f"action_provider.{name}"
+            tool_name = f"computer_primitives.{name}"
 
             if DIAGNOSTIC_MODE:
                 run_id = current_run_id_var.get()
@@ -1789,7 +1789,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
-        dedicated_action_provider: Optional[ActionProvider] = None,
+        dedicated_computer_primitives: Optional[ComputerPrimitives] = None,
     ):
         """
         Initializes the Hierarchical Plan active task.
@@ -1806,7 +1806,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             images: Optional mapping of source-scoped keys to ImageHandle objects.
             entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the function from the FunctionManager as the main plan.
-            dedicated_action_provider: Optional. If provided, use this action provider for the plan.
+            dedicated_computer_primitives: Optional. If provided, use this action provider for the plan.
             If not provided, use the actor's action provider instead.
         """
         self.actor = actor
@@ -1818,7 +1818,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self.entrypoint = entrypoint
         self.entrypoint_args = entrypoint_args or []
         self.entrypoint_kwargs = entrypoint_kwargs or {}
-        self.dedicated_action_provider = dedicated_action_provider
+        self.dedicated_computer_primitives = dedicated_computer_primitives
 
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
@@ -1934,11 +1934,11 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             return_full_completion=True,
         )
 
-    def _get_action_provider(self) -> ActionProvider:
+    def _get_computer_primitives(self) -> ComputerPrimitives:
         return (
-            self.dedicated_action_provider
-            if self.dedicated_action_provider is not None
-            else self.actor.action_provider
+            self.dedicated_computer_primitives
+            if self.dedicated_computer_primitives is not None
+            else self.actor.computer_primitives
         )
 
     def _set_final_result(self, result: str):
@@ -2480,19 +2480,19 @@ async def main_plan():
                     item.start_seq >= 0
                     and item.exit_seq > item.start_seq
                     and isinstance(
-                        self.actor.action_provider.browser.backend,
+                        self.actor.computer_primitives.browser.backend,
                         MagnitudeBrowserBackend,
                     )
                 ):
-                    backend = self.actor.action_provider.browser.backend
+                    backend = self.actor.computer_primitives.browser.backend
                     current_seq_cursor = item.start_seq + 1
 
                     for idx, interaction in enumerate(item.interactions):
                         if interaction[0] == "tool_call":
                             call_repr = interaction[1]
                             if (
-                                "action_provider.act" in call_repr
-                                or "action_provider.navigate" in call_repr
+                                "computer_primitives.act" in call_repr
+                                or "computer_primitives.navigate" in call_repr
                             ):
                                 target_seq = current_seq_cursor
                                 current_seq_cursor += 1
@@ -2530,12 +2530,12 @@ async def main_plan():
                         reason="Skipped verification for fully cached replay step.",
                     )
                 else:
-                    action_provider = self._get_action_provider()
+                    computer_primitives = self._get_computer_primitives()
                     if isinstance(
-                        action_provider.browser.backend,
+                        computer_primitives.browser.backend,
                         MagnitudeBrowserBackend,
                     ):
-                        await action_provider.browser.backend.barrier(
+                        await computer_primitives.browser.backend.barrier(
                             up_to_seq=item.exit_seq,
                         )
                     post_state_screenshot = item.post_state.get("screenshot")
@@ -2852,12 +2852,12 @@ async def main_plan():
                 f"verification failure targeting '{target_function_name_override}'",
             )
             await self._clear_browser_queue_for_run(run_id_being_cancelled)
-            action_provider = self._get_action_provider()
+            computer_primitives = self._get_computer_primitives()
             if hasattr(
-                action_provider.browser.backend,
+                computer_primitives.browser.backend,
                 "interrupt_current_action",
             ):
-                await action_provider.browser.backend.interrupt_current_action()
+                await computer_primitives.browser.backend.interrupt_current_action()
 
             await self._handle_dynamic_implementation(
                 function_name=target_function_name_override,
@@ -3191,7 +3191,7 @@ async def main_plan():
         This prevents stale commands from an old execution run from executing after
         the run has been cancelled and a new one has started.
         """
-        backend = self._get_action_provider().browser.backend
+        backend = self._get_computer_primitives().browser.backend
         if hasattr(backend, "clear_pending_commands"):
             try:
                 self.action_log.append(
@@ -3331,12 +3331,12 @@ async def main_plan():
             return "Cannot interject: plan not running."
 
         async with self._interject_lock:
-            action_provider = self._get_action_provider()
+            computer_primitives = self._get_computer_primitives()
             if hasattr(
-                action_provider.browser.backend,
+                computer_primitives.browser.backend,
                 "interrupt_current_action",
             ):
-                await action_provider.browser.backend.interrupt_current_action()
+                await computer_primitives.browser.backend.interrupt_current_action()
             await self.pause()
             decision = None
             try:
@@ -3618,12 +3618,12 @@ async def main_plan():
                 if self.clean_function_source_map
                 else ""
             )
-            action_provider = self._get_action_provider()
+            computer_primitives = self._get_computer_primitives()
             refactor_prompt = prompt_builders.build_refactor_prompt(
                 monolithic_code=monolithic_code,
                 generalization_request=decision.generalization_context,
                 action_log="\n".join(self.action_log),
-                current_url=await action_provider.browser.get_current_url(),
+                current_url=await computer_primitives.browser.get_current_url(),
                 tools=self.actor.tools,
             )
 
@@ -3669,7 +3669,7 @@ async def main_plan():
                 f"Executing decision: explore_detached for goal: '{decision.new_goal}'",
             )
 
-            action_provider = self._get_action_provider()
+            computer_primitives = self._get_computer_primitives()
             try:
                 try:
 
@@ -3679,18 +3679,18 @@ async def main_plan():
                             description="The index of the current tab. Return None if the tab index cannot be determined from the visible content.",
                         )
 
-                    original_tab_index = await action_provider.observe(
+                    original_tab_index = await computer_primitives.observe(
                         "Look at the browser tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
                         response_format=TabState,
                     )
-                    original_url = await action_provider.browser.get_current_url()
+                    original_url = await computer_primitives.browser.get_current_url()
                 except Exception as e:
                     self.action_log.append(f"SANDBOX: Could not record tab state: {e}")
                     original_tab_index = TabState(current_tab_index=0)
-                    original_url = await action_provider.browser.get_current_url()
+                    original_url = await computer_primitives.browser.get_current_url()
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
-                await action_provider.act(
+                await computer_primitives.act(
                     f"Open a new tab navigating to the url {original_url} and ensure the new tab is active",
                 )
 
@@ -3770,7 +3770,7 @@ async def main_plan():
                         if original_tab_index.current_tab_index is not None
                         else 0
                     )
-                    await action_provider.act(
+                    await computer_primitives.act(
                         f"Switch to tab {tab_index} which was on the url {original_url} to go back to the original tab",
                     )
                     self.action_log.append("SANDBOX: Returned to original tab")
@@ -3839,13 +3839,13 @@ async def main_plan():
             A status message.
         """
 
-        if self.dedicated_action_provider is not None:
+        if self.dedicated_computer_primitives is not None:
             try:
                 logger.info(
                     "Stopping dedicated action provider session for plan %s.",
                     self._module_name,
                 )
-                self.dedicated_action_provider.browser.stop()
+                self.dedicated_computer_primitives.browser.stop()
             except Exception as exc:
                 logger.warning(
                     "Failed to stop dedicated action provider session for plan %s: %s",
@@ -3854,7 +3854,7 @@ async def main_plan():
                     exc_info=True,
                 )
             finally:
-                self.dedicated_action_provider = None
+                self.dedicated_computer_primitives = None
 
         await self._cancel_all_background_tasks()
         if self._is_complete:
@@ -3931,9 +3931,12 @@ async def main_plan():
             _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
         ):
             if immediate:
-                action_provider = self._get_action_provider()
-                if action_provider and hasattr(action_provider.browser, "backend"):
-                    backend = action_provider.browser.backend
+                computer_primitives = self._get_computer_primitives()
+                if computer_primitives and hasattr(
+                    computer_primitives.browser,
+                    "backend",
+                ):
+                    backend = computer_primitives.browser.backend
                     if hasattr(backend, "interrupt_current_action"):
                         logger.info("⚡ Sending interrupt to browser action...")
                         await backend.interrupt_current_action()
@@ -3994,7 +3997,7 @@ async def main_plan():
             Query the browser agent's memory and action history to answer a question.
             """
             try:
-                return await self._get_action_provider().browser_query(query)
+                return await self._get_computer_primitives().browser_query(query)
             except Exception as e:
                 return f"Error querying browser: {e}"
 
@@ -4108,7 +4111,7 @@ class HierarchicalActor(BaseActor):
         self._agent_mode = agent_mode
         self._agent_server_url = agent_server_url
         self._connect_now = connect_now
-        self.action_provider = ActionProvider(
+        self.computer_primitives = ComputerPrimitives(
             session_connect_url=session_connect_url,
             headless=headless,
             browser_mode=browser_mode,
@@ -4117,12 +4120,12 @@ class HierarchicalActor(BaseActor):
             connect_now=connect_now,
         )
         self.tools = {}
-        for name in dir(self.action_provider):
+        for name in dir(self.computer_primitives):
             if not name.startswith("_"):
-                attr_descriptor = getattr(type(self.action_provider), name, None)
+                attr_descriptor = getattr(type(self.computer_primitives), name, None)
                 if isinstance(attr_descriptor, property):
                     continue
-                attr = getattr(self.action_provider, name)
+                attr = getattr(self.computer_primitives, name)
                 if callable(attr):
                     self.tools[name] = attr
         self.max_escalations = max_escalations or 2
@@ -4391,9 +4394,9 @@ class HierarchicalActor(BaseActor):
         Returns:
             An active handle to the running HierarchicalActorHandle.
         """
-        dedicated_action_provider = None
+        dedicated_computer_primitives = None
         if new_session:
-            dedicated_action_provider = ActionProvider(
+            dedicated_computer_primitives = ComputerPrimitives(
                 session_connect_url=self._session_connect_url,
                 headless=self._headless,
                 browser_mode=self._browser_mode,
@@ -4415,7 +4418,7 @@ class HierarchicalActor(BaseActor):
             entrypoint=entrypoint,
             entrypoint_args=entrypoint_args,
             entrypoint_kwargs=entrypoint_kwargs,
-            dedicated_action_provider=dedicated_action_provider,
+            dedicated_computer_primitives=dedicated_computer_primitives,
         )
         setattr(plan_handle, "__passthrough__", True)
         self._plan_handles.add(plan_handle)
@@ -4563,7 +4566,7 @@ class HierarchicalActor(BaseActor):
         plan.execution_namespace.update(sandbox_globals)
         plan.execution_namespace["_cp"] = plan.runtime.checkpoint
 
-        action_provider = plan._get_action_provider()
+        computer_primitives = plan._get_computer_primitives()
 
         async def _int(func_name: str):
             req = plan.interruption_request
@@ -4588,7 +4591,10 @@ class HierarchicalActor(BaseActor):
 
         plan.execution_namespace.update(
             {
-                "action_provider": _ActionProviderProxy(action_provider, plan),
+                "computer_primitives": _ComputerPrimitivesProxy(
+                    computer_primitives,
+                    plan,
+                ),
                 "request_clarification": request_clarification_primitive,
                 "runtime": plan.runtime,
                 "verify": self._create_verify_decorator(plan),
@@ -4611,10 +4617,10 @@ class HierarchicalActor(BaseActor):
         A reusable helper to verify the current browser state against a target
         precondition and execute a correction script if they do not match.
         """
-        action_provider = plan._get_action_provider()
+        computer_primitives = plan._get_computer_primitives()
 
         try:
-            screenshot = await action_provider.browser.get_screenshot()
+            screenshot = await computer_primitives.browser.get_screenshot()
             verification_prompt = prompt_builders.build_state_verification_prompt(
                 precondition=target_precondition,
             )
@@ -4647,7 +4653,7 @@ class HierarchicalActor(BaseActor):
                 f"STATE DRIFT for '{context_label}': {verification_decision.reason}",
             )
 
-            current_url = await action_provider.browser.get_current_url()
+            current_url = await computer_primitives.browser.get_current_url()
             correction_prompt = prompt_builders.build_proactive_correction_prompt(
                 precondition=target_precondition,
                 current_url=current_url,
@@ -4706,10 +4712,10 @@ class HierarchicalActor(BaseActor):
         if not precondition or precondition.get("status") == "not_applicable":
             return
 
-        action_provider = plan._get_action_provider()
+        computer_primitives = plan._get_computer_primitives()
 
-        if isinstance(action_provider.browser.backend, MagnitudeBrowserBackend):
-            await action_provider.browser.backend.barrier()
+        if isinstance(computer_primitives.browser.backend, MagnitudeBrowserBackend):
+            await computer_primitives.browser.backend.barrier()
 
         await self._verify_and_correct_state(
             plan=plan,
@@ -4731,10 +4737,10 @@ class HierarchicalActor(BaseActor):
         from .code_act_actor import CodeActActor
         from unity.image_manager.image_manager import ImageManager
 
-        action_provider = plan._get_action_provider()
+        computer_primitives = plan._get_computer_primitives()
 
         logger.info("[COURSE_CORRECTION] Getting current screenshot...")
-        current_screenshot = await action_provider.browser.get_screenshot()
+        current_screenshot = await computer_primitives.browser.get_screenshot()
         logger.info("[COURSE_CORRECTION] Got current screenshot.")
 
         if isinstance(current_screenshot, str):
@@ -4787,14 +4793,14 @@ class HierarchicalActor(BaseActor):
 
         **YOUR WORKFLOW:**
         1.  **Analyze:** Review the injected image overview (tool result) in the transcript that lists all available images with their annotations and metadata. Compare them to determine if a correction is needed. If they are the same, you are done.
-        2.  **Plan & Execute:** Write Python code using the `action_provider` to reverse the trajectory. This may take multiple steps. After each step, you will receive new visual feedback to guide your next action.
+        2.  **Plan & Execute:** Write Python code using the `computer_primitives` to reverse the trajectory. This may take multiple steps. After each step, you will receive new visual feedback to guide your next action.
         3.  **Complete:** When the browser state visually matches the target state, your work is done.
         """
 
         logger.info("COURSE CORRECTION: Starting recovery sub-agent...")
 
         correction_agent = CodeActActor(
-            action_provider=action_provider,
+            computer_primitives=computer_primitives,
             timeout=300,
         )
 
@@ -4825,7 +4831,7 @@ class HierarchicalActor(BaseActor):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
-                action_provider = plan._get_action_provider()
+                computer_primitives = plan._get_computer_primitives()
                 while True:
                     context_rid = current_run_id_var.get()
                     plan_rid = plan.run_id
@@ -4885,16 +4891,16 @@ class HierarchicalActor(BaseActor):
                     #     await self._ensure_precondition(plan, func_name)
 
                     pre_state = {
-                        "url": await action_provider.browser.get_current_url(),
-                        "screenshot": await action_provider.browser.get_screenshot(),
+                        "url": await computer_primitives.browser.get_current_url(),
+                        "screenshot": await computer_primitives.browser.get_screenshot(),
                     }
 
                     start_seq = -1
                     if isinstance(
-                        action_provider.browser.backend,
+                        computer_primitives.browser.backend,
                         MagnitudeBrowserBackend,
                     ):
-                        start_seq = action_provider.browser.backend.current_seq
+                        start_seq = computer_primitives.browser.backend.current_seq
 
                     last_error_reason = ""
                     result = None
@@ -5086,14 +5092,14 @@ class HierarchicalActor(BaseActor):
 
                         exit_seq = -1
                         if isinstance(
-                            action_provider.browser.backend,
+                            computer_primitives.browser.backend,
                             MagnitudeBrowserBackend,
                         ):
-                            exit_seq = action_provider.browser.backend.current_seq
+                            exit_seq = computer_primitives.browser.backend.current_seq
 
                         post_state = {
-                            "url": await action_provider.browser.get_current_url(),
-                            "screenshot": await action_provider.browser.get_screenshot(),
+                            "url": await computer_primitives.browser.get_current_url(),
+                            "screenshot": await computer_primitives.browser.get_screenshot(),
                         }
 
                         if plan.runtime.cache_miss_counter:
@@ -5251,7 +5257,7 @@ class HierarchicalActor(BaseActor):
                     initial_references.add(node.value.id)
 
             common_non_lib_names = {
-                "action_provider",
+                "computer_primitives",
                 "asyncio",
                 "print",
                 "verify",
@@ -5481,7 +5487,9 @@ class HierarchicalActor(BaseActor):
 
             browser_screenshot = None
             try:
-                browser_screenshot = await self.action_provider.browser.get_screenshot()
+                browser_screenshot = (
+                    await self.computer_primitives.browser.get_screenshot()
+                )
             except Exception as e:
                 logger.warning(f"Could not get browser screenshot: {e}")
 
@@ -5530,7 +5538,7 @@ class HierarchicalActor(BaseActor):
             recent_transcript = None
             try:
                 # TODO: Add this in case the plan needs the full transcript as context(https://app.clickup.com/t/86c4unzg9)
-                # recent_transcript = await self.action_provider.transcript_manager.ask(
+                # recent_transcript = await self.computer_primitives.transcript_manager.ask(
                 #     "Provide a summary of the most recent conversational turns."
                 # )
                 pass
@@ -5640,7 +5648,7 @@ class HierarchicalActor(BaseActor):
         recent_transcript = None
         try:
             # TODO: Add this in case the plan needs the full transcript as context(https://app.clickup.com/t/86c4unzg9)
-            # recent_transcript = await self.action_provider.transcript_manager.ask(
+            # recent_transcript = await self.computer_primitives.transcript_manager.ask(
             #     "Provide a summary of the most recent conversational turns."
             # )
             pass
@@ -5759,5 +5767,5 @@ class HierarchicalActor(BaseActor):
         plan: HierarchicalActorHandle = None
         for plan in self._plan_handles:
             await plan.stop()
-        self.action_provider.browser.stop()
+        self.computer_primitives.browser.stop()
         self._plan_handles.clear()

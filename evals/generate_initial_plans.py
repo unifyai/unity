@@ -86,7 +86,7 @@ def patched_build_initial_plan_prompt(
         4. **Entry Point**: The main entry point MUST be `async def main_plan()`.
         5. **No Imports**: You MUST NOT use any `import` statements. All needed modules are pre-imported.
         6. **Async Functions**: All functions MUST be `async def`.
-        7. **Await Calls**: All `action_provider` methods that are async MUST be called with `await`.
+        7. **Await Calls**: All `computer_primitives` methods that are async MUST be called with `await`.
         8. **Structured Output**: Use Pydantic BaseModel for structured data extraction.
         9. **Error Handling**: Include proper try/except blocks for error handling.
 
@@ -117,7 +117,7 @@ def patched_build_initial_plan_prompt(
 
         ---
         ### Tools Reference
-        You have access to a global `action_provider` object with these methods:
+        You have access to a global `computer_primitives` object with these methods:
         ```json
         {tool_reference}
         ```
@@ -136,7 +136,7 @@ def patched_build_initial_plan_prompt(
         @verify
         async def send_confirmation_sms():
             # First, await the tool to get the interactive handle.
-            sms_handle = await action_provider.send_sms_message("Text Jane Doe to confirm her 3pm appointment")
+            sms_handle = await computer_primitives.send_sms_message("Text Jane Doe to confirm her 3pm appointment")
 
             # You can now interact with the handle if needed, or just get the final result.
             confirmation = await sms_handle.result()
@@ -148,7 +148,7 @@ def patched_build_initial_plan_prompt(
         @verify
         async def make_appointment_followup_call():
             # Note: start_call is synchronous and returns a Call handle immediately
-            call_handle = action_provider.start_call(
+            call_handle = computer_primitives.start_call(
                 phone_number="+1234567890",
                 purpose="Follow up with patient about their upcoming appointment on Friday at 2 PM and confirm they received the pre-appointment instructions"
             )
@@ -170,7 +170,7 @@ def patched_build_initial_plan_prompt(
                 notes: str = Field(description="Any additional notes from the conversation")
 
             # Analyze the call transcript
-            analysis = await action_provider.reason(
+            analysis = await computer_primitives.reason(
                 request="Extract the key outcomes from this phone call transcript",
                 context=call_result,
                 response_format=CallOutcome
@@ -183,10 +183,10 @@ def patched_build_initial_plan_prompt(
         ```python
         @verify
         async def check_unify_blog():
-            # The browser object can be used directly from the action_provider
-            await action_provider.browser_act("Navigate to unify.ai")
-            await action_provider.browser_act("Click the 'Blog' link in the main navigation")
-            blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
+            # The browser object can be used directly from the computer_primitives
+            await computer_primitives.browser_act("Navigate to unify.ai")
+            await computer_primitives.browser_act("Click the 'Blog' link in the main navigation")
+            blog_title = await computer_primitives.browser_observe("What is the title of the first blog post?")
             return blog_title
         ```
 
@@ -197,9 +197,9 @@ def patched_build_initial_plan_prompt(
         @verify
         async def login_to_portal():
             # This part is simple and can be implemented directly.
-            await action_provider.browser_act("Navigate to [https://portal.example.com/login](https://portal.example.com/login)")
-            await action_provider.browser_act("Enter 'user@example.com' into the email field")
-            await action_provider.browser_act("Click the 'Next' button")
+            await computer_primitives.browser_act("Navigate to [https://portal.example.com/login](https://portal.example.com/login)")
+            await computer_primitives.browser_act("Enter 'user@example.com' into the email field")
+            await computer_primitives.browser_act("Click the 'Next' button")
 
         @verify
         async def scrape_user_dashboard():
@@ -233,7 +233,7 @@ def patched_build_initial_plan_prompt(
         @verify
         async def extract_search_results():
             # Observe the page to extract structured product data
-            results = await action_provider.browser_observe(
+            results = await computer_primitives.browser_observe(
                 "List all visible products on this search results page with their prices and availability status. Also note the total result count.",
                 response_format=SearchResults
             )
@@ -265,7 +265,7 @@ def patched_build_initial_plan_prompt(
         @verify
         async def fill_checkout_form():
             # First, analyze what's on the form
-            form_info = await action_provider.browser_observe(
+            form_info = await computer_primitives.browser_observe(
                 "Analyze this form page. What is the title, what fields are visible, and what does the submit button say?",
                 response_format=FormAnalysis
             )
@@ -274,18 +274,18 @@ def patched_build_initial_plan_prompt(
             for field in form_info.fields:
                 if field.is_required and field.field_type == "text":
                     if "email" in field.label.lower():
-                        await action_provider.browser_act(
+                        await computer_primitives.browser_act(
                             f"Click on the text field labeled '{{field.label}}' and type 'user@example.com'",
                             "The email field should now contain 'user@example.com'"
                         )
                     elif "name" in field.label.lower():
-                        await action_provider.browser_act(
+                        await computer_primitives.browser_act(
                             f"Click on the text field labeled '{{field.label}}' and type 'John Doe'",
                             "The name field should now contain 'John Doe'"
                         )
 
             # Submit using the exact button text we observed
-            await action_provider.browser_act(
+            await computer_primitives.browser_act(
                 f"Click the '{{form_info.submit_button_text}}' button",
                 "The form should be submitted and we should see a confirmation page"
             )
@@ -300,7 +300,7 @@ def patched_build_initial_plan_prompt(
         @verify
         async def summarize_article(article_text: str):
             # Use the reason tool for analysis and structured extraction.
-            result = await action_provider.reason(
+            result = await computer_primitives.reason(
                 request="Summarize the provided article, extracting key topics.",
                 context=article_text,
                 response_format=Summary
@@ -333,7 +333,7 @@ def post_process_generated_code(code: str) -> str:
     Post-process the generated code to:
     1. Remove @verify decorators
     2. Ensure required imports are at the top
-    3. Ensure action_provider initialization is present after imports
+    3. Ensure computer_primitives initialization is present after imports
     """
     # Remove @verify decorators
     code = re.sub(r"@verify\s*\n", "", code)
@@ -364,7 +364,7 @@ def post_process_generated_code(code: str) -> str:
         "import re",
         "from pydantic import BaseModel, Field",
         "from typing import List, Optional",
-        "from unity.actor.action_provider import ActionProvider",
+        "from unity.actor.computer_primitives import ComputerPrimitives",
     ]
 
     # Check which imports are missing
@@ -389,10 +389,12 @@ def post_process_generated_code(code: str) -> str:
                 # Check if typing imports exist
                 if "from typing import" not in existing_imports_text:
                     imports_to_add.append(imp)
-            elif imp == "from unity.actor.action_provider import ActionProvider":
-                # Check if ActionProvider import exists
+            elif (
+                imp == "from unity.actor.computer_primitives import ComputerPrimitives"
+            ):
+                # Check if ComputerPrimitives import exists
                 if (
-                    "from unity.actor.action_provider import ActionProvider"
+                    "from unity.actor.computer_primitives import ComputerPrimitives"
                     not in existing_imports_text
                 ):
                     imports_to_add.append(imp)
@@ -412,21 +414,24 @@ def post_process_generated_code(code: str) -> str:
     if final_lines:
         final_lines.append("")
 
-    # Add action_provider initialization
-    final_lines.append("action_provider = ActionProvider()")
+    # Add computer_primitives initialization
+    final_lines.append("computer_primitives = ComputerPrimitives()")
     final_lines.append("")
 
-    # Check if action_provider initialization already exists in code_lines
-    has_action_provider = any(
-        "action_provider = ActionProvider()" in line for line in code_lines
+    # Check if computer_primitives initialization already exists in code_lines
+    has_computer_primitives = any(
+        "computer_primitives = ComputerPrimitives()" in line for line in code_lines
     )
 
-    # Add the rest of the code, skipping any existing action_provider initialization
+    # Add the rest of the code, skipping any existing computer_primitives initialization
     for line in code_lines:
-        if "action_provider = ActionProvider()" not in line or not has_action_provider:
+        if (
+            "computer_primitives = ComputerPrimitives()" not in line
+            or not has_computer_primitives
+        ):
             final_lines.append(line)
-        if "action_provider = ActionProvider()" in line:
-            has_action_provider = True  # Mark that we've seen it
+        if "computer_primitives = ComputerPrimitives()" in line:
+            has_computer_primitives = True  # Mark that we've seen it
 
     # Join and clean up
     result = "\n".join(final_lines)

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from unity.guidance_manager.guidance_manager import GuidanceManager
     from unity.web_searcher.web_searcher import WebSearcher
     from unity.skill_manager.skill_manager import SkillManager
-    from unity.actor.action_provider import ActionProvider
+    from unity.actor.computer_primitives import ComputerPrimitives
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +73,9 @@ PRIMITIVE_SOURCES: List[Tuple[str, List[str]]] = [
         "unity.skill_manager.skill_manager.SkillManager",
         ["ask"],
     ),
-    # ActionProvider browser/reasoning methods
+    # ComputerPrimitives browser/reasoning methods
     (
-        "unity.actor.action_provider.ActionProvider",
+        "unity.actor.computer_primitives.ComputerPrimitives",
         ["navigate", "act", "observe", "query", "reason"],
     ),
 ]
@@ -212,17 +212,17 @@ def compute_primitives_hash(primitives: Dict[str, Dict[str, Any]]) -> str:
 
 def get_primitive_callable(
     primitive_data: Dict[str, Any],
-    action_provider: Optional[Any] = None,
+    computer_primitives: Optional[Any] = None,
 ) -> Optional[Callable]:
     """
     Resolve a primitive metadata dict to its actual callable.
 
-    For ActionProvider methods, uses the provided action_provider instance.
+    For ComputerPrimitives methods, uses the provided computer_primitives instance.
     For state manager methods, instantiates the manager (singletons).
 
     Args:
         primitive_data: Primitive metadata with primitive_class and primitive_method.
-        action_provider: ActionProvider instance (required for ActionProvider primitives).
+        computer_primitives: ComputerPrimitives instance (required for ComputerPrimitives primitives).
 
     Returns:
         The callable method, or None if resolution fails.
@@ -233,14 +233,14 @@ def get_primitive_callable(
     if not class_path or not method_name:
         return None
 
-    # Special case: ActionProvider methods use the provided instance
-    if "ActionProvider" in class_path:
-        if action_provider is None:
+    # Special case: ComputerPrimitives methods use the provided instance
+    if "ComputerPrimitives" in class_path:
+        if computer_primitives is None:
             logger.warning(
-                f"Cannot resolve ActionProvider primitive without action_provider instance",
+                f"Cannot resolve ComputerPrimitives primitive without computer_primitives instance",
             )
             return None
-        return getattr(action_provider, method_name, None)
+        return getattr(computer_primitives, method_name, None)
 
     # State managers: instantiate (they're singletons)
     cls = _import_class(class_path)
@@ -288,7 +288,7 @@ class Primitives:
         self._guidance: Optional["GuidanceManager"] = None
         self._web: Optional["WebSearcher"] = None
         self._skills: Optional["SkillManager"] = None
-        self._computer: Optional["ActionProvider"] = None
+        self._computer: Optional["ComputerPrimitives"] = None
 
     @property
     def contacts(self) -> "ContactManager":
@@ -363,7 +363,7 @@ class Primitives:
         return self._skills
 
     @property
-    def computer(self) -> "ActionProvider":
+    def computer(self) -> "ComputerPrimitives":
         """
         Computer use primitives (navigate, act, observe, query, reason).
 
@@ -372,7 +372,7 @@ class Primitives:
         computer use won't load browser/desktop infrastructure.
         """
         if self._computer is None:
-            from unity.actor.action_provider import ActionProvider
+            from unity.actor.computer_primitives import ComputerPrimitives
 
-            self._computer = ActionProvider()
+            self._computer = ComputerPrimitives()
         return self._computer

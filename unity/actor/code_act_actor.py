@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Callable, Awaitable
 
 from unity.actor.base import BaseActor
 from unity.actor.handle import ActorHandle
-from unity.actor.action_provider import ActionProvider
+from unity.actor.computer_primitives import ComputerPrimitives
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
@@ -16,19 +16,19 @@ from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
 
 def build_code_act_system_prompt(
-    action_provider: ActionProvider,
+    computer_primitives: ComputerPrimitives,
 ) -> str:
     """Builds the rich system prompt for the CodeActActor with enhanced quality."""
 
-    rules_and_examples = _build_code_act_rules_and_examples(action_provider)
+    rules_and_examples = _build_code_act_rules_and_examples(computer_primitives)
 
     execute_tool = {
         "execute_python_code": {
             "signature": "async def execute_python_code(thought: str, code: str) -> Any",
             "docstring": (
                 "Executes a block of Python code in a stateful sandbox and returns the result.\n"
-                "You have access to an `action_provider` object to control a web browser and send communications.\n"
-                "All variables are preserved between calls. The sandbox is asynchronous - use await for all action_provider methods."
+                "You have access to an `computer_primitives` object to control a web browser and send communications.\n"
+                "All variables are preserved between calls. The sandbox is asynchronous - use await for all computer_primitives methods."
             ),
         },
     }
@@ -55,19 +55,19 @@ class CodeExecutionSandbox:
     capturing stdout, stderr, return values, and exceptions in a structured format.
     """
 
-    def __init__(self, action_provider: Optional[ActionProvider] = None):
+    def __init__(self, computer_primitives: Optional[ComputerPrimitives] = None):
         """
         Initializes the sandbox.
 
         Args:
-            action_provider: An instance of ActionProvider to be injected into the
+            computer_primitives: An instance of ComputerPrimitives to be injected into the
                              sandbox's global state, making browser tools available.
         """
         from unity.common.sandbox_utils import create_execution_globals
 
         self.global_state: Dict[str, Any] = create_execution_globals()
-        if action_provider:
-            self.global_state["action_provider"] = action_provider
+        if computer_primitives:
+            self.global_state["computer_primitives"] = computer_primitives
 
     async def execute(self, code: str) -> Dict[str, Any]:
         """
@@ -157,26 +157,28 @@ class CodeActActor(BaseActor):
         timeout: float = 1000,
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
-        action_provider: Optional["ActionProvider"] = None,
+        computer_primitives: Optional["ComputerPrimitives"] = None,
     ):
         """
         Initializes the CodeActActor.
 
         Args:
-            action_provider: Optional existing ActionProvider instance to reuse.
+            computer_primitives: Optional existing ComputerPrimitives instance to reuse.
                            If provided, other browser-related params are ignored.
         """
-        if action_provider is not None:
-            self._action_provider = action_provider
+        if computer_primitives is not None:
+            self._computer_primitives = computer_primitives
         else:
-            self._action_provider = ActionProvider(
+            self._computer_primitives = ComputerPrimitives(
                 session_connect_url=session_connect_url,
                 headless=headless,
                 browser_mode=browser_mode,
                 agent_mode=agent_mode,
                 agent_server_url=agent_server_url,
             )
-        self._sandbox = CodeExecutionSandbox(action_provider=self._action_provider)
+        self._sandbox = CodeExecutionSandbox(
+            computer_primitives=self._computer_primitives,
+        )
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
         self._tools = self._build_tools()
@@ -188,11 +190,11 @@ class CodeActActor(BaseActor):
             pass
 
     def _get_browser_tools(self) -> Dict[str, Callable]:
-        """Extracts browser-related methods from the ActionProvider."""
+        """Extracts browser-related methods from the ComputerPrimitives."""
         return {
-            "navigate": self._action_provider.navigate,
-            "act": self._action_provider.act,
-            "observe": self._action_provider.observe,
+            "navigate": self._computer_primitives.navigate,
+            "act": self._computer_primitives.act,
+            "observe": self._computer_primitives.observe,
         }
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
@@ -234,9 +236,9 @@ class CodeActActor(BaseActor):
             ]
             if any(keyword in code for keyword in browser_action_keywords):
                 try:
-                    url = await self._action_provider.browser.get_current_url()
+                    url = await self._computer_primitives.browser.get_current_url()
                     screenshot_b64 = (
-                        await self._action_provider.browser.get_screenshot()
+                        await self._computer_primitives.browser.get_screenshot()
                     )
 
                     browser_state_summary = f"--- BROWSER STATE ---\nURL: {url}"
@@ -273,7 +275,7 @@ class CodeActActor(BaseActor):
             "wait for the user to provide instructions via interjection."
         )
         system_prompt = build_code_act_system_prompt(
-            self._action_provider,
+            self._computer_primitives,
         )
         handle = ActorHandle(
             task_description=description or initial_prompt,
@@ -286,12 +288,12 @@ class CodeActActor(BaseActor):
             persist=is_interactive_session,
             custom_system_prompt=system_prompt,
             tool_policy=None,
-            action_provider=self._action_provider,
+            computer_primitives=self._computer_primitives,
             images=images,
         )
         return handle
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
-        if self._action_provider:
-            self._action_provider.browser.stop()
+        if self._computer_primitives:
+            self._computer_primitives.browser.stop()

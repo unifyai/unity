@@ -31,9 +31,11 @@ async def test_enforces_single_session(
     )
 
     # Keep the actor lightweight and deterministic
-    real_actor.action_provider.navigate = AsyncMock(return_value=None)
-    real_actor.action_provider.act = AsyncMock(return_value=None)
-    real_actor.action_provider.observe = AsyncMock(return_value="Mocked Page Heading")
+    real_actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    real_actor.computer_primitives.act = AsyncMock(return_value=None)
+    real_actor.computer_primitives.observe = AsyncMock(
+        return_value="Mocked Page Heading",
+    )
 
     class _NoKeychainBrowser:
         def __init__(self):
@@ -45,7 +47,7 @@ async def test_enforces_single_session(
         async def get_screenshot(self) -> str:
             return ""
 
-    real_actor.action_provider._browser = _NoKeychainBrowser()
+    real_actor.computer_primitives._browser = _NoKeychainBrowser()
 
     # Wrap HierarchicalActor.act to signal once scheduled so we can coordinate.
     # IMPORTANT: Patch before Conductor is constructed so the tool mapping captures it.
