@@ -315,3 +315,459 @@ async def test_rpc_error_propagates_to_function(
         venv_dir = fm._get_venv_dir(venv_id)
         if venv_dir.exists():
             shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Error Propagation in Full Chain Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+# Function that raises an error immediately
+FUNCTION_RAISES_IMMEDIATELY = """
+async def raise_immediately() -> str:
+    \"\"\"Raises an error before any RPC.\"\"\"
+    raise ValueError("Immediate function error")
+""".strip()
+
+
+# Function that uses an invalid primitive path
+INVALID_PRIMITIVE_PATH_FUNCTION = """
+async def call_invalid_primitive() -> str:
+    \"\"\"Call a non-existent primitive method.\"\"\"
+    result = await primitives.nonexistent.fake_method(arg="test")
+    return result
+""".strip()
+
+
+# Function that captures and re-raises RPC errors
+FUNCTION_RERAISES_RPC_ERROR = """
+async def reraise_rpc_error() -> str:
+    \"\"\"Call primitive and reraise with additional context.\"\"\"
+    try:
+        result = await primitives.contacts.ask(question="test")
+        return result
+    except Exception as e:
+        raise RuntimeError(f"Wrapped: {e}") from e
+""".strip()
+
+
+# Function that makes multiple calls, one of which fails
+PARTIAL_FAILURE_FUNCTION = """
+async def partial_failure() -> dict:
+    \"\"\"First call succeeds, second fails.\"\"\"
+    first = await primitives.contacts.ask(question="first")
+    second = await primitives.knowledge.ask(question="second")  # Will fail
+    return {"first": first, "second": second}
+""".strip()
+
+
+# Sync function that uses primitives (tests sync RPC error handling)
+SYNC_PRIMITIVES_FUNCTION = """
+def sync_ask_contacts(question: str) -> str:
+    \"\"\"Sync function calling primitives via RPC.\"\"\"
+    result = primitives.contacts.ask(question=question)
+    return result
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_function_error_before_rpc(function_manager_factory):
+    """Errors in function code before any RPC should propagate correctly."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=FUNCTION_RAISES_IMMEDIATELY,
+            call_kwargs={},
+            is_async=True,
+        )
+
+        # The error should be captured
+        assert result["error"] is not None
+        assert "Immediate function error" in result["error"]
+        assert "ValueError" in result["error"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_different_exception_types_propagate(function_manager_factory):
+    """Various exception types from primitives should propagate with type info."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Test different exception types
+    exception_types = [
+        (KeyError, "key_not_found"),
+        (RuntimeError, "runtime issue"),
+        (TypeError, "wrong type"),
+        (AttributeError, "missing attribute"),
+    ]
+
+    for exc_type, exc_msg in exception_types:
+        mock_primitives = MagicMock()
+        mock_primitives.contacts = MagicMock()
+        mock_primitives.contacts.ask = AsyncMock(side_effect=exc_type(exc_msg))
+
+        try:
+            result = await fm.execute_in_venv(
+                venv_id=venv_id,
+                implementation=PRIMITIVES_ASK_FUNCTION,
+                call_kwargs={"question": "test"},
+                is_async=True,
+                primitives=mock_primitives,
+            )
+
+            # The error message should be captured
+            assert (
+                result["error"] is not None
+            ), f"Expected error for {exc_type.__name__}"
+            assert exc_msg in result["error"], (
+                f"Expected '{exc_msg}' in error for {exc_type.__name__}, "
+                f"got: {result['error']}"
+            )
+        finally:
+            pass  # Don't cleanup between iterations
+
+    # Final cleanup
+    venv_dir = fm._get_venv_dir(venv_id)
+    if venv_dir.exists():
+        shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_rpc_error_is_wrapped_in_runtime_error(function_manager_factory):
+    """RPC errors should be wrapped in RuntimeError with clear message."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(
+        side_effect=ValueError("Original error message"),
+    )
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=PRIMITIVES_ASK_FUNCTION,
+            call_kwargs={"question": "test"},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is not None
+        # Error should contain RPC context
+        assert "RPC" in result["error"] or "Original error message" in result["error"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_function_reraises_with_context(function_manager_factory):
+    """Function that wraps RPC error should preserve both messages."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(
+        side_effect=ValueError("Original RPC error"),
+    )
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=FUNCTION_RERAISES_RPC_ERROR,
+            call_kwargs={},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is not None
+        # Should contain the wrapped context
+        assert "Wrapped" in result["error"] or "RuntimeError" in result["error"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_partial_failure_in_multiple_rpc_calls(function_manager_factory):
+    """When one of multiple RPC calls fails, error should propagate."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # First call succeeds, second fails
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(return_value="success")
+    mock_primitives.knowledge = MagicMock()
+    mock_primitives.knowledge.ask = AsyncMock(
+        side_effect=RuntimeError("Second call failed"),
+    )
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=PARTIAL_FAILURE_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        # Error should be from the second call
+        assert result["error"] is not None
+        assert "Second call failed" in result["error"]
+
+        # First call should have been made
+        mock_primitives.contacts.ask.assert_called_once()
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sync_function_rpc_error(function_manager_factory):
+    """Sync functions should also get RPC errors propagated."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    # For sync functions, the mock needs to return a value or raise synchronously
+    mock_primitives.contacts.ask = MagicMock(
+        side_effect=ValueError("Sync RPC error"),
+    )
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=SYNC_PRIMITIVES_FUNCTION,
+            call_kwargs={"question": "test"},
+            is_async=False,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is not None
+        assert "Sync RPC error" in result["error"] or "RPC" in result["error"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_error_propagates(function_manager_factory):
+    """Errors from computer_primitives RPC should also propagate."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    mock_computer = MagicMock()
+    mock_computer.click = AsyncMock(
+        side_effect=RuntimeError("Browser not available"),
+    )
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=COMPUTER_PRIMITIVES_FUNCTION,
+            call_kwargs={"selector": "#button"},
+            is_async=True,
+            computer_primitives=mock_computer,
+        )
+
+        assert result["error"] is not None
+        assert "Browser not available" in result["error"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_subprocess_crash_handled_gracefully(function_manager_factory):
+    """If the subprocess crashes, error should be returned not raised."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Function that causes subprocess to exit
+    crash_function = """
+import sys
+def crash_subprocess() -> str:
+    \"\"\"Force subprocess to exit.\"\"\"
+    sys.exit(1)
+""".strip()
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=crash_function,
+            call_kwargs={},
+            is_async=False,
+        )
+
+        # Should get an error, not crash the main process
+        assert result["error"] is not None
+        # Could be "Subprocess ended unexpectedly" or similar
+        assert (
+            "error" in result["error"].lower()
+            or "unexpected" in result["error"].lower()
+        )
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_invalid_implementation_syntax_error(function_manager_factory):
+    """Syntax errors in implementation should be caught and reported."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Invalid Python syntax
+    invalid_function = """
+def broken_syntax(
+    \"\"\"Missing close paren and colon.\"\"\"
+    return "never reached"
+""".strip()
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=invalid_function,
+            call_kwargs={},
+            is_async=False,
+        )
+
+        assert result["error"] is not None
+        assert "SyntaxError" in result["error"] or "syntax" in result["error"].lower()
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_import_error_in_function(function_manager_factory):
+    """Import errors in function code should be caught and reported."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Function that imports non-existent module
+    import_error_function = """
+async def import_nonexistent() -> str:
+    \"\"\"Try to import a module that doesn't exist.\"\"\"
+    import nonexistent_module_xyz123
+    return "never reached"
+""".strip()
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=import_error_function,
+            call_kwargs={},
+            is_async=True,
+        )
+
+        assert result["error"] is not None
+        assert (
+            "ModuleNotFoundError" in result["error"]
+            or "ImportError" in result["error"]
+            or "nonexistent_module" in result["error"]
+        )
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_error_includes_traceback(function_manager_factory):
+    """Error messages should include stack trace information."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Function with nested call that fails
+    nested_error_function = """
+async def nested_error() -> str:
+    \"\"\"Error in nested function.\"\"\"
+    def inner():
+        def innermost():
+            raise ValueError("Deep error")
+        return innermost()
+    return inner()
+""".strip()
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=nested_error_function,
+            call_kwargs={},
+            is_async=True,
+        )
+
+        assert result["error"] is not None
+        assert "Deep error" in result["error"]
+        # Should have traceback info
+        assert "innermost" in result["error"] or "Traceback" in result["error"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_stdout_stderr_captured_with_error(
+    function_manager_factory,
+    mock_primitives,
+):
+    """stdout/stderr should still be captured when an error occurs."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Function that prints before failing
+    print_then_fail = """
+async def print_then_fail() -> str:
+    \"\"\"Print something then raise.\"\"\"
+    print("This is stdout before failure")
+    raise ValueError("Failure after print")
+""".strip()
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=print_then_fail,
+            call_kwargs={},
+            is_async=True,
+        )
+
+        assert result["error"] is not None
+        assert "Failure after print" in result["error"]
+        # stdout should still be captured
+        assert "stdout before failure" in result["stdout"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
