@@ -5,15 +5,19 @@ tests/test_conversation_manager/conftest.py
 Fixtures for conversation manager integration tests.
 
 Sets up:
-- Redis server (default port 6379)
+- Redis server (dynamic port to support parallel test runs)
 - Conversation manager process
 - Event capture utilities
+
+IMPORTANT: These tests are compatible with `-t` per-test parallelism because
+each test gets its own Redis server on a unique port.
 """
 
 import asyncio
 import os
 import pytest
 import pytest_asyncio
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -27,6 +31,13 @@ from unity.conversation_manager.events import (
 )
 
 
+def _find_free_port() -> int:
+    """Find an available port by binding to port 0 and reading the assigned port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 # ============================================================================
 # Redis Server Management
 # ============================================================================
@@ -35,14 +46,17 @@ from unity.conversation_manager.events import (
 @pytest.fixture(scope="module")
 def redis_server():
     """
-    Start a Redis server on the default port (6379).
+    Start a Redis server on a dynamically allocated port.
 
-    Note: Make sure no other Redis instance is running on this port.
+    This enables parallel test execution with `-t` flag since each test
+    module gets its own Redis instance on a unique port.
     """
-    # Start redis-server (uses default port 6379)
+    redis_port = _find_free_port()
     redis_proc = subprocess.Popen(
         [
             "redis-server",
+            "--port",
+            str(redis_port),
             "--save",
             "",
             "--appendonly",
@@ -58,21 +72,21 @@ def redis_server():
             # Use sync Redis client for the health check
             import redis as redis_sync
 
-            test_client = redis_sync.Redis(decode_responses=False)
+            test_client = redis_sync.Redis(port=redis_port, decode_responses=False)
             test_client.ping()
             test_client.close()
-            print(f"✓ Redis server started")
+            print(f"✓ Redis server started on port {redis_port}")
             break
         except (redis_sync.ConnectionError, redis_sync.ResponseError):
             if i == 49:
                 redis_proc.kill()
-                raise RuntimeError("Redis failed to start")
+                raise RuntimeError(f"Redis failed to start on port {redis_port}")
             time.sleep(0.1)
 
-    yield
+    yield redis_port
 
     # Cleanup: Stop Redis
-    print(f"\n✓ Stopping Redis server")
+    print(f"\n✓ Stopping Redis server (port {redis_port})")
     redis_proc.terminate()
     try:
         redis_proc.wait(timeout=5)
@@ -89,7 +103,7 @@ def redis_server():
 @pytest_asyncio.fixture
 async def test_redis_client(redis_server):
     """Redis client for publishing events in tests."""
-    client = redis.Redis()
+    client = redis.Redis(port=redis_server)
     yield client
     await client.aclose()
 
@@ -194,8 +208,7 @@ async def event_capture(redis_server):
     Creates its own Redis client to avoid event loop conflicts with
     module-scoped fixtures.
     """
-    # Create a dedicated Redis client for this event capture instance
-    client = redis.Redis()
+    client = redis.Redis(port=redis_server)
     capture = EventCapture(client)
     await capture.start_capturing(["app:comms:*", "app:conductor:*", "app:managers:*"])
     yield capture
@@ -219,6 +232,7 @@ async def conversation_manager_process(redis_server):
             "JOB_NAME": "test_job",
             "UNIFY_CACHE": "true",
             "TEST": "true",
+            "REDIS_PORT": str(redis_server),
         },
     )
 
@@ -239,7 +253,9 @@ async def conversation_manager_process(redis_server):
             break
         time.sleep(0.5)
 
-    print(f"✓ Conversation manager started (PID: {cm_proc.pid})")
+    print(
+        f"✓ Conversation manager started (PID: {cm_proc.pid}, Redis port: {redis_server})",
+    )
 
     yield cm_proc
 
@@ -271,8 +287,7 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
 
     Returns: cm_process
     """
-    # Create a temporary Redis client just for initialization
-    temp_client = redis.Redis()
+    temp_client = redis.Redis(port=redis_server)
 
     startup = StartupEvent(
         api_key=os.getenv("UNIFY_KEY", "test_key"),
