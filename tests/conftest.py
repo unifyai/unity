@@ -432,19 +432,28 @@ def _normalize_pytest_nodeid(nodeid):
 
 
 def pytest_runtest_call(item):
+    import types
+
     func_name = item.originalname
+
+    # For class-based tests, item.obj is a bound method. We need to access
+    # the underlying function via __func__ to set/get attributes.
+    target_obj = item.obj
+    if isinstance(target_obj, types.MethodType):
+        target_obj = target_obj.__func__
+
     if "[" in item.nodeid:  # Any parametrization (markers, fixtures, etc.)
         # Need to keep track of invocation count for parametrized tests
         # In case of a later failure.
-        current_count = getattr(item.obj, "_unity_pytest_invocation_count", 0)
-        setattr(item.obj, "_unity_pytest_invocation_count", current_count + 1)
+        current_count = getattr(target_obj, "_unity_pytest_invocation_count", 0)
+        setattr(target_obj, "_unity_pytest_invocation_count", current_count + 1)
 
         normalized_id = _normalize_pytest_nodeid(item.nodeid)
         if normalized_id is None:
             normalized_id = f"_{current_count}_"
         func_name = f"{func_name}/{normalized_id}"
 
-    setattr(item.obj, "_unity_pytest_nodeid", func_name)
+    setattr(target_obj, "_unity_pytest_nodeid", func_name)
 
 
 def pytest_runtest_teardown(item):
