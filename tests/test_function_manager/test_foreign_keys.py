@@ -5,14 +5,13 @@ Coverage
 ========
 ✓ guidance_ids[*] → Guidance.guidance_id (nested array FK)
   - Validation: Reject invalid guidance_ids on function creation
-  - SET NULL: Remove deleted guidance IDs from function.guidance_ids array
+  - CASCADE: Remove deleted guidance IDs from function.guidance_ids array
   - CASCADE: Update guidance_id changes in function.guidance_ids array
   - Array operations: Multiple guidance references, empty arrays
 """
 
 from __future__ import annotations
 
-import pytest
 import unify
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
@@ -69,12 +68,9 @@ def test_fk_guidance_ids_valid_reference():
     assert sorted(stored_guidance_ids) == g_ids
 
 
-@pytest.mark.skip(
-    reason="Nested foreign keys (array refs) not yet supported on backend",
-)
 @_handle_project
-def test_fk_guidance_ids_set_null_on_delete():
-    """Test SET NULL: Deleting guidance removes it from function.guidance_ids array."""
+def test_fk_guidance_ids_cascade_on_delete():
+    """Test nested CASCADE: Deleting guidance removes it from function.guidance_ids array."""
     gm = GuidanceManager()
     fm = FunctionManager()
 
@@ -120,7 +116,7 @@ def test_fk_guidance_ids_set_null_on_delete():
     # Delete the middle guidance entry (g2)
     gm._delete_guidance(guidance_id=g2)
 
-    # Verify g2 was removed from function.guidance_ids (SET NULL behavior)
+    # Verify g2 was removed from function.guidance_ids (CASCADE behavior)
     funcs_after = unify.get_logs(
         context=fm._compositional_ctx,
         from_fields=["function_id", "guidance_ids"],
@@ -149,12 +145,9 @@ def test_fk_guidance_ids_empty_array():
     assert funcs[0].entries.get("guidance_ids", []) == []
 
 
-@pytest.mark.skip(
-    reason="Nested foreign keys (array refs) not yet supported on backend",
-)
 @_handle_project
 def test_fk_guidance_ids_multiple_deletes():
-    """Test SET NULL with multiple sequential deletes."""
+    """Test nested CASCADE with multiple sequential deletes."""
     gm = GuidanceManager()
     fm = FunctionManager()
 
