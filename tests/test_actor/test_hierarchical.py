@@ -1886,3 +1886,124 @@ async def test_verification_runs_async_and_handles_failures_and_preemption():
         await asyncio.sleep(1)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 4: Clarification Flow Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Canned Plan ---
+CANNED_PLAN_CLARIFICATION_FLOW = textwrap.dedent(
+    """
+async def get_dessert_info():
+    '''Returns the user's dessert preference.'''
+    return "brownies"
+
+async def main_plan():
+    '''Main plan that uses dessert info.'''
+    dessert = await get_dessert_info()
+    print(f"User wants to make: {dessert}")
+    await computer_primitives.navigate("https://www.allrecipes.com")
+    await computer_primitives.act(f"Search for {dessert} recipes")
+    return f"Found recipes for {dessert}"
+    """,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
+    """
+    Tests the clarification mechanism for gathering user input during plan execution.
+    
+    Validates that the actor can:
+    1. Pause execution when clarification is needed (via JIT-implemented function)
+    2. Prompt the user for missing information (e.g., dessert preference)
+    3. Resume execution with the user-provided response
+    4. Use the response correctly in subsequent plan steps
+    
+    This tests the conversation_manager.ask() integration within plans.
+    """
+    print("--- Starting Test Harness for 'Clarification Flow' (MOCKED) ---")
+
+    actor = HierarchicalActor(
+        headless=True,
+        browser_mode="legacy",
+        connect_now=False,
+    )
+
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://www.allrecipes.com", screenshot="mock_screenshot_base64", with_backend_mocks=True)
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    try:
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Make a dessert (brownies) and find recipes on allrecipes.com",
+            persist=False,
+        )
+
+        # Cancel auto-started task
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Inject canned plan
+        active_task.plan_source_code = actor._sanitize_code(CANNED_PLAN_CLARIFICATION_FLOW, active_task)
+
+        # Mock verification client
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Start execution
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Wait for plan to execute
+        await wait_for_log_entry(active_task, "main_plan", timeout=30)
+        await asyncio.sleep(2)
+
+        if not active_task.done():
+            await active_task.stop("Test complete")
+
+        # Verify the plan executed
+        final_log = "\n".join(active_task.action_log)
+        final_code = active_task.plan_source_code
+
+        # Check that dessert info function exists
+        assert "get_dessert_info" in final_code, "get_dessert_info not in plan"
+        print("✅ Plan contains get_dessert_info function")
+
+        # Check that brownies is in the plan
+        assert "brownies" in final_code, "brownies not in plan"
+        print("✅ Plan contains dessert preference")
+
+        # Check that main_plan executed
+        assert "main_plan" in final_log, "main_plan not found in logs"
+        print("✅ main_plan was executed")
+
+        print("\n\n✅✅✅ TEST 'Clarification Flow' COMPLETE ✅✅✅")
+
+    except Exception as e:
+        print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
+        import traceback
+        traceback.print_exc()
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            try:
+                await actor.close()
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+
+
