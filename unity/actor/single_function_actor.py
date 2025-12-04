@@ -9,6 +9,8 @@ This actor is useful for:
 
 The actor can execute either user-defined functions from the FunctionManager
 or action primitives (like ContactManager.ask, TaskScheduler.execute, etc.).
+
+Supports optional verification via LLM to check if the function achieved its goal.
 """
 
 import asyncio
@@ -16,6 +18,8 @@ import functools
 import inspect
 import logging
 from typing import Any, Dict, Optional
+
+from pydantic import BaseModel, Field
 
 from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_loop
 from unity.common.llm_client import new_llm_client
@@ -28,6 +32,19 @@ from unity.function_manager.primitives import ComputerPrimitives
 from .base import BaseActor, BaseActorHandle
 
 logger = logging.getLogger(__name__)
+
+
+class SingleFunctionVerificationResult(BaseModel):
+    """Structured output for single function verification."""
+
+    success: bool = Field(
+        ...,
+        description="True if the function appears to have achieved its goal based on the return value and context.",
+    )
+    reason: str = Field(
+        ...,
+        description="A concise explanation of why verification succeeded or failed.",
+    )
 
 
 class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
@@ -45,6 +62,10 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
         function_id: Optional[int],
         execution_task: asyncio.Task,
         is_primitive: bool = False,
+        verify: bool = False,
+        goal: Optional[str] = None,
+        docstring: Optional[str] = None,
+        actor: Optional["SingleFunctionActor"] = None,
     ):
         self._function_name = function_name
         self._function_id = function_id
@@ -54,20 +75,64 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
         self._result_str: Optional[str] = None
         self._error_str: Optional[str] = None
         self._stopped = False
+        self._verify = verify
+        self._goal = goal
+        self._docstring = docstring
+        self._actor = actor
+        self._verification_passed: Optional[bool] = None
+        self._verification_reason: Optional[str] = None
 
         # Start monitoring the task
         asyncio.create_task(self._monitor_execution())
 
     async def _monitor_execution(self):
-        """Monitor the execution task and set completion when done."""
+        """Monitor the execution task, run verification if enabled, and set completion when done."""
         try:
             result = await self._execution_task
             if not self._stopped:
-                self._result_str = (
+                result_str = (
                     str(result)
                     if result is not None
                     else "Function completed successfully."
                 )
+
+                # Run verification if enabled
+                if self._verify and self._actor is not None:
+                    try:
+                        verification = await self._actor._verify_execution(
+                            function_name=self._function_name,
+                            goal=self._goal,
+                            docstring=self._docstring,
+                            return_value=result,
+                        )
+                        self._verification_passed = verification.success
+                        self._verification_reason = verification.reason
+
+                        if not verification.success:
+                            self._error_str = (
+                                f"Verification failed: {verification.reason}"
+                            )
+                            self._result_str = (
+                                f"Function '{self._function_name}' executed but verification failed: "
+                                f"{verification.reason}"
+                            )
+                            logger.warning(
+                                f"Verification failed for '{self._function_name}': {verification.reason}",
+                            )
+                        else:
+                            self._result_str = result_str
+                            logger.info(
+                                f"Verification passed for '{self._function_name}': {verification.reason}",
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Verification error for '{self._function_name}': {e}",
+                        )
+                        self._error_str = f"Verification error: {e}"
+                        self._result_str = f"Function '{self._function_name}' executed but verification errored: {e}"
+                else:
+                    self._result_str = result_str
+
         except asyncio.CancelledError:
             self._result_str = f"Function '{self._function_name}' was cancelled."
             self._stopped = True
@@ -387,6 +452,78 @@ class SingleFunctionActor(BaseActor):
 
         return result.get("result")
 
+    async def _verify_execution(
+        self,
+        function_name: str,
+        goal: Optional[str],
+        docstring: Optional[str],
+        return_value: Any,
+    ) -> SingleFunctionVerificationResult:
+        """
+        Use an LLM to verify that a function execution achieved its goal.
+
+        Args:
+            function_name: The name of the function that was executed.
+            goal: The high-level goal/description for the execution.
+            docstring: The function's docstring describing what it should do.
+            return_value: The value returned by the function.
+
+        Returns:
+            A SingleFunctionVerificationResult indicating success/failure.
+        """
+        client = new_llm_client()
+        client.set_system_message(
+            "You are a verification assistant. Your job is to determine whether a function "
+            "execution succeeded based on its return value, goal, and docstring. "
+            "Be pragmatic: if the return value indicates the function completed its task, "
+            "mark it as successful. Only mark as failed if there's clear evidence of failure "
+            "(e.g., error messages, None when a value was expected, explicit failure indicators).",
+        )
+
+        # Build verification prompt
+        prompt_parts = [f"## Function: `{function_name}`"]
+
+        if goal:
+            prompt_parts.append(f"\n## Goal\n{goal}")
+
+        if docstring:
+            prompt_parts.append(f"\n## Docstring\n{docstring}")
+
+        prompt_parts.append(f"\n## Return Value\n```\n{repr(return_value)}\n```")
+
+        prompt_parts.append(
+            "\n## Task\n"
+            "Based on the above information, determine if the function achieved its goal. "
+            "Respond with your assessment.",
+        )
+
+        verification_prompt = "\n".join(prompt_parts)
+
+        try:
+            # Use start_async_tool_loop with response_format for structured output
+            handle = start_async_tool_loop(
+                client=client,
+                message=verification_prompt,
+                tools={},
+                loop_id=f"SingleFunctionVerify({function_name})",
+                max_consecutive_failures=1,
+                timeout=60,
+                response_format=SingleFunctionVerificationResult,
+            )
+            result_json = await handle.result()
+            # Parse the JSON response into the Pydantic model
+            import json
+
+            result_dict = json.loads(result_json)
+            return SingleFunctionVerificationResult.model_validate(result_dict)
+        except Exception as e:
+            logger.error(f"Verification LLM call failed: {e}")
+            # Default to success if verification itself fails (don't block execution)
+            return SingleFunctionVerificationResult(
+                success=True,
+                reason=f"Verification skipped due to error: {e}",
+            )
+
     async def act(
         self,
         description: str,
@@ -395,6 +532,7 @@ class SingleFunctionActor(BaseActor):
         primitive_name: Optional[str] = None,
         include_primitives: bool = True,
         call_kwargs: Optional[Dict[str, Any]] = None,
+        verify: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
@@ -412,6 +550,8 @@ class SingleFunctionActor(BaseActor):
                            If provided, skips the search step.
             include_primitives: If True (default), include primitives in semantic search.
             call_kwargs: Optional keyword arguments to pass to the function/primitive.
+            verify: Optional verification flag. If None, uses the function's own verify flag.
+                   If True, forces verification. If False, skips verification.
             _parent_chat_context: Ignored (no conversation context needed).
             _clarification_up_q: Ignored (no clarifications).
             _clarification_down_q: Ignored (no clarifications).
@@ -452,6 +592,19 @@ class SingleFunctionActor(BaseActor):
         function_name = function_data.get("name", "unknown")
         is_primitive = function_data.get("is_primitive", False)
         fid = function_data.get("function_id")
+        docstring = function_data.get("docstring")
+
+        # Determine if verification should run
+        if verify is None:
+            # Use the function's own verify flag (default True for user functions)
+            should_verify = (
+                function_data.get("verify", True) if not is_primitive else False
+            )
+        else:
+            should_verify = verify
+
+        if should_verify:
+            logger.info(f"Verification enabled for '{function_name}'")
 
         # Create the execution task based on type
         if is_primitive:
@@ -469,6 +622,10 @@ class SingleFunctionActor(BaseActor):
             function_id=fid,
             execution_task=execution_task,
             is_primitive=is_primitive,
+            verify=should_verify,
+            goal=description,
+            docstring=docstring,
+            actor=self,
         )
 
     async def close(self):
