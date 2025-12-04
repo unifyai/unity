@@ -85,6 +85,66 @@ class TestWaitFlag:
         assert result.exit_code == 0, "Short -w flag should work"
 
 
+class TestWaitWithTimeout:
+    """Tests for --wait N timeout functionality."""
+
+    def test_wait_with_timeout_completes_normally(self, runner):
+        """--wait N should complete normally if tests finish before timeout."""
+        import time
+
+        start = time.time()
+        result = runner.run(
+            "--wait",
+            "120",  # 2 minute timeout - plenty of time
+            runner.fixture_path("test_always_pass.py"),
+        )
+        elapsed = time.time() - start
+
+        # Should complete successfully (not timeout)
+        assert result.exit_code == 0, f"Should pass within timeout: {result.stderr}"
+        # Should have taken some time but not the full 120s
+        assert elapsed < 100, f"Should complete quickly, took {elapsed:.1f}s"
+
+    def test_wait_with_timeout_times_out(self, runner):
+        """--wait N should timeout and exit with code 2 if tests don't complete in time."""
+        # Use a very short timeout (2 seconds) - tests won't complete in time
+        result = runner.run(
+            "--wait",
+            "2",  # 2 second timeout - too short
+            runner.fixture_path("test_always_pass.py"),
+        )
+
+        # Should timeout with exit code 2
+        assert (
+            result.exit_code == 2
+        ), f"Should timeout with code 2, got {result.exit_code}"
+        # Should mention timeout in output
+        assert "timeout" in result.stdout.lower() or "Timeout" in result.stdout
+
+    def test_wait_with_short_flag_and_timeout(self, runner):
+        """-w N should work the same as --wait N."""
+        result = runner.run(
+            "-w",
+            "120",
+            runner.fixture_path("test_always_pass.py"),
+        )
+
+        assert (
+            result.exit_code == 0
+        ), f"Short -w with timeout should work: {result.stderr}"
+
+    def test_wait_timeout_with_per_test(self, runner):
+        """--wait N with -t should work correctly."""
+        result = runner.run(
+            "-t",
+            "--wait",
+            "120",
+            runner.fixture_path("test_always_pass.py"),
+        )
+
+        assert result.exit_code == 0, f"Should pass: {result.stderr}"
+
+
 class TestPerTestFlag:
     """Tests for --per-test / -t flag."""
 
