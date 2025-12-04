@@ -771,3 +771,553 @@ async def print_then_fail() -> str:
         venv_dir = fm._get_venv_dir(venv_id)
         if venv_dir.exists():
             shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# ComputerPrimitives via Venv RPC - Comprehensive Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+# Function that uses computer_primitives.act
+CP_ACT_FUNCTION = """
+async def use_act(instruction: str) -> str:
+    \"\"\"Use computer_primitives.act via RPC.\"\"\"
+    result = await computer_primitives.act(instruction=instruction)
+    return result
+""".strip()
+
+
+# Function that uses computer_primitives.observe
+CP_OBSERVE_FUNCTION = """
+async def use_observe() -> str:
+    \"\"\"Use computer_primitives.observe via RPC.\"\"\"
+    result = await computer_primitives.observe()
+    return result
+""".strip()
+
+
+# Function that uses computer_primitives.query
+CP_QUERY_FUNCTION = """
+async def use_query(question: str) -> str:
+    \"\"\"Use computer_primitives.query via RPC.\"\"\"
+    result = await computer_primitives.query(question=question)
+    return result
+""".strip()
+
+
+# Function that uses computer_primitives.navigate
+CP_NAVIGATE_FUNCTION = """
+async def use_navigate(url: str) -> str:
+    \"\"\"Use computer_primitives.navigate via RPC.\"\"\"
+    result = await computer_primitives.navigate(url=url)
+    return result
+""".strip()
+
+
+# Function that uses computer_primitives.get_links
+CP_GET_LINKS_FUNCTION = """
+async def use_get_links() -> list:
+    \"\"\"Use computer_primitives.get_links via RPC.\"\"\"
+    result = await computer_primitives.get_links()
+    return result
+""".strip()
+
+
+# Function that uses computer_primitives.get_content
+CP_GET_CONTENT_FUNCTION = """
+async def use_get_content() -> str:
+    \"\"\"Use computer_primitives.get_content via RPC.\"\"\"
+    result = await computer_primitives.get_content()
+    return result
+""".strip()
+
+
+# Function that uses computer_primitives.reason
+CP_REASON_FUNCTION = """
+async def use_reason(request: str, context: str) -> str:
+    \"\"\"Use computer_primitives.reason via RPC.\"\"\"
+    result = await computer_primitives.reason(request=request, context=context)
+    return result
+""".strip()
+
+
+# Function that chains multiple computer_primitives calls
+CP_CHAIN_FUNCTION = """
+async def chain_computer_primitives(url: str, question: str) -> dict:
+    \"\"\"Chain multiple computer_primitives calls.\"\"\"
+    nav_result = await computer_primitives.navigate(url=url)
+    observe_result = await computer_primitives.observe()
+    query_result = await computer_primitives.query(question=question)
+    return {
+        "navigate": nav_result,
+        "observe": observe_result,
+        "query": query_result,
+    }
+""".strip()
+
+
+# Function that uses both primitives and computer_primitives
+MIXED_PRIMITIVES_FUNCTION = """
+async def use_both_primitives(contact_question: str, browser_url: str) -> dict:
+    \"\"\"Use both primitives and computer_primitives in one function.\"\"\"
+    contact_result = await primitives.contacts.ask(question=contact_question)
+    nav_result = await computer_primitives.navigate(url=browser_url)
+    return {
+        "contacts": contact_result,
+        "navigate": nav_result,
+    }
+""".strip()
+
+
+@pytest.fixture
+def full_mock_computer_primitives():
+    """Create a comprehensive mock of computer_primitives for testing."""
+    computer = MagicMock()
+    computer.click = AsyncMock(return_value="clicked #button")
+    computer.act = AsyncMock(return_value="action performed")
+    computer.observe = AsyncMock(
+        return_value="Page shows login form with email/password fields",
+    )
+    computer.query = AsyncMock(return_value="The page title is 'Dashboard'")
+    computer.navigate = AsyncMock(return_value="navigated to url")
+    computer.get_links = AsyncMock(
+        return_value=[
+            {"text": "Home", "href": "/"},
+            {"text": "About", "href": "/about"},
+            {"text": "Contact", "href": "/contact"},
+        ],
+    )
+    computer.get_content = AsyncMock(
+        return_value="<html><body>Page content here</body></html>",
+    )
+    computer.reason = AsyncMock(
+        return_value="Based on analysis, the user wants to login",
+    )
+    computer.type_text = AsyncMock(return_value="typed text successfully")
+    return computer
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_act(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """computer_primitives.act should work via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_ACT_FUNCTION,
+            call_kwargs={"instruction": "Click the login button"},
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        full_mock_computer_primitives.act.assert_called_once_with(
+            instruction="Click the login button",
+        )
+        assert result["result"] == "action performed"
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_observe(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """computer_primitives.observe should work via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_OBSERVE_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        full_mock_computer_primitives.observe.assert_called_once()
+        assert "login form" in result["result"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_query(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """computer_primitives.query should work via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_QUERY_FUNCTION,
+            call_kwargs={"question": "What is the page title?"},
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        full_mock_computer_primitives.query.assert_called_once_with(
+            question="What is the page title?",
+        )
+        assert "Dashboard" in result["result"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_navigate(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """computer_primitives.navigate should work via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_NAVIGATE_FUNCTION,
+            call_kwargs={"url": "https://example.com"},
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        full_mock_computer_primitives.navigate.assert_called_once_with(
+            url="https://example.com",
+        )
+        assert result["result"] == "navigated to url"
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_get_links_returns_list(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """computer_primitives.get_links should return a list via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_GET_LINKS_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        full_mock_computer_primitives.get_links.assert_called_once()
+
+        # Result should be a list of links
+        assert isinstance(result["result"], list)
+        assert len(result["result"]) == 3
+        assert result["result"][0]["text"] == "Home"
+        assert result["result"][1]["href"] == "/about"
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_get_content(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """computer_primitives.get_content should return HTML content via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_GET_CONTENT_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        full_mock_computer_primitives.get_content.assert_called_once()
+        assert "<html>" in result["result"]
+        assert "Page content" in result["result"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_reason(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """computer_primitives.reason should work via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_REASON_FUNCTION,
+            call_kwargs={
+                "request": "Analyze user intent",
+                "context": "User clicked login button",
+            },
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        full_mock_computer_primitives.reason.assert_called_once_with(
+            request="Analyze user intent",
+            context="User clicked login button",
+        )
+        assert "login" in result["result"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_chain_multiple_calls(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """Chaining multiple computer_primitives calls should work via RPC."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_CHAIN_FUNCTION,
+            call_kwargs={
+                "url": "https://example.com",
+                "question": "What is on the page?",
+            },
+            is_async=True,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+
+        # All three methods should have been called
+        full_mock_computer_primitives.navigate.assert_called_once_with(
+            url="https://example.com",
+        )
+        full_mock_computer_primitives.observe.assert_called_once()
+        full_mock_computer_primitives.query.assert_called_once_with(
+            question="What is on the page?",
+        )
+
+        # Result should be a dict with all three results
+        assert result["result"]["navigate"] == "navigated to url"
+        assert "login form" in result["result"]["observe"]
+        assert "Dashboard" in result["result"]["query"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_mixed_primitives_and_computer_primitives(
+    function_manager_factory,
+    mock_primitives,
+    full_mock_computer_primitives,
+):
+    """Using both primitives and computer_primitives in same function should work."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=MIXED_PRIMITIVES_FUNCTION,
+            call_kwargs={
+                "contact_question": "Who is Alice?",
+                "browser_url": "https://example.com",
+            },
+            is_async=True,
+            primitives=mock_primitives,
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+
+        # Both should have been called
+        mock_primitives.contacts.ask.assert_called_once_with(question="Who is Alice?")
+        full_mock_computer_primitives.navigate.assert_called_once_with(
+            url="https://example.com",
+        )
+
+        # Result should have both
+        assert result["result"]["contacts"] == "Alice is a test contact"
+        assert result["result"]["navigate"] == "navigated to url"
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_without_primitives(
+    function_manager_factory,
+    full_mock_computer_primitives,
+):
+    """Using only computer_primitives (no primitives) should work."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_OBSERVE_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            primitives=None,  # Explicitly no primitives
+            computer_primitives=full_mock_computer_primitives,
+        )
+
+        assert result["error"] is None, f"Unexpected error: {result['error']}"
+        assert "login form" in result["result"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_error_with_details(
+    function_manager_factory,
+):
+    """ComputerPrimitives errors should include detailed error info."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    mock_computer = MagicMock()
+    mock_computer.navigate = AsyncMock(
+        side_effect=RuntimeError("Connection refused: browser not responding"),
+    )
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_NAVIGATE_FUNCTION,
+            call_kwargs={"url": "https://example.com"},
+            is_async=True,
+            computer_primitives=mock_computer,
+        )
+
+        assert result["error"] is not None
+        assert "Connection refused" in result["error"]
+        assert "browser not responding" in result["error"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_partial_chain_failure(
+    function_manager_factory,
+):
+    """When one call in a chain fails, error should include which call failed."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    mock_computer = MagicMock()
+    mock_computer.navigate = AsyncMock(return_value="navigated")
+    mock_computer.observe = AsyncMock(side_effect=TimeoutError("Page load timeout"))
+    mock_computer.query = AsyncMock(return_value="query result")
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_CHAIN_FUNCTION,
+            call_kwargs={
+                "url": "https://example.com",
+                "question": "test",
+            },
+            is_async=True,
+            computer_primitives=mock_computer,
+        )
+
+        assert result["error"] is not None
+        assert "Page load timeout" in result["error"]
+
+        # Navigate should have been called (before the failure)
+        mock_computer.navigate.assert_called_once()
+        # Query should NOT have been called (after the failure)
+        mock_computer.query.assert_not_called()
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_computer_primitives_without_computer_primitives_arg(
+    function_manager_factory,
+):
+    """Calling computer_primitives without providing it should error gracefully."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=CP_OBSERVE_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            computer_primitives=None,  # Not provided
+        )
+
+        assert result["error"] is not None
+        assert (
+            "computer_primitives" in result["error"].lower()
+            or "rpc" in result["error"].lower()
+        )
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
