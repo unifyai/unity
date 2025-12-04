@@ -488,3 +488,221 @@ async def test_proxy_handles_stdout_capture(
         # Check that stdout was logged
         stdout_logged = any("Hello from venv" in log for log in mock_plan.action_log)
         assert stdout_logged, f"Expected stdout in logs, got: {mock_plan.action_log}"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# E2E Tests - Real Venv Execution with RPC
+# ────────────────────────────────────────────────────────────────────────────
+
+import shutil
+
+
+@pytest.fixture
+def cleanup_venvs(function_manager_factory):
+    """Fixture to clean up venv directories after tests."""
+    fm = function_manager_factory()
+    venv_ids = []
+
+    def track(venv_id):
+        venv_ids.append(venv_id)
+        return venv_id
+
+    yield fm, track
+
+    for venv_id in venv_ids:
+        try:
+            venv_dir = fm._get_venv_dir(venv_id)
+            if venv_dir.exists():
+                shutil.rmtree(venv_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+VENV_RPC_FUNCTION = """
+async def get_contact_via_rpc(question: str):
+    '''Get contact info via RPC to primitives.'''
+    result = await primitives.contacts.ask(question=question)
+    return f"Got: {result}"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_proxy_e2e_with_real_rpc(cleanup_venvs):
+    """E2E test: _VenvFunctionProxy should work with real RPC to primitives."""
+    fm, track = cleanup_venvs
+
+    venv_id = track(fm.add_venv(venv=MINIMAL_VENV_CONTENT))
+
+    func_data = {
+        "name": "get_contact_via_rpc",
+        "venv_id": venv_id,
+        "implementation": VENV_RPC_FUNCTION,
+        "docstring": "Get contact info via RPC.",
+        "argspec": "(question: str) -> str",
+    }
+
+    mock_plan = MagicMock()
+    mock_plan.action_log = []
+
+    # Real primitives mock that will be called via RPC
+    real_primitives = MagicMock()
+    real_primitives.contacts = MagicMock()
+    real_primitives.contacts.ask = AsyncMock(return_value="Alice is contact #1")
+
+    proxy = _VenvFunctionProxy(
+        function_manager=fm,
+        func_data=func_data,
+        plan=mock_plan,
+        primitives=real_primitives,
+        computer_primitives=MagicMock(),
+    )
+
+    result = await proxy(question="Who is the first contact?")
+
+    assert "Got: Alice is contact #1" in result
+    real_primitives.contacts.ask.assert_called_once_with(
+        question="Who is the first contact?",
+    )
+
+
+VENV_COMPUTER_RPC_FUNCTION = """
+async def click_button(selector: str):
+    '''Click a button via computer primitives RPC.'''
+    await computer_primitives.click(selector=selector)
+    return f"Clicked: {selector}"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_proxy_e2e_with_computer_primitives_rpc(cleanup_venvs):
+    """E2E test: _VenvFunctionProxy should work with computer primitives RPC."""
+    fm, track = cleanup_venvs
+
+    venv_id = track(fm.add_venv(venv=MINIMAL_VENV_CONTENT))
+
+    func_data = {
+        "name": "click_button",
+        "venv_id": venv_id,
+        "implementation": VENV_COMPUTER_RPC_FUNCTION,
+        "docstring": "Click a button.",
+        "argspec": "(selector: str) -> str",
+    }
+
+    mock_plan = MagicMock()
+    mock_plan.action_log = []
+
+    mock_computer = MagicMock()
+    mock_computer.click = AsyncMock(return_value=None)
+
+    proxy = _VenvFunctionProxy(
+        function_manager=fm,
+        func_data=func_data,
+        plan=mock_plan,
+        primitives=MagicMock(),
+        computer_primitives=mock_computer,
+    )
+
+    result = await proxy(selector="#submit-btn")
+
+    assert "Clicked: #submit-btn" in result
+    mock_computer.click.assert_called_once_with(selector="#submit-btn")
+
+
+VENV_MIXED_RPC_FUNCTION = """
+async def search_and_click(query: str, button: str):
+    '''Search via primitives and click via computer.'''
+    search_result = await primitives.knowledge.ask(question=query)
+    await computer_primitives.click(selector=button)
+    return f"Found '{search_result}', clicked '{button}'"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_proxy_e2e_mixed_primitives_and_computer(cleanup_venvs):
+    """E2E test: Function can use both primitives and computer_primitives."""
+    fm, track = cleanup_venvs
+
+    venv_id = track(fm.add_venv(venv=MINIMAL_VENV_CONTENT))
+
+    func_data = {
+        "name": "search_and_click",
+        "venv_id": venv_id,
+        "implementation": VENV_MIXED_RPC_FUNCTION,
+        "docstring": "Search and click.",
+        "argspec": "(query: str, button: str) -> str",
+    }
+
+    mock_plan = MagicMock()
+    mock_plan.action_log = []
+
+    mock_primitives = MagicMock()
+    mock_primitives.knowledge = MagicMock()
+    mock_primitives.knowledge.ask = AsyncMock(return_value="Result from knowledge")
+
+    mock_computer = MagicMock()
+    mock_computer.click = AsyncMock(return_value=None)
+
+    proxy = _VenvFunctionProxy(
+        function_manager=fm,
+        func_data=func_data,
+        plan=mock_plan,
+        primitives=mock_primitives,
+        computer_primitives=mock_computer,
+    )
+
+    result = await proxy(query="What is X?", button="#confirm")
+
+    assert "Found 'Result from knowledge'" in result
+    assert "clicked '#confirm'" in result
+    mock_primitives.knowledge.ask.assert_called_once()
+    mock_computer.click.assert_called_once()
+
+
+VENV_ERROR_FUNCTION = """
+async def failing_rpc():
+    '''Function that gets an RPC error.'''
+    result = await primitives.contacts.ask(question="cause error")
+    return result
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_proxy_e2e_rpc_error_propagates(cleanup_venvs):
+    """E2E test: RPC errors should propagate through the proxy."""
+    fm, track = cleanup_venvs
+
+    venv_id = track(fm.add_venv(venv=MINIMAL_VENV_CONTENT))
+
+    func_data = {
+        "name": "failing_rpc",
+        "venv_id": venv_id,
+        "implementation": VENV_ERROR_FUNCTION,
+        "docstring": "Function that fails.",
+        "argspec": "() -> str",
+    }
+
+    mock_plan = MagicMock()
+    mock_plan.action_log = []
+
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(
+        side_effect=RuntimeError("Database connection failed"),
+    )
+
+    proxy = _VenvFunctionProxy(
+        function_manager=fm,
+        func_data=func_data,
+        plan=mock_plan,
+        primitives=mock_primitives,
+        computer_primitives=MagicMock(),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await proxy()
+
+    assert "Database connection failed" in str(exc_info.value)

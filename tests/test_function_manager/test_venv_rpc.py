@@ -5,6 +5,7 @@ Tests that functions running in custom venvs can call back to the main process
 to access primitives (state managers) and computer_primitives.
 """
 
+import asyncio
 import pytest
 import shutil
 from unittest.mock import AsyncMock, MagicMock
@@ -1317,6 +1318,380 @@ async def test_computer_primitives_without_computer_primitives_arg(
             "computer_primitives" in result["error"].lower()
             or "rpc" in result["error"].lower()
         )
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Large Data Transfer Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+LARGE_DATA_FUNCTION = """
+async def get_large_data():
+    '''Retrieve large data from primitives.'''
+    result = await primitives.contacts.ask(question="get large data")
+    return f"Got {len(result)} chars"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_rpc_handles_large_data_response(function_manager_factory):
+    """RPC should handle large data returned from primitives."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Create a mock with a large response (100KB)
+    large_response = "x" * 100_000
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(return_value=large_response)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=LARGE_DATA_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is None
+        assert "Got 100000 chars" in result["result"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+LARGE_INPUT_FUNCTION = """
+async def process_large_input(data: str):
+    '''Process large input data.'''
+    result = await primitives.contacts.ask(question=data)
+    return f"Processed {len(data)} chars"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_rpc_handles_large_input_data(function_manager_factory):
+    """RPC should handle large input data passed to primitives."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    large_input = "query: " + "y" * 50_000  # 50KB input
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(return_value="processed")
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=LARGE_INPUT_FUNCTION,
+            call_kwargs={"data": large_input},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is None
+        assert "Processed" in result["result"]
+
+        # Verify the large input was passed through
+        mock_primitives.contacts.ask.assert_called_once()
+        call_kwargs = mock_primitives.contacts.ask.call_args.kwargs
+        assert len(call_kwargs["question"]) > 50_000
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Concurrent Execution Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+CONCURRENT_FUNCTION = """
+async def increment_counter(counter_id: str):
+    '''Increment a counter identified by counter_id.'''
+    result = await primitives.tasks.ask(question=f"increment {counter_id}")
+    return result
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_concurrent_venv_executions(function_manager_factory):
+    """Multiple functions can run concurrently in the same venv."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    # Track call order
+    call_order = []
+
+    async def mock_ask(question: str):
+        counter_id = question.split()[-1]
+        call_order.append(counter_id)
+        await asyncio.sleep(0.1)  # Simulate some work
+        return f"incremented {counter_id}"
+
+    mock_primitives = MagicMock()
+    mock_primitives.tasks = MagicMock()
+    mock_primitives.tasks.ask = mock_ask
+
+    try:
+        # Run 3 concurrent executions
+        tasks = [
+            fm.execute_in_venv(
+                venv_id=venv_id,
+                implementation=CONCURRENT_FUNCTION,
+                call_kwargs={"counter_id": str(i)},
+                is_async=True,
+                primitives=mock_primitives,
+            )
+            for i in range(3)
+        ]
+
+        results = await asyncio.gather(*tasks)
+
+        # All should succeed
+        for result in results:
+            assert result["error"] is None
+
+        # All 3 calls should have been made
+        assert len(call_order) == 3
+        assert set(call_order) == {"0", "1", "2"}
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_concurrent_different_venvs(function_manager_factory):
+    """Concurrent executions in different venvs should work independently."""
+    fm = function_manager_factory()
+
+    # Create two venvs
+    venv_id_1 = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+    venv_id_2 = fm.add_venv(
+        venv=MINIMAL_VENV_CONTENT.replace("test-venv", "test-venv-2"),
+    )
+
+    calls = {"venv1": [], "venv2": []}
+
+    async def mock_ask_1(question: str):
+        calls["venv1"].append(question)
+        return "from venv1"
+
+    async def mock_ask_2(question: str):
+        calls["venv2"].append(question)
+        return "from venv2"
+
+    mock_primitives_1 = MagicMock()
+    mock_primitives_1.tasks = MagicMock()
+    mock_primitives_1.tasks.ask = mock_ask_1
+
+    mock_primitives_2 = MagicMock()
+    mock_primitives_2.tasks = MagicMock()
+    mock_primitives_2.tasks.ask = mock_ask_2
+
+    try:
+        # Run concurrent executions in different venvs
+        task1 = fm.execute_in_venv(
+            venv_id=venv_id_1,
+            implementation=CONCURRENT_FUNCTION,
+            call_kwargs={"counter_id": "A"},
+            is_async=True,
+            primitives=mock_primitives_1,
+        )
+        task2 = fm.execute_in_venv(
+            venv_id=venv_id_2,
+            implementation=CONCURRENT_FUNCTION,
+            call_kwargs={"counter_id": "B"},
+            is_async=True,
+            primitives=mock_primitives_2,
+        )
+
+        result1, result2 = await asyncio.gather(task1, task2)
+
+        assert result1["error"] is None
+        assert result2["error"] is None
+        assert "from venv1" in result1["result"]
+        assert "from venv2" in result2["result"]
+
+        # Each venv's primitives should have been called independently
+        assert len(calls["venv1"]) == 1
+        assert len(calls["venv2"]) == 1
+    finally:
+        for venv_id in [venv_id_1, venv_id_2]:
+            venv_dir = fm._get_venv_dir(venv_id)
+            if venv_dir.exists():
+                shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# RPC Edge Cases
+# ────────────────────────────────────────────────────────────────────────────
+
+NESTED_DICT_FUNCTION = """
+async def get_nested_data():
+    '''Get deeply nested data structure.'''
+    result = await primitives.knowledge.ask(question="get nested")
+    return result
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_rpc_handles_nested_dict_response(function_manager_factory):
+    """RPC should handle deeply nested dict responses."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    nested_data = {
+        "level1": {
+            "level2": {
+                "level3": {
+                    "level4": {"value": "deep_value", "list": [1, 2, 3]},
+                },
+            },
+        },
+        "array": [{"nested": {"item": i}} for i in range(10)],
+    }
+
+    mock_primitives = MagicMock()
+    mock_primitives.knowledge = MagicMock()
+    mock_primitives.knowledge.ask = AsyncMock(return_value=nested_data)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=NESTED_DICT_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is None
+        # The result is returned as repr/str, verify structure preserved
+        assert "level1" in str(result["result"])
+        assert "deep_value" in str(result["result"])
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+UNICODE_FUNCTION = """
+async def process_unicode(text: str):
+    '''Process unicode text.'''
+    result = await primitives.contacts.ask(question=text)
+    return f"Received: {result}"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_rpc_handles_unicode_data(function_manager_factory):
+    """RPC should handle unicode characters in both input and output."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    unicode_text = "Hello 世界! 🌍 Ümlauts: äöü Symbols: ∑∫∆"
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(return_value=f"Echo: {unicode_text}")
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=UNICODE_FUNCTION,
+            call_kwargs={"text": unicode_text},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is None
+        assert "世界" in result["result"]
+        assert "🌍" in result["result"]
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+NONE_RESULT_FUNCTION = """
+async def get_none_result():
+    '''Get a None result from primitives.'''
+    result = await primitives.contacts.ask(question="get none")
+    return result
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_rpc_handles_none_response(function_manager_factory):
+    """RPC should handle None responses correctly."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = AsyncMock(return_value=None)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=NONE_RESULT_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is None
+        assert result["result"] is None
+    finally:
+        venv_dir = fm._get_venv_dir(venv_id)
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+LIST_RESULT_FUNCTION = """
+async def get_list_result():
+    '''Get a list result from primitives.'''
+    result = await primitives.tasks.ask(question="list tasks")
+    return result
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_rpc_handles_list_response(function_manager_factory):
+    """RPC should handle list responses correctly."""
+    fm = function_manager_factory()
+    venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
+
+    list_data = [{"id": 1, "name": "Task 1"}, {"id": 2, "name": "Task 2"}]
+    mock_primitives = MagicMock()
+    mock_primitives.tasks = MagicMock()
+    mock_primitives.tasks.ask = AsyncMock(return_value=list_data)
+
+    try:
+        result = await fm.execute_in_venv(
+            venv_id=venv_id,
+            implementation=LIST_RESULT_FUNCTION,
+            call_kwargs={},
+            is_async=True,
+            primitives=mock_primitives,
+        )
+
+        assert result["error"] is None
+        # Result should be the list
+        assert isinstance(result["result"], list)
+        assert len(result["result"]) == 2
     finally:
         venv_dir = fm._get_venv_dir(venv_id)
         if venv_dir.exists():
