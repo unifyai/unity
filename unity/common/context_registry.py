@@ -60,14 +60,22 @@ class ContextRegistry:
         out = {}
 
         for context in manager.Config.required_contexts:
+            # Create copies of foreign_keys to avoid mutating class-level config.
+            # Without copying, the references get double-prefixed on subsequent
+            # calls (e.g., across test runs), corrupting FK resolution.
+            resolved_foreign_keys = None
             if context.foreign_keys:
+                resolved_foreign_keys = []
                 for foreign_key in context.foreign_keys:
-                    foreign_key["references"] = (
+                    fk_copy = foreign_key.copy()
+                    fk_copy["references"] = (
                         f"{current_context}/{foreign_key['references']}"
                     )
+                    resolved_foreign_keys.append(fk_copy)
             data = {
                 "resolved_name": f"{current_context}/{context.name}",
                 "table_context": context,
+                "resolved_foreign_keys": resolved_foreign_keys,
             }
             out[context.name] = data
         return out
@@ -115,6 +123,9 @@ class ContextRegistry:
         """
         table = entry["table_context"]
         target_name = entry["resolved_name"]
+        # Use resolved_foreign_keys (with prefixed references) instead of
+        # table.foreign_keys to avoid using mutated class-level config.
+        resolved_foreign_keys = entry.get("resolved_foreign_keys")
         # Idempotent creation: try to create, tolerate if already exists
         try:
             create_context(
@@ -122,7 +133,7 @@ class ContextRegistry:
                 description=table.description,
                 unique_keys=table.unique_keys,
                 auto_counting=table.auto_counting,
-                foreign_keys=table.foreign_keys,
+                foreign_keys=resolved_foreign_keys,
             )
         except Exception:
             pass  # Already exists or transient failure
