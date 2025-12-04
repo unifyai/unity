@@ -887,8 +887,8 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._reduce,
             # Inventory listing
             FileManager.list,
-            # Parse when missing (policy enforced in prompts)
-            FileManager.parse,
+            # Ingest files when missing (policy enforced in prompts)
+            FileManager.ingest_files,
             # Delegate to file-scoped Q&A when needed
             FileManager.ask_about_file,
             # Existence probe
@@ -898,7 +898,7 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     elif kind == "ask_about_file":
         return methods_to_tool_dict(
             # Read-only helpers
-            FileManager.parse,
+            FileManager.ingest_files,
             FileManager._list_columns,
             FileManager._tables_overview,
             FileManager._filter_files,
@@ -926,7 +926,7 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
         return methods_to_tool_dict(
             FileManager.list,
             FileManager.exists,
-            FileManager.parse,
+            FileManager.ingest_files,
             FileManager._filter_files,
             FileManager._search_files,
             FileManager._list_columns,
