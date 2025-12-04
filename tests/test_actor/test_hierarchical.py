@@ -2370,3 +2370,268 @@ async def test_entrypoint_execution_orchestrator():
         print("\n\n❌❌❌ A TEST FAILED ❌❌❌")
         import traceback
         traceback.print_exc()
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 7: Immediate Pause/Resume Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+class _OkVerificationClient:
+    def __init__(self):
+        self.generate = AsyncMock(
+            return_value=VerificationAssessment(
+                status="ok",
+                reason="Mock OK",
+            ).model_dump_json(),
+        )
+
+    def set_response_format(self, *_args, **_kwargs):
+        pass
+
+    def reset_response_format(self, *_args, **_kwargs):
+        pass
+
+    def reset_messages(self, *_args, **_kwargs):
+        pass
+
+    def set_system_message(self, *_args, **_kwargs):
+        pass
+
+
+async def _wait_for_state(
+    plan: HierarchicalActorHandle,
+    expected: _HierarchicalHandleState,
+    timeout: float = 60.0,
+    poll: float = 0.05,
+):
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if plan._state == expected:
+            return
+        await asyncio.sleep(poll)
+    tail = "\n".join(plan.action_log[-15:])
+    raise AssertionError(
+        f"Timed out waiting for {expected.name}; state={plan._state.name}\n---\n{tail}",
+    )
+
+
+# --- Canned plans ---
+CANNED_PLAN_SIMPLE_IMMEDIATE_PAUSE_RESUME = textwrap.dedent(
+    """
+    @verify
+    async def step():
+        await computer_primitives.act("first")
+        await computer_primitives.act("second")
+        return "done"
+
+    async def main_plan():
+        return await step()
+    """,
+)
+
+CANNED_PLAN_WITH_OBSERVE_IMMEDIATE_PAUSE_RESUME = textwrap.dedent(
+    """
+    @verify
+    async def step_with_observe():
+        await computer_primitives.act("open")
+        await computer_primitives.observe("what is the title?")
+        await computer_primitives.act("click cta")
+        return "done/observe"
+
+    async def main_plan():
+        return await step_with_observe()
+    """,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
+    """
+    Validates that an in-flight action cancellation (mapped to BrowserAgentError('cancelled'))
+    results in a _ControlledInterruptionException, which restarts the @verify function cleanly.
+
+    Flow:
+      - First act() call blocks on an event so we can align pause(immediate=True).
+      - We then release the act() which raises BrowserAgentError('cancelled') once.
+      - The function restarts (idempotency cache avoids duplicate work), plan is PAUSED, then RESUMED to completion.
+    """
+    actor = HierarchicalActor(headless=True, connect_now=False, browser_mode="legacy")
+
+    # Avoid system prompts/keychain
+    actor.computer_primitives._browser = NoKeychainBrowser()  # type: ignore[attr-defined]
+
+    # Event-driven alignment
+    act_entered = asyncio.Event()
+    act_proceed = asyncio.Event()
+    first_act_done = False
+
+    async def act_side_effect(*args, **kwargs):
+        nonlocal first_act_done
+        if not first_act_done:
+            act_entered.set()
+            await act_proceed.wait()
+            first_act_done = True
+            raise BrowserAgentError("cancelled", "Action was interrupted.")
+        return None
+
+    actor.computer_primitives.act = AsyncMock(side_effect=act_side_effect)  # type: ignore[attr-defined]
+    actor.computer_primitives.observe = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+
+    plan = HierarchicalActorHandle(actor=actor, goal="Immediate pause test", persist=False)
+
+    # Stop auto-run, inject canned plan, and patch verification client
+    if plan._execution_task:
+        plan._execution_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await plan._execution_task
+
+    plan.plan_source_code = actor._sanitize_code(CANNED_PLAN_SIMPLE_IMMEDIATE_PAUSE_RESUME, plan)
+    plan.verification_client = _OkVerificationClient()
+
+    plan._execution_task = asyncio.create_task(plan._initialize_and_run())
+
+    # Wait until act enters, then request immediate pause and let act raise cancelled
+    await act_entered.wait()
+    await plan.pause(immediate=True)
+    act_proceed.set()
+
+    # The plan transitions to PAUSED (state gateway); ensure no ERROR
+    await _wait_for_state(plan, _HierarchicalHandleState.PAUSED, timeout=10)
+
+    # Resume and await completion
+    await plan.resume()
+    result = await plan.result()
+
+    # Assertions via logs and call counts
+    log = "\n".join(plan.action_log)
+    print("> Final log: ", log)
+    assert (
+        "Retrying 'step' Reason: Action 'computer_primitives.act((('first',), {}))' interrupted by immediate pause"
+        in log
+    )
+    # Expect 3 act invocations: first(cancelled), then restart -> first again, then second
+    assert actor.computer_primitives.act.call_count >= 3  # type: ignore[attr-defined]
+    assert "ERROR" not in str(result)
+
+    print("\n✅✅✅ TEST 'Immediate Pause Resume Step Restart' COMPLETE ✅✅✅")
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_immediate_pause_caches_completed_actions_for_replay_after_resume():
+    """
+    Tests immediate pause/resume with observe() calls in the execution path.
+    
+    Validates that:
+    1. Actions before the pause point (open, observe) complete and are cached
+    2. Immediate pause correctly interrupts the final action (click cta)
+    3. After resume, the function restarts from the beginning
+    4. Cached actions (open, observe) are replayed from cache (CACHE HIT)
+    5. The interrupted action executes fresh after resume
+    
+    This ensures observe() results are properly cached and reused during restart.
+    """
+    actor = HierarchicalActor(headless=True, connect_now=False, browser_mode="legacy")
+    actor.computer_primitives._browser = NoKeychainBrowser()  # type: ignore[attr-defined]
+
+    # Orchestrate: let 'open' and 'observe' run; cancel at 'click cta'.
+    open_called = asyncio.Event()
+    observe_called = asyncio.Event()
+    cta_entered = asyncio.Event()
+    cta_proceed = asyncio.Event()
+    cta_cancel_count = 0
+
+    async def act_side_effect(*args, **kwargs):
+        nonlocal cta_cancel_count
+        verb = args[0] if args else None
+        if verb == "open":
+            open_called.set()
+            return None
+        if verb == "click cta":
+            cta_entered.set()
+            await cta_proceed.wait()
+            if cta_cancel_count == 0:
+                cta_cancel_count += 1
+                raise BrowserAgentError("cancelled", "Action was interrupted.")
+            return None
+        return None
+
+    async def observe_side_effect(*args, **kwargs):
+        observe_called.set()
+        return None
+
+    actor.computer_primitives.act = AsyncMock(side_effect=act_side_effect)  # type: ignore[attr-defined]
+    actor.computer_primitives.observe = AsyncMock(side_effect=observe_side_effect)  # type: ignore[attr-defined]
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+
+    plan = HierarchicalActorHandle(
+        actor=actor,
+        goal="Immediate pause with observe",
+        persist=False,
+    )
+
+    if plan._execution_task:
+        plan._execution_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await plan._execution_task
+
+    plan.plan_source_code = actor._sanitize_code(CANNED_PLAN_WITH_OBSERVE_IMMEDIATE_PAUSE_RESUME, plan)
+    plan.verification_client = _OkVerificationClient()
+
+    plan._execution_task = asyncio.create_task(plan._initialize_and_run())
+
+    # Ensure first two steps complete and cache
+    await open_called.wait()
+    await observe_called.wait()
+    # Intercept before CTA completes
+    await cta_entered.wait()
+    # First CTA call should be cancelled; second (on restart) should proceed
+    await plan.pause(immediate=True)
+    cta_proceed.set()
+
+    await _wait_for_state(plan, _HierarchicalHandleState.PAUSED, timeout=10)
+
+    await plan.resume()
+    result = await plan.result()
+
+    log = "\n".join(plan.action_log)
+    print(">>> Final log: ", log)
+    assert (
+        "Retrying 'step_with_observe' Reason: Action 'computer_primitives.act((('click cta',), {}))' interrupted by immediate pause."
+        in log
+    )
+    # Expect cache hits for 'open' and 'observe' on restart
+    assert (
+        log.count("CACHE HIT") >= 2
+    ), f"Expected at least two CACHE HIT entries after resume. Log:\n{log}"
+    # act call count counts only cache MISS paths. On restart, 'open' is a CACHE HIT, so expect >=3.
+    assert actor.computer_primitives.act.call_count >= 3  # type: ignore[attr-defined]
+    # observe is a CACHE HIT on restart and won't invoke the mock again; expect at least 1 call overall
+    assert actor.computer_primitives.observe.call_count >= 1  # type: ignore[attr-defined]
+    assert "ERROR" not in str(result)
+    print("\n✅✅✅ TEST 'Immediate Pause Resume With Observe Path' COMPLETE ✅✅✅")
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_immediate_pause_resume_orchestrator():
+    """
+    Orchestrates immediate pause/resume tests.
+    
+    Tests the actor's ability to handle immediate (mid-action) pauses:
+    - test_immediate_pause_cancels_action_and_restarts_function_cleanly: Validates action cancellation triggers function restart
+    - test_immediate_pause_caches_completed_actions_for_replay_after_resume: Ensures cache hits during restart after pause
+    
+    Critical for user-controlled interruption of long-running browser actions.
+    """
+    try:
+        await test_immediate_pause_cancels_action_and_restarts_function_cleanly()
+        await test_immediate_pause_caches_completed_actions_for_replay_after_resume()
+        print("\n✅✅✅ ALL TESTS COMPLETE ✅✅✅")
+    except Exception as e:
+        print(f"\n\n❌❌❌ A TEST FAILED: {e} ❌❌❌")
+        traceback.print_exc()
+
+
