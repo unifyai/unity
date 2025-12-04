@@ -2336,5 +2336,13 @@ class FunctionManager(BaseFunctionManager):
             return [self._make_json_serializable(item) for item in obj]
         if isinstance(obj, dict):
             return {str(k): self._make_json_serializable(v) for k, v in obj.items()}
+        # Handle Pydantic models
+        try:
+            from pydantic import BaseModel
+
+            if isinstance(obj, BaseModel):
+                return self._make_json_serializable(obj.model_dump())
+        except ImportError:
+            pass
         # For other types, convert to string representation
         return str(obj)
