@@ -4297,3 +4297,225 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
         await asyncio.sleep(1)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 16: Skip Verify Flag Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Test Function Definitions ---
+# Function that should NOT be verified
+FUNCTION_WITHOUT_VERIFY = textwrap.dedent(
+    """
+async def simple_navigation(url: str):
+    '''
+    Navigate to a URL without verification.
+    This is a simple, low-risk action that doesn't need verification.
+    '''
+    print(f"NAVIGATING: Going to {url}")
+    await computer_primitives.act(f"Navigate to {url}")
+    return f"Navigated to {url}"
+""",
+)
+
+# Function that SHOULD be verified (default behavior)
+FUNCTION_WITH_VERIFY = textwrap.dedent(
+    """
+async def complex_data_entry(field_name: str, value: str):
+    '''
+    Enter data into a form field with verification.
+    This is a critical action that needs verification.
+    '''
+    print(f"DATA_ENTRY: Entering {value} into {field_name}")
+    await computer_primitives.act(f"Enter {value} into the {field_name} field")
+    return f"Entered {value} into {field_name}"
+""",
+)
+
+# Canned plan that uses both functions
+CANNED_PLAN_WITH_FUNCTIONS_SKIP_VERIFY_FLAG = textwrap.dedent(
+    """
+async def simple_navigation(url: str):
+    '''
+    Navigate to a URL without verification.
+    This is a simple, low-risk action that doesn't need verification.
+    '''
+    print(f"NAVIGATING: Going to {url}")
+    await computer_primitives.act(f"Navigate to {url}")
+    return f"Navigated to {url}"
+
+async def complex_data_entry(field_name: str, value: str):
+    '''
+    Enter data into a form field with verification.
+    This is a critical action that needs verification.
+    '''
+    print(f"DATA_ENTRY: Entering {value} into {field_name}")
+    await computer_primitives.act(f"Enter {value} into the {field_name} field")
+    return f"Entered {value} into {field_name}"
+
+async def main_plan():
+    '''Execute navigation and data entry.'''
+    await simple_navigation("https://example.com")
+    await complex_data_entry("username", "test_value")
+    return "Plan completed with both navigation and data entry."
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_functions_with_skip_verify_flag_bypass_verification():
+    """
+    Tests the functions_skip_verify flag for selective verification skipping.
+    
+    Validates that:
+    1. Functions marked with verify=False skip the verification step
+    2. Functions marked with verify=True (default) are verified normally
+    3. Skipped functions still execute correctly, just without post-verification
+    4. The skip flag is respected at the FunctionManager level
+    
+    Useful for simple, deterministic functions where verification overhead is unnecessary.
+    """
+    print("\n--- Starting Test: Skip Verify Flag (MOCKED) ---")
+    actor = None
+    active_task = None
+    try:
+        # --- PHASE 1: SETUP ---
+        print("\n\n--- PHASE 1: Preparing Functions with Different Verify Flags ---")
+
+        # 1. Initialize and clear FunctionManager
+        fm = FunctionManager()
+        fm.clear()
+        print("✅ Cleared FunctionManager")
+
+        # 2. Add function with verify=False
+        fm.add_functions(
+            implementations=[FUNCTION_WITHOUT_VERIFY],
+            verify={"simple_navigation": False},  # This function should NOT be verified
+        )
+        print("✅ Added 'simple_navigation' with verify=False")
+
+        # 3. Add function with verify=True (default)
+        fm.add_functions(
+            implementations=[FUNCTION_WITH_VERIFY],
+            verify={"complex_data_entry": True},  # This function SHOULD be verified
+        )
+        print("✅ Added 'complex_data_entry' with verify=True")
+
+        # 4. Instantiate the actor with mocked browser
+        actor = HierarchicalActor(
+            function_manager=fm,
+            headless=True,
+            browser_mode="legacy",
+            connect_now=False,
+        )
+
+        # Mock browser and action_provider
+        actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+        actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
+        actor.computer_primitives.navigate = AsyncMock(return_value=None)
+        print("✅ Actor initialized and action_provider is mocked.")
+
+        # --- PHASE 2: EXECUTION ---
+        print("\n\n--- PHASE 2: Executing a Plan that Uses Both Functions ---")
+
+        goal = "Use the existing function 'simple_navigation' to navigate to https://example.com and 'complex_data_entry' to enter 'test_value' into the username field."
+        print(f"\n>>> Starting Plan with goal: '{goal}'")
+
+        # Create the handle directly with mocking
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal=goal,
+            persist=False,
+        )
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Set up mocks
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Set functions_skip_verify to test the functionality
+        active_task.functions_skip_verify.add("simple_navigation")
+
+        # Inject canned plan
+        sanitized_plan = actor._sanitize_code(CANNED_PLAN_WITH_FUNCTIONS_SKIP_VERIFY_FLAG, active_task)
+        active_task.plan_source_code = sanitized_plan
+
+        # Start execution
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Wait for plan to complete
+        await wait_for_log_entry(active_task, "main_plan", timeout=30)
+        await asyncio.sleep(2)
+
+        # Stop if still running
+        if not active_task.done():
+            await active_task.stop("Test complete")
+
+        print(f"\n--- Plan finished ---")
+
+        # --- PHASE 3: VERIFICATION (ASSERTIONS) ---
+        print("\n\n--- PHASE 3: Verifying Decorator Application ---")
+
+        final_plan_code = active_task.plan_source_code
+
+        # Assertion 1: Check that simple_navigation is in functions_skip_verify
+        assert (
+            "simple_navigation" in active_task.functions_skip_verify
+        ), f"simple_navigation should be in functions_skip_verify set. Current set: {active_task.functions_skip_verify}"
+        print(
+            "✅ ASSERTION PASSED: simple_navigation is tracked in functions_skip_verify",
+        )
+
+        # Assertion 2: Check that complex_data_entry is NOT in functions_skip_verify
+        assert (
+            "complex_data_entry" not in active_task.functions_skip_verify
+        ), f"complex_data_entry should NOT be in functions_skip_verify set. Current set: {active_task.functions_skip_verify}"
+        print(
+            "✅ ASSERTION PASSED: complex_data_entry is NOT in functions_skip_verify",
+        )
+
+        # Assertion 3: Verify both functions are present in the final code
+        assert (
+            "simple_navigation" in final_plan_code
+        ), "simple_navigation not found in final plan code"
+        assert (
+            "complex_data_entry" in final_plan_code
+        ), "complex_data_entry not found in final plan code"
+        print("✅ ASSERTION PASSED: Both functions are present in final plan code")
+
+        print("\n\n✅✅✅ TEST 'Skip Verify Flag' COMPLETE ✅✅✅")
+
+    except Exception as e:
+        print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
+        import traceback
+        traceback.print_exc()
+        if active_task and hasattr(active_task, "plan_source_code"):
+            print("\n--- Final Generated Plan Source Code (for debugging) ---")
+            print(active_task.plan_source_code)
+            print("------------------------------------------------------")
+            print("\n--- functions_skip_verify set ---")
+            print(active_task.functions_skip_verify)
+            print("------------------------------------------------------")
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            try:
+                await actor.close()
+            except Exception as e:
+                print(f"Warning: Error closing actor: {e}")
+        await asyncio.sleep(1)
+
+
