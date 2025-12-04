@@ -273,7 +273,7 @@ async def get_update_or_create_contact(
                     **{**c.model_dump(), **uc, "threads": c.threads},
                 )
         phone_number, email_address = details.get("phone_number"), details.get(
-            "email_address"
+            "email_address",
         )
         contact = (
             cm.contact_index.get_contact(phone_number=phone_number)
@@ -285,7 +285,7 @@ async def get_update_or_create_contact(
     # means retrieve if exists, create if not
     elif details:
         phone_number, email_address = details.get("phone_number"), details.get(
-            "email_address"
+            "email_address",
         )
         maybe_contact = cm.contact_index.get_contact(
             phone_number=phone_number,
@@ -497,7 +497,7 @@ async def conductor_ask_request(
         "conductor_handle_resume",
         "conductor_handle_done",
         "conductor_handle_answer_clarification",
-    ]
+    ],
 )
 async def conductor_handle_actions(
     cm: "ConversationManager",

@@ -492,7 +492,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             skip_initial_wait: If True, skip the initial 8s wait (used when rescheduling after a false decision)
         """
         print(
-            f"[Proactive Speech] schedule_proactive_speech called, mode={self.mode}, skip_initial_wait={skip_initial_wait}"
+            f"[Proactive Speech] schedule_proactive_speech called, mode={self.mode}, skip_initial_wait={skip_initial_wait}",
         )
         await self.cancel_proactive_speech()
 
@@ -506,7 +506,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         print("[Proactive Speech] Creating proactive speech task...")
         # Create a task to run the decision and potential wait
         self._proactive_speech_task = asyncio.create_task(
-            self._proactive_speech_loop(skip_initial_wait=skip_initial_wait)
+            self._proactive_speech_loop(skip_initial_wait=skip_initial_wait),
         )
         self._proactive_speech_task.add_done_callback(log_task_exc)
 
@@ -529,7 +529,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await asyncio.sleep(10)
             else:
                 print(
-                    "[Proactive Speech] Skipping initial wait (reschedule after false decision)"
+                    "[Proactive Speech] Skipping initial wait (reschedule after false decision)",
                 )
 
             print("[Proactive Speech] Entering _proactive_speech_loop")
@@ -539,7 +539,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             last_message_timestamp = None
 
             contact = self.call_manager.call_contact or self.contact_index.get_contact(
-                contact_id=1
+                contact_id=1,
             )
             if (
                 contact
@@ -584,7 +584,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 elapsed_seconds=elapsed_seconds,
             )
             print(
-                f"[Proactive Speech] Decision: should_speak={decision.should_speak}, delay={decision.delay}s"
+                f"[Proactive Speech] Decision: should_speak={decision.should_speak}, delay={decision.delay}s",
             )
 
             if not decision.should_speak:
@@ -592,13 +592,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 # Otherwise, wait until we hit ~12s threshold (but cap at 7s max wait)
                 if elapsed_seconds < 10:
                     wait_time = min(
-                        12 - elapsed_seconds, 7
+                        12 - elapsed_seconds,
+                        7,
                     )  # Wait until ~12s, but max 7s
                 else:
                     wait_time = 5  # Already past 10s, check every 5s
 
                 print(
-                    f"[Proactive Speech] Not speaking (LLM chose delay={decision.delay}s), will check again in {wait_time:.1f}s"
+                    f"[Proactive Speech] Not speaking (LLM chose delay={decision.delay}s), will check again in {wait_time:.1f}s",
                 )
                 await asyncio.sleep(wait_time)
                 # Skip initial wait when rescheduling since we just waited
@@ -612,7 +613,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             # Record in contact_index
             contact = self.call_manager.call_contact or self.contact_index.get_contact(
-                contact_id=1
+                contact_id=1,
             )
             if contact:
                 self.contact_index.push_message(

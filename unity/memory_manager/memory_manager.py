@@ -161,7 +161,8 @@ class MemoryManager(BaseMemoryManager):
             # Otherwise use regular create_task (called from async context)
             if loop is not None:
                 loop.call_soon_threadsafe(
-                    loop.create_task, self._setup_message_callbacks()
+                    loop.create_task,
+                    self._setup_message_callbacks(),
                 )
             else:
                 asyncio.create_task(self._setup_message_callbacks())
@@ -186,7 +187,8 @@ class MemoryManager(BaseMemoryManager):
             #     in the transcript chunk payloads passed to the LLM.
             if loop is not None:
                 loop.call_soon_threadsafe(
-                    loop.create_task, self._setup_explicit_call_callbacks()
+                    loop.create_task,
+                    self._setup_explicit_call_callbacks(),
                 )
             else:
                 asyncio.create_task(self._setup_explicit_call_callbacks())
