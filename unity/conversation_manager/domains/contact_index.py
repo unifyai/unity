@@ -84,7 +84,11 @@ class ContactIndex:
         contact = self.active_conversations[contact_id]
         if thread_name == "email":
             message = EmailMessage(
-                contact.full_name if role == "user" else "You",
+                (
+                    contact.full_name
+                    if role == "user"
+                    else "You" if role == "assistant" else role
+                ),
                 subject,
                 body,
                 message_id,
@@ -92,7 +96,11 @@ class ContactIndex:
             )
         else:
             message = Message(
-                contact.full_name if role == "user" else "You",
+                (
+                    contact.full_name
+                    if role == "user"
+                    else "You" if role == "assistant" else role
+                ),
                 message_content,
                 timestamp,
             )

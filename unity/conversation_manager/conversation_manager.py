@@ -257,9 +257,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             else:
                 if parsed_out.get("phone_guidance"):
+                    event = AssistantRealtimeGuidance(
+                        self.contact_index.get_contact(
+                            contact_id=self.call_manager.call_contact["contact_id"]
+                        ),
+                        parsed_out["phone_guidance"],
+                    )
                     await self.event_broker.publish(
                         "app:call:call_notifs",
-                        json.dumps({"content": parsed_out["phone_guidance"]}),
+                        event.to_json(),
+                    )
+                    await self.event_broker.publish(
+                        "app:comms:assistant_realtime_guidance",
+                        event.to_json(),
                     )
 
         print(f"parsed_out {parsed_out}")
