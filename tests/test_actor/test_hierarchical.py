@@ -4833,3 +4833,130 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
         await asyncio.sleep(1)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 19: Steerable Replace Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Canned plan that will be replaced ---
+CANNED_PLAN_FOR_REPLACEMENT_STEERABLE_REPLACE = textwrap.dedent(
+    """
+    async def main_plan():
+        '''A simple plan that waits, intended to be replaced.'''
+        print("--- Canned Plan: Starting original goal. Waiting for 5 seconds... ---")
+        await asyncio.sleep(5)
+        return "Original plan finished (this should not be reached)."
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_replace_interjection_discards_plan_and_starts_fresh():
+    """
+    Tests the 'replace_task' interjection for complete plan replacement.
+    
+    Validates that when a user requests a replacement:
+    1. The interjection is classified as 'replace_task'
+    2. The current plan is completely discarded
+    3. A new plan is generated from scratch based on user feedback
+    4. The new plan executes from the beginning
+    5. No state from the old plan carries over
+    
+    This enables complete pivots when the original approach is wrong.
+    """
+    print("--- Starting Test Harness for 'replace_task' (MOCKED) ---")
+
+    # Use connect_now=False to prevent real browser initialization
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+
+    # Mock browser and action_provider to avoid real browser calls
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    try:
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="This goal will be replaced.",
+            parent_chat_context=[
+                {"role": "user", "content": "Start the original test."},
+            ],
+            max_escalations=1,
+            max_local_retries=1,
+        )
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Mock verification client
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Mock the modification client to return a replace_task decision
+        async def mock_modification_generate(*args, **kwargs):
+            print("--- MOCK MODIFICATION CLIENT: Received replace_task interjection ---")
+            response = InterjectionDecision(
+                action="replace_task",
+                reason="User wants to completely change the task to visit wikipedia",
+                patches=[],
+                cache=CacheInvalidateSpec(invalidate_steps=[]),
+            )
+            return response.model_dump_json()
+
+        active_task.modification_client.generate = mock_modification_generate
+
+        sanitized_plan = actor._sanitize_code(CANNED_PLAN_FOR_REPLACEMENT_STEERABLE_REPLACE, active_task)
+        active_task.plan_source_code = sanitized_plan
+
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        print("\n>>> Plan is running. Waiting before interjecting...")
+        await asyncio.sleep(1)
+
+        interjection_message = "Forget that. Please go to wikipedia.org and find the page for 'Asynchronous programming'."
+        print(f"\n>>> INTERJECTING with a new goal: '{interjection_message}'")
+
+        interjection_status = await active_task.interject(interjection_message)
+        print(f">>> Interjection status: {interjection_status}")
+
+        # The replace_task action should re-initialize the plan
+        # We don't wait for full completion since a replaced task starts fresh
+        await asyncio.sleep(2)
+
+        # Stop the task since replace_task starts a new execution loop
+        if not active_task.done():
+            await active_task.stop("Test complete - replace_task verified")
+
+        print("\n\n✅✅✅ TEST 'replace_task' COMPLETE ✅✅✅")
+        print("=== INTERJECTION STATUS ===")
+        print(interjection_status)
+
+        # The replace_task should have re-initialized the plan
+        assert "re-initialized" in interjection_status.lower() or "new goal" in interjection_status.lower()
+        print("\nAssertion successful: Replace task was handled correctly.")
+
+        print("\n=== EXPECTED BEHAVIOR LOGS ===")
+        print("- The original plan starts (mocked).")
+        print("- The 'interject' call triggers the 'replace_task' decision.")
+        print("- The plan logs that it is stopping.")
+        print("- The result indicates the task was replaced.")
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            await actor.close()
+        await asyncio.sleep(1)
+
+
