@@ -265,7 +265,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
-        _response_format: Optional[Type[BaseModel]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _requests_clarification: bool = False,
@@ -292,10 +292,10 @@ class SimulatedWebSearcher(BaseWebSearcher):
             parent_chat_context=_parent_chat_context,
         )
 
-        # When a _response_format is requested, use a per-call client configured
+        # When a response_format is requested, use a per-call client configured
         # with the same system message to return structured output.
         llm_for_handle = self._llm
-        if _response_format is not None:
+        if response_format is not None:
             schema_llm = new_llm_client()
             # Mirror the stateful system message for continuity
             try:
@@ -310,7 +310,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
                     f"\n\n{ask_msg}\n\nBack-story: {self._description}",
                 )
             try:
-                schema_llm.set_response_format(_response_format)
+                schema_llm.set_response_format(response_format)
             except Exception:
                 pass
             llm_for_handle = schema_llm
@@ -352,7 +352,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
-        _response_format: Optional[Type[BaseModel]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,

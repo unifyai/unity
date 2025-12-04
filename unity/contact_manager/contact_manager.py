@@ -1,4 +1,5 @@
-from typing import List, Dict, Optional, Callable, Any, Tuple, Union
+from typing import List, Dict, Optional, Callable, Any, Tuple, Type, Union
+from pydantic import BaseModel
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 import asyncio
 import functools
@@ -187,6 +188,7 @@ class ContactManager(BaseContactManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -249,6 +251,7 @@ class ContactManager(BaseContactManager):
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
             images=images,
+            response_format=response_format,
         )
 
         if _return_reasoning_steps:
@@ -268,6 +271,7 @@ class ContactManager(BaseContactManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -311,6 +315,7 @@ class ContactManager(BaseContactManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             images=images,
+            response_format=response_format,
         )
 
         if _return_reasoning_steps:

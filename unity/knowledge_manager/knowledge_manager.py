@@ -2,7 +2,8 @@ import asyncio
 import uuid
 import unify
 import functools
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
+from pydantic import BaseModel
 
 import json
 
@@ -428,6 +429,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
@@ -500,6 +502,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_refactor_tool_policy,
+            response_format=response_format,
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -520,6 +523,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
@@ -595,6 +599,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
+            response_format=response_format,
         )
 
         # Optionally wrap .result() to expose reasoning
@@ -616,13 +621,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         case_specific_instructions: str | None = None,
-        response_format: Any | None = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
         """

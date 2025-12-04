@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import threading
 import functools
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Type, Union
 
 import unify
+from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
 from .base import BaseTranscriptManager
@@ -349,6 +350,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,

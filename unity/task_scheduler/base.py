@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 import json
 
+from pydantic import BaseModel
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
@@ -87,6 +88,7 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
@@ -146,6 +148,10 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         text : str
             Plain‑English question about existing tasks, e.g. "Which tasks are
             due tomorrow?".
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured answer. When provided,
+            the final result should conform to this schema; otherwise a plain
+            string answer is returned.
         _return_reasoning_steps : bool, default ``False``
             When *True*, :pymeth:`SteerableToolHandle.result` returns
             ``(answer, messages)`` – the first element is the assistant's
@@ -175,6 +181,7 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,

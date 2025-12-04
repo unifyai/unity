@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from abc import abstractmethod
 import asyncio
-from typing import Dict, List, Optional, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Any, Type, TYPE_CHECKING
+from pydantic import BaseModel
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 from ..common.async_tool_loop import SteerableToolHandle
@@ -35,6 +36,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -87,6 +89,10 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         text : str
             The user's plain-English question (e.g. "Show me Alice's phone number.").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured answer. When provided,
+            the final result should conform to this schema; otherwise a plain
+            string answer is returned.
         _return_reasoning_steps : bool, default ``False``
             When True, :pyfunc:`SteerableToolHandle.result` returns a
             tuple ``(answer, messages)`` where *messages* is the invisible
@@ -114,6 +120,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -154,6 +161,10 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         text : str
             The user's request (e.g. "Add Sarah Connor's phone number …").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured outcome. When provided,
+            the final result should conform to this schema; otherwise a plain
+            string summary is returned.
         _return_reasoning_steps, _parent_chat_context,
         _clarification_up_q, _clarification_down_q
             Same semantics as in :py:meth:`ask`.

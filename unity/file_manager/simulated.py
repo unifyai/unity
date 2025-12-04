@@ -5,9 +5,11 @@ import asyncio
 import json
 import functools
 import threading
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Type, Union
 
 import unify
+from pydantic import BaseModel
+
 from .base import BaseFileManager, BaseGlobalFileManager
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.llm_client import new_llm_client, get_cache_setting
@@ -47,6 +49,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
+        response_format: Optional[Type[BaseModel]] = None,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -82,6 +85,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 pass
 
         self._extra_msgs: List[str] = []
+        self._response_format = response_format
 
         self._done_event = threading.Event()
         self._cancelled = False
@@ -146,11 +150,23 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 sys_msg = getattr(self._llm, "system_message", None)
             except Exception:
                 sys_msg = None
-            answer = await simulated_llm_roundtrip(
-                self._llm,
-                label=self._log_label,
-                prompt=prompt,
-            )
+            # Set response_format if provided
+            old_response_format = None
+            if self._response_format is not None:
+                old_response_format = getattr(self._llm, "response_format", None)
+                self._llm.response_format = self._response_format
+            try:
+                answer = await simulated_llm_roundtrip(
+                    self._llm,
+                    label=self._log_label,
+                    prompt=prompt,
+                )
+            finally:
+                if self._response_format is not None:
+                    if old_response_format is not None:
+                        self._llm.response_format = old_response_format
+                    elif hasattr(self._llm, "response_format"):
+                        del self._llm.response_format
             self._answer = answer
             self._messages = [
                 {"role": "user", "content": prompt},
@@ -219,6 +235,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
             _requests_clarification=False,
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
+            response_format=self._response_format,
         )
         # Align with other simulated components: concise "Question(<parent_label>)" label
         try:
@@ -383,6 +400,7 @@ class SimulatedFileManager(BaseFileManager):
         _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         log_events: bool = False,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
         call_id = None  # No EventBus publishing for simulated managers
@@ -402,6 +420,7 @@ class SimulatedFileManager(BaseFileManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
 
         # Tool-style scheduled log (only when no parent lineage)
@@ -521,6 +540,7 @@ class SimulatedFileManager(BaseFileManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
         return handle
 
@@ -539,6 +559,7 @@ class SimulatedFileManager(BaseFileManager):
         _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         # Simulate an organization plan by summarizing current files
         inventory = sorted(list(self._files.keys()))
@@ -559,6 +580,7 @@ class SimulatedFileManager(BaseFileManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
         return handle
 
@@ -1070,6 +1092,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         _requests_clarification: bool = False,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         # Provide a compact inventory snapshot to the simulator
         inventory = {
@@ -1098,6 +1121,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
         return handle
 
@@ -1111,6 +1135,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         _requests_clarification: bool = False,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         # Build a simple plan description and return a handle
         plan = {
@@ -1130,6 +1155,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
         return handle
 

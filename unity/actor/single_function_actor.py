@@ -17,7 +17,7 @@ import asyncio
 import functools
 import inspect
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Type
 
 from pydantic import BaseModel, Field
 
@@ -528,6 +528,7 @@ class SingleFunctionActor(BaseActor):
         self,
         description: Optional[str] = None,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         function_id: Optional[int] = None,
         primitive_name: Optional[str] = None,
         include_primitives: bool = True,

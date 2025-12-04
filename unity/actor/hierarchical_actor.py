@@ -16,7 +16,7 @@ import textwrap
 import traceback
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
 import typing
 import types
 import weakref
@@ -4507,6 +4507,7 @@ class HierarchicalActor(BaseActor):
         self,
         description: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,

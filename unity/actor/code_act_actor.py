@@ -4,7 +4,8 @@ import traceback
 import json
 import ast
 from contextlib import redirect_stdout, redirect_stderr
-from typing import Any, Dict, Optional, Callable, Awaitable
+from typing import Any, Dict, Optional, Callable, Awaitable, Type
+from pydantic import BaseModel
 
 from unity.actor.base import BaseActor
 from unity.actor.handle import ActorHandle
@@ -256,6 +257,7 @@ class CodeActActor(BaseActor):
         self,
         description: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,

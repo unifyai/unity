@@ -9,9 +9,10 @@ or queue state is read or written.
 import asyncio
 import threading
 import functools
-from typing import List, Optional, Callable, Any
+from typing import List, Optional, Callable, Type, Any
 
 import unify
+from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..constants import LOGGER
@@ -412,6 +413,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,  # Ignored – we do not expose tools
         _parent_chat_context: list[dict] | None = None,  # Unused – synthetic
@@ -463,6 +465,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,  # Ignored – no tools here
         _parent_chat_context: list[dict] | None = None,

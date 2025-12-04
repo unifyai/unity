@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Type
+from pydantic import BaseModel
 
 from unity.common.async_tool_loop import SteerableToolHandle
 
@@ -80,6 +81,7 @@ class BaseActor(ABC):
         self,
         description: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
