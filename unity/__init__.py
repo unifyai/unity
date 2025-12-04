@@ -167,6 +167,9 @@ def init(
     if _INITIALISED:
         return
 
+    # 0. Validate LLM provider credentials are present
+    _SETTINGS.validate_llm_providers()
+
     # 1. Ensure Unify project is active
     if not unify.active_project():
         unify.activate(project_name, overwrite)
