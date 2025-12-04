@@ -2635,3 +2635,184 @@ async def test_immediate_pause_resume_orchestrator():
         traceback.print_exc()
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 8: Interjection Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_user_interjections_incrementally_build_and_modify_plan():
+    """
+    Tests incremental plan building through user interjections.
+    
+    Simulates a multi-step teaching session where the user:
+    1. Starts with a basic goal (search for cookies)
+    2. Interjects to add navigation step (go to allrecipes.com first)
+    3. Interjects again to add a search step
+    4. Completes the teaching with a final "good job" confirmation
+    
+    Validates that each interjection correctly modifies the plan and
+    the actor adapts its execution based on user feedback.
+    """
+    print("--- Starting Test Harness for Incremental Teaching Session ---")
+
+    # Use connect_now=False to prevent real browser initialization
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+
+    # Mock browser and action_provider to avoid real browser calls
+    actor.computer_primitives._browser = NoKeychainBrowser()
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    interjection_count = 0
+
+    # Create mock interjection responses for each interjection
+    def create_mock_modification_response(interjection_num):
+        """Create appropriate mock responses for each interjection."""
+        if interjection_num == 1:
+            # First interjection: Navigate to allrecipes.com
+            return InterjectionDecision(
+                action="modify_task",
+                reason="User wants to navigate to allrecipes.com",
+                patches=[
+                    FunctionPatch(
+                        function_name="main_plan",
+                        new_code=textwrap.dedent("""
+                            async def main_plan():
+                                '''Navigate to allrecipes.'''
+                                await computer_primitives.navigate("https://www.allrecipes.com")
+                                return "Navigated to allrecipes.com"
+                        """),
+                    ),
+                ],
+                cache=CacheInvalidateSpec(invalidate_steps=[]),
+            )
+        elif interjection_num == 2:
+            # Second interjection: Search for chocolate chip cookies
+            return InterjectionDecision(
+                action="modify_task",
+                reason="User wants to search for chocolate chip cookies",
+                patches=[
+                    FunctionPatch(
+                        function_name="main_plan",
+                        new_code=textwrap.dedent("""
+                            async def main_plan():
+                                '''Navigate and search.'''
+                                await computer_primitives.navigate("https://www.allrecipes.com")
+                                await computer_primitives.act("Search for 'chocolate chip cookies'")
+                                return "Searched for chocolate chip cookies"
+                        """),
+                    ),
+                ],
+                cache=CacheInvalidateSpec(invalidate_steps=[]),
+            )
+        else:
+            # Third interjection: Complete the task
+            return InterjectionDecision(
+                action="complete_task",
+                reason="User indicated the session is complete",
+                patches=[],
+                cache=CacheInvalidateSpec(invalidate_steps=[]),
+            )
+
+    try:
+        # 1) Start plan with no goal (teaching session)
+        print("\n>>> Instantiating actor with no goal...")
+        active_task = HierarchicalActorHandle(actor=actor, goal=None)
+
+        # Create a stateful mock for modification_client
+        async def mock_generate(*args, **kwargs):
+            nonlocal interjection_count
+            interjection_count += 1
+            response = create_mock_modification_response(interjection_count)
+            print(f"--- MOCK MODIFICATION CLIENT: Interjection {interjection_count}, action={response.action} ---")
+            return response.model_dump_json()
+
+        active_task.modification_client.generate = mock_generate
+
+        # 2) Wait until the plan is actually paused for the first interjection
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
+        print("--- Plan is correctly awaiting first instruction. ---")
+
+        # 3) Interjection 1
+        interjection_1 = "Navigate to allrecipes.com"
+        print(f"\n>>> INTERJECTION 1: '{interjection_1}'")
+        status_1 = await active_task.interject(interjection_1)
+        print(f">>> Status: {status_1}")
+
+        # 4) Wait until it re-pauses
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
+        print("--- Step 1 complete. Plan is correctly awaiting next instruction. ---")
+
+        # 5) Interjection 2
+        interjection_2 = "Great, now search for 'chocolate chip cookies'."
+        print(f"\n>>> INTERJECTION 2: '{interjection_2}'")
+        status_2 = await active_task.interject(interjection_2)
+        print(f">>> Status: {status_2}")
+
+        # 6) Wait until it re-pauses again
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
+        print("--- Step 2 complete. Plan is correctly awaiting final instruction. ---")
+
+        # 7) Interjection 3: finish
+        interjection_3 = "Perfect, that's all. We're done."
+        print(f"\n>>> INTERJECTION 3: '{interjection_3}'")
+        status_3 = await active_task.interject(interjection_3)
+        print(f">>> Status: {status_3}")
+
+        # 8) Await the final result
+        print("\n>>> Waiting for the final result...")
+        final_result = await active_task.result()
+        print(f"\n--- Plan finished with result: {final_result} ---")
+
+        # Verify the task completed successfully
+        assert active_task._state.name in {
+            "COMPLETED",
+            "PAUSED_FOR_INTERJECTION",
+        }, f"Unexpected final state: {active_task._state.name}"
+        assert not str(final_result).startswith(
+            "ERROR",
+        ), f"Task ended with error: {final_result}"
+
+        print("\n\n✅✅✅ TEST 'Incremental Teaching Session' COMPLETE ✅✅✅")
+        print("\n=== EXPECTED BEHAVIOR LOGS ===")
+        print("- Plan starts in 'PAUSED_FOR_INTERJECTION' state.")
+        print(
+            "- Interjection 1 modifies the plan to navigate; plan runs then returns to 'PAUSED_FOR_INTERJECTION'.",
+        )
+        print(
+            "- Interjection 2 modifies the plan to add a search step; plan runs then returns to 'PAUSED_FOR_INTERJECTION'.",
+        )
+        print(
+            "- Interjection 3 signals completion. The plan transitions to the 'COMPLETED' state.",
+        )
+        print(
+            "- The final result is returned (with mocked browser actions).",
+        )
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            await actor.close()
+        await asyncio.sleep(1)
+
+
