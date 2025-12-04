@@ -17,7 +17,7 @@ from .base import BaseConversationManagerHandle
 from .events import (
     NotificationInjectedEvent,
     NotificationUnpinnedEvent,
-    DirectSpeechEvent,
+    DirectMessageEvent,
 )
 import logging
 
@@ -446,7 +446,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             # Speak to user via direct speech (bypasses Main CM Brain)
             await self.event_broker.publish(
                 "app:comms:direct_speech",
-                DirectSpeechEvent(content=text).to_json(),
+                DirectMessageEvent(content=text).to_json(),
             )
 
             try:
@@ -576,7 +576,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                     ):
                         await cm_handle.event_broker.publish(
                             "app:comms:direct_speech",
-                            DirectSpeechEvent(
+                            DirectMessageEvent(
                                 content=final_payload["acknowledgment"],
                             ).to_json(),
                         )

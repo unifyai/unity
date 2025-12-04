@@ -493,13 +493,13 @@ class SummarizeContext(Event):
 
 
 @dataclass
-class DirectSpeechEvent(Event):
+class DirectMessageEvent(Event):
     """
-    Event to speak directly to the user via the voice layer without triggering the Main CM Brain.
+    Send a message directly to the user via the current medium,
+    bypassing the Main CM Brain's decision-making.
 
-    This bypasses the normal LLM decision-making flow and immediately sends the content to
-    the voice output (either Realtime API or STT-TTS pipeline). Used by ConversationManagerHandle.ask
-    for questions and acknowledgments that should be spoken verbatim without LLM processing.
+    Used by ConversationManagerHandle.ask for questions and acknowledgments
+    that should be delivered verbatim without LLM processing.
     """
 
     content: str
