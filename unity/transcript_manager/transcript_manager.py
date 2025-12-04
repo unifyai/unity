@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import List, Dict, Optional, Union, Any, Callable, Literal
+from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
+from pydantic import BaseModel
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message, UNASSIGNED
@@ -198,6 +199,7 @@ class TranscriptManager(BaseTranscriptManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
@@ -275,6 +277,7 @@ class TranscriptManager(BaseTranscriptManager):
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
             images=images,
+            response_format=response_format,
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────

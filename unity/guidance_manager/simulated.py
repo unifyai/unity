@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import threading
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from typing import List, Dict, Any, Optional, Type, TYPE_CHECKING
+from pydantic import BaseModel
 
 import unify
 from .base import BaseGuidanceManager
@@ -317,6 +318,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
@@ -359,6 +361,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,

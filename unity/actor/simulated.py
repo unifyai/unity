@@ -5,7 +5,8 @@ import time
 import unify
 from .base import BaseActor, BaseActorHandle
 import functools
-from typing import Optional
+from typing import Optional, Type
+from pydantic import BaseModel
 from unity.function_manager.function_manager import FunctionManager
 from unity.constants import LOGGER
 from unity.common.simulated import (
@@ -698,6 +699,7 @@ class SimulatedActor(BaseActor):
         self,
         description: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,

@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type
+from pydantic import BaseModel
 
 import unify
 from unity.common.llm_client import new_llm_client
@@ -425,6 +426,7 @@ class SecretManager(BaseSecretManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -491,6 +493,7 @@ class SecretManager(BaseSecretManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
+            response_format=response_format,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
@@ -513,6 +516,7 @@ class SecretManager(BaseSecretManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -577,6 +581,7 @@ class SecretManager(BaseSecretManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
+            response_format=response_format,
         )
 
         if _return_reasoning_steps:

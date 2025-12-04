@@ -30,7 +30,7 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
-        _response_format: Optional[Type[BaseModel]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -79,7 +79,7 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         text : str
             The user's plain‑English research question.
-        _response_format : Type[BaseModel] | None, default None
+        response_format : Type[BaseModel] | None, default None
             Optional Pydantic model to request a structured answer. When provided,
             the final result should conform to this schema; otherwise a plain
             string answer is returned.
@@ -104,7 +104,7 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
-        _response_format: Optional[Type[BaseModel]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -138,7 +138,7 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
 
         Parameters
         ----------
-        _response_format : Type[BaseModel] | None, default None
+        response_format : Type[BaseModel] | None, default None
             Optional Pydantic model to request a structured outcome. When provided,
             the final result should conform to this schema; otherwise a plain
             string summary is returned.

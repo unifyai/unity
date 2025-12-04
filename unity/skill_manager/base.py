@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
+from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -34,6 +35,7 @@ class BaseSkillManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,

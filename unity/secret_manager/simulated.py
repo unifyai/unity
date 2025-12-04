@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, Type, TYPE_CHECKING
+from pydantic import BaseModel
 
 import unify
 from .base import BaseSecretManager
@@ -319,6 +320,7 @@ class SimulatedSecretManager(BaseSecretManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
@@ -453,6 +455,7 @@ class SimulatedSecretManager(BaseSecretManager):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,

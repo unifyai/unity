@@ -3,9 +3,10 @@ from __future__ import annotations
 # Backwards-compat shim: re-export BaseFileManager from managers.base
 from unity.common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from unity.file_manager.managers.base import BaseFileManager  # noqa: F401
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 import asyncio
 from abc import abstractmethod
+from pydantic import BaseModel
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from ..common.state_managers import BaseStateManager
@@ -63,6 +64,7 @@ class BaseGlobalFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing files** (read‑only) across all configured
@@ -122,6 +124,7 @@ class BaseGlobalFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         """
         Apply a **re‑organization** request – rename/move only – and obtain a

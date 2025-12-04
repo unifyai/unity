@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type
 
 import unify
+from pydantic import BaseModel
 
 from unity.common.llm_client import new_llm_client
 from unity.file_manager.managers.base import BaseFileManager
@@ -127,6 +128,7 @@ class GlobalFileManager(BaseGlobalFileManager):
         _clarification_down_q: Optional[Any] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         """
         Read-only questions over the aggregated file view.
@@ -190,6 +192,7 @@ class GlobalFileManager(BaseGlobalFileManager):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
+            response_format=response_format,
         )
         if _return_reasoning_steps:
             original_result = handle.result
@@ -213,6 +216,7 @@ class GlobalFileManager(BaseGlobalFileManager):
         _clarification_down_q: Optional[Any] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         """
         Plan and execute safe rename/move operations across filesystems.
@@ -266,6 +270,7 @@ class GlobalFileManager(BaseGlobalFileManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy,
+            response_format=response_format,
         )
         if _return_reasoning_steps:
             original_result = handle.result

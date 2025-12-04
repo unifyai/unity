@@ -15,8 +15,9 @@ import asyncio
 import functools
 import json
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Union, Callable, Tuple
+from typing import Dict, List, Any, Optional, Type, Union, Callable, Tuple
 from typing import Literal, overload
+from pydantic import BaseModel
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -440,6 +441,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
         _parent_chat_context: list[dict] | None = None,
@@ -503,6 +505,7 @@ class TaskScheduler(BaseTaskScheduler):
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
             images=images,
+            response_format=response_format,
         )
         # Logging wrapper applied by decorator
 
@@ -520,6 +523,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
         _parent_chat_context: list[dict] | None = None,
@@ -592,6 +596,7 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
             images=images,
+            response_format=response_format,
         )
         # Logging wrapper applied by decorator
 
@@ -3876,6 +3881,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = None,
         handle_cls: Optional["type[SteerableToolHandle]"] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         """Centralised wrapper around start_async_tool_loop."""
         return start_async_tool_loop(
@@ -3889,6 +3895,7 @@ class TaskScheduler(BaseTaskScheduler):
             tool_policy=tool_policy,
             handle_cls=handle_cls,
             images=images,
+            response_format=response_format,
         )
 
     def _maybe_add_clarification_tool(
