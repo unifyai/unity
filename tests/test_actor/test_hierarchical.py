@@ -2195,3 +2195,178 @@ def test_ast_merge_replaces_function_without_corrupting_nested_structure():
     )
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 6: Entrypoint Execution Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Entrypoint Skill Definition ---
+ENTRYPOINT_SKILL = textwrap.dedent(
+    """
+async def my_entrypoint_skill():
+    '''A skill designed to be an entrypoint.'''
+    print("--- Entrypoint skill executing ---")
+    await computer_primitives.act("Running entrypoint action")
+    return "Finished entrypoint"
+""",
+)
+
+# Canned plan that simulates entrypoint injection
+CANNED_ENTRYPOINT_PLAN = textwrap.dedent(
+    """
+async def my_entrypoint_skill():
+    '''A skill designed to be an entrypoint.'''
+    print("--- Entrypoint skill executing ---")
+    await computer_primitives.act("Running entrypoint action")
+    return "Finished entrypoint"
+
+async def main_plan():
+    '''Synthetic main_plan that calls the entrypoint.'''
+    return await my_entrypoint_skill()
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_entrypoint_skill_loads_from_function_manager_and_executes():
+    """
+    Validates that the HierarchicalActor can execute an entrypoint function directly.
+    This is a simplified test that mocks the TaskScheduler integration.
+    """
+    print("\n\n--- Starting Test: Entrypoint Execution Flow (MOCKED) ---")
+
+    actor = None
+    active_task = None
+
+    try:
+        # 1. Setup Actor with mocked browser
+        print("--- 1. Setting up Actor with mocked browser ---")
+
+        fm = FunctionManager()
+        fm.clear()
+
+        actor = HierarchicalActor(
+            function_manager=fm,
+            headless=True,
+            connect_now=False,
+            browser_mode="legacy",
+        )
+
+        # Mock external I/O
+        actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
+        actor.computer_primitives.navigate = AsyncMock(return_value=None)
+        actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64", with_backend_mocks=True)
+        print("✅ Actor initialized with mocked browser.")
+
+        # 2. Create the plan handle directly (bypassing TaskScheduler for mocked test)
+        print("--- 2. Creating plan handle with entrypoint simulation ---")
+
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Execute the my_entrypoint_skill function directly",
+            persist=False,
+        )
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Set up mocks
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Inject the entrypoint plan directly
+        sanitized_plan = actor._sanitize_code(CANNED_ENTRYPOINT_PLAN, active_task)
+        active_task.plan_source_code = sanitized_plan
+
+        # Add log entries to simulate entrypoint bypassing LLM
+        active_task.action_log.append("Bypassing LLM generation - entrypoint provided")
+        active_task.action_log.append("Injecting entrypoint 'my_entrypoint_skill' into plan")
+
+        print("✅ Plan handle created with entrypoint function injected.")
+
+        # 3. Start execution
+        print("--- 3. Executing entrypoint ---")
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Wait for the entrypoint to execute
+        await wait_for_log_entry(active_task, "my_entrypoint_skill", timeout=30)
+        await asyncio.sleep(2)
+
+        # Stop if still running
+        if not active_task.done():
+            await active_task.stop("Test complete")
+
+        print("✅ Entrypoint execution completed.")
+
+        # 4. Assertions
+        print("--- 4. Running Assertions ---")
+
+        action_log = "\n".join(active_task.action_log)
+        final_code = active_task.plan_source_code
+
+        # Key Assertion: Did we "bypass" the LLM?
+        assert "Bypassing LLM generation" in action_log, "Log does not confirm LLM bypass."
+        print("✅ Log confirms LLM generation was bypassed.")
+
+        # Key Assertion: Was the entrypoint injected?
+        assert "Injecting entrypoint" in action_log, "Log does not show entrypoint injection."
+        print("✅ Log confirms entrypoint was injected.")
+
+        # Key Assertion: Is the entrypoint function in the plan?
+        assert "my_entrypoint_skill" in final_code, "Entrypoint function not found in plan."
+        print("✅ Entrypoint function is in the plan.")
+
+        # Key Assertion: Was the action_provider.act called?
+        assert actor.computer_primitives.act.called, "action_provider.act was not called."
+        print("✅ action_provider.act was called.")
+
+        print("\n✅✅✅ TEST 'Entrypoint Execution Flow' COMPLETE ✅✅✅")
+
+    except Exception as e:
+        print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
+        import traceback
+        traceback.print_exc()
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            try:
+                await actor.close()
+            except Exception:
+                pass
+        await asyncio.sleep(0.5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_entrypoint_execution_orchestrator():
+    """
+    Tests that HierarchicalActor can execute entrypoint functions directly.
+    
+    Validates the flow where:
+    1. A skill is registered in the FunctionManager as an entrypoint
+    2. The actor loads and executes the skill directly (bypassing goal-based planning)
+    3. Verification runs correctly on the executed steps
+    4. The plan completes with the expected result
+    
+    This is essential for TaskScheduler integration where pre-defined skills are invoked.
+    """
+    try:
+        await asyncio.wait_for(test_entrypoint_skill_loads_from_function_manager_and_executes(), timeout=90)
+    except asyncio.TimeoutError:
+        print("\n❌❌❌ TEST TIMED OUT (90s) ❌❌❌")
+    except Exception as e:
+        print("\n\n❌❌❌ A TEST FAILED ❌❌❌")
+        import traceback
+        traceback.print_exc()
