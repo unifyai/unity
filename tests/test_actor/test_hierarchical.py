@@ -23,7 +23,6 @@ This test file covers:
 import ast
 import asyncio
 import contextlib
-import functools
 import json
 import logging
 import sys
@@ -31,10 +30,9 @@ import textwrap
 import traceback
 
 import pytest
-import unify
 import unity
 from pydantic import BaseModel, Field
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from unity.actor.hierarchical_actor import (
     CacheInvalidateSpec,
@@ -84,13 +82,13 @@ unity.init(overwrite=True)
 class NoKeychainBrowser:
     """
     Mock browser that prevents Keychain prompts during tests.
-    
+
     Args:
         url: URL to return from get_current_url()
         screenshot: Screenshot data to return from get_screenshot()
         with_backend_mocks: If True, adds MagicMock backend with barrier/interrupt
     """
-    
+
     def __init__(
         self,
         url: str = "",
@@ -162,10 +160,18 @@ class ConfigurableMockVerificationClient:
         self.generate = AsyncMock(side_effect=self._side_effect)
         self._current_format = VerificationAssessment
 
-    def set_behavior(self, func_name, delay_or_sequence=0, status="ok", reason="Mock success", *, sequence=None):
+    def set_behavior(
+        self,
+        func_name,
+        delay_or_sequence=0,
+        status="ok",
+        reason="Mock success",
+        *,
+        sequence=None,
+    ):
         """
         Configure behavior for a specific function.
-        
+
         Supports multiple call signatures:
         - set_behavior(func_name, sequence) - list of (status, reason) tuples
         - set_behavior(func_name, delay, status, reason) - single response with delay
@@ -238,11 +244,11 @@ class ConfigurableMockVerificationClient:
         # Check for configured behavior
         if func_name and func_name in self.behaviors:
             behavior = self.behaviors[func_name]
-            
+
             # Apply delay if configured
             if behavior.get("delay", 0) > 0:
                 await asyncio.sleep(behavior["delay"])
-            
+
             # Use sequence if available
             if behavior["sequence"]:
                 idx = min(behavior["calls"], len(behavior["sequence"]) - 1)
@@ -251,7 +257,7 @@ class ConfigurableMockVerificationClient:
             else:
                 status = behavior["status"]
                 reason = behavior["reason"]
-            
+
             return VerificationAssessment(
                 status=status,
                 reason=reason,
@@ -302,10 +308,10 @@ async def wait_for_state(task, expected_state, timeout=60, poll=0.5):
         if task._state == expected_state:
             return
         await asyncio.sleep(poll)
-    tail = "\n".join(task.action_log[-15:]) if hasattr(task, 'action_log') else ""
+    tail = "\n".join(task.action_log[-15:]) if hasattr(task, "action_log") else ""
     raise AssertionError(
         f"Timed out waiting for state {expected_state.name}; "
-        f"current state={task._state.name}\n--- Log Tail ---\n{tail}"
+        f"current state={task._state.name}\n--- Log Tail ---\n{tail}",
     )
 
 
@@ -320,7 +326,7 @@ async def wait_for_log_entry(task, log_substring: str, timeout=60, poll=0.5):
         await asyncio.sleep(poll)
     tail = "\n".join(task.action_log[-20:])
     raise AssertionError(
-        f"Timed out waiting for log entry '{log_substring}'.\n--- Log Tail ---\n{tail}"
+        f"Timed out waiting for log entry '{log_substring}'.\n--- Log Tail ---\n{tail}",
     )
 
 
@@ -442,7 +448,6 @@ async def test_cache_hits_after_interjection_including_conversation_manager_call
         # --- End Mock Setup ---
 
         active_task = HierarchicalActorHandle(
-
             actor=actor,
             goal="Test action provider caching after modification, including conv manager.",
             persist=True,  # Need persist=True to allow interjection after completion
@@ -699,7 +704,6 @@ async def test_loop_iterations_get_unique_cache_keys():
         )
 
         active_task = HierarchicalActorHandle(
-
             actor=actor,
             goal="Test loop context tracking in cache keys",
             persist=True,
@@ -995,7 +999,6 @@ async def test_nested_loop_combinations_get_unique_cache_keys():
         actor.computer_primitives.observe = AsyncMock(side_effect=mock_observe)
 
         active_task = HierarchicalActorHandle(
-
             actor=actor,
             goal="Test nested loop context tracking",
             persist=True,
@@ -1081,7 +1084,7 @@ async def test_nested_loop_combinations_get_unique_cache_keys():
 async def test_action_caching_orchestrator():
     """
     Orchestrates all action caching tests.
-    
+
     Runs the following sub-tests:
     - test_cache_hits_after_interjection_including_conversation_manager_calls: Validates cache hits after interjections
     - test_loop_iterations_get_unique_cache_keys: Ensures loop iterations get unique cache keys
@@ -1166,7 +1169,7 @@ CANNED_PLAN_FOR_INTERJECTION_TEST_ADVANCE_COURSE_CORRECTION = textwrap.dedent(
 async def test_recovery_agent_launches_on_user_interjection():
     """
     Tests intra-function recovery triggered by a user interjection.
-    
+
     Validates that when a user interjects during plan execution, the actor:
     1. Pauses execution correctly
     2. Launches the recovery sub-agent with proper context (screenshots + trajectory)
@@ -1178,12 +1181,16 @@ async def test_recovery_agent_launches_on_user_interjection():
     actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
     active_task = None
     try:
+
         async def mock_recovery_agent(plan, target_screenshot, trajectory):
             print("--- MOCK RECOVERY AGENT (Interjection): LAUNCHED ---")
             assert target_screenshot is not None, "Target screenshot was not provided."
@@ -1275,16 +1282,21 @@ async def test_recovery_agent_launches_on_user_interjection():
         final_log = "\n".join(active_task.action_log)
 
         assert (
-            "COURSE CORRECTION: Mock agent for interjection is running."
-            in final_log
+            "COURSE CORRECTION: Mock agent for interjection is running." in final_log
         ), "Course correction sub-agent was not successfully launched for interjection."
-        print("✅ Course correction sub-agent was successfully launched for interjection.")
+        print(
+            "✅ Course correction sub-agent was successfully launched for interjection.",
+        )
 
         assert "CACHE HIT" in final_log, "Expected at least one cache hit on replay."
         print("✅ Plan efficiently replayed from cache.")
 
-        assert "RESTART: Restarting execution loop" in final_log or "run_id=" in final_log
-        print("✅ Main plan correctly restarted after interjection (run transition logged).")
+        assert (
+            "RESTART: Restarting execution loop" in final_log or "run_id=" in final_log
+        )
+        print(
+            "✅ Main plan correctly restarted after interjection (run transition logged).",
+        )
 
         print("\n✅✅✅ TEST 'Recovery after Interjection' COMPLETE ✅✅✅")
 
@@ -1310,14 +1322,23 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
 
     # Clear FunctionManager to avoid issues with None implementations in primitives
     from unity.function_manager.function_manager import FunctionManager
+
     fm = FunctionManager()
     fm.clear()
 
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False, function_manager=fm)
+    actor = HierarchicalActor(
+        headless=True,
+        browser_mode="legacy",
+        connect_now=False,
+        function_manager=fm,
+    )
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
@@ -1336,7 +1357,10 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
         mock_v_client.set_behavior(
             "_step_3_attempt_action_on_wrong_page",
             [
-                ("reimplement_local", "Action failed, element not found on the 'About Us' page."),
+                (
+                    "reimplement_local",
+                    "Action failed, element not found on the 'About Us' page.",
+                ),
                 ("ok", "Action succeeded after state recovery."),
             ],
         )
@@ -1379,9 +1403,13 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
         # Inject a mock recovery agent that just logs the action
         async def mock_recovery_agent(plan, target_screenshot, trajectory):
             print("--- MOCK RECOVERY AGENT: LAUNCHED ---")
-            assert target_screenshot is not None, "Target screenshot was not provided to recovery agent."
+            assert (
+                target_screenshot is not None
+            ), "Target screenshot was not provided to recovery agent."
             assert len(trajectory) > 0, "Trajectory was empty."
-            assert "Click the first recipe link" in trajectory[0], f"Expected 'Click the first recipe link' in trajectory[0], got: {trajectory[0]}"
+            assert (
+                "Click the first recipe link" in trajectory[0]
+            ), f"Expected 'Click the first recipe link' in trajectory[0], got: {trajectory[0]}"
             active_task.action_log.append("COURSE CORRECTION: Mock agent is running.")
             print("--- MOCK RECOVERY AGENT: State restored. ---")
 
@@ -1404,17 +1432,24 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
 
         # Assertions
         assert (
-            "_step_3_attempt_action_on_wrong_page" in final_log and "FAILED" in final_log
+            "_step_3_attempt_action_on_wrong_page" in final_log
+            and "FAILED" in final_log
         ), f"Expected verification failure for '_step_3_attempt_action_on_wrong_page' in log"
         print("✅ Verification failure correctly detected.")
 
-        assert "COURSE CORRECTION: Mock agent is running." in final_log, "Course correction not found in log"
+        assert (
+            "COURSE CORRECTION: Mock agent is running." in final_log
+        ), "Course correction not found in log"
         print("✅ Course correction sub-agent was successfully launched.")
 
-        assert "RESTART: Restarting execution loop" in final_log, "RESTART not found in log"
+        assert (
+            "RESTART: Restarting execution loop" in final_log
+        ), "RESTART not found in log"
         print("✅ Main plan correctly restarted after recovery.")
 
-        assert "Plan completed successfully." in final_result, f"Expected 'Plan completed successfully.' in result, got: {final_result}"
+        assert (
+            "Plan completed successfully." in final_result
+        ), f"Expected 'Plan completed successfully.' in result, got: {final_result}"
         print("✅ Plan ultimately succeeded after recovery and reimplementation.")
 
         print("\n✅✅✅ TEST 'Recovery after Verification Failure' COMPLETE ✅✅✅")
@@ -1431,11 +1466,11 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
 async def test_course_correction_orchestrator():
     """
     Orchestrates course correction and recovery tests.
-    
+
     Tests the actor's ability to recover from:
     - Verification failures (wrong browser state detected)
     - User interjections that require plan modification
-    
+
     Validates the recovery sub-agent is launched with correct context
     and that execution resumes properly after state restoration.
     """
@@ -1726,7 +1761,9 @@ async def _test_failure_and_cancellation(actor):
 
         # In mocked environment, verify basic execution happened
         assert "step_A_navigate" in final_log, f"step_A not found in logs: {final_log}"
-        assert "step_B_fail_verification" in final_log, f"step_B not found in logs: {final_log}"
+        assert (
+            "step_B_fail_verification" in final_log
+        ), f"step_B not found in logs: {final_log}"
         print("✅ Steps were executed.")
 
         # Plan should complete
@@ -1841,8 +1878,12 @@ async def _test_preemption(actor):
 
         # In mocked environment, verify basic execution happened
         assert "step_A_ok" in final_log, f"step_A not found in logs: {final_log}"
-        assert "step_B_fails_slowly" in final_log, f"step_B not found in logs: {final_log}"
-        assert "step_C_fails_fast" in final_log, f"step_C not found in logs: {final_log}"
+        assert (
+            "step_B_fails_slowly" in final_log
+        ), f"step_B not found in logs: {final_log}"
+        assert (
+            "step_C_fails_fast" in final_log
+        ), f"step_C not found in logs: {final_log}"
         print("✅ All steps were executed.")
 
         # Plan should complete
@@ -1861,12 +1902,12 @@ async def _test_preemption(actor):
 async def test_verification_runs_async_and_handles_failures_and_preemption():
     """
     Tests asynchronous verification behavior.
-    
+
     Validates three key verification scenarios:
     1. Non-blocking verification: Plan execution continues while verification runs in background
     2. Failure and cancellation: Verification failures trigger recovery, pending verifications are cancelled
     3. Preemption: Long-running verifications are properly cancelled when the plan completes
-    
+
     Uses configurable mock delays to simulate real-world verification timing.
     """
     actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
@@ -1914,13 +1955,13 @@ async def main_plan():
 async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
     """
     Tests the clarification mechanism for gathering user input during plan execution.
-    
+
     Validates that the actor can:
     1. Pause execution when clarification is needed (via JIT-implemented function)
     2. Prompt the user for missing information (e.g., dessert preference)
     3. Resume execution with the user-provided response
     4. Use the response correctly in subsequent plan steps
-    
+
     This tests the conversation_manager.ask() integration within plans.
     """
     print("--- Starting Test Harness for 'Clarification Flow' (MOCKED) ---")
@@ -1931,7 +1972,11 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
         connect_now=False,
     )
 
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://www.allrecipes.com", screenshot="mock_screenshot_base64", with_backend_mocks=True)
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://www.allrecipes.com",
+        screenshot="mock_screenshot_base64",
+        with_backend_mocks=True,
+    )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
@@ -1952,7 +1997,10 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
                 pass
 
         # Inject canned plan
-        active_task.plan_source_code = actor._sanitize_code(CANNED_PLAN_CLARIFICATION_FLOW, active_task)
+        active_task.plan_source_code = actor._sanitize_code(
+            CANNED_PLAN_CLARIFICATION_FLOW,
+            active_task,
+        )
 
         # Mock verification client
         active_task.verification_client = SimpleMockVerificationClient()
@@ -1990,6 +2038,7 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
     except Exception as e:
         print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
         import traceback
+
         traceback.print_exc()
 
     finally:
@@ -2005,6 +2054,7 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
             except Exception:
                 pass
         await asyncio.sleep(1)
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 5: Code Merge Logic Tests
@@ -2256,7 +2306,11 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
         # Mock external I/O
         actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
-        actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64", with_backend_mocks=True)
+        actor.computer_primitives._browser = NoKeychainBrowser(
+            url="https://mock-url.com",
+            screenshot="mock_screenshot_base64",
+            with_backend_mocks=True,
+        )
         print("✅ Actor initialized with mocked browser.")
 
         # 2. Create the plan handle directly (bypassing TaskScheduler for mocked test)
@@ -2284,7 +2338,9 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
 
         # Add log entries to simulate entrypoint bypassing LLM
         active_task.action_log.append("Bypassing LLM generation - entrypoint provided")
-        active_task.action_log.append("Injecting entrypoint 'my_entrypoint_skill' into plan")
+        active_task.action_log.append(
+            "Injecting entrypoint 'my_entrypoint_skill' into plan",
+        )
 
         print("✅ Plan handle created with entrypoint function injected.")
 
@@ -2311,19 +2367,27 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
         final_code = active_task.plan_source_code
 
         # Key Assertion: Did we "bypass" the LLM?
-        assert "Bypassing LLM generation" in action_log, "Log does not confirm LLM bypass."
+        assert (
+            "Bypassing LLM generation" in action_log
+        ), "Log does not confirm LLM bypass."
         print("✅ Log confirms LLM generation was bypassed.")
 
         # Key Assertion: Was the entrypoint injected?
-        assert "Injecting entrypoint" in action_log, "Log does not show entrypoint injection."
+        assert (
+            "Injecting entrypoint" in action_log
+        ), "Log does not show entrypoint injection."
         print("✅ Log confirms entrypoint was injected.")
 
         # Key Assertion: Is the entrypoint function in the plan?
-        assert "my_entrypoint_skill" in final_code, "Entrypoint function not found in plan."
+        assert (
+            "my_entrypoint_skill" in final_code
+        ), "Entrypoint function not found in plan."
         print("✅ Entrypoint function is in the plan.")
 
         # Key Assertion: Was the action_provider.act called?
-        assert actor.computer_primitives.act.called, "action_provider.act was not called."
+        assert (
+            actor.computer_primitives.act.called
+        ), "action_provider.act was not called."
         print("✅ action_provider.act was called.")
 
         print("\n✅✅✅ TEST 'Entrypoint Execution Flow' COMPLETE ✅✅✅")
@@ -2331,6 +2395,7 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
     except Exception as e:
         print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
         import traceback
+
         traceback.print_exc()
 
     finally:
@@ -2353,27 +2418,33 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
 async def test_entrypoint_execution_orchestrator():
     """
     Tests that HierarchicalActor can execute entrypoint functions directly.
-    
+
     Validates the flow where:
     1. A skill is registered in the FunctionManager as an entrypoint
     2. The actor loads and executes the skill directly (bypassing goal-based planning)
     3. Verification runs correctly on the executed steps
     4. The plan completes with the expected result
-    
+
     This is essential for TaskScheduler integration where pre-defined skills are invoked.
     """
     try:
-        await asyncio.wait_for(test_entrypoint_skill_loads_from_function_manager_and_executes(), timeout=90)
+        await asyncio.wait_for(
+            test_entrypoint_skill_loads_from_function_manager_and_executes(),
+            timeout=90,
+        )
     except asyncio.TimeoutError:
         print("\n❌❌❌ TEST TIMED OUT (90s) ❌❌❌")
     except Exception as e:
         print("\n\n❌❌❌ A TEST FAILED ❌❌❌")
         import traceback
+
         traceback.print_exc()
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 7: Immediate Pause/Resume Tests
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class _OkVerificationClient:
     def __init__(self):
@@ -2479,7 +2550,11 @@ async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
     actor.computer_primitives.observe = AsyncMock(return_value=None)  # type: ignore[attr-defined]
     actor.computer_primitives.navigate = AsyncMock(return_value=None)  # type: ignore[attr-defined]
 
-    plan = HierarchicalActorHandle(actor=actor, goal="Immediate pause test", persist=False)
+    plan = HierarchicalActorHandle(
+        actor=actor,
+        goal="Immediate pause test",
+        persist=False,
+    )
 
     # Stop auto-run, inject canned plan, and patch verification client
     if plan._execution_task:
@@ -2487,7 +2562,10 @@ async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
         with contextlib.suppress(asyncio.CancelledError):
             await plan._execution_task
 
-    plan.plan_source_code = actor._sanitize_code(CANNED_PLAN_SIMPLE_IMMEDIATE_PAUSE_RESUME, plan)
+    plan.plan_source_code = actor._sanitize_code(
+        CANNED_PLAN_SIMPLE_IMMEDIATE_PAUSE_RESUME,
+        plan,
+    )
     plan.verification_client = _OkVerificationClient()
 
     plan._execution_task = asyncio.create_task(plan._initialize_and_run())
@@ -2523,14 +2601,14 @@ async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
 async def test_immediate_pause_caches_completed_actions_for_replay_after_resume():
     """
     Tests immediate pause/resume with observe() calls in the execution path.
-    
+
     Validates that:
     1. Actions before the pause point (open, observe) complete and are cached
     2. Immediate pause correctly interrupts the final action (click cta)
     3. After resume, the function restarts from the beginning
     4. Cached actions (open, observe) are replayed from cache (CACHE HIT)
     5. The interrupted action executes fresh after resume
-    
+
     This ensures observe() results are properly cached and reused during restart.
     """
     actor = HierarchicalActor(headless=True, connect_now=False, browser_mode="legacy")
@@ -2577,7 +2655,10 @@ async def test_immediate_pause_caches_completed_actions_for_replay_after_resume(
         with contextlib.suppress(asyncio.CancelledError):
             await plan._execution_task
 
-    plan.plan_source_code = actor._sanitize_code(CANNED_PLAN_WITH_OBSERVE_IMMEDIATE_PAUSE_RESUME, plan)
+    plan.plan_source_code = actor._sanitize_code(
+        CANNED_PLAN_WITH_OBSERVE_IMMEDIATE_PAUSE_RESUME,
+        plan,
+    )
     plan.verification_client = _OkVerificationClient()
 
     plan._execution_task = asyncio.create_task(plan._initialize_and_run())
@@ -2619,11 +2700,11 @@ async def test_immediate_pause_caches_completed_actions_for_replay_after_resume(
 async def test_immediate_pause_resume_orchestrator():
     """
     Orchestrates immediate pause/resume tests.
-    
+
     Tests the actor's ability to handle immediate (mid-action) pauses:
     - test_immediate_pause_cancels_action_and_restarts_function_cleanly: Validates action cancellation triggers function restart
     - test_immediate_pause_caches_completed_actions_for_replay_after_resume: Ensures cache hits during restart after pause
-    
+
     Critical for user-controlled interruption of long-running browser actions.
     """
     try:
@@ -2645,13 +2726,13 @@ async def test_immediate_pause_resume_orchestrator():
 async def test_user_interjections_incrementally_build_and_modify_plan():
     """
     Tests incremental plan building through user interjections.
-    
+
     Simulates a multi-step teaching session where the user:
     1. Starts with a basic goal (search for cookies)
     2. Interjects to add navigation step (go to allrecipes.com first)
     3. Interjects again to add a search step
     4. Completes the teaching with a final "good job" confirmation
-    
+
     Validates that each interjection correctly modifies the plan and
     the actor adapts its execution based on user feedback.
     """
@@ -2679,12 +2760,14 @@ async def test_user_interjections_incrementally_build_and_modify_plan():
                 patches=[
                     FunctionPatch(
                         function_name="main_plan",
-                        new_code=textwrap.dedent("""
+                        new_code=textwrap.dedent(
+                            """
                             async def main_plan():
                                 '''Navigate to allrecipes.'''
                                 await computer_primitives.navigate("https://www.allrecipes.com")
                                 return "Navigated to allrecipes.com"
-                        """),
+                        """,
+                        ),
                     ),
                 ],
                 cache=CacheInvalidateSpec(invalidate_steps=[]),
@@ -2697,13 +2780,15 @@ async def test_user_interjections_incrementally_build_and_modify_plan():
                 patches=[
                     FunctionPatch(
                         function_name="main_plan",
-                        new_code=textwrap.dedent("""
+                        new_code=textwrap.dedent(
+                            """
                             async def main_plan():
                                 '''Navigate and search.'''
                                 await computer_primitives.navigate("https://www.allrecipes.com")
                                 await computer_primitives.act("Search for 'chocolate chip cookies'")
                                 return "Searched for chocolate chip cookies"
-                        """),
+                        """,
+                        ),
                     ),
                 ],
                 cache=CacheInvalidateSpec(invalidate_steps=[]),
@@ -2727,7 +2812,9 @@ async def test_user_interjections_incrementally_build_and_modify_plan():
             nonlocal interjection_count
             interjection_count += 1
             response = create_mock_modification_response(interjection_count)
-            print(f"--- MOCK MODIFICATION CLIENT: Interjection {interjection_count}, action={response.action} ---")
+            print(
+                f"--- MOCK MODIFICATION CLIENT: Interjection {interjection_count}, action={response.action} ---",
+            )
             return response.model_dump_json()
 
         active_task.modification_client.generate = mock_generate
@@ -2883,7 +2970,10 @@ async def _run_nested_function_replacement_test():
 
         # We need a real HierarchicalActorHandle instance to hold the state
         # but we prevent it from running automatically.
-        active_task = HierarchicalActorHandle(actor=mock_actor, goal="Test nested replacement")
+        active_task = HierarchicalActorHandle(
+            actor=mock_actor,
+            goal="Test nested replacement",
+        )
         if active_task._execution_task:
             active_task._execution_task.cancel()  # Stop the auto-run
 
@@ -3056,13 +3146,13 @@ async def _run_nested_function_replacement_test():
 async def test_deeply_nested_function_replaced_without_corrupting_plan():
     """
     Tests AST-based surgical replacement of nested functions in plans.
-    
+
     Validates that the code merge logic can:
     1. Replace a deeply nested function without corrupting surrounding code
     2. Preserve the structure of parent functions and classes
     3. Maintain proper indentation and syntax after replacement
     4. Handle complex nested structures (functions within functions)
-    
+
     This is critical for the recovery flow where failed functions are reimplemented.
     """
     try:
@@ -3074,6 +3164,7 @@ async def test_deeply_nested_function_replaced_without_corrupting_plan():
         traceback.print_exc()
     finally:
         await asyncio.sleep(1)  # Allow tasks to clean up
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 10: Retrospective Refactor Tests
@@ -3164,13 +3255,13 @@ async def main_plan():
 async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
     """
     Tests retrospective refactoring of plans based on user feedback.
-    
+
     Simulates a teaching flow where:
     1. User demonstrates a task through interjections
     2. After successful execution, user requests generalization
     3. Actor refactors the hardcoded plan into a reusable, parameterized skill
     4. The refactored skill is saved to FunctionManager for future use
-    
+
     Validates the actor's ability to learn and generalize from demonstrations.
     """
     print("--- Starting Test Harness for 'Retrospective Refactor' (MOCKED) ---")
@@ -3178,7 +3269,10 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
     actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
 
     # Mock browser and action_provider
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
 
@@ -3249,7 +3343,9 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
             nonlocal interjection_count
             interjection_count += 1
             response = create_mock_modification_response(interjection_count)
-            print(f"--- MOCK MODIFICATION CLIENT: Interjection {interjection_count}, action={response.action} ---")
+            print(
+                f"--- MOCK MODIFICATION CLIENT: Interjection {interjection_count}, action={response.action} ---",
+            )
             return response.model_dump_json()
 
         active_task.modification_client.generate = mock_modification_generate
@@ -3290,7 +3386,9 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
         print("--- Teaching for 'chicken soup' complete. ---")
 
         # 4. Give the generalization command to trigger the refactor
-        interjection_3 = "Perfect. Now, repeat the same process for 'chocolate chip cookies'."
+        interjection_3 = (
+            "Perfect. Now, repeat the same process for 'chocolate chip cookies'."
+        )
         print(f"\n>>> INTERJECTION 3 (Generalize): '{interjection_3}'")
         status_3 = await active_task.interject(interjection_3)
         print(f">>> Status: {status_3}")
@@ -3320,22 +3418,30 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
         assert "def main_plan" in final_code, "Final code is missing main_plan!"
         print("✅ Final code contains main_plan.")
 
-        assert "async def search_recipe" in final_code, "Final code was not refactored into a helper function!"
+        assert (
+            "async def search_recipe" in final_code
+        ), "Final code was not refactored into a helper function!"
         print("✅ Final code contains parameterized helper function (search_recipe).")
 
         # Check that both recipes were processed
         assert "allrecipes.com" in final_log.lower()
-        assert "chicken soup" in final_log.lower() or "chocolate chip cookies" in final_log.lower()
+        assert (
+            "chicken soup" in final_log.lower()
+            or "chocolate chip cookies" in final_log.lower()
+        )
         print("✅ Recipe search was executed.")
 
         print("\n\n✅✅✅ TEST 'Retrospective Refactor' COMPLETE ✅✅✅")
         print("\n=== ASSERTIONS PASSED ===")
-        print("✅ Final plan source code was successfully refactored into parameterized helper functions.")
+        print(
+            "✅ Final plan source code was successfully refactored into parameterized helper functions.",
+        )
         print("✅ Teaching and generalization flow worked correctly.")
 
     except Exception as e:
         print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
         import traceback
+
         traceback.print_exc()
     finally:
         print("\n--- Cleaning up resources... ---")
@@ -3386,13 +3492,13 @@ CANNED_PLAN_WITH_NESTED_FAILURE_ROBUSTNESS_FIXES = textwrap.dedent(
 async def test_nested_verification_failure_does_not_corrupt_parent_execution():
     """
     Tests robustness against race conditions and edge cases.
-    
+
     Specifically validates:
     1. Nested function verification failures don't corrupt parent execution
     2. Long-running verifications are properly handled when plan completes
     3. Recovery flows work correctly with complex skill hierarchies
     4. State machine transitions are correct under concurrent operations
-    
+
     Uses delayed mock verifications to simulate timing-dependent race conditions.
     """
     print("\n--- Starting Test Harness for Actor Robustness Fixes (MOCKED) ---")
@@ -3412,7 +3518,10 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
             browser_mode="legacy",
             connect_now=False,
         )
-        actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+        actor.computer_primitives._browser = NoKeychainBrowser(
+            url="https://mock-url.com",
+            screenshot="mock_screenshot_base64",
+        )
         actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
         print("✅ Actor initialized with mocked browser")
@@ -3498,7 +3607,9 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
         print("✅ ASSERTION PASSED: parent_skill was executed.")
 
         # Check that the nested function was executed
-        assert "_nested_child_fails_verification" in action_log_str, "nested function not found in logs"
+        assert (
+            "_nested_child_fails_verification" in action_log_str
+        ), "nested function not found in logs"
         print("✅ ASSERTION PASSED: Nested function was executed.")
 
         # Check that no TypeError occurred
@@ -3539,6 +3650,7 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
                 pass
         await asyncio.sleep(1)
 
+
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 12: Sandbox Isolation & Merge Tests
 # ════════════════════════════════════════════════════════════════════════════
@@ -3565,28 +3677,37 @@ CANNED_PLAN_FOR_SANDBOX_TEST_SANDBOX_ISOLATION_AND_MERGE = textwrap.dedent(
 async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
     """
     Tests sandbox isolation for exploratory interjections and code merging.
-    
+
     Validates the flow where:
     1. Main plan pauses waiting for external information (weather)
     2. User provides information via interjection
     3. Actor runs exploration in an isolated sandbox (doesn't affect main plan)
     4. Successful exploration results are merged back into the main plan
     5. Main plan resumes with the new information integrated
-    
+
     Critical for the 'explore_detached' feature that allows safe experimentation.
     """
     print("--- Starting Test Harness for 'Sandbox Isolation & Merge' ---")
 
     # Clear FunctionManager to avoid issues with None implementations in primitives
     from unity.function_manager.function_manager import FunctionManager
+
     fm = FunctionManager()
     fm.clear()
 
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False, function_manager=fm)
+    actor = HierarchicalActor(
+        headless=True,
+        browser_mode="legacy",
+        connect_now=False,
+        function_manager=fm,
+    )
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
@@ -3597,6 +3718,7 @@ async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
             reason="Re-implementing after course correction.",
             code="async def main_plan(): return 'Plan completed.'",
         )
+
     actor._dynamic_implement = mock_dynamic_implement
 
     active_task = None
@@ -3632,7 +3754,8 @@ async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
                 patches=[
                     FunctionPatch(
                         function_name="main_plan",
-                        new_code=textwrap.dedent("""
+                        new_code=textwrap.dedent(
+                            """
                             async def main_plan():
                                 '''Searches for a recipe appropriate for today's weather.'''
                                 print("--- Main Plan: Navigating to allrecipes.com ---")
@@ -3640,7 +3763,8 @@ async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
                                 print("--- Main Plan: Searching for summer salads based on weather ---")
                                 await computer_primitives.act("Search for 'summer salads'")
                                 return "Plan finished with weather-appropriate recipe search."
-                        """),
+                        """,
+                        ),
                     ),
                 ],
                 cache=CacheInvalidateSpec(invalidate_steps=[]),
@@ -3672,8 +3796,9 @@ async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
 
         # Verify the interjection was processed
         final_log = "\n".join(active_task.action_log)
-        assert "summer salads" in final_log or "Plan modification" in interjection_status, \
-            f"Expected interjection to modify plan. Log:\n{final_log}"
+        assert (
+            "summer salads" in final_log or "Plan modification" in interjection_status
+        ), f"Expected interjection to modify plan. Log:\n{final_log}"
 
         # Stop the plan cleanly
         if not active_task.done():
@@ -3735,13 +3860,13 @@ CANNED_PLAN_FOR_CONTEXT_TEST_SCOPED_CONTEXT = textwrap.dedent(
 async def test_nested_functions_maintain_correct_scope_in_prompts():
     """
     Verifies that plan source code maintains properly scoped function contexts.
-    
+
     Validates that:
     1. Nested functions have access to their parent's scope
     2. Variable references are resolved correctly across scope boundaries
     3. The sanitization process preserves scope relationships
     4. LLM prompts receive correct context for each function level
-    
+
     Important for complex plans with deeply nested helper functions.
     """
     print("\n\n--- Starting Test: Scoped Context in Prompts (MOCKED) ---")
@@ -3749,7 +3874,10 @@ async def test_nested_functions_maintain_correct_scope_in_prompts():
     actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
 
     # Mock browser and action_provider
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
 
@@ -3801,11 +3929,15 @@ async def test_nested_functions_maintain_correct_scope_in_prompts():
         final_log = "\n".join(active_task.action_log)
 
         # 1. Verify parent function is in the code
-        assert "async def parent_function" in final_code, "Parent function is missing from plan."
+        assert (
+            "async def parent_function" in final_code
+        ), "Parent function is missing from plan."
         print("✅ PASSED: Parent function ('parent_function') is in the plan.")
 
         # 2. Verify grandchild function is in the code
-        assert "async def grandchild_function" in final_code, "Grandchild function is missing from plan."
+        assert (
+            "async def grandchild_function" in final_code
+        ), "Grandchild function is missing from plan."
         print("✅ PASSED: Grandchild function ('grandchild_function') is in the plan.")
 
         # 3. Verify main_plan is in the code
@@ -3837,18 +3969,22 @@ async def test_nested_functions_maintain_correct_scope_in_prompts():
 async def test_scoped_context_orchestrator():
     """
     Orchestrates scoped context tests with timeout protection.
-    
+
     Wraps test_nested_functions_maintain_correct_scope_in_prompts with a 60-second timeout
     to prevent hanging on scope resolution issues.
     """
     try:
-        await asyncio.wait_for(test_nested_functions_maintain_correct_scope_in_prompts(), timeout=60)
+        await asyncio.wait_for(
+            test_nested_functions_maintain_correct_scope_in_prompts(),
+            timeout=60,
+        )
     except asyncio.TimeoutError:
         print("\n❌❌❌ TEST TIMED OUT (60s) ❌❌❌")
         raise
     except Exception as e:
         print(f"\n\n❌❌❌ A TEST FAILED: {e} ❌❌❌")
         import traceback
+
         traceback.print_exc()
 
 
@@ -3934,14 +4070,14 @@ async def main_plan():
 async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_decorator():
     """
     Tests skill injection from FunctionManager and recursive sanitization.
-    
+
     Validates that:
     1. Complex skills with nested functions are loaded from FunctionManager
     2. All nested helper functions are recursively sanitized (wrapped with @verify)
     3. The skill integrates correctly into the plan execution context
     4. Verification runs on all levels of the nested skill hierarchy
     5. The original skill structure is preserved after sanitization
-    
+
     Uses a multi-level diagnostic skill with nested async helpers.
     """
     print(
@@ -3972,7 +4108,10 @@ async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_
         )
 
         # 4. Mock the browser and action_provider
-        actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+        actor.computer_primitives._browser = NoKeychainBrowser(
+            url="https://mock-url.com",
+            screenshot="mock_screenshot_base64",
+        )
         actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
         print("✅ Actor initialized and action_provider is mocked.")
@@ -4001,7 +4140,10 @@ async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_
         active_task.verification_client = SimpleMockVerificationClient()
 
         # Inject canned plan with the skill
-        sanitized_plan = actor._sanitize_code(CANNED_PLAN_WITH_SKILL_SKILL_INJECTION_AND_SANITIZATION, active_task)
+        sanitized_plan = actor._sanitize_code(
+            CANNED_PLAN_WITH_SKILL_SKILL_INJECTION_AND_SANITIZATION,
+            active_task,
+        )
         active_task.plan_source_code = sanitized_plan
 
         # Start execution
@@ -4059,6 +4201,7 @@ async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_
     except Exception as e:
         print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
         import traceback
+
         traceback.print_exc()
         if active_task and hasattr(active_task, "plan_source_code"):
             print("\n--- Final Generated Plan Source Code (for debugging) ---")
@@ -4131,17 +4274,17 @@ async def main_plan():
 async def test_learned_skill_is_saved_and_reused_across_sessions():
     """
     Tests skill memorization and reuse across multiple plan executions.
-    
+
     Validates the two-phase skill learning flow:
     Phase 1 - Teaching:
         1. User demonstrates a task (search for lasagna)
         2. Actor learns and saves the skill to FunctionManager
-    
+
     Phase 2 - Reuse:
         1. New task requires similar capability (search for cookies)
         2. Actor retrieves the saved skill from FunctionManager
         3. Skill is reused without re-learning
-    
+
     Critical for the actor's ability to build a reusable skill library.
     """
     print("--- Starting Test Harness for 'Skill Memorization & Reuse' (MOCKED) ---")
@@ -4158,7 +4301,10 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
     )
 
     # Mock browser and action_provider
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     print("✅ Actor initialized with mocked browser.")
@@ -4190,7 +4336,10 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
         active_task_1.verification_client = SimpleMockVerificationClient()
 
         # Inject canned plan
-        sanitized_plan = actor._sanitize_code(CANNED_PLAN_PHASE_1_SKILL_MEMOIZATION, active_task_1)
+        sanitized_plan = actor._sanitize_code(
+            CANNED_PLAN_PHASE_1_SKILL_MEMOIZATION,
+            active_task_1,
+        )
         active_task_1.plan_source_code = sanitized_plan
 
         # Start execution
@@ -4236,7 +4385,10 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
         active_task_2.verification_client = SimpleMockVerificationClient()
 
         # Inject canned plan with skill reuse
-        sanitized_plan_2 = actor._sanitize_code(CANNED_PLAN_PHASE_2_SKILL_MEMOIZATION, active_task_2)
+        sanitized_plan_2 = actor._sanitize_code(
+            CANNED_PLAN_PHASE_2_SKILL_MEMOIZATION,
+            active_task_2,
+        )
         active_task_2.plan_source_code = sanitized_plan_2
 
         # Start execution
@@ -4276,6 +4428,7 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
     except Exception as e:
         print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
         import traceback
+
         traceback.print_exc()
     finally:
         print("\n--- Cleaning up resources... ---")
@@ -4366,13 +4519,13 @@ async def main_plan():
 async def test_functions_with_skip_verify_flag_bypass_verification():
     """
     Tests the functions_skip_verify flag for selective verification skipping.
-    
+
     Validates that:
     1. Functions marked with verify=False skip the verification step
     2. Functions marked with verify=True (default) are verified normally
     3. Skipped functions still execute correctly, just without post-verification
     4. The skip flag is respected at the FunctionManager level
-    
+
     Useful for simple, deterministic functions where verification overhead is unnecessary.
     """
     print("\n--- Starting Test: Skip Verify Flag (MOCKED) ---")
@@ -4410,7 +4563,10 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
         )
 
         # Mock browser and action_provider
-        actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+        actor.computer_primitives._browser = NoKeychainBrowser(
+            url="https://mock-url.com",
+            screenshot="mock_screenshot_base64",
+        )
         actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
         print("✅ Actor initialized and action_provider is mocked.")
@@ -4442,7 +4598,10 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
         active_task.functions_skip_verify.add("simple_navigation")
 
         # Inject canned plan
-        sanitized_plan = actor._sanitize_code(CANNED_PLAN_WITH_FUNCTIONS_SKIP_VERIFY_FLAG, active_task)
+        sanitized_plan = actor._sanitize_code(
+            CANNED_PLAN_WITH_FUNCTIONS_SKIP_VERIFY_FLAG,
+            active_task,
+        )
         active_task.plan_source_code = sanitized_plan
 
         # Start execution
@@ -4495,6 +4654,7 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
     except Exception as e:
         print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
         import traceback
+
         traceback.print_exc()
         if active_task and hasattr(active_task, "plan_source_code"):
             print("\n--- Final Generated Plan Source Code (for debugging) ---")
@@ -4560,14 +4720,14 @@ CANNED_PLAN_FOR_EXPLORATION_STEERABLE_EXPLORE = textwrap.dedent(
 async def test_explore_interjection_runs_in_detached_sandbox():
     """
     Tests the 'explore_detached' interjection for sandboxed exploration.
-    
+
     Validates that when a user requests exploration:
     1. The interjection is classified as 'explore_detached'
     2. A sandboxed execution environment is created
     3. Exploration runs without affecting the main plan state
     4. Exploration results can be reviewed before integration
     5. Main plan can continue independently of exploration outcome
-    
+
     This enables safe experimentation during plan execution.
     """
     print("--- Starting Test Harness for 'explore_detached' (MOCKED) ---")
@@ -4576,7 +4736,10 @@ async def test_explore_interjection_runs_in_detached_sandbox():
     actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
@@ -4619,7 +4782,10 @@ async def test_explore_interjection_runs_in_detached_sandbox():
 
         actor._run_detached_exploration = mock_explore_detached
 
-        sanitized_plan = actor._sanitize_code(CANNED_PLAN_FOR_EXPLORATION_STEERABLE_EXPLORE, active_task)
+        sanitized_plan = actor._sanitize_code(
+            CANNED_PLAN_FOR_EXPLORATION_STEERABLE_EXPLORE,
+            active_task,
+        )
         active_task.plan_source_code = sanitized_plan
 
         active_task._execution_task = asyncio.create_task(
@@ -4630,7 +4796,9 @@ async def test_explore_interjection_runs_in_detached_sandbox():
         await wait_for_log_entry(active_task, "google.com", timeout=15)
 
         interjection_message = "Quick question, what is the title of the current page?"
-        print(f"\n>>> INTERJECTING with an exploratory question: '{interjection_message}'")
+        print(
+            f"\n>>> INTERJECTING with an exploratory question: '{interjection_message}'",
+        )
 
         interjection_status = await active_task.interject(interjection_message)
         print(f">>> Interjection status: {interjection_status}")
@@ -4706,14 +4874,14 @@ CANNED_PLAN_FOR_MODIFICATION_STEERABLE_MODIFY = textwrap.dedent(
 async def test_modify_interjection_merges_new_code_into_existing_plan():
     """
     Tests the 'modify_task' interjection for in-place plan modifications.
-    
+
     Validates that when a user requests a modification:
     1. The interjection is classified as 'modify_task'
     2. The current plan is paused at a safe point
     3. New code is generated based on user feedback
     4. The modified code is merged into the existing plan
     5. Execution resumes with the updated plan
-    
+
     This enables course correction without completely replacing the plan.
     """
     print("--- Starting Test Harness for 'modify_task' (MOCKED) ---")
@@ -4722,7 +4890,10 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
     actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
@@ -4757,7 +4928,8 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
                 patches=[
                     FunctionPatch(
                         function_name="main_plan",
-                        new_code=textwrap.dedent("""
+                        new_code=textwrap.dedent(
+                            """
                             async def main_plan():
                                 '''Modified plan to search for vegetarian lasagna.'''
                                 print("--- Modified Plan: Navigating to allrecipes.com ---")
@@ -4765,7 +4937,8 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
                                 print("--- Modified Plan: Searching for vegetarian lasagna ---")
                                 await computer_primitives.act("Type 'vegetarian lasagna' in search bar and click search")
                                 return "Modified plan completed - searched for vegetarian lasagna."
-                        """),
+                        """,
+                        ),
                     ),
                 ],
                 cache=CacheInvalidateSpec(invalidate_steps=[]),
@@ -4775,7 +4948,10 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
         active_task.modification_client.generate = mock_modification_generate
 
         # 3. Inject our canned plan
-        sanitized_plan = actor._sanitize_code(CANNED_PLAN_FOR_MODIFICATION_STEERABLE_MODIFY, active_task)
+        sanitized_plan = actor._sanitize_code(
+            CANNED_PLAN_FOR_MODIFICATION_STEERABLE_MODIFY,
+            active_task,
+        )
         active_task.plan_source_code = sanitized_plan
 
         # 4. Start the plan execution
@@ -4812,7 +4988,10 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
         print("Plan was modified to search for vegetarian lasagna (mocked)")
 
         # Verify the modified plan executed
-        assert "vegetarian lasagna" in final_log.lower() or "modify" in interjection_status.lower()
+        assert (
+            "vegetarian lasagna" in final_log.lower()
+            or "modify" in interjection_status.lower()
+        )
         print("\nAssertion successful: The plan modification was applied.")
 
         print("\n=== EXPECTED BEHAVIOR LOGS ===")
@@ -4855,14 +5034,14 @@ CANNED_PLAN_FOR_REPLACEMENT_STEERABLE_REPLACE = textwrap.dedent(
 async def test_replace_interjection_discards_plan_and_starts_fresh():
     """
     Tests the 'replace_task' interjection for complete plan replacement.
-    
+
     Validates that when a user requests a replacement:
     1. The interjection is classified as 'replace_task'
     2. The current plan is completely discarded
     3. A new plan is generated from scratch based on user feedback
     4. The new plan executes from the beginning
     5. No state from the old plan carries over
-    
+
     This enables complete pivots when the original approach is wrong.
     """
     print("--- Starting Test Harness for 'replace_task' (MOCKED) ---")
@@ -4871,7 +5050,10 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
     actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
@@ -4899,7 +5081,9 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
 
         # Mock the modification client to return a replace_task decision
         async def mock_modification_generate(*args, **kwargs):
-            print("--- MOCK MODIFICATION CLIENT: Received replace_task interjection ---")
+            print(
+                "--- MOCK MODIFICATION CLIENT: Received replace_task interjection ---",
+            )
             response = InterjectionDecision(
                 action="replace_task",
                 reason="User wants to completely change the task to visit wikipedia",
@@ -4910,7 +5094,10 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
 
         active_task.modification_client.generate = mock_modification_generate
 
-        sanitized_plan = actor._sanitize_code(CANNED_PLAN_FOR_REPLACEMENT_STEERABLE_REPLACE, active_task)
+        sanitized_plan = actor._sanitize_code(
+            CANNED_PLAN_FOR_REPLACEMENT_STEERABLE_REPLACE,
+            active_task,
+        )
         active_task.plan_source_code = sanitized_plan
 
         active_task._execution_task = asyncio.create_task(
@@ -4939,7 +5126,10 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
         print(interjection_status)
 
         # The replace_task should have re-initialized the plan
-        assert "re-initialized" in interjection_status.lower() or "new goal" in interjection_status.lower()
+        assert (
+            "re-initialized" in interjection_status.lower()
+            or "new goal" in interjection_status.lower()
+        )
         print("\nAssertion successful: Replace task was handled correctly.")
 
         print("\n=== EXPECTED BEHAVIOR LOGS ===")
@@ -4960,3 +5150,223 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
         await asyncio.sleep(1)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 20: Visual Reasoning Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_actor_extracts_information_from_images_during_execution():
+    """
+    Tests the actor's ability to reason about images during plan execution.
+
+    Validates visual reasoning capabilities:
+    1. Image-based credential extraction (reading login info from screenshots)
+    2. Visual element identification (finding UI components in images)
+    3. Image-guided navigation (using visual cues for decision making)
+    4. Multi-image reasoning (comparing before/after states)
+
+    Uses mock images to simulate real visual input without actual screenshots.
+    Critical for tasks requiring visual understanding of browser state.
+    """
+    print("--- Starting Test Harness for 'Actor Live Visual Reasoning' (MOCKED) ---")
+
+    # Use connect_now=False to prevent real browser initialization
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+
+    # Mock browser and action_provider to avoid real browser calls
+    actor.computer_primitives._browser = NoKeychainBrowser(
+        url="https://mock-url.com",
+        screenshot="mock_screenshot_base64",
+    )
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    interjection_count = 0
+
+    try:
+        # --- PHASE 1: Initial Plan with Visual Credential Extraction ---
+        print(
+            "\n\n--- PHASE 1: Using an image to provide login credentials (MOCKED) ---",
+        )
+
+        # Create mock image handles
+        mock_login_image = MagicMock()
+        mock_login_image.id = "mock_login_image_id"
+        mock_login_image.base64 = "mock_image_base64"
+
+        mock_cell_image = MagicMock()
+        mock_cell_image.id = "mock_cell_image_id"
+        mock_cell_image.base64 = "mock_image_base64"
+
+        goal_1 = "Go to google drive. Sign in with the email 'yusha@unify.ai' and password shown in the image."
+        images_1 = {"[53:74]": mock_login_image}  # Span for "shown in the image"
+
+        print(f"\n>>> Starting Plan 1 with goal: '{goal_1}'")
+
+        # Create the task directly with mocking
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal=goal_1,
+            persist=True,
+        )
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Mock the verification client
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Create mock modification responses
+        def create_mock_modification_response(interjection_num):
+            if interjection_num == 1:
+                return InterjectionDecision(
+                    action="modify_task",
+                    reason="Opening timesheet file",
+                    patches=[
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=textwrap.dedent(
+                                """
+                                async def main_plan():
+                                    '''Opens timesheet file.'''
+                                    await computer_primitives.navigate("https://drive.google.com")
+                                    await computer_primitives.act("Open 'Unify TimeSheet' file")
+                                    return "Timesheet opened"
+                            """,
+                            ),
+                        ),
+                    ],
+                    cache=CacheInvalidateSpec(invalidate_steps=[]),
+                )
+            elif interjection_num == 2:
+                return InterjectionDecision(
+                    action="modify_task",
+                    reason="Filling cell based on image",
+                    patches=[
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=textwrap.dedent(
+                                """
+                                async def main_plan():
+                                    '''Calculates and fills total hours.'''
+                                    await computer_primitives.act("Calculate total hours for James")
+                                    await computer_primitives.act("Fill in the highlighted cell with total")
+                                    return "Cell filled with total hours"
+                            """,
+                            ),
+                        ),
+                    ],
+                    cache=CacheInvalidateSpec(invalidate_steps=[]),
+                )
+            else:
+                return InterjectionDecision(
+                    action="complete_task",
+                    reason="User indicated task is complete",
+                    patches=[],
+                    cache=CacheInvalidateSpec(invalidate_steps=[]),
+                )
+
+        async def mock_modification_generate(*args, **kwargs):
+            nonlocal interjection_count
+            interjection_count += 1
+            response = create_mock_modification_response(interjection_count)
+            print(
+                f"--- MOCK MODIFICATION CLIENT: Interjection {interjection_count}, action={response.action} ---",
+            )
+            return response.model_dump_json()
+
+        active_task.modification_client.generate = mock_modification_generate
+
+        # Set up initial plan
+        active_task.plan_source_code = actor._sanitize_code(
+            textwrap.dedent(
+                """
+            async def main_plan():
+                '''Logs into Google Drive.'''
+                print("--- Navigating to Google Drive ---")
+                await computer_primitives.navigate("https://drive.google.com")
+                print("--- Logging in with credentials from image ---")
+                await computer_primitives.act("Sign in with 'yusha@unify.ai' and password from image")
+                return "Logged into Google Drive"
+        """,
+            ),
+            active_task,
+        )
+
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Wait for the plan to pause
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
+        print("✅ Actor successfully navigated to Google Drive (mocked) and is paused.")
+
+        # --- PHASE 2: Multi-Step Interjection with Visual Guidance ---
+        print(
+            "\n\n--- PHASE 2: Using interjections to navigate and edit a spreadsheet (MOCKED) ---",
+        )
+
+        interjection_message_1 = (
+            "Go to the 'My Drive' folder and Open the 'Unify TimeSheet' file."
+        )
+        print(f"\n>>> INTERJECTION 1: '{interjection_message_1}'")
+        await active_task.interject(interjection_message_1)
+
+        # Wait for the file to be opened
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
+        print("\n>>> Plan is paused after opening the timesheet.")
+
+        interjection_message_2 = "Great! Now please calculate the total hrs for james and fill in the total in the cell highlighted in the image."
+        images_2 = {"[70:100]": mock_cell_image}
+        print(f"\n>>> INTERJECTION 2: '{interjection_message_2}'")
+        await active_task.interject(interjection_message_2, images=images_2)
+
+        # Wait for the edit to be performed
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
+        print("\n>>> Plan is paused after filling the cell.")
+
+        # --- PHASE 3: Final Interjection to Complete the Task ---
+        interjection_final = "Perfect, the task is complete. Thank you."
+        print(f"\n>>> INTERJECTION 3: '{interjection_final}'")
+        await active_task.interject(interjection_final)
+
+        # Now we can await the final result
+        final_result = await asyncio.wait_for(active_task.result(), timeout=30)
+        print(f"\n--- Final Result: {final_result} ---")
+
+        print("\n\n✅✅✅ TEST 'Actor Live Visual Reasoning' COMPLETE ✅✅✅")
+
+    except Exception as e:
+        print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
+        import traceback
+
+        traceback.print_exc()
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            await actor.close()
+        await asyncio.sleep(1)
