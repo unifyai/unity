@@ -3,11 +3,22 @@ import json
 import os
 import asyncio
 import aiohttp
-from google.cloud import pubsub_v1
 
 load_dotenv()
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
-publisher = pubsub_v1.PublisherClient()
+
+# Lazily initialized publisher (avoids import-time GCP auth failures in tests)
+_publisher = None
+
+
+def _get_publisher():
+    """Get or create the GCP Pub/Sub publisher client."""
+    global _publisher
+    if _publisher is None:
+        from google.cloud import pubsub_v1
+
+        _publisher = pubsub_v1.PublisherClient()
+    return _publisher
 
 
 async def send_sms_message_via_number(to_number: str, message: str) -> str:
@@ -62,6 +73,7 @@ async def send_unify_message(message: str) -> str:
             else ""
         )
     )
+    publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
     print(f"Sending unify message: {message}")

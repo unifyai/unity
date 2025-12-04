@@ -211,6 +211,8 @@ async def event_capture(redis_server):
 @pytest_asyncio.fixture(scope="module")
 async def conversation_manager_process(redis_server):
     """Start the conversation manager as a background process."""
+    import sys
+
     test_env = os.environ.copy()
     test_env.update(
         {
@@ -223,7 +225,7 @@ async def conversation_manager_process(redis_server):
     # Start conversation manager (logs go to terminal)
     repo_root = Path(__file__).parent.parent.parent
     cm_proc = subprocess.Popen(
-        ["python", "start.py"],
+        [sys.executable, "start.py"],
         cwd=repo_root,
         env=test_env,
     )
