@@ -121,26 +121,135 @@ def test_actor_can_store_false(actor_no_store):
     assert actor_no_store.can_store is False
 
 
-# --- Plan Generation Blocked When can_compose=False ---
+# --- Semantic Search When can_compose=False ---
 
 
 @pytest.mark.asyncio
-async def test_plan_generation_blocked_when_can_compose_false(actor_no_compose):
+async def test_semantic_search_when_can_compose_false_no_entrypoint(
+    mock_function_manager,
+    mock_computer_primitives,
+    monkeypatch,
+):
     """
-    Test that attempting to generate a plan from a goal (without entrypoint)
-    raises RuntimeError when can_compose=False.
+    Test that when can_compose=False and no entrypoint is provided, the actor
+    uses semantic search to find the best matching function.
     """
-    plan = await actor_no_compose.act("Do something", persist=False)
+    # Set up a function that matches the goal
+    matching_code = '''
+async def send_email_task():
+    """Sends an email to someone."""
+    return "Email sent"
+'''
+    mock_function_manager.search_functions_by_similarity.return_value = [
+        {
+            "function_id": 42,
+            "name": "send_email_task",
+            "implementation": matching_code,
+            "verify": False,
+            "calls": [],
+        },
+    ]
+    mock_function_manager.search_functions.return_value = [
+        {
+            "function_id": 42,
+            "name": "send_email_task",
+            "implementation": matching_code,
+            "verify": False,
+            "calls": [],
+        },
+    ]
+    mock_function_manager.list_functions.return_value = {
+        "send_email_task": {
+            "function_id": 42,
+            "name": "send_email_task",
+            "implementation": matching_code,
+            "calls": [],
+            "verify": False,
+        },
+    }
 
-    # The plan should fail during initialization because it needs to generate code
-    with pytest.raises(RuntimeError) as exc_info:
+    # Create actor with can_compose=False
+    monkeypatch.setattr(
+        hierarchical_actor_module,
+        "ComputerPrimitives",
+        lambda *args, **kwargs: mock_computer_primitives,
+    )
+    actor = HierarchicalActor(
+        function_manager=mock_function_manager,
+        headless=True,
+        can_compose=False,
+    )
+
+    # Ensure _generate_initial_plan is NOT called
+    generate_plan_mock = AsyncMock(side_effect=ValueError("Should not be called"))
+    monkeypatch.setattr(actor, "_generate_initial_plan", generate_plan_mock)
+
+    # Act without providing an entrypoint - should use semantic search
+    plan = await actor.act(
+        "Send an email to John",  # Goal that should match send_email_task
+        persist=False,
+    )
+
+    # Wait for initialization
+    await asyncio.sleep(0.1)
+
+    # Verify semantic search was called with the goal
+    mock_function_manager.search_functions_by_similarity.assert_called_once()
+    call_args = mock_function_manager.search_functions_by_similarity.call_args
+    assert call_args.kwargs["query"] == "Send an email to John"
+
+    # Verify plan generation was NOT called
+    generate_plan_mock.assert_not_called()
+
+    # Verify the action log shows semantic search was used
+    assert any("semantic search" in log.lower() for log in plan.action_log)
+    assert any("send_email_task" in log for log in plan.action_log)
+
+    # Verify the plan source contains the selected function
+    assert plan.plan_source_code is not None
+    assert "send_email_task" in plan.plan_source_code
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_fails_when_no_functions_match(
+    mock_function_manager,
+    mock_computer_primitives,
+    monkeypatch,
+):
+    """
+    Test that when can_compose=False and semantic search finds no matching
+    functions, an appropriate error is raised.
+    """
+    # Return empty results from semantic search
+    mock_function_manager.search_functions_by_similarity.return_value = []
+
+    # Create actor with can_compose=False
+    monkeypatch.setattr(
+        hierarchical_actor_module,
+        "ComputerPrimitives",
+        lambda *args, **kwargs: mock_computer_primitives,
+    )
+    actor = HierarchicalActor(
+        function_manager=mock_function_manager,
+        headless=True,
+        can_compose=False,
+    )
+
+    # Act without entrypoint - should fail since no functions match
+    plan = await actor.act(
+        "Do something completely unique",
+        persist=False,
+    )
+
+    # Should fail with error about no matching functions
+    with pytest.raises(RuntimeError):
         await plan.result()
 
-    assert (
-        "can_compose=False" in str(exc_info.value)
-        or plan._state == _HierarchicalHandleState.ERROR
-    )
     assert plan._state == _HierarchicalHandleState.ERROR
+    # Check that the error message mentions no functions found
+    assert any(
+        "no functions found" in log.lower() for log in plan.action_log
+    ) or "No functions found" in (plan._final_result_str or "")
 
 
 @pytest.mark.asyncio

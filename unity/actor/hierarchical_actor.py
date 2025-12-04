@@ -2064,22 +2064,55 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
                 self._set_state(_HierarchicalHandleState.RUNNING)
 
             if self.plan_source_code is None:
-                if self.entrypoint is not None:
+                # Determine the entrypoint: explicit, semantic search, or generate plan
+                resolved_entrypoint = self.entrypoint
+                entrypoint_via_search = False
+
+                if resolved_entrypoint is None and not self.can_compose:
+                    # can_compose=False with no explicit entrypoint: use semantic search
+                    if not self.actor.function_manager:
+                        raise ValueError(
+                            "can_compose=False requires a FunctionManager to search for functions.",
+                        )
                     self.action_log.append(
-                        f"Bypassing LLM generation. Using entrypoint function_id {self.entrypoint}.",
+                        f"Searching for best matching function for goal: '{self.goal}'",
                     )
+                    search_results = (
+                        self.actor.function_manager.search_functions_by_similarity(
+                            query=self.goal,
+                            n=1,
+                            include_primitives=False,
+                        )
+                    )
+                    if not search_results:
+                        raise ValueError(
+                            f"No functions found matching goal: '{self.goal}'. "
+                            f"Add functions to FunctionManager or set can_compose=True.",
+                        )
+                    best_match = search_results[0]
+                    resolved_entrypoint = best_match.get("function_id")
+                    entrypoint_via_search = True
+                    self.action_log.append(
+                        f"Selected function '{best_match.get('name')}' (ID: {resolved_entrypoint}) via semantic search.",
+                    )
+
+                if resolved_entrypoint is not None:
+                    if not entrypoint_via_search:
+                        self.action_log.append(
+                            f"Bypassing LLM generation. Using entrypoint function_id {resolved_entrypoint}.",
+                        )
                     if not self.actor.function_manager:
                         raise ValueError(
                             "Entrypoint was provided, but no FunctionManager is available to fetch the function.",
                         )
 
                     search_results = self.actor.function_manager.search_functions(
-                        filter=f"function_id == {self.entrypoint}",
+                        filter=f"function_id == {resolved_entrypoint}",
                         limit=1,
                     )
                     if not search_results:
                         raise ValueError(
-                            f"Entrypoint function_id {self.entrypoint} not found in FunctionManager.",
+                            f"Entrypoint function_id {resolved_entrypoint} not found in FunctionManager.",
                         )
 
                     entrypoint_func_data = search_results[0]
@@ -2089,7 +2122,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
 
                     if not entrypoint_code or not entrypoint_name:
                         raise ValueError(
-                            f"Invalid function data for entrypoint {self.entrypoint}.",
+                            f"Invalid function data for entrypoint {resolved_entrypoint}.",
                         )
 
                     # Skip verification for entrypoint wrapper if verify=False
@@ -2125,11 +2158,7 @@ async def main_plan():
                     self.action_log.append("Entrypoint plan sanitized and ready.")
 
                 else:
-                    if not self.can_compose:
-                        raise ValueError(
-                            "Cannot generate a plan from goal: can_compose=False. "
-                            "Provide an entrypoint function_id to execute pre-existing code.",
-                        )
+                    # can_compose=True: generate plan from goal
                     self.action_log.append("Generating plan from goal...")
                     self.plan_source_code = await self.actor._generate_initial_plan(
                         plan=self,
