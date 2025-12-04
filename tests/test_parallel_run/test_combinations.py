@@ -536,6 +536,42 @@ class TestInputTypeCombinations:
 
         assert result.exit_code == 0
 
+    def test_multiple_specific_tests_with_per_test_and_wait(self, runner):
+        """Multiple explicit node IDs with -t and --wait should block and wait.
+
+        This tests the exact scenario of:
+            .parallel_run.sh -t --wait file.py::test_a file.py::test_b ...
+
+        The --wait flag should cause the script to block until all tests complete,
+        regardless of whether -t is specified (which is somewhat redundant with
+        explicit node IDs, but should still work correctly).
+        """
+        import time
+
+        test1 = runner.fixture_path("test_always_pass.py") + "::test_pass_one"
+        test2 = runner.fixture_path("test_always_pass.py") + "::test_pass_two"
+        test3 = runner.fixture_path("test_always_pass.py") + "::test_pass_three"
+        test4 = runner.fixture_path("test_single_test.py") + "::test_single"
+
+        start = time.time()
+        result = runner.run(
+            "-t",
+            "--wait",
+            test1,
+            test2,
+            test3,
+            test4,
+        )
+        elapsed = time.time() - start
+
+        # Should have blocked for at least some time
+        assert (
+            elapsed > 1.0
+        ), f"--wait should block until tests complete, but returned in {elapsed:.2f}s"
+
+        # All tests should pass
+        assert result.exit_code == 0, f"All tests should pass: {result.stderr}"
+
     def test_mixed_file_and_specific_test_with_wait(self, runner):
         """File + specific test with --wait should work."""
         file_path = runner.fixture_path("test_single_test.py")
