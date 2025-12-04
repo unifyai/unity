@@ -51,6 +51,8 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         planned_result: str | None = None,
         # New: optional session suffix to reuse across simulated logs
         session_suffix: "str | None" = None,
+        # Optional response format for structured output
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -63,6 +65,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self._log_mode: str | None = (
             log_mode if log_mode in ("print", "log", None) else "log"
         )
+        self._response_format = response_format
 
         # Store optional entrypoint metadata and a planned completion result
         self._entrypoint_info: dict | None = entrypoint_info
@@ -248,7 +251,33 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         if self._steps is not None and not self._done_event.is_set():
             self.simulate_step()
         await asyncio.to_thread(self._done_event.wait)
-        return self._result_str  # type: ignore
+        raw_result = self._result_str  # type: ignore
+
+        # If response_format is specified, generate structured output
+        if self._response_format is not None:
+            try:
+                import json
+
+                schema = self._response_format.model_json_schema()
+                prompt = (
+                    f"The following action was completed:\n{raw_result}\n\n"
+                    "Return valid JSON matching the following schema. "
+                    "Do NOT include any extra keys or commentary.\n"
+                    f"{json.dumps(schema, indent=2)}"
+                )
+                self._llm.set_response_format(self._response_format)
+                try:
+                    structured_result = await self._llm.generate(prompt)
+                finally:
+                    try:
+                        self._llm.reset_response_format()
+                    except Exception:
+                        pass
+                return structured_result
+            except Exception:
+                pass
+
+        return raw_result
 
     def stop(self, reason: Optional[str] = None) -> str:
         if self._done_event.is_set():
@@ -791,4 +820,5 @@ class SimulatedActor(BaseActor):
             entrypoint_info=entrypoint_info,
             planned_result=planned_result,
             session_suffix=session_suffix,
+            response_format=response_format,
         )

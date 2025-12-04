@@ -268,10 +268,23 @@ async def simulated_llm_roundtrip(
     *,
     label: str,
     prompt: str,
+    response_format: Any = None,
 ) -> str:
     """Unified 'LLM simulating' roundtrip with console logging.
 
     LLM I/O debugging is now handled by hooks installed on the unify client.
+
+    Parameters
+    ----------
+    llm : Any
+        The LLM client to use for generation.
+    label : str
+        Human-readable label for logging.
+    prompt : str
+        The prompt to send to the LLM.
+    response_format : Type[BaseModel] | None
+        Optional Pydantic model for structured output. When provided,
+        the LLM's response_format is set before generation and reset after.
     """
     try:
         from unity.constants import LOGGER  # noqa: WPS433
@@ -287,7 +300,20 @@ async def simulated_llm_roundtrip(
         pass
     t0 = _time.perf_counter()
 
-    answer = await llm.generate(prompt)
+    # Set response_format if provided
+    if response_format is not None:
+        try:
+            llm.set_response_format(response_format)
+        except Exception:
+            pass
+    try:
+        answer = await llm.generate(prompt)
+    finally:
+        if response_format is not None:
+            try:
+                llm.reset_response_format()
+            except Exception:
+                pass
     dt_ms = int((_time.perf_counter() - t0) * 1000)
 
     try:

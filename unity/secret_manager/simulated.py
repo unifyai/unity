@@ -43,6 +43,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> None:
         self._llm = llm
         self._initial = initial_text
@@ -50,6 +51,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
+        self._response_format = response_format
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
         ):
@@ -143,6 +145,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._llm,
                 label=self._log_label,
                 prompt=prompt,
+                response_format=self._response_format,
             )
             self._answer = answer
             self._messages = [
@@ -367,6 +370,7 @@ class SimulatedSecretManager(BaseSecretManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
 
         if should_log and call_id is not None:
@@ -501,6 +505,7 @@ class SimulatedSecretManager(BaseSecretManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
 
         if should_log and call_id is not None:

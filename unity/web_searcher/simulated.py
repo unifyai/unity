@@ -37,6 +37,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
+        response_format: Optional[Type[BaseModel]] = None,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -44,6 +45,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
         self._mode = str(mode or "ask")
+        self._response_format = response_format
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
         ):
@@ -137,6 +139,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._llm,
                 label=self._log_label,
                 prompt=prompt,
+                response_format=self._response_format,
             )
             self._answer = answer
             self._messages = [
@@ -323,6 +326,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
 
         return handle
@@ -378,5 +382,6 @@ class SimulatedWebSearcher(BaseWebSearcher):
             _requests_clarification=False,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
         return handle
