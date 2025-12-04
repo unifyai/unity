@@ -1,0 +1,270 @@
+# ConversationManager
+
+The `ConversationManager` is the live orchestration layer that handles real-time conversations with users across multiple mediums (phone calls, emails, SMS, web chat). It acts as the "front office" that interfaces with users while delegating complex reasoning to the `Conductor` (the "brain").
+
+## Prerequisites
+
+### Required Dependencies
+
+1. **Redis** — Used as the event broker for inter-component communication
+   ```bash
+   # macOS
+   brew install redis
+
+   # Ubuntu/Debian
+   sudo apt-get install redis-server
+
+   # Verify installation
+   redis-server --version
+   ```
+
+2. **Python environment** — Use the project's virtual environment
+   ```bash
+   # From project root
+   source .venv/bin/activate
+   ```
+
+### Running Tests
+
+```bash
+# Ensure Redis is available (tests start their own instance)
+tests/.parallel_run.sh -t --wait tests/test_conversation_manager/
+```
+
+---
+
+## Architecture Overview
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                             External World                                │
+│       (Phone/Twilio, Email/Gmail, SMS, Web Chat, LiveKit Voice)           │
+└───────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│                             CommsManager                                  │
+│    Subscribes to GCP PubSub topics, converts external messages to events │
+└───────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ Redis PubSub (app:comms:*)
+┌───────────────────────────────────────────────────────────────────────────┐
+│                          ConversationManager                              │
+│                                                                           │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌───────────────────────────┐  │
+│  │  ContactIndex   │  │ NotificationBar │  │      Main CM Brain        │  │
+│  │  (live state)   │  │    (pending)    │  │   (gpt-5-mini LLM loop)   │  │
+│  └─────────────────┘  └─────────────────┘  └───────────────────────────┘  │
+│                                                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │                          EventHandler                               │  │
+│  │    Routes events to appropriate handlers, triggers LLM runs         │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │                          CallManager                                │  │
+│  │    Manages voice calls (Twilio/LiveKit), realtime vs TTS modes      │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ (via Actions / Conductor tools)
+┌───────────────────────────────────────────────────────────────────────────┐
+│                               Conductor                                   │
+│  The "brain" — orchestrates all state managers (contacts, tasks, knowledge)│
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Key Components
+
+### `ConversationManager` (`conversation_manager.py`)
+
+The central orchestrator that:
+- Maintains live conversation state (`ContactIndex`, `NotificationBar`)
+- Runs the "Main CM Brain" LLM loop to decide responses and actions
+- Routes user input to either the Main Brain or active nested handles
+- Manages voice call lifecycle via `CallManager`
+
+Key methods:
+- `wait_for_events()` — Main event loop, subscribes to Redis channels
+- `run_llm()` — Triggers the Main CM Brain to process state and generate responses
+- `interject_or_run(content)` — Routes user input to active `ask` handle or Main Brain
+
+### `ConversationManagerHandle` (`handle.py`)
+
+A steerable handle that external components (Conductor, Actor) use to interact with the live conversation:
+- `ask(question, response_format)` — Ask the user a question and wait for their answer
+- `interject(message)` — Inject a message into the conversation
+- `send_notification(content)` — Send a notification to the Main CM Brain
+- `get_full_transcript()` — Retrieve recent conversation history
+
+### `EventHandler` (`domains/event_handlers.py`)
+
+Registry-based event dispatcher that routes events to handlers:
+- `@EventHandler.register(EventClass)` decorator registers handlers
+- Handles all communication events (SMS, Email, Phone, etc.)
+- Triggers LLM runs and updates state
+
+### `Events` (`events.py`)
+
+Dataclass-based event definitions:
+- **Comms Events**: `SMSReceived`, `EmailReceived`, `PhoneUtterance`, etc.
+- **Conductor Events**: `ConductorRequest`, `ConductorResponse`, etc.
+- **Control Events**: `DirectMessageEvent`, `NotificationInjectedEvent`, etc.
+
+### `CallManager` (`domains/call_manager.py`)
+
+Manages voice call lifecycle:
+- **Realtime Mode**: Uses GPT Realtime API for ultra-low-latency responses
+- **TTS Mode**: Traditional STT → LLM → TTS pipeline
+
+---
+
+## Two Operating Modes
+
+### 1. Non-Realtime Mode (TTS/STT Pipeline)
+
+```
+User speaks → STT transcribes → PhoneUtterance event
+    → Main CM Brain thinks → generates response
+    → Response published → TTS speaks
+```
+
+The Main CM Brain has full control over responses.
+
+### 2. Realtime Mode (GPT Realtime API)
+
+```
+User speaks → GPT Realtime processes live → responds immediately
+    → Transcription of response → AssistantUtterance event
+    → Main CM Brain receives for logging/guidance
+```
+
+GPT Realtime handles the live conversation. The Main CM Brain provides "guidance" via `AssistantRealtimeGuidance` events rather than direct responses.
+
+---
+
+## The `ConversationManagerHandle.ask` Flow
+
+When the Conductor or another manager needs to ask the user a question:
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                     ConversationManagerHandle.ask                         │
+├───────────────────────────────────────────────────────────────────────────┤
+│  1. Build context (recent transcript from ContactIndex)                   │
+│  2. Start inner async tool loop (gemini-2.5-flash)                        │
+│  3. Register as cm.active_ask_handle                                      │
+│                                                                           │
+│  Inner LLM has two paths:                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │  PATH 1 (INFER): If 90%+ confident from transcript                  │  │
+│  │      → Return JSON with {acknowledgment, final_answer}              │  │
+│  │      → No tool calls, instant response                              │  │
+│  │                                                                     │  │
+│  │  PATH 2 (ASK): If genuinely ambiguous                               │  │
+│  │      → Call ask_question(text) tool                                 │  │
+│  │      → Publishes DirectMessageEvent → voice speaks question         │  │
+│  │      → Blocks waiting for user_reply_future                         │  │
+│  │      → User reply routes via cm.interject_or_run()                  │  │
+│  │      → Future resolves, tool returns "User replied: ..."            │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+Key insight: While `active_ask_handle` is set, user input is routed to the nested loop, **bypassing the Main CM Brain**.
+
+---
+
+## Event Flow
+
+### Redis Channels
+
+| Channel Pattern | Purpose |
+|-----------------|---------|
+| `app:comms:*` | Communication events (SMS, email, phone, etc.) |
+| `app:conductor:*` | Conductor request/response events |
+| `app:call:*` | Voice call control events |
+| `app:logging:*` | Transcript logging events |
+| `app:managers:*` | State manager operations |
+
+### Key Events
+
+| Event | Description |
+|-------|-------------|
+| `DirectMessageEvent` | Bypass Main CM Brain, send message directly to user |
+| `NotificationInjectedEvent` | Inject notification into Main CM Brain's context |
+| `PhoneUtterance` / `UnifyCallUtterance` | User spoke during a call |
+| `AssistantPhoneUtterance` | Assistant response during a call |
+| `ConductorRequest` | Request the Conductor to perform an action |
+
+---
+
+## File Structure
+
+```
+conversation_manager/
+├── __init__.py              # Public exports
+├── base.py                  # Base class for handle abstraction
+├── conversation_manager.py  # Main ConversationManager class
+├── handle.py                # ConversationManagerHandle implementation
+├── events.py                # Event dataclass definitions
+├── event_broker.py          # Redis connection utilities
+├── comms_manager.py         # GCP PubSub → Redis bridge
+├── simulated.py             # Simulated implementation for testing
+├── main.py                  # Entry point for running as a service
+├── debug_logger.py          # Debug logging utilities
+├── utils.py                 # Shared utilities
+│
+├── domains/                 # Sub-components
+│   ├── actions.py           # Action definitions (send SMS, email, etc.)
+│   ├── assistant.py         # Assistant profile dataclass
+│   ├── call_manager.py      # Voice call management
+│   ├── comms_utils.py       # Communication utilities
+│   ├── contact_index.py     # Live contact/conversation state
+│   ├── event_handlers.py    # Event routing and handling
+│   ├── llm.py               # LLM wrapper for Main CM Brain
+│   ├── managers_utils.py    # Manager initialization utilities
+│   ├── notifications.py     # Notification bar management
+│   ├── proactive_speech.py  # Proactive silence-filling logic
+│   ├── renderer.py          # State → prompt rendering
+│   └── utils.py             # Domain utilities
+│
+├── medium_scripts/          # Medium-specific voice handling
+│   ├── call.py              # Twilio phone calls
+│   ├── gmeet.py             # Google Meet integration
+│   ├── realtime_call.py     # GPT Realtime API calls
+│   └── common.py            # Shared voice utilities
+│
+└── prompts/                 # LLM system prompts
+    ├── v1.md, v2.md         # Non-realtime prompts
+    ├── realtime.md          # Realtime mode prompt
+    └── realtime_phone_agent.md
+```
+
+---
+
+## Testing
+
+Tests are located in `tests/test_conversation_manager/`:
+
+| File | Description |
+|------|-------------|
+| `conftest.py` | Fixtures including Redis server setup |
+| `helpers.py` | Test utilities and mock event publishers |
+| `test_comms.py` | Tests for cross-medium communication |
+| `test_managers.py` | Tests for Conductor integration |
+| `test_simulated.py` | Tests using simulated implementation |
+
+### Running Tests
+
+```bash
+# Run all conversation_manager tests
+tests/.parallel_run.sh -t --wait tests/test_conversation_manager/
+
+# Run a specific test file
+tests/.parallel_run.sh -t --wait tests/test_conversation_manager/test_simulated.py
+```
+
+**Note**: Tests require Redis to be available. The `redis_server` fixture in `conftest.py` starts a temporary Redis instance.
