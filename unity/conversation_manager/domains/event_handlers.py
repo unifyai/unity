@@ -189,7 +189,10 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(AssistantRealtimeGuidance)
 async def _(
-    event: AssistantRealtimeGuidance, cm: "ConversationManager", *args, **kwargs
+    event: AssistantRealtimeGuidance,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
 ):
     print("received realtime guidance", event)
     contact_id = event.contact["contact_id"]
@@ -526,9 +529,9 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
     asyncio.create_task(summarize_task())
 
 
-@EventHandler.register(DirectSpeechEvent)
-async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs):
-    print(f"Received DirectSpeechEvent: {event.content}")
+@EventHandler.register(DirectMessageEvent)
+async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwargs):
+    print(f"Received DirectMessageEvent: {event.content}")
 
     # Speak to voice layer using appropriate channel
     if cm.mode in ["call", "unify_call", "gmeet"]:
