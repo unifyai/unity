@@ -179,8 +179,8 @@ async def test_real_ask_response_format(
     (root / "test_doc.txt").write_text("Test document content")
     (root / "data.csv").write_text("col1,col2\n1,2\n3,4")
 
-    # Parse the files
-    file_manager.parse(["test_doc.txt", "data.csv"])
+    # Ingest the files
+    file_manager.ingest_files(["test_doc.txt", "data.csv"])
 
     gfm = global_file_manager
     handle = await gfm.ask(
@@ -208,8 +208,8 @@ async def test_real_organize_response_format(
     root = Path(fm_root)
     (root / "to_rename.txt").write_text("File to be renamed")
 
-    # Parse the file
-    file_manager.parse(["to_rename.txt"])
+    # Ingest the file
+    file_manager.ingest_files(["to_rename.txt"])
 
     gfm = global_file_manager
     handle = await gfm.organize(
