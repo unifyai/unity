@@ -253,18 +253,64 @@ Tests are located in `tests/test_conversation_manager/`:
 |------|-------------|
 | `conftest.py` | Fixtures including Redis server setup |
 | `helpers.py` | Test utilities and mock event publishers |
-| `test_comms.py` | Tests for cross-medium communication |
+| `test_comms.py` | Integration tests for cross-medium communication (eval tests) |
 | `test_managers.py` | Tests for Conductor integration |
 | `test_simulated.py` | Tests using simulated implementation |
 
+### Prerequisites
+
+1. **Redis must be installed** (but NOT running — tests start their own instance):
+   ```bash
+   # macOS
+   brew install redis
+
+   # Ubuntu/Debian
+   sudo apt-get install redis-server
+
+   # Verify installation
+   redis-server --version
+   ```
+
+2. **No existing Redis on port 6379** — tests start a temporary Redis server on the default port. Stop any running Redis instances before running tests:
+   ```bash
+   # Check if Redis is running
+   redis-cli ping
+
+   # If it returns PONG, stop it
+   brew services stop redis  # macOS
+   # or
+   sudo systemctl stop redis  # Linux
+   ```
+
 ### Running Tests
 
-```bash
-# Run all conversation_manager tests
-tests/.parallel_run.sh -t --wait tests/test_conversation_manager/
+**⚠️ IMPORTANT**: `test_comms.py` uses **module-scoped fixtures** (shared Redis and CM process across all tests in the file). Do **NOT** use `-t` per-test parallelism for this file — it will cause port conflicts.
 
-# Run a specific test file
+```bash
+# Run test_comms.py (file-level, NOT per-test)
+# This runs all 20 tests sequentially sharing one Redis + CM instance
+tests/.parallel_run.sh --wait tests/test_conversation_manager/test_comms.py
+
+# Run other test files (per-test parallelism is fine)
 tests/.parallel_run.sh -t --wait tests/test_conversation_manager/test_simulated.py
+tests/.parallel_run.sh -t --wait tests/test_conversation_manager/test_managers.py
+
+# Run directly with pytest (for debugging)
+.venv/bin/python -m pytest tests/test_conversation_manager/test_comms.py -v --timeout=300
 ```
 
-**Note**: Tests require Redis to be available. The `redis_server` fixture in `conftest.py` starts a temporary Redis instance.
+### Test Categories
+
+These tests are marked as **eval tests** (`pytest.mark.eval`) because they exercise end-to-end LLM behavior:
+- Results depend on LLM responses (cached after first run)
+- Some tests may be flaky due to timing-dependent voice call flows
+- Expected pass rate: ~85% (17/20 tests typically pass)
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| `Address already in use` | Stop any existing Redis: `redis-cli shutdown` |
+| `Conversation manager did not subscribe` | Check CM process logs; ensure no import errors |
+| Voice call tests timeout | These are timing-sensitive eval tests; retry or check LLM cache |
+| `FileNotFoundError: python` | Ensure `.venv/bin/python` is used (handled by conftest) |
