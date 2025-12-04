@@ -180,6 +180,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
         notifs = self.notifications_bar.notifications
         self.notifications_bar.notifications = [n for n in notifs if n.pinned]
 
+    async def interject_or_run(self, content: str):
+        """Interject the ask handle or run the LLM"""
+        if self.active_ask_handle and not self.active_ask_handle.done():
+            print(f"🔀 ROUTING: Forwarding to ConversationManagerHandle.ask")
+            await self.active_ask_handle.interject(content)
+        else:
+            print(f"🧠 ROUTING: Triggering Main CM Brain")
+            await self.run_llm(delay=0, cancel_running=True)
+
     # this is non-blocking, it will quickly submit the
     # coro and return
     async def run_llm(self, delay=0, cancel_running=False):
