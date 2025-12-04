@@ -49,6 +49,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ) -> None:
         self._llm = llm
         self._initial_text = initial_text
@@ -56,6 +57,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._ret_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
+        self._response_format = response_format
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
         ):
@@ -158,6 +160,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._llm,
                 label=self._log_label,
                 prompt=user_block,
+                response_format=self._response_format,
             )
 
             self._answer = answer
@@ -444,6 +447,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
 
         # Tool-style scheduled log (only when no parent lineage)
@@ -493,6 +497,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            response_format=response_format,
         )
 
         # Tool-style scheduled log (only when no parent lineage)
@@ -514,6 +519,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self,
         task_id: int | str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         isolated: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
@@ -564,6 +570,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             _suffix = None
         handle = await actor.act(
             task_description,
+            response_format=response_format,
             _parent_chat_context=_parent_chat_context,
             _clarification_up_q=_clarification_up_q,
             _clarification_down_q=_clarification_down_q,

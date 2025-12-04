@@ -250,6 +250,7 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         task_id: int,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         isolated: Optional[bool] = None,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -267,6 +268,9 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         task_id : int
             Identifier of the task to start. Must reference a single, non‑terminal,
             non‑active instance.
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured result. When provided,
+            the final result should conform to this schema.
         isolated : bool | None, default ``None``
             When ``True``, execute the task in isolation (detach from any queue).
             When ``False`` or ``None``, preserve queue/chained semantics.

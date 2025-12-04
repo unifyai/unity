@@ -614,6 +614,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         task_id: int,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         isolated: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
