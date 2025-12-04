@@ -51,6 +51,16 @@ class ProductionSettings(BaseSettings):
     UNIFY_CACHE: bool | str = True
 
     # ─────────────────────────────────────────────────────────────────────────
+    # LLM Provider Credentials
+    # ─────────────────────────────────────────────────────────────────────────
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    VERTEXAI_LOCATION: str = ""
+    VERTEXAI_PROJECT: str = ""
+    UNITY_VALIDATE_LLM_PROVIDERS: bool = True
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Debugging / Observability
     # ─────────────────────────────────────────────────────────────────────────
     LLM_IO_DEBUG: bool = True
@@ -144,6 +154,7 @@ class ProductionSettings(BaseSettings):
         "UNITY_SKILLS_ENABLED",
         "UNITY_WEB_SEARCH_ENABLED",
         "UNITY_FILES_ENABLED",
+        "UNITY_VALIDATE_LLM_PROVIDERS",
         mode="before",
     )
     @classmethod
@@ -155,6 +166,28 @@ class ProductionSettings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
+
+    def validate_llm_providers(self) -> None:
+        """Validate that all required LLM provider credentials are set.
+
+        Raises:
+            RuntimeError: If any LLM provider credential is missing or empty.
+        """
+        if not self.UNITY_VALIDATE_LLM_PROVIDERS:
+            return
+        required = {
+            "OPENAI_API_KEY": self.OPENAI_API_KEY,
+            "ANTHROPIC_API_KEY": self.ANTHROPIC_API_KEY,
+            "GOOGLE_APPLICATION_CREDENTIALS": self.GOOGLE_APPLICATION_CREDENTIALS,
+            "VERTEXAI_LOCATION": self.VERTEXAI_LOCATION,
+            "VERTEXAI_PROJECT": self.VERTEXAI_PROJECT,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise RuntimeError(
+                f"Missing required LLM provider credentials: {', '.join(missing)}. "
+                "Set these environment variables before initializing Unity.",
+            )
 
 
 # Singleton instance for production code
