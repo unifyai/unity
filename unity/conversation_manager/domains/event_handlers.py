@@ -153,36 +153,32 @@ async def _(
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     # publish transcript
+    print("publishing transcript", event)
     await managers_utils.queue_operation(managers_utils.log_message, cm, event)
-    print("publishing utterance", event)
+
+    # push message to contact index
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
-    cm.contact_index.push_message(
-        contact,
-        "phone",
-        event.content,
-        role=(
-            "user"
-            if "assistant" not in event.__class__.__name__.lower()
-            else "assistant"
-        ),
+    role = (
+        "user" if "assistant" not in event.__class__.__name__.lower() else "assistant"
     )
-    # start filler only in non-realtime
-    if isinstance(event, (PhoneUtterance, UnifyCallUtterance)):
-        if not cm.call_manager.realtime:
-            await cm.cancel_filler()
-            asyncio.create_task(cm.run_filler_once())
+    cm.contact_index.push_message(contact, "phone", event.content, role=role)
 
-        # Cancel proactive speech on user utterance
+    # cancel proactive speech
+    if role == "user":
         await cm.cancel_proactive_speech()
 
-        # Route to active ask handle or Main CM Brain
-        if cm.active_ask_handle and not cm.active_ask_handle.done():
-            print(f"🔀 ROUTING: Forwarding to ConversationManagerHandle.ask")
-            await cm.active_ask_handle.interject(event.content)
-        else:
-            print(f"🧠 ROUTING: Triggering Main CM Brain")
-            await cm.run_llm(delay=0, cancel_running=True)
+    # trigger LLM runs for user events in non-realtime mode
+    if not cm.call_manager.realtime and role == "user":
+        # start filler only in non-realtime
+        await cm.cancel_filler()
+        asyncio.create_task(cm.run_filler_once())
+
+        await cm.interject_or_run(event.content)
+
+    # trigger LLM runs for assistant events in realtime mode
+    elif cm.call_manager.realtime and role == "assistant":
+        await cm.interject_or_run(event.content)
 
 
 @EventHandler.register((PhoneCallEnded, UnifyCallEnded))
