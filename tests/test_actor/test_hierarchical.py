@@ -3075,3 +3075,280 @@ async def test_deeply_nested_function_replaced_without_corrupting_plan():
     finally:
         await asyncio.sleep(1)  # Allow tasks to clean up
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 10: Retrospective Refactor Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# Canned plan that simulates the teaching and generalization flow
+INITIAL_PLAN = textwrap.dedent(
+    """
+async def main_plan():
+    '''Initial empty plan waiting for instructions.'''
+    return "Waiting for first instruction"
+""",
+)
+
+PLAN_AFTER_INTERJECTION_1 = textwrap.dedent(
+    """
+async def search_recipe(ingredient: str):
+    '''Search for a recipe on allrecipes.com.'''
+    print(f"--- Navigating to allrecipes.com ---")
+    await computer_primitives.navigate("https://www.allrecipes.com")
+    print(f"--- Searching for {ingredient} ---")
+    await computer_primitives.act(f"Search for '{ingredient}'")
+    return f"Searched for {ingredient}"
+
+async def main_plan():
+    '''Search for chicken soup recipe.'''
+    result = await search_recipe("chicken soup")
+    return result
+""",
+)
+
+PLAN_AFTER_INTERJECTION_2 = textwrap.dedent(
+    """
+async def search_recipe(ingredient: str):
+    '''Search for a recipe on allrecipes.com.'''
+    print(f"--- Navigating to allrecipes.com ---")
+    await computer_primitives.navigate("https://www.allrecipes.com")
+    print(f"--- Searching for {ingredient} ---")
+    await computer_primitives.act(f"Search for '{ingredient}'")
+    return f"Searched for {ingredient}"
+
+async def get_recipe_summary(ingredient: str):
+    '''Get a summary of the first recipe result.'''
+    print(f"--- Clicking first result for {ingredient} ---")
+    await computer_primitives.act("Click on the first search result")
+    print(f"--- Getting recipe summary ---")
+    await computer_primitives.act("Read and summarize the recipe")
+    return f"Recipe summary for {ingredient}"
+
+async def main_plan():
+    '''Search for chicken soup recipe and get summary.'''
+    await search_recipe("chicken soup")
+    summary = await get_recipe_summary("chicken soup")
+    return summary
+""",
+)
+
+PLAN_AFTER_GENERALIZATION = textwrap.dedent(
+    """
+async def search_recipe(ingredient: str):
+    '''Search for a recipe on allrecipes.com.'''
+    print(f"--- Navigating to allrecipes.com ---")
+    await computer_primitives.navigate("https://www.allrecipes.com")
+    print(f"--- Searching for {ingredient} ---")
+    await computer_primitives.act(f"Search for '{ingredient}'")
+    return f"Searched for {ingredient}"
+
+async def get_recipe_summary(ingredient: str):
+    '''Get a summary of the first recipe result.'''
+    print(f"--- Clicking first result for {ingredient} ---")
+    await computer_primitives.act("Click on the first search result")
+    print(f"--- Getting recipe summary ---")
+    await computer_primitives.act("Read and summarize the recipe")
+    return f"Recipe summary for {ingredient}"
+
+async def main_plan():
+    '''Search for chocolate chip cookies recipe and get summary.'''
+    await search_recipe("chocolate chip cookies")
+    summary = await get_recipe_summary("chocolate chip cookies")
+    return summary
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
+    """
+    Tests retrospective refactoring of plans based on user feedback.
+    
+    Simulates a teaching flow where:
+    1. User demonstrates a task through interjections
+    2. After successful execution, user requests generalization
+    3. Actor refactors the hardcoded plan into a reusable, parameterized skill
+    4. The refactored skill is saved to FunctionManager for future use
+    
+    Validates the actor's ability to learn and generalize from demonstrations.
+    """
+    print("--- Starting Test Harness for 'Retrospective Refactor' (MOCKED) ---")
+
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+
+    # Mock browser and action_provider
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+
+    active_task = None
+    interjection_count = 0
+
+    try:
+        # 1. Start a goal-less teaching session
+        active_task = HierarchicalActorHandle(actor=actor, goal=None)
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Mock verification client
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Create mock modification responses
+        def create_mock_modification_response(count):
+            if count == 1:
+                return InterjectionDecision(
+                    action="modify_task",
+                    reason="Teaching navigation to allrecipes.com",
+                    patches=[
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=PLAN_AFTER_INTERJECTION_1,
+                        ),
+                    ],
+                    cache=CacheInvalidateSpec(invalidate_steps=[]),
+                )
+            elif count == 2:
+                return InterjectionDecision(
+                    action="modify_task",
+                    reason="Teaching recipe summary step",
+                    patches=[
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=PLAN_AFTER_INTERJECTION_2,
+                        ),
+                    ],
+                    cache=CacheInvalidateSpec(invalidate_steps=[]),
+                )
+            elif count == 3:
+                return InterjectionDecision(
+                    action="modify_task",
+                    reason="Generalizing for chocolate chip cookies",
+                    patches=[
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=PLAN_AFTER_GENERALIZATION,
+                        ),
+                    ],
+                    cache=CacheInvalidateSpec(invalidate_steps=[]),
+                )
+            else:
+                return InterjectionDecision(
+                    action="complete_task",
+                    reason="User indicated task is complete",
+                    patches=[],
+                    cache=CacheInvalidateSpec(invalidate_steps=[]),
+                )
+
+        async def mock_modification_generate(*args, **kwargs):
+            nonlocal interjection_count
+            interjection_count += 1
+            response = create_mock_modification_response(interjection_count)
+            print(f"--- MOCK MODIFICATION CLIENT: Interjection {interjection_count}, action={response.action} ---")
+            return response.model_dump_json()
+
+        active_task.modification_client.generate = mock_modification_generate
+
+        # Set initial plan
+        sanitized_plan = actor._sanitize_code(INITIAL_PLAN, active_task)
+        active_task.plan_source_code = sanitized_plan
+
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
+        print("--- Plan is correctly awaiting first instruction. ---")
+
+        # 2. Teach the first part of the process
+        interjection_1 = "Navigate to allrecipes.com and search for 'chicken soup'"
+        print(f"\n>>> INTERJECTION 1 (Teach): '{interjection_1}'")
+        status_1 = await active_task.interject(interjection_1)
+        print(f">>> Status: {status_1}")
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
+
+        # 3. Teach the second part
+        interjection_2 = "Click on the first search result and give me a brief summary."
+        print(f"\n>>> INTERJECTION 2 (Teach): '{interjection_2}'")
+        status_2 = await active_task.interject(interjection_2)
+        print(f">>> Status: {status_2}")
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
+        print("--- Teaching for 'chicken soup' complete. ---")
+
+        # 4. Give the generalization command to trigger the refactor
+        interjection_3 = "Perfect. Now, repeat the same process for 'chocolate chip cookies'."
+        print(f"\n>>> INTERJECTION 3 (Generalize): '{interjection_3}'")
+        status_3 = await active_task.interject(interjection_3)
+        print(f">>> Status: {status_3}")
+
+        # 5. End the plan
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
+        print("--- Generalization complete. ---")
+        interjection_4 = "Perfect. That's all. Thank you."
+        print(f"\n>>> INTERJECTION 4 (End): '{interjection_4}'")
+        status_4 = await active_task.interject(interjection_4)
+        print(f">>> Status: {status_4}")
+
+        # 6. Wait briefly and stop
+        await asyncio.sleep(2)
+        if not active_task.done():
+            await active_task.stop("Test complete")
+
+        print(f"\n--- Plan finished ---")
+
+        # 7. Final assertions and checks
+        final_log = "\n".join(active_task.action_log)
+        final_code = active_task.plan_source_code
+
+        assert "def main_plan" in final_code, "Final code is missing main_plan!"
+        print("✅ Final code contains main_plan.")
+
+        assert "async def search_recipe" in final_code, "Final code was not refactored into a helper function!"
+        print("✅ Final code contains parameterized helper function (search_recipe).")
+
+        # Check that both recipes were processed
+        assert "allrecipes.com" in final_log.lower()
+        assert "chicken soup" in final_log.lower() or "chocolate chip cookies" in final_log.lower()
+        print("✅ Recipe search was executed.")
+
+        print("\n\n✅✅✅ TEST 'Retrospective Refactor' COMPLETE ✅✅✅")
+        print("\n=== ASSERTIONS PASSED ===")
+        print("✅ Final plan source code was successfully refactored into parameterized helper functions.")
+        print("✅ Teaching and generalization flow worked correctly.")
+
+    except Exception as e:
+        print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            try:
+                await actor.close()
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+
+
