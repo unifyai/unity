@@ -5,6 +5,7 @@ import os
 
 from unify.utils import http
 
+from unity.session_details import SESSION_DETAILS
 from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.types.filesystem import FileSystemCapabilities, FileReference
 
@@ -74,7 +75,7 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
     def _headers(self) -> Dict[str, str]:
         # Mirror agent-service header style; service only checks presence
         unify_key = os.environ.get("UNIFY_KEY", "")
-        assistant_email = os.environ.get("ASSISTANT_EMAIL", "")
+        assistant_email = SESSION_DETAILS.assistant.email
         return {"authorization": f"Bearer {unify_key} {assistant_email}".strip()}
 
     def _ensure_connected(self) -> None:

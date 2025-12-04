@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import contextlib
 
+from unity.session_details import SESSION_DETAILS
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager import debug_logger
@@ -259,7 +260,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 if parsed_out.get("phone_guidance"):
                     event = AssistantRealtimeGuidance(
                         self.contact_index.get_contact(
-                            contact_id=self.call_manager.call_contact["contact_id"]
+                            contact_id=self.call_manager.call_contact["contact_id"],
                         ),
                         parsed_out["phone_guidance"],
                     )
@@ -359,10 +360,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """
         self.user_turn_end_callback = callback
 
-    # This can be moved to event handlers actually
-    # and sets the Assistant dataclass instead of calling the conversation manager's
     def set_details(self, payload: dict):
-        """Populate assistant/user/voice details and update environment variables."""
+        """Populate assistant/user/voice details into SESSION_DETAILS."""
         self.user_id = payload["user_id"]
         self.assistant_id = payload["assistant_id"]
         self.assistant_name = payload["assistant_name"]
@@ -381,17 +380,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.build_response_model()
         if payload.get("api_key"):
             os.environ["UNIFY_KEY"] = payload["api_key"]
-        os.environ["USER_ID"] = self.user_id
-        os.environ["USER_NAME"] = self.user_name
-        os.environ["USER_NUMBER"] = self.user_number
-        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
-        os.environ["USER_EMAIL"] = self.user_email
-        os.environ["ASSISTANT_NAME"] = self.assistant_name
-        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
-        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
-        os.environ["VOICE_PROVIDER"] = self.voice_provider
-        os.environ["VOICE_ID"] = self.voice_id
-        os.environ["VOICE_MODE"] = self.voice_mode
+        # Populate the global SessionDetails singleton
+        SESSION_DETAILS.populate(
+            assistant_id=self.assistant_id,
+            assistant_name=self.assistant_name,
+            assistant_age=self.assistant_age,
+            assistant_nationality=self.assistant_nationality,
+            assistant_about=self.assistant_about,
+            assistant_number=self.assistant_number,
+            assistant_email=self.assistant_email,
+            user_id=self.user_id,
+            user_name=self.user_name,
+            user_number=self.user_number,
+            user_whatsapp_number=self.user_whatsapp_number,
+            user_email=self.user_email,
+            voice_provider=self.voice_provider,
+            voice_id=self.voice_id,
+            voice_mode=self.voice_mode,
+        )
+        # Export to env vars for subprocess inheritance
+        SESSION_DETAILS.export_to_env()
 
     def get_details(self) -> dict:
         return {
