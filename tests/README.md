@@ -297,20 +297,34 @@ How it interprets arguments:
   - When you do not specify individual tests, the script creates one session per file.
   - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
 
-### Wait Mode and Logs (`--wait`)
+### Wait Mode and Logs (`--wait [N]`)
 
 Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipelines or automated agents.
 
 ```bash
+# Wait indefinitely until all tests complete
 ./.parallel_run.sh --wait tests/my_tests
+
+# Wait up to 120 seconds, then timeout
+./.parallel_run.sh --wait 120 tests/my_tests
 ```
 
 **Behavior:**
-- Blocks until all tmux sessions complete.
+- Blocks until all tmux sessions complete (or timeout is reached).
 - If all pass, exits with code `0`.
 - If any fail, exits with code `1` and lists the failed sessions.
+- If timeout is reached before completion, exits with code `2`.
 - **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/unit-test_math.txt`).
 - **Debugging**: When running with `--wait`, inspect these log files to diagnose failures instead of attaching to tmux sessions (though sessions remain open for inspection if they fail).
+
+**Timeout examples:**
+```bash
+# Quick sanity check with 60s timeout
+./.parallel_run.sh --wait 60 -t tests/test_basic.py
+
+# Long-running tests with 5 minute timeout
+./.parallel_run.sh --wait 300 tests/test_slow_suite/
+```
 
 ### Match Tests by Filename (Glob-Style)
 
@@ -408,7 +422,7 @@ The `--env` approach is intentionally generic. Any variable from either class is
 
 | Option | Description |
 |--------|-------------|
-| `-w`, `--wait` | Block until all tests complete; exit 0 on success, 1 on any failure |
+| `-w [N]`, `--wait [N]` | Block until all tests complete; exit 0 on success, 1 on failure, 2 on timeout. Optional `N` sets timeout in seconds. |
 | `-t`, `--per-test` | Create one session per test function instead of per file |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |

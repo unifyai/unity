@@ -18,8 +18,9 @@ EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .i
 # With -t/--per-test: one session per collected pytest node id across provided dirs/files.
 PER_TEST=0
 
-# Wait for completion flag
+# Wait for completion flag and optional timeout
 WAIT_FOR_COMPLETION=0
+WAIT_TIMEOUT=0  # 0 means no timeout (wait indefinitely)
 
 # Optional filename match (glob-like, e.g., "*_tool_docstring*")
 NAME_PATTERN=""
@@ -50,7 +51,13 @@ while (( "$#" )); do
   case "$1" in
     -w|--wait)
       WAIT_FOR_COMPLETION=1
-      shift
+      # Check if next arg is an optional timeout (positive integer)
+      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
+        WAIT_TIMEOUT="$2"
+        shift 2
+      else
+        shift
+      fi
       ;;
     -t|--per-test)
       PER_TEST=1
@@ -532,8 +539,14 @@ echo "  • Attach:       tmux attach -t <session>"
 echo "  • Inside tmux:  tmux switch-client -t <session>"
 
 if (( WAIT_FOR_COMPLETION )); then
-  echo "Waiting for tests to complete..."
+  if (( WAIT_TIMEOUT > 0 )); then
+    echo "Waiting for tests to complete (timeout: ${WAIT_TIMEOUT}s)..."
+  else
+    echo "Waiting for tests to complete..."
+  fi
 
+  wait_start=$(date +%s)
+  timed_out=0
   while true; do
     pending_count=0
     for sid in "${session_ids[@]}"; do
@@ -548,8 +561,24 @@ if (( WAIT_FOR_COMPLETION )); then
     if (( pending_count == 0 )); then
       break
     fi
+
+    # Check timeout if specified
+    if (( WAIT_TIMEOUT > 0 )); then
+      elapsed=$(( $(date +%s) - wait_start ))
+      if (( elapsed >= WAIT_TIMEOUT )); then
+        timed_out=1
+        echo "Timeout reached after ${WAIT_TIMEOUT}s. ${pending_count} session(s) still running."
+        break
+      fi
+    fi
+
     sleep 1
   done
+
+  if (( timed_out )); then
+    echo "Tests did not complete within timeout. Check tmux sessions manually."
+    exit 2
+  fi
 
   echo "All tests completed."
 
