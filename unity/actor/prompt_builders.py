@@ -615,15 +615,6 @@ def _build_code_act_rules_and_examples(computer_primitives) -> str:
     }
     all_tools.update(browser_tools)
 
-    comm_tools = {
-        "send_sms_message": computer_primitives.send_sms_message,
-        "send_email": computer_primitives.send_email,
-        "send_whatsapp_message": computer_primitives.send_whatsapp_message,
-        "start_call": computer_primitives.start_call,
-        "join_meet": computer_primitives.join_meet,
-    }
-    all_tools.update(comm_tools)
-
     if hasattr(computer_primitives, "reason"):
         all_tools["reason"] = computer_primitives.reason
 
