@@ -32,7 +32,10 @@ class EventHandler:
         print(f"Received EVENT: {event}")
         if event.__class__.loggable:
             asyncio.create_task(
-                managers_utils.queue_operation(managers_utils.publish_bus_events, event)
+                managers_utils.queue_operation(
+                    managers_utils.publish_bus_events,
+                    event,
+                ),
             )
         print(event)
         f = cls._registry.get(event.__class__)
@@ -93,7 +96,10 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
                 notif_content = f"Call sent to {contact['first_name']}"
             case UnifyCallReceived() as e:
                 cm.call_manager.start_unify_call(
-                    contact, boss, e.agent_name, e.room_name
+                    contact,
+                    boss,
+                    e.agent_name,
+                    e.room_name,
                 )
                 message_content = "<Recieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
@@ -206,7 +212,7 @@ async def _(
         contact = cm.contact_index.get_contact(contact_id=1)
     else:
         contact = cm.contact_index.get_contact(
-            phone_number=event.contact["phone_number"]
+            phone_number=event.contact["phone_number"],
         )
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
@@ -231,7 +237,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 "action_name": "conductor_handle_clarification_request",
                 "query": event.query,
                 "call_id": event.call_id,
-            }
+            },
         )
     else:
         ...
@@ -365,7 +371,10 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(NotificationInjectedEvent)
 async def _(
-    event: NotificationInjectedEvent, cm: "ConversationManager", *args, **kwargs
+    event: NotificationInjectedEvent,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
 ):
     print(f"Received NotificationInjectedEvent: {event.content}")
 
@@ -387,7 +396,10 @@ async def _(
 
 @EventHandler.register(NotificationUnpinnedEvent)
 async def _(
-    event: NotificationUnpinnedEvent, cm: "ConversationManager", *args, **kwargs
+    event: NotificationUnpinnedEvent,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
 ):
     print(f"Received NotificationUnpinnedEvent: {event.interjection_id}")
 
@@ -487,7 +499,7 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
         ]
         tasks = [
             asyncio.create_task(
-                cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
+                cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid),
             )
             for cid, t in res
         ]
@@ -531,7 +543,8 @@ async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs
             channel = f"app:{cm.mode}:response_gen"
             await cm.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
             await cm.event_broker.publish(
-                channel, json.dumps({"type": "gen_chunk", "chunk": event.content})
+                channel,
+                json.dumps({"type": "gen_chunk", "chunk": event.content}),
             )
             await cm.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
 
