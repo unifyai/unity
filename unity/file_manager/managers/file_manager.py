@@ -113,7 +113,7 @@ class FileManager(BaseFileManager):
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
         if not read_ctx:
             try:
-                from .. import ensure_initialised as _ensure_initialised  # type: ignore  # local to avoid cycles
+                from ... import ensure_initialised as _ensure_initialised  # type: ignore  # local to avoid cycles
 
                 _ensure_initialised()
                 ctxs = unify.get_active_context()
@@ -141,7 +141,13 @@ class FileManager(BaseFileManager):
             ),
             fields=model_to_fields(FileRecord),
         )
-        self._store.ensure_context()
+        try:
+            self._store.ensure_context()
+        except unify.RequestError as e:
+            body = getattr(e.response, "text", "") or ""
+            # Treat duplicate context as success and do not emit error output
+            if "already exists" in body:
+                pass
 
         # Ensure storage via shared helper (idempotent)
         try:
