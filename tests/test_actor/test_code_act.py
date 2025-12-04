@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from unity.actor.code_act_actor import CodeActActor, CodeExecutionSandbox
 from unity.function_manager.primitives import ComputerPrimitives
-from tests.test_actor.conftest import NoKeychainBrowser
 
 
 # ────────────────────────────────────────────────────────────────────────────
