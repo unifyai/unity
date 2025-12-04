@@ -1101,3 +1101,355 @@ async def test_action_caching_orchestrator():
         await asyncio.sleep(1)  # Allow tasks to clean up
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 2: Course Correction & Recovery Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Mocking & Test Utilities ---
+
+
+# --- Canned Plan for Predictable State Deviations ---
+
+CANNED_PLAN_FOR_VERIFICATION_FAILURE_TEST_ADVANCE_COURSE_CORRECTION = textwrap.dedent(
+    """
+    async def _step_1_navigate_and_search():
+        '''Navigates to a dummy site and searches for an item.'''
+        print("EXEC: Running Step 1: Navigate and Search")
+        await computer_primitives.navigate("https://www.allrecipes.com/search?q=pasta")
+
+    async def _step_2_deviate_state():
+        '''This function intentionally navigates away, creating a state deviation.'''
+        print("EXEC: Running Step 2: Intentionally Deviating State")
+        await computer_primitives.navigate("https://www.allrecipes.com/about-us-6648102")
+
+    async def _step_3_attempt_action_on_wrong_page():
+        '''This action is expected to fail verification because the popup is in the way.'''
+        print("EXEC: Running Step 3: Attempting Action on Wrong Page")
+        await computer_primitives.act("Click the first recipe link to go to the details page.")
+
+    async def main_plan():
+        await _step_1_navigate_and_search()
+        await _step_2_deviate_state()
+        await _step_3_attempt_action_on_wrong_page()
+        return "Plan completed successfully."
+    """,
+)
+
+
+CANNED_PLAN_FOR_INTERJECTION_TEST_ADVANCE_COURSE_CORRECTION = textwrap.dedent(
+    """
+    async def _multi_step_function():
+        '''A function with multiple, distinct, state-changing actions.'''
+        print("EXEC: Multi-step function, action 1/3 (Navigate to search page).")
+        await computer_primitives.navigate("https://www.allrecipes.com/search?q=cookies")
+
+        print("EXEC: Multi-step function, action 2/3 (Navigate to 'About Us').")
+        await computer_primitives.navigate("https://www.allrecipes.com/about-us-6648102")
+
+        print("EXEC: Multi-step function, pausing for interjection...")
+        await asyncio.sleep(5)
+
+        print("EXEC: Multi-step function, action 3/3 (This should be skipped).")
+        await computer_primitives.act("Click a link on the About Us page.")
+
+    async def main_plan():
+        await _multi_step_function()
+        return "Original plan finished."
+    """,
+)
+
+
+# --- THE TEST SUITE ---
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_recovery_agent_launches_on_user_interjection():
+    """
+    Tests intra-function recovery triggered by a user interjection.
+    
+    Validates that when a user interjects during plan execution, the actor:
+    1. Pauses execution correctly
+    2. Launches the recovery sub-agent with proper context (screenshots + trajectory)
+    3. Restarts the affected function after recovery completes
+    4. Continues execution from the correct state
+    """
+    print("\n\n--- Starting Test: Recovery after Interjection ---")
+    # Use connect_now=False to prevent real browser initialization
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+
+    # Mock browser and action_provider to avoid real browser calls
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    try:
+        async def mock_recovery_agent(plan, target_screenshot, trajectory):
+            print("--- MOCK RECOVERY AGENT (Interjection): LAUNCHED ---")
+            assert target_screenshot is not None, "Target screenshot was not provided."
+            assert (
+                "about-us" in trajectory[0]
+            ), f"Trajectory should contain the invalidated 'about-us' navigation. Got: {trajectory}"
+            active_task.action_log.append(
+                "COURSE CORRECTION: Mock agent for interjection is running.",
+            )
+            print("--- MOCK RECOVERY AGENT: State restored. ---")
+
+        actor._run_course_correction_agent = mock_recovery_agent
+
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test interjection recovery.",
+            persist=True,
+        )
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Mock the modification client to return a predictable decision that invalidates mid-function.
+        mock_decision = InterjectionDecision(
+            action="modify_task",
+            reason="User wants to change the logic after the first navigation.",
+            patches=[
+                FunctionPatch(
+                    function_name="_multi_step_function",
+                    new_code=textwrap.dedent(
+                        """
+                    async def _multi_step_function():
+                        print("EXEC: Multi-step function, action 1/3 (Navigate to search page).")
+                        await computer_primitives.navigate("https://www.allrecipes.com/search?q=cookies")
+                        print("EXEC: Running new, modified action after interjection.")
+                        print("EXEC: Multi-step function, action 2/3 (Search for 'brownies').")
+                        await computer_primitives.act("Search for 'brownies' instead.")
+                """,
+                    ),
+                ),
+            ],
+            cache=CacheInvalidateSpec(
+                invalidate_steps=[
+                    CacheStepRange(
+                        function_name="_multi_step_function",
+                        from_step_inclusive=2,
+                    ),
+                ],
+            ),
+        )
+        active_task.modification_client.generate = AsyncMock(
+            return_value=mock_decision.model_dump_json(),
+        )
+
+        active_task.plan_source_code = actor._sanitize_code(
+            CANNED_PLAN_FOR_INTERJECTION_TEST_ADVANCE_COURSE_CORRECTION,
+            active_task,
+        )
+
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Wait until the second navigation (to About Us) is executed and logged.
+        await wait_for_log_entry(active_task, "about-us-6648102")
+
+        while len(active_task.idempotency_cache) != 2:
+            await asyncio.sleep(0.1)
+
+        await active_task.interject("Change the plan after the first search.")
+
+        # Ensure course correction agent was invoked before proceeding
+        await wait_for_log_entry(
+            active_task,
+            "COURSE CORRECTION: Mock agent for interjection is running.",
+        )
+
+        # Wait for the patched function's new action to be logged
+        await wait_for_log_entry(active_task, "Search for 'brownies' instead.")
+
+        await active_task.stop("Test complete.")
+        final_result = await active_task.result()
+
+        print(f"\n--- Plan finished with result: {final_result} ---")
+        final_log = "\n".join(active_task.action_log)
+
+        assert (
+            "COURSE CORRECTION: Mock agent for interjection is running."
+            in final_log
+        ), "Course correction sub-agent was not successfully launched for interjection."
+        print("✅ Course correction sub-agent was successfully launched for interjection.")
+
+        assert "CACHE HIT" in final_log, "Expected at least one cache hit on replay."
+        print("✅ Plan efficiently replayed from cache.")
+
+        assert "RESTART: Restarting execution loop" in final_log or "run_id=" in final_log
+        print("✅ Main plan correctly restarted after interjection (run transition logged).")
+
+        print("\n✅✅✅ TEST 'Recovery after Interjection' COMPLETE ✅✅✅")
+
+    finally:
+        if active_task and not active_task.done():
+            await active_task.stop()
+        if actor:
+            await actor.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_recovery_agent_launches_on_verification_failure_and_restores_state():
+    """
+    Tests the end-to-end flow:
+    1. A function (_step_2) puts the browser in an incorrect state.
+    2. The next function (_step_3) runs, but its verification fails because it's on the wrong page.
+    3. The recovery sub-agent is launched with the correct context (screenshots + trajectory).
+    4. The sub-agent executes a `navigate` action to restore the correct state.
+    5. The main plan restarts, fixes the logic for the failed function, and completes successfully.
+    """
+    print("\n\n--- Starting Test: Recovery after Verification Failure ---")
+
+    # Clear FunctionManager to avoid issues with None implementations in primitives
+    from unity.function_manager.function_manager import FunctionManager
+    fm = FunctionManager()
+    fm.clear()
+
+    # Use connect_now=False to prevent real browser initialization
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False, function_manager=fm)
+
+    # Mock browser and action_provider to avoid real browser calls
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    try:
+        mock_v_client = ConfigurableMockVerificationClient()
+        mock_v_client.set_behavior(
+            "_step_1_navigate_and_search",
+            [("ok", "Navigated successfully.")],
+        )
+        mock_v_client.set_behavior(
+            "_step_2_deviate_state",
+            [("ok", "State deviated as planned.")],
+        )
+        # First verification of step 3 will fail, the second (after recovery) will succeed.
+        mock_v_client.set_behavior(
+            "_step_3_attempt_action_on_wrong_page",
+            [
+                ("reimplement_local", "Action failed, element not found on the 'About Us' page."),
+                ("ok", "Action succeeded after state recovery."),
+            ],
+        )
+
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test recovery from verification failure.",
+            persist=False,
+        )
+
+        # Immediately cancel the auto-started task from __init__
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        active_task.verification_client = mock_v_client
+
+        # Mock _dynamic_implement to bypass prompt building which fails on primitives with None implementations
+        async def mock_dynamic_implement(*args, **kwargs):
+            return ImplementationDecision(
+                action="implement_function",
+                reason="Re-implementing after course correction.",
+                code="async def _step_3_attempt_action_on_wrong_page(): await computer_primitives.act('Click any recipe.')",
+            )
+
+        actor._dynamic_implement = mock_dynamic_implement
+
+        # Also mock the implementation client in case it's called elsewhere
+        active_task.implementation_client.generate = AsyncMock(
+            return_value=ImplementationDecision(
+                action="implement_function",
+                reason="Re-implementing after course correction.",
+                code="async def _step_3_attempt_action_on_wrong_page(): await computer_primitives.act('Click any recipe.')",
+            ).model_dump_json(),
+        )
+
+        # Inject a mock recovery agent that just logs the action
+        async def mock_recovery_agent(plan, target_screenshot, trajectory):
+            print("--- MOCK RECOVERY AGENT: LAUNCHED ---")
+            assert target_screenshot is not None, "Target screenshot was not provided to recovery agent."
+            assert len(trajectory) > 0, "Trajectory was empty."
+            assert "Click the first recipe link" in trajectory[0], f"Expected 'Click the first recipe link' in trajectory[0], got: {trajectory[0]}"
+            active_task.action_log.append("COURSE CORRECTION: Mock agent is running.")
+            print("--- MOCK RECOVERY AGENT: State restored. ---")
+
+        actor._run_course_correction_agent = mock_recovery_agent
+
+        active_task.plan_source_code = actor._sanitize_code(
+            CANNED_PLAN_FOR_VERIFICATION_FAILURE_TEST_ADVANCE_COURSE_CORRECTION,
+            active_task,
+        )
+
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Await completion
+        final_result = await active_task.result()
+
+        print(f"\n--- Plan finished with result: {final_result} ---")
+        final_log = "\n".join(active_task.action_log)
+
+        # Assertions
+        assert (
+            "_step_3_attempt_action_on_wrong_page" in final_log and "FAILED" in final_log
+        ), f"Expected verification failure for '_step_3_attempt_action_on_wrong_page' in log"
+        print("✅ Verification failure correctly detected.")
+
+        assert "COURSE CORRECTION: Mock agent is running." in final_log, "Course correction not found in log"
+        print("✅ Course correction sub-agent was successfully launched.")
+
+        assert "RESTART: Restarting execution loop" in final_log, "RESTART not found in log"
+        print("✅ Main plan correctly restarted after recovery.")
+
+        assert "Plan completed successfully." in final_result, f"Expected 'Plan completed successfully.' in result, got: {final_result}"
+        print("✅ Plan ultimately succeeded after recovery and reimplementation.")
+
+        print("\n✅✅✅ TEST 'Recovery after Verification Failure' COMPLETE ✅✅✅")
+
+    finally:
+        if active_task:
+            await active_task.stop()
+        if actor:
+            await actor.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_course_correction_orchestrator():
+    """
+    Orchestrates course correction and recovery tests.
+    
+    Tests the actor's ability to recover from:
+    - Verification failures (wrong browser state detected)
+    - User interjections that require plan modification
+    
+    Validates the recovery sub-agent is launched with correct context
+    and that execution resumes properly after state restoration.
+    """
+    try:
+        await test_recovery_agent_launches_on_verification_failure_and_restores_state()
+        await test_recovery_agent_launches_on_user_interjection()
+    except Exception as e:
+        import traceback
+
+        print("\n\n❌❌❌ A TEST FAILED ❌❌❌")
+        print(e)
+        print(traceback.format_exc())
+        logging.exception("Test failed")
+    finally:
+        await asyncio.sleep(1)
+
+
