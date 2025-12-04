@@ -112,14 +112,18 @@ class ContactIndex:
         contact_id: str = None,
         phone_number=None,
         email=None,
-    ) -> dict:
+    ) -> dict | None:
         c = None
         if contact_id:
             c = self.contacts.get(contact_id)
         elif phone_number:
             c = next(
-                c for c in self.contacts.values() if c.phone_number == phone_number
+                (c for c in self.contacts.values() if c.phone_number == phone_number),
+                None,
             )
         elif email:
-            c = next(c for c in self.contacts.values() if c.email_address == email)
+            c = next(
+                (c for c in self.contacts.values() if c.email_address == email),
+                None,
+            )
         return c.model_dump(exclude={"threads"}) if c else None
