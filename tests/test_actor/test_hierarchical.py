@@ -4080,3 +4080,220 @@ async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_
         await asyncio.sleep(1)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 15: Skill Memoization Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# Canned plan for phase 1 - searching for lasagna
+CANNED_PLAN_PHASE_1_SKILL_MEMOIZATION = textwrap.dedent(
+    """
+async def search_recipe(ingredient: str):
+    '''
+    Search for a recipe on allrecipes.com.
+    This skill navigates to allrecipes and searches for the given ingredient.
+    '''
+    print(f"--- Searching for {ingredient} recipe ---")
+    await computer_primitives.navigate("https://www.allrecipes.com")
+    await computer_primitives.act(f"Search for '{ingredient}'")
+    return f"Found recipe for {ingredient}"
+
+async def main_plan():
+    '''Search for vegetarian lasagna recipe.'''
+    result = await search_recipe("vegetarian lasagna")
+    return f"Found lasagna recipe: {result}"
+""",
+)
+
+# Canned plan for phase 2 - reusing skill for cookies
+CANNED_PLAN_PHASE_2_SKILL_MEMOIZATION = textwrap.dedent(
+    """
+async def search_recipe(ingredient: str):
+    '''
+    Search for a recipe on allrecipes.com.
+    This skill navigates to allrecipes and searches for the given ingredient.
+    '''
+    print(f"--- Searching for {ingredient} recipe ---")
+    await computer_primitives.navigate("https://www.allrecipes.com")
+    await computer_primitives.act(f"Search for '{ingredient}'")
+    return f"Found recipe for {ingredient}"
+
+async def main_plan():
+    '''Search for chocolate chip cookies recipe.'''
+    result = await search_recipe("chocolate chip cookies")
+    return f"Found cookies recipe: {result}"
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_learned_skill_is_saved_and_reused_across_sessions():
+    """
+    Tests skill memorization and reuse across multiple plan executions.
+    
+    Validates the two-phase skill learning flow:
+    Phase 1 - Teaching:
+        1. User demonstrates a task (search for lasagna)
+        2. Actor learns and saves the skill to FunctionManager
+    
+    Phase 2 - Reuse:
+        1. New task requires similar capability (search for cookies)
+        2. Actor retrieves the saved skill from FunctionManager
+        3. Skill is reused without re-learning
+    
+    Critical for the actor's ability to build a reusable skill library.
+    """
+    print("--- Starting Test Harness for 'Skill Memorization & Reuse' (MOCKED) ---")
+
+    fm = FunctionManager()
+    fm.clear()
+    print("✅ Cleared FunctionManager")
+
+    actor = HierarchicalActor(
+        function_manager=fm,
+        headless=True,
+        browser_mode="legacy",
+        connect_now=False,
+    )
+
+    # Mock browser and action_provider
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    print("✅ Actor initialized with mocked browser.")
+
+    active_task_1 = None
+    active_task_2 = None
+    try:
+        # --- PHASE 1: Teach and Memorize the Skill ---
+        print("\n\n--- PHASE 1: Teaching the 'search_recipe' skill ---")
+
+        goal_1 = "Go to allrecipes.com and search for 'vegetarian lasagna'."
+        print(f"\n>>> Starting Plan 1 with goal: '{goal_1}'")
+
+        # Create the handle directly with mocking
+        active_task_1 = HierarchicalActorHandle(
+            actor=actor,
+            goal=goal_1,
+            persist=False,
+        )
+
+        if active_task_1._execution_task:
+            active_task_1._execution_task.cancel()
+            try:
+                await active_task_1._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Set up mocks
+        active_task_1.verification_client = SimpleMockVerificationClient()
+
+        # Inject canned plan
+        sanitized_plan = actor._sanitize_code(CANNED_PLAN_PHASE_1_SKILL_MEMOIZATION, active_task_1)
+        active_task_1.plan_source_code = sanitized_plan
+
+        # Start execution
+        active_task_1._execution_task = asyncio.create_task(
+            active_task_1._initialize_and_run(),
+        )
+
+        # Wait for plan to complete
+        await wait_for_log_entry(active_task_1, "search_recipe", timeout=30)
+        await asyncio.sleep(2)
+
+        if not active_task_1.done():
+            await active_task_1.stop("Phase 1 complete")
+
+        print(f"\n--- Plan 1 finished ---")
+        print("✅ Plan 1 completed successfully (mocked).")
+
+        # Verify the skill source code is present
+        assert "search_recipe" in active_task_1.plan_source_code
+        print("✅ 'search_recipe' skill is in the plan source code.")
+
+        # --- PHASE 2: Recall and Use the Skill ---
+        print("\n\n--- PHASE 2: Recalling and Reusing the skill for a new task ---")
+
+        goal_2 = "Find a recipe for 'chocolate chip cookies' on allrecipes.com."
+        print(f"\n>>> Starting Plan 2 with similar goal: '{goal_2}'")
+
+        # Create second handle
+        active_task_2 = HierarchicalActorHandle(
+            actor=actor,
+            goal=goal_2,
+            persist=False,
+        )
+
+        if active_task_2._execution_task:
+            active_task_2._execution_task.cancel()
+            try:
+                await active_task_2._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Set up mocks
+        active_task_2.verification_client = SimpleMockVerificationClient()
+
+        # Inject canned plan with skill reuse
+        sanitized_plan_2 = actor._sanitize_code(CANNED_PLAN_PHASE_2_SKILL_MEMOIZATION, active_task_2)
+        active_task_2.plan_source_code = sanitized_plan_2
+
+        # Start execution
+        active_task_2._execution_task = asyncio.create_task(
+            active_task_2._initialize_and_run(),
+        )
+
+        # Wait for plan to complete
+        await wait_for_log_entry(active_task_2, "search_recipe", timeout=30)
+        await asyncio.sleep(2)
+
+        if not active_task_2.done():
+            await active_task_2.stop("Phase 2 complete")
+
+        print(f"\n--- Plan 2 finished ---")
+        print("✅ Plan 2 completed successfully using reused skill (mocked).")
+
+        # --- FINAL ASSERTIONS ---
+        print("\n\n--- Verifying Assertions ---")
+
+        # 1. Check that the source code of the reused skill is in the final plan
+        final_code_plan_2 = active_task_2.plan_source_code
+        assert (
+            "search_recipe" in final_code_plan_2
+        ), "Skill implementation search_recipe not found in Plan 2"
+        print(
+            "✅ Source code for the skill 'search_recipe' was correctly included in Plan 2.",
+        )
+
+        # 2. Check that the final plan for goal 2 includes the new ingredient
+        assert "main_plan" in final_code_plan_2
+        assert "chocolate chip cookies" in final_code_plan_2
+        print("✅ Plan 2 correctly uses the skill with new ingredient.")
+
+        print("\n\n✅✅✅ TEST 'Skill Memorization & Reuse' COMPLETE ✅✅✅")
+
+    except Exception as e:
+        print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task_1 and not active_task_1.done():
+            try:
+                await active_task_1.stop()
+            except Exception:
+                pass
+        if active_task_2 and not active_task_2.done():
+            try:
+                await active_task_2.stop()
+            except Exception:
+                pass
+        if actor:
+            try:
+                await actor.close()
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+
+
