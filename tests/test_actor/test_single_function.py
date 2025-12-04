@@ -771,3 +771,203 @@ def sync_venv_add(a: int, b: int) -> int:
     result = await handle.result()
     assert "8" in result
     assert handle.done()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7. Verification tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _create_successful_function(fm: FunctionManager) -> dict:
+    """Add a function that clearly succeeds."""
+    implementation = '''
+async def calculate_sum(a: int, b: int) -> dict:
+    """Calculate the sum of two numbers and return a success result."""
+    result = a + b
+    return {"status": "success", "sum": result}
+'''
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("calculate_sum") in ("added", "skipped: already exists")
+    functions = fm.list_functions(include_implementations=True)
+    return functions["calculate_sum"]
+
+
+def _create_function_that_returns_failure(fm: FunctionManager) -> dict:
+    """Add a function that returns a failure indicator."""
+    implementation = '''
+async def failed_operation() -> dict:
+    """Attempts an operation that fails."""
+    return {"status": "error", "message": "Operation failed: connection refused"}
+'''
+    result = fm.add_functions(implementations=[implementation])
+    assert result.get("failed_operation") in ("added", "skipped: already exists")
+    functions = fm.list_functions(include_implementations=True)
+    return functions["failed_operation"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+@_handle_project
+async def test_verification_passes_for_successful_function():
+    """Verification should pass when function clearly succeeds."""
+    fm = FunctionManager()
+    func_data = _create_successful_function(fm)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="Calculate the sum of 5 and 3",
+        function_id=func_data["function_id"],
+        call_kwargs={"a": 5, "b": 3},
+        verify=True,
+    )
+
+    result = await handle.result()
+
+    # Should succeed
+    assert "Error" not in result
+    assert handle._verification_passed is True
+    assert handle._verification_reason is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+@_handle_project
+async def test_verification_fails_for_failed_function():
+    """Verification should fail when function returns failure indicators."""
+    fm = FunctionManager()
+    func_data = _create_function_that_returns_failure(fm)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="Perform the operation successfully",
+        function_id=func_data["function_id"],
+        verify=True,
+    )
+
+    result = await handle.result()
+
+    # Should fail verification
+    assert handle._verification_passed is False
+    assert "verification failed" in result.lower() or "error" in result.lower()
+    assert handle._verification_reason is not None
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_verification_disabled_by_default_when_verify_flag_false():
+    """Verification should be skipped when function has verify=False."""
+    fm = FunctionManager()
+
+    # Create function with verify=False
+    implementation = '''
+async def no_verify_task() -> str:
+    """A task that should not be verified."""
+    return "Done without verification"
+'''
+    # Add function with verify=False
+    fm.add_functions(
+        implementations=[implementation],
+        verify={"no_verify_task": False},
+    )
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["no_verify_task"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="Run task",
+        function_id=func_data["function_id"],
+        # Don't pass verify - should use function's flag (False)
+    )
+
+    result = await handle.result()
+
+    # Verification should not have run
+    assert handle._verification_passed is None
+    assert "Done without verification" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+@_handle_project
+async def test_verify_param_overrides_function_flag():
+    """verify=True on act() should override function's verify=False."""
+    fm = FunctionManager()
+
+    implementation = '''
+async def override_verify_task() -> dict:
+    """A task with explicit verify override."""
+    return {"status": "success", "message": "completed"}
+'''
+    # Add function with verify=False
+    fm.add_functions(
+        implementations=[implementation],
+        verify={"override_verify_task": False},
+    )
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["override_verify_task"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="Run task successfully",
+        function_id=func_data["function_id"],
+        verify=True,  # Override the function's verify=False
+    )
+
+    await handle.result()
+
+    # Verification should have run (override was effective)
+    assert handle._verification_passed is not None
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_verify_false_skips_verification():
+    """verify=False on act() should skip verification even if function has verify=True."""
+    fm = FunctionManager()
+
+    # Create function with verify=True (the default)
+    implementation = '''
+async def verified_sum(a: int, b: int) -> dict:
+    """Calculate sum with verification enabled by default."""
+    return {"status": "success", "sum": a + b}
+'''
+    fm.add_functions(
+        implementations=[implementation],
+        verify={"verified_sum": True},
+    )
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["verified_sum"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="Calculate sum",
+        function_id=func_data["function_id"],
+        call_kwargs={"a": 1, "b": 2},
+        verify=False,  # Explicitly skip verification
+    )
+
+    result = await handle.result()
+
+    # Verification should not have run
+    assert handle._verification_passed is None
+    assert "success" in result.lower() or "3" in result
