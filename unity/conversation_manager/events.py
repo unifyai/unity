@@ -179,6 +179,16 @@ class AssistantUnifyCallUtterance(Event):
 
 
 @dataclass
+class AssistantRealtimeGuidance(Event):
+    """
+    Notification from the conversation manager sent to the assistant.
+    """
+
+    contact: dict
+    content: str
+
+
+@dataclass
 class EmailReceived(Event):
     contact: dict
     subject: str
