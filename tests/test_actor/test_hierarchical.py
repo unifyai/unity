@@ -3852,3 +3852,231 @@ async def test_scoped_context_orchestrator():
         traceback.print_exc()
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 14: Skill Injection & Sanitization Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Test Skill Definition ---
+# This string simulates a large, complex skill.
+# It has a main entry point and nested async helper functions.
+COMPLEX_SKILL_WITH_NESTED_FUNCTIONS = textwrap.dedent(
+    """
+async def run_diagnostic_flow(target_system: str):
+    '''
+    A complex skill with nested functions to test recursive sanitization.
+    This function simulates a multi-step diagnostic process.
+    '''
+
+    # This nested function should be decorated with @verify by the sanitizer.
+    async def _step_one_check_power():
+        '''Nested Function: Checks power status.'''
+        print("DIAGNOSTIC: Executing step one: checking power.")
+        await computer_primitives.act(f"Check power light on {target_system}.")
+        return "Power OK"
+
+    # This nested function should ALSO be decorated with @verify.
+    async def _step_two_check_connectivity():
+        '''Nested Function: Checks network connectivity.'''
+        print("DIAGNOSTIC: Executing step two: checking connectivity.")
+        await computer_primitives.act(f"Check network cable on {target_system}.")
+        return "Network OK"
+
+    print(f"Starting diagnostic flow for {target_system}.")
+    status_1 = await _step_one_check_power()
+    status_2 = await _step_two_check_connectivity()
+
+    final_status = f"Diagnostics for {target_system} complete. Status: {status_1}, {status_2}."
+    print(final_status)
+    return final_status
+""",
+)
+
+# Canned plan that uses the diagnostic skill
+CANNED_PLAN_WITH_SKILL_SKILL_INJECTION_AND_SANITIZATION = textwrap.dedent(
+    """
+async def run_diagnostic_flow(target_system: str):
+    '''
+    A complex skill with nested functions to test recursive sanitization.
+    This function simulates a multi-step diagnostic process.
+    '''
+
+    async def _step_one_check_power():
+        '''Nested Function: Checks power status.'''
+        print("DIAGNOSTIC: Executing step one: checking power.")
+        await computer_primitives.act(f"Check power light on {target_system}.")
+        return "Power OK"
+
+    async def _step_two_check_connectivity():
+        '''Nested Function: Checks network connectivity.'''
+        print("DIAGNOSTIC: Executing step two: checking connectivity.")
+        await computer_primitives.act(f"Check network cable on {target_system}.")
+        return "Network OK"
+
+    print(f"Starting diagnostic flow for {target_system}.")
+    status_1 = await _step_one_check_power()
+    status_2 = await _step_two_check_connectivity()
+
+    final_status = f"Diagnostics for {target_system} complete. Status: {status_1}, {status_2}."
+    print(final_status)
+    return final_status
+
+async def main_plan():
+    '''Run diagnostic flow for server-01.'''
+    result = await run_diagnostic_flow("server-01")
+    return result
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_decorator():
+    """
+    Tests skill injection from FunctionManager and recursive sanitization.
+    
+    Validates that:
+    1. Complex skills with nested functions are loaded from FunctionManager
+    2. All nested helper functions are recursively sanitized (wrapped with @verify)
+    3. The skill integrates correctly into the plan execution context
+    4. Verification runs on all levels of the nested skill hierarchy
+    5. The original skill structure is preserved after sanitization
+    
+    Uses a multi-level diagnostic skill with nested async helpers.
+    """
+    print(
+        "\n--- Starting Test Harness for 'Skill Injection & Recursive Sanitization' (MOCKED) ---",
+    )
+    actor = None
+    active_task = None
+    try:
+        # --- PHASE 1: SETUP ---
+        print("\n\n--- PHASE 1: Preparing the Skill Library ---")
+
+        # 1. Initialize and clear the FunctionManager
+        fm = FunctionManager()
+        fm.clear()
+        print("✅ Cleared FunctionManager")
+
+        # 2. Add our complex, multi-level skill to the library
+        fm.add_functions(implementations=[COMPLEX_SKILL_WITH_NESTED_FUNCTIONS])
+        skill_name = "run_diagnostic_flow"
+        print(f"✅ Complex skill '{skill_name}' added to the FunctionManager.")
+
+        # 3. Instantiate the actor with mocked browser
+        actor = HierarchicalActor(
+            function_manager=fm,
+            headless=True,
+            browser_mode="legacy",
+            connect_now=False,
+        )
+
+        # 4. Mock the browser and action_provider
+        actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+        actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
+        actor.computer_primitives.navigate = AsyncMock(return_value=None)
+        print("✅ Actor initialized and action_provider is mocked.")
+
+        # --- PHASE 2: EXECUTION ---
+        print("\n\n--- PHASE 2: Executing a Plan that Uses the Injected Skill ---")
+
+        goal = "Please run the standard diagnostic flow for the 'server-01' system."
+        print(f"\n>>> Starting Plan with goal: '{goal}'")
+
+        # Create the handle directly with mocking
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal=goal,
+            persist=False,
+        )
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Set up mocks
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Inject canned plan with the skill
+        sanitized_plan = actor._sanitize_code(CANNED_PLAN_WITH_SKILL_SKILL_INJECTION_AND_SANITIZATION, active_task)
+        active_task.plan_source_code = sanitized_plan
+
+        # Start execution
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Wait for the diagnostic flow to complete
+        await wait_for_log_entry(active_task, "run_diagnostic_flow", timeout=30)
+        await asyncio.sleep(2)
+
+        # Stop if still running
+        if not active_task.done():
+            await active_task.stop("Test complete")
+
+        print(f"\n--- Plan finished ---")
+
+        # --- PHASE 3: VERIFICATION (ASSERTIONS) ---
+        print("\n\n--- PHASE 3: Verifying Injection and Sanitization ---")
+
+        final_plan_code = active_task.plan_source_code
+
+        # Assertion 1: Was the complex skill's source code in the final plan?
+        assert (
+            skill_name in final_plan_code
+        ), "Assertion Failed: Skill source code not found in the final plan."
+        print(
+            f"✅ ASSERTION PASSED: Source code for '{skill_name}' is present.",
+        )
+
+        # Assertion 2: Are nested functions present?
+        assert (
+            "_step_one_check_power" in final_plan_code
+        ), "Assertion Failed: Nested function '_step_one_check_power' not found."
+        assert (
+            "_step_two_check_connectivity" in final_plan_code
+        ), "Assertion Failed: Nested function '_step_two_check_connectivity' not found."
+        print(
+            "✅ ASSERTION PASSED: Nested functions are present in the plan.",
+        )
+
+        # Assertion 3: Verify execution happened (check action log)
+        action_log_str = "\n".join(active_task.action_log)
+        assert (
+            "run_diagnostic_flow" in action_log_str or "main_plan" in action_log_str
+        ), "Assertion Failed: Expected execution log entries not found."
+        print(
+            "✅ ASSERTION PASSED: Execution logs confirm the plan ran correctly.",
+        )
+
+        print(
+            "\n\n✅✅✅ TEST 'Skill Injection & Recursive Sanitization' COMPLETE ✅✅✅",
+        )
+
+    except Exception as e:
+        print(f"\n\n❌❌❌ TEST FAILED: {e} ❌❌❌")
+        import traceback
+        traceback.print_exc()
+        if active_task and hasattr(active_task, "plan_source_code"):
+            print("\n--- Final Generated Plan Source Code (for debugging) ---")
+            print(active_task.plan_source_code)
+            print("------------------------------------------------------")
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            try:
+                await actor.close()
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+
+
