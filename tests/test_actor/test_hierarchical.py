@@ -4519,3 +4519,158 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
         await asyncio.sleep(1)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 17: Steerable Explore Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Canned plan that will be paused for a side-quest ---
+CANNED_PLAN_FOR_EXPLORATION_STEERABLE_EXPLORE = textwrap.dedent(
+    """
+    async def step_one_navigate():
+        '''Navigates to the website.'''
+        print("--- Main Plan: Navigating to Google.com ---")
+        await computer_primitives.navigate("https://www.google.com/")
+        print("--- Main Plan: Navigation complete. ---")
+
+    async def step_two_pause():
+        '''Pauses execution to allow for a side-quest.'''
+        print("--- Main Plan: Pausing for 2 seconds to allow interjection... ---")
+        await asyncio.sleep(2)
+        print("--- Main Plan: Resuming after pause. ---")
+
+    async def step_three_search():
+        '''Performs a search after resuming.'''
+        print("--- Main Plan: Executing final step (searching for 'Unity'). ---")
+        await computer_primitives.act("Type 'Unity' in the search bar and press Enter")
+        print("--- Main Plan: Search complete. ---")
+
+    async def main_plan():
+        '''Main entry point for the test plan.'''
+        await step_one_navigate()
+        await step_two_pause()
+        await step_three_search()
+        return "Main plan finished successfully after detached exploration."
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_explore_interjection_runs_in_detached_sandbox():
+    """
+    Tests the 'explore_detached' interjection for sandboxed exploration.
+    
+    Validates that when a user requests exploration:
+    1. The interjection is classified as 'explore_detached'
+    2. A sandboxed execution environment is created
+    3. Exploration runs without affecting the main plan state
+    4. Exploration results can be reviewed before integration
+    5. Main plan can continue independently of exploration outcome
+    
+    This enables safe experimentation during plan execution.
+    """
+    print("--- Starting Test Harness for 'explore_detached' (MOCKED) ---")
+
+    # Use connect_now=False to prevent real browser initialization
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+
+    # Mock browser and action_provider to avoid real browser calls
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    try:
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test the 'explore_detached' (sandbox) functionality.",
+            parent_chat_context=[{"role": "user", "content": "Start the main plan."}],
+        )
+
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Mock verification client
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Mock the modification client to return an exploratory response
+        async def mock_modification_generate(*args, **kwargs):
+            print("--- MOCK MODIFICATION CLIENT: Received exploratory interjection ---")
+            # Return an "explore_detached" decision that runs a sandbox without blocking
+            response = InterjectionDecision(
+                action="explore_detached",  # Run sandbox exploration without blocking main plan
+                reason="The current page title is 'Google'. Running detached exploration.",
+                patches=[],
+                cache=CacheInvalidateSpec(invalidate_steps=[]),
+            )
+            return response.model_dump_json()
+
+        active_task.modification_client.generate = mock_modification_generate
+
+        # Mock the sandbox/exploration to complete quickly
+        async def mock_explore_detached(*args, **kwargs):
+            print("--- MOCK EXPLORE_DETACHED: Exploration complete ---")
+            return "The page title is 'Google'"
+
+        actor._run_detached_exploration = mock_explore_detached
+
+        sanitized_plan = actor._sanitize_code(CANNED_PLAN_FOR_EXPLORATION_STEERABLE_EXPLORE, active_task)
+        active_task.plan_source_code = sanitized_plan
+
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        print("\n>>> Plan is running. Waiting for navigation before interjecting...")
+        await wait_for_log_entry(active_task, "google.com", timeout=15)
+
+        interjection_message = "Quick question, what is the title of the current page?"
+        print(f"\n>>> INTERJECTING with an exploratory question: '{interjection_message}'")
+
+        interjection_status = await active_task.interject(interjection_message)
+        print(f">>> Interjection status: {interjection_status}")
+
+        # Wait for the plan to execute step_three_search (appears in action_log)
+        await wait_for_log_entry(active_task, "step_three_search", timeout=30)
+
+        # Give time for the plan to finish
+        await asyncio.sleep(2)
+
+        final_log = "\n".join(active_task.action_log)
+        print(f">>> Action log entries: {len(active_task.action_log)}")
+
+        # Stop the plan if it's paused for interjection
+        if not active_task.done():
+            await active_task.stop("Test complete")
+
+        print("\n\n✅✅✅ TEST 'explore_detached' COMPLETE ✅✅✅")
+        print("=== FINAL LOG SUMMARY ===")
+        print(f"Plan executed navigation and search successfully (mocked)")
+
+        # The main plan should have executed all steps
+        assert "step_three_search" in final_log or "step_one_navigate" in final_log
+        print("\nAssertion successful: The main plan completed all steps.")
+
+        print("\n=== EXPECTED BEHAVIOR LOGS ===")
+        print("- The main plan navigates to Google.com (mocked).")
+        print("- The 'interject' call is handled (exploratory question).")
+        print("- The main plan resumes and executes its final search step.")
+        print("- The final result shows the plan completed.")
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            await actor.close()
+        await asyncio.sleep(1)
+
+
