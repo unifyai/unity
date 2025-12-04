@@ -1869,6 +1869,8 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
         dedicated_computer_primitives: Optional[ComputerPrimitives] = None,
+        can_compose: bool = True,
+        can_store: bool = True,
     ):
         """
         Initializes the Hierarchical Plan active task.
@@ -1886,7 +1888,11 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the function from the FunctionManager as the main plan.
             dedicated_computer_primitives: Optional. If provided, use this action provider for the plan.
-            If not provided, use the actor's action provider instead.
+                If not provided, use the actor's action provider instead.
+            can_compose: When True, allows the plan to generate new code on the fly.
+                When False, only pre-existing functions can be executed via entrypoint.
+            can_store: When True, allows verified functions to be persisted to FunctionManager.
+                When False, functions are executed but not stored.
         """
         self.actor = actor
         self.goal = goal
@@ -1898,6 +1904,8 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self.entrypoint_args = entrypoint_args or []
         self.entrypoint_kwargs = entrypoint_kwargs or {}
         self.dedicated_computer_primitives = dedicated_computer_primitives
+        self.can_compose = can_compose
+        self.can_store = can_store
 
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
@@ -2117,6 +2125,11 @@ async def main_plan():
                     self.action_log.append("Entrypoint plan sanitized and ready.")
 
                 else:
+                    if not self.can_compose:
+                        raise ValueError(
+                            "Cannot generate a plan from goal: can_compose=False. "
+                            "Provide an entrypoint function_id to execute pre-existing code.",
+                        )
                     self.action_log.append("Generating plan from goal...")
                     self.plan_source_code = await self.actor._generate_initial_plan(
                         plan=self,
@@ -2250,6 +2263,12 @@ async def main_plan():
                 - scoped_context_snapshot: Snapshot of the scoped context at time of failure.
                 - ...and other existing kwargs.
         """
+        if not self.can_compose:
+            raise RuntimeError(
+                f"Cannot dynamically implement '{function_name}': can_compose=False. "
+                f"All functions must have complete implementations when this flag is disabled.",
+            )
+
         reason = kwargs.get(
             "replan_reason",
             "First-time implementation from NotImplementedError.",
@@ -2690,18 +2709,6 @@ async def main_plan():
         logger.info(
             f"[V-TASK-{item.ordinal}] Verification SUCCEEDED for '{item.function_name}'. Reason: {assessment.reason}",
         )
-        return
-        # if assessment.refinements:
-        #     logger.info(
-        #         f"[V-TASK-{item.ordinal}] Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
-        #     )
-        #     logger.info(
-        #         f"[V-TASK-{item.ordinal}] Refinements: {assessment.refinements}",
-        #     )
-
-        # self.action_log.append(
-        #     f"Async Verification for {item.function_name}: ok - '{assessment.reason}'",
-        # )
 
         self.last_verified_function_name = item.function_name
         self.last_verified_url = item.post_state["url"]
@@ -2709,6 +2716,12 @@ async def main_plan():
 
         if hasattr(self, "cumulative_interactions"):
             self.cumulative_interactions.extend(item.interactions)
+
+        if not self.can_store:
+            logger.debug(
+                f"Skipping function persistence for '{item.function_name}' (can_store=False).",
+            )
+            return
 
         is_top_level_function = item.function_name in self.top_level_function_names
 
@@ -2805,6 +2818,17 @@ async def main_plan():
         Handles a failed verification, including preemption logic and targeting
         the correct function for replanning (parent or self).
         """
+        if not self.can_compose:
+            error_msg = (
+                f"Verification failed for '{item.function_name}' (status={assessment.status}): "
+                f"{assessment.reason}. Cannot recover because can_compose=False. "
+                f"All functions must execute successfully without re-implementation when this flag is disabled."
+            )
+            logger.error(error_msg)
+            self._set_state(_HierarchicalHandleState.ERROR)
+            self._set_final_result(f"ERROR: {error_msg}")
+            raise RuntimeError(error_msg)
+
         if self.is_verifying_post_completion:
             logger.info(
                 f"Verification failed for '{item.function_name}' after plan completion. Re-opening plan for recovery...",
@@ -4164,6 +4188,8 @@ class HierarchicalActor(BaseActor):
         agent_server_url: str = "http://localhost:3000",
         *,
         connect_now: bool = False,
+        can_compose: bool = True,
+        can_store: bool = True,
     ):
         """
         Initializes the HierarchicalActor.
@@ -4180,6 +4206,11 @@ class HierarchicalActor(BaseActor):
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
             agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
             connect_now: When False (default), defer any browser/agent connections until first use.
+            can_compose: When True (default), allows the actor to generate new code on the fly.
+                When False, the actor can only execute pre-existing functions via entrypoint.
+            can_store: When True (default), allows verified functions to be persisted
+                to the FunctionManager as reusable skills. When False, functions are
+                executed but not stored.
         """
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
@@ -4190,6 +4221,8 @@ class HierarchicalActor(BaseActor):
         self._agent_mode = agent_mode
         self._agent_server_url = agent_server_url
         self._connect_now = connect_now
+        self.can_compose = can_compose
+        self.can_store = can_store
         self.computer_primitives = ComputerPrimitives(
             session_connect_url=session_connect_url,
             headless=headless,
@@ -4454,6 +4487,8 @@ class HierarchicalActor(BaseActor):
         new_session: bool = False,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
+        can_compose: Optional[bool] = None,
+        can_store: Optional[bool] = None,
         **kwargs,
     ) -> HierarchicalActorHandle:
         """
@@ -4469,6 +4504,11 @@ class HierarchicalActor(BaseActor):
             entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the specified function from the FunctionManager.
             new_session: If True, creates a new browser/desktop session for this plan. If False (default), reuses the actor's shared session.
+            can_compose: If provided, overrides the actor's default can_compose setting
+                for this call. When False, the actor can only execute pre-existing
+                functions via entrypoint.
+            can_store: If provided, overrides the actor's default can_store setting
+                for this call. When False, verified functions are not persisted.
 
         Returns:
             An active handle to the running HierarchicalActorHandle.
@@ -4484,6 +4524,11 @@ class HierarchicalActor(BaseActor):
                 connect_now=self._connect_now,
             )
 
+        effective_can_compose = (
+            can_compose if can_compose is not None else self.can_compose
+        )
+        effective_can_store = can_store if can_store is not None else self.can_store
+
         plan_handle = HierarchicalActorHandle(
             actor=self,
             goal=description,
@@ -4498,6 +4543,8 @@ class HierarchicalActor(BaseActor):
             entrypoint_args=entrypoint_args,
             entrypoint_kwargs=entrypoint_kwargs,
             dedicated_computer_primitives=dedicated_computer_primitives,
+            can_compose=effective_can_compose,
+            can_store=effective_can_store,
         )
         setattr(plan_handle, "__passthrough__", True)
         self._plan_handles.add(plan_handle)
