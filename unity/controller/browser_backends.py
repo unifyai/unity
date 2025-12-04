@@ -13,6 +13,7 @@ from pydantic import BaseModel, PydanticUserError
 import asyncio
 import functools
 import websockets
+from unity.session_details import SESSION_DETAILS
 from .controller import Controller
 
 logger = logging.getLogger("websockets")
@@ -342,7 +343,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         # Prepare authentication headers
         auth_key = os.getenv("UNIFY_KEY", "")
-        assistant_email = os.getenv("ASSISTANT_EMAIL", "")
+        assistant_email = SESSION_DETAILS.assistant.email
         headers = {
             "Authorization": f"Bearer {auth_key} {assistant_email}".strip(),
         }
@@ -500,7 +501,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             try:
                 # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>"
                 auth_key = os.getenv("UNIFY_KEY", "")
-                assistant_email = os.getenv("ASSISTANT_EMAIL", "")
+                assistant_email = SESSION_DETAILS.assistant.email
                 headers = {
                     "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
                 }
@@ -548,7 +549,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         try:
             url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
             auth_key = os.getenv("UNIFY_KEY", "")
-            assistant_email = os.getenv("ASSISTANT_EMAIL", "")
+            assistant_email = SESSION_DETAILS.assistant.email
             headers = {
                 "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
             }
@@ -594,8 +595,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
             orchestra_url = os.getenv("UNIFY_BASE_URL")
             dl_endpoint = f"{orchestra_url}/admin/file/download_url"
 
-            user_id = os.environ.get("USER_ID", "default")
-            assistant_name = os.environ.get("ASSISTANT_NAME", "assistant")
+            user_id = SESSION_DETAILS.user.id
+            assistant_name = SESSION_DETAILS.assistant.name
             project = "Assistants"
 
             headers = {
@@ -732,7 +733,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             # Iterate local files and upload each via signed upload URL
             orchestra_url = os.getenv("UNIFY_BASE_URL")
             up_endpoint = f"{orchestra_url}/admin/file/upload_url"
-            user_id = os.environ.get("USER_ID", "default")
+            user_id = SESSION_DETAILS.user.id
             project = f"Assistants"
             headers = {
                 "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
@@ -740,7 +741,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             }
 
             def _iter_local_files(root_dir: str):
-                assistant_name = os.getenv("ASSISTANT_NAME", "assistant")
+                assistant_name = SESSION_DETAILS.assistant.name
                 for r, _, files in os.walk(root_dir):
                     for fn in files:
                         ap = os.path.join(r, fn)

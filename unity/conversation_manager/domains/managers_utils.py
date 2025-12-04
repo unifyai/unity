@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import unity
 
+from unity.session_details import SESSION_DETAILS
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
@@ -428,14 +429,14 @@ def _init_managers(
     conversation_cls = get_class("conversation", SETTINGS.UNITY_CONVERSATION_IMPL)
     if SETTINGS.UNITY_CONVERSATION_IMPL == "simulated":
         cm._conversation_manager_handle = conversation_cls(
-            assistant_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+            assistant_id=SESSION_DETAILS.assistant.id,
             contact_id="1",
             description="production deployment",
         )
     else:
         cm._conversation_manager_handle = conversation_cls(
             event_broker=cm.event_broker,
-            conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+            conversation_id=SESSION_DETAILS.assistant.id,
             contact_id="1",
             transcript_manager=cm.transcript_manager,
             conversation_manager=cm,

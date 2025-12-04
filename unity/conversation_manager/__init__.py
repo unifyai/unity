@@ -7,6 +7,8 @@ import signal
 import socket
 from typing import Optional, Dict, Any
 
+from unity.session_details import SESSION_DETAILS
+
 
 # Global state for the service manager
 _process: Optional[subprocess.Popen] = None
@@ -140,11 +142,10 @@ def start(
         return True  # Already running
 
     try:
-        # Get environment variables for this assistant (set by Cloud Run)
-        assistant_id = os.environ.get("ASSISTANT_ID", "default")
-
         # Start main.py using subprocess
-        print(f"Starting Unity service (main.py) for assistant {assistant_id}")
+        print(
+            f"Starting Unity service (main.py) for assistant {SESSION_DETAILS.assistant.id}",
+        )
 
         cmd = [sys.executable, "unity/conversation_manager/main.py"]
         cmd.append("--project-name")
@@ -233,7 +234,7 @@ def get_status() -> Dict[str, Any]:
         "running": running,
         "uptime_seconds": uptime,
         "process_id": _process.pid if _process else None,
-        "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
+        "assistant_id": SESSION_DETAILS.assistant.id,
         "shutdown_reason": _shutdown_reason,
         "inactivity_timeout_minutes": 6,  # Document the timeout setting
     }
