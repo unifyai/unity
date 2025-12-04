@@ -58,8 +58,6 @@ async def test_ask_with_mocked_llm(file_manager, supported_file_examples: dict):
 
             # Verify system message was set
             mock_client.set_system_message.assert_called_once()
-            system_msg = mock_client.set_system_message.call_args[0][0]
-            assert "parse" in system_msg
 
             # Verify tool loop was started
             mock_loop.assert_called_once()

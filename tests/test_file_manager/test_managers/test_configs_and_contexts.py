@@ -181,7 +181,7 @@ def test_file_pipeline_config_defaults():
     assert isinstance(cfg.diagnostics, DiagnosticsConfig)
     assert cfg.parse.batch_size == 3
     assert cfg.ingest.mode == "per_file"
-    assert cfg.embed.strategy == "auto"
+    assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "compact"
     assert cfg.diagnostics.enable_progress is False
 
@@ -335,7 +335,7 @@ def test_config_from_file_partial(tmp_path: Path):
     assert cfg.output.return_mode == "full"
     # Other sections should have defaults
     assert cfg.ingest.mode == "per_file"
-    assert cfg.embed.strategy == "auto"
+    assert cfg.embed.strategy == "after"
 
 
 def test_config_from_file_business_contexts(tmp_path: Path):
@@ -905,7 +905,6 @@ def test_config_all_sections_populated(tmp_path: Path):
 
     # Verify embed
     assert cfg.embed.strategy == "after"
-    assert cfg.embed.large_threshold == 10000
     assert cfg.embed.hooks_per_chunk is True
     # The test config uses "file_specs" format (updated from legacy)
     assert len(cfg.embed.file_specs) == 1

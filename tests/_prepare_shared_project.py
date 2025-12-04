@@ -13,6 +13,9 @@ Usage (internal - typically invoked via .parallel_run.sh):
 """
 
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
 
 PROJECT = "UnityTests"
 
