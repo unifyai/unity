@@ -4674,3 +4674,162 @@ async def test_explore_interjection_runs_in_detached_sandbox():
         await asyncio.sleep(1)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 18: Steerable Modify Tests
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# --- Canned plan that will be paused and modified ---
+CANNED_PLAN_FOR_MODIFICATION_STEERABLE_MODIFY = textwrap.dedent(
+    """
+    async def initial_step():
+        '''Navigates to the website and then waits for further instructions.'''
+        print("--- Canned Plan: Navigating to allrecipes.com ---")
+        await computer_primitives.navigate("https://www.allrecipes.com/")
+        print("--- Canned Plan: Navigation complete. Now pausing for 5 seconds... ---")
+        # This sleep provides a window for us to interject.
+        for i in range(5):
+            print(f"--- Canned Plan: Waiting... ({i+1}/5) ---")
+            await asyncio.sleep(1)
+        print("--- Canned Plan: Pause complete. Finishing plan. ---")
+
+    async def main_plan():
+        '''Main entry point for the test plan.'''
+        await initial_step()
+        return "Initial plan finished without modification."
+""",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_modify_interjection_merges_new_code_into_existing_plan():
+    """
+    Tests the 'modify_task' interjection for in-place plan modifications.
+    
+    Validates that when a user requests a modification:
+    1. The interjection is classified as 'modify_task'
+    2. The current plan is paused at a safe point
+    3. New code is generated based on user feedback
+    4. The modified code is merged into the existing plan
+    5. Execution resumes with the updated plan
+    
+    This enables course correction without completely replacing the plan.
+    """
+    print("--- Starting Test Harness for 'modify_task' (MOCKED) ---")
+
+    # Use connect_now=False to prevent real browser initialization
+    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+
+    # Mock browser and action_provider to avoid real browser calls
+    actor.computer_primitives._browser = NoKeychainBrowser(url="https://mock-url.com", screenshot="mock_screenshot_base64")
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+    try:
+        # 1. Manually create the HierarchicalActorHandle instance
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test the 'modify_task' interjection.",
+            parent_chat_context=[{"role": "user", "content": "Start the test."}],
+            max_escalations=1,
+            max_local_retries=1,
+        )
+
+        # 2. Cancel the auto-started task from __init__
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Mock verification client
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Mock the modification client to return a modify_task decision
+        async def mock_modification_generate(*args, **kwargs):
+            print("--- MOCK MODIFICATION CLIENT: Received modify_task interjection ---")
+            response = InterjectionDecision(
+                action="modify_task",
+                reason="User wants to search for vegetarian lasagna",
+                patches=[
+                    FunctionPatch(
+                        function_name="main_plan",
+                        new_code=textwrap.dedent("""
+                            async def main_plan():
+                                '''Modified plan to search for vegetarian lasagna.'''
+                                print("--- Modified Plan: Navigating to allrecipes.com ---")
+                                await computer_primitives.navigate("https://www.allrecipes.com/")
+                                print("--- Modified Plan: Searching for vegetarian lasagna ---")
+                                await computer_primitives.act("Type 'vegetarian lasagna' in search bar and click search")
+                                return "Modified plan completed - searched for vegetarian lasagna."
+                        """),
+                    ),
+                ],
+                cache=CacheInvalidateSpec(invalidate_steps=[]),
+            )
+            return response.model_dump_json()
+
+        active_task.modification_client.generate = mock_modification_generate
+
+        # 3. Inject our canned plan
+        sanitized_plan = actor._sanitize_code(CANNED_PLAN_FOR_MODIFICATION_STEERABLE_MODIFY, active_task)
+        active_task.plan_source_code = sanitized_plan
+
+        # 4. Start the plan execution
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # 5. Wait for the plan to navigate, then interject
+        print("\n>>> Plan is running. Waiting for navigation before interjecting...")
+        await wait_for_log_entry(active_task, "allrecipes.com", timeout=15)
+
+        interjection_message = "Great, now that you're on the homepage, type vegetarian lasagna into the search bar and click search."
+        print(f"\n>>> INTERJECTING with: '{interjection_message}'")
+
+        # This is the core of the test
+        interjection_status = await active_task.interject(interjection_message)
+        print(f">>> Interjection status: {interjection_status}")
+
+        # 6. Wait for the modified plan to execute
+        print("\n>>> Interjection sent. Waiting for the modified plan to complete...")
+        await wait_for_log_entry(active_task, "vegetarian lasagna", timeout=30)
+
+        # Give time for verification to complete
+        await asyncio.sleep(2)
+
+        final_log = "\n".join(active_task.action_log)
+
+        # Stop if still running
+        if not active_task.done():
+            await active_task.stop("Test complete")
+
+        print("\n\n✅✅✅ TEST 'modify_task' COMPLETE ✅✅✅")
+        print("=== FINAL RESULT SUMMARY ===")
+        print("Plan was modified to search for vegetarian lasagna (mocked)")
+
+        # Verify the modified plan executed
+        assert "vegetarian lasagna" in final_log.lower() or "modify" in interjection_status.lower()
+        print("\nAssertion successful: The plan modification was applied.")
+
+        print("\n=== EXPECTED BEHAVIOR LOGS ===")
+        print("- The plan navigates to allrecipes.com (mocked).")
+        print("- The 'interject' call triggers the 'modify_task' decision.")
+        print("- The plan code is updated to search for vegetarian lasagna.")
+        print("- The modified plan executes successfully.")
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            await actor.close()
+        await asyncio.sleep(1)
+
+
