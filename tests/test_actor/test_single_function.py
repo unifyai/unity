@@ -92,7 +92,6 @@ async def test_execute_sync_function_by_id():
 
     function_id = simple_sync_function["function_id"]
     handle = await actor.act(
-        description="greet someone",
         function_id=function_id,
         call_kwargs={"name": "Alice"},
     )
@@ -116,7 +115,6 @@ async def test_execute_async_function_by_id():
 
     function_id = simple_async_function["function_id"]
     handle = await actor.act(
-        description="async greet",
         function_id=function_id,
         call_kwargs={"name": "Bob"},
     )
@@ -163,7 +161,6 @@ async def test_execute_function_default_args():
 
     function_id = simple_sync_function["function_id"]
     handle = await actor.act(
-        description="greet",
         function_id=function_id,
         # No call_kwargs - should use default "World"
     )
@@ -189,10 +186,7 @@ async def test_function_not_found_by_id():
     )
 
     with pytest.raises(ValueError, match="No function found with ID"):
-        await actor.act(
-            description="anything",
-            function_id=99999,
-        )
+        await actor.act(function_id=99999)
 
 
 @pytest.mark.asyncio
@@ -218,6 +212,21 @@ async def test_function_not_found_by_description(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_no_selection_method_provided():
+    """Error when no function_id, primitive_name, or description is provided."""
+    fm = FunctionManager()
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    with pytest.raises(ValueError, match="Must provide at least one of"):
+        await actor.act()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_function_execution_error():
     """Handle errors during function execution."""
     fm = FunctionManager()
@@ -229,10 +238,7 @@ async def test_function_execution_error():
     )
 
     function_id = failing_function["function_id"]
-    handle = await actor.act(
-        description="fail",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     result = await handle.result()
     assert "Error:" in result or "failed" in result.lower()
@@ -258,10 +264,7 @@ async def test_handle_pause_is_noop():
     )
 
     function_id = simple_sync_function["function_id"]
-    handle = await actor.act(
-        description="greet",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     pause_result = await handle.pause()
     assert "acknowledged" in pause_result.lower() or "no effect" in pause_result.lower()
@@ -284,10 +287,7 @@ async def test_handle_resume_is_noop():
     )
 
     function_id = simple_sync_function["function_id"]
-    handle = await actor.act(
-        description="greet",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     resume_result = await handle.resume()
     assert (
@@ -311,10 +311,7 @@ async def test_handle_interject_is_noop():
     )
 
     function_id = simple_sync_function["function_id"]
-    handle = await actor.act(
-        description="greet",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     interject_result = await handle.interject("change something")
     assert (
@@ -339,10 +336,7 @@ async def test_handle_stop_cancels_execution():
     )
 
     function_id = slow_function["function_id"]
-    handle = await actor.act(
-        description="slow",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     # Wait a bit then stop
     await asyncio.sleep(0.05)
@@ -366,10 +360,7 @@ async def test_handle_ask_returns_status():
     )
 
     function_id = simple_async_function["function_id"]
-    handle = await actor.act(
-        description="async greet",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     # Ask while running
     ask_handle = await handle.ask("What's happening?")
@@ -398,10 +389,7 @@ async def test_handle_done_property():
     )
 
     function_id = simple_sync_function["function_id"]
-    handle = await actor.act(
-        description="greet",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     # Wait for completion
     await handle.result()
@@ -421,10 +409,7 @@ async def test_handle_get_history_is_empty():
     )
 
     function_id = simple_sync_function["function_id"]
-    handle = await actor.act(
-        description="greet",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     history = handle.get_history()
     assert history == []
@@ -445,10 +430,7 @@ async def test_handle_clarification_queues_are_none():
     )
 
     function_id = simple_sync_function["function_id"]
-    handle = await actor.act(
-        description="greet",
-        function_id=function_id,
-    )
+    handle = await actor.act(function_id=function_id)
 
     assert handle.clarification_up_q is None
     assert handle.clarification_down_q is None
@@ -596,7 +578,6 @@ async def test_execute_function_in_custom_venv(cleanup_venvs):
     )
 
     handle = await actor.act(
-        description="greet from venv",
         function_id=func_data["function_id"],
         call_kwargs={"name": "VenvUser"},
     )
@@ -658,10 +639,7 @@ async def venv_error_function() -> str:
         function_manager=fm,
     )
 
-    handle = await actor.act(
-        description="run error function",
-        function_id=func_data["function_id"],
-    )
+    handle = await actor.act(function_id=func_data["function_id"])
 
     result = await handle.result()
     assert "Error" in result or "failed" in result.lower()
@@ -686,7 +664,6 @@ async def test_venv_function_with_primitives_rpc(cleanup_venvs):
     )
 
     handle = await actor.act(
-        description="ask contacts from venv",
         function_id=func_data["function_id"],
         call_kwargs={"question": "Who are my contacts?"},
     )
@@ -723,10 +700,7 @@ async def slow_venv_task() -> str:
         function_manager=fm,
     )
 
-    handle = await actor.act(
-        description="slow venv task",
-        function_id=func_data["function_id"],
-    )
+    handle = await actor.act(function_id=func_data["function_id"])
 
     # Wait a bit then stop
     await asyncio.sleep(0.5)
@@ -763,7 +737,6 @@ def sync_venv_add(a: int, b: int) -> int:
     )
 
     handle = await actor.act(
-        description="add numbers in venv",
         function_id=func_data["function_id"],
         call_kwargs={"a": 5, "b": 3},
     )
@@ -819,7 +792,6 @@ async def test_verification_passes_for_successful_function():
     )
 
     handle = await actor.act(
-        description="Calculate the sum of 5 and 3",
         function_id=func_data["function_id"],
         call_kwargs={"a": 5, "b": 3},
         verify=True,
@@ -847,7 +819,6 @@ async def test_verification_fails_for_failed_function():
     )
 
     handle = await actor.act(
-        description="Perform the operation successfully",
         function_id=func_data["function_id"],
         verify=True,
     )
@@ -886,7 +857,6 @@ async def no_verify_task() -> str:
     )
 
     handle = await actor.act(
-        description="Run task",
         function_id=func_data["function_id"],
         # Don't pass verify - should use function's flag (False)
     )
@@ -924,7 +894,6 @@ async def override_verify_task() -> dict:
     )
 
     handle = await actor.act(
-        description="Run task successfully",
         function_id=func_data["function_id"],
         verify=True,  # Override the function's verify=False
     )
@@ -960,7 +929,6 @@ async def verified_sum(a: int, b: int) -> dict:
     )
 
     handle = await actor.act(
-        description="Calculate sum",
         function_id=func_data["function_id"],
         call_kwargs={"a": 1, "b": 2},
         verify=False,  # Explicitly skip verification

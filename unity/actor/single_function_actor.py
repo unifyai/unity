@@ -526,7 +526,7 @@ class SingleFunctionActor(BaseActor):
 
     async def act(
         self,
-        description: str,
+        description: Optional[str] = None,
         *,
         function_id: Optional[int] = None,
         primitive_name: Optional[str] = None,
@@ -544,6 +544,7 @@ class SingleFunctionActor(BaseActor):
         Args:
             description: Natural language description of what to do.
                         Used for semantic search if function_id/primitive_name not provided.
+                        Required when neither function_id nor primitive_name is specified.
             function_id: Optional explicit function ID to execute.
                         If provided, skips the search step.
             primitive_name: Optional explicit primitive name (e.g., 'ContactManager.ask').
@@ -560,9 +561,16 @@ class SingleFunctionActor(BaseActor):
             A SingleFunctionActorHandle for monitoring the execution.
 
         Raises:
-            ValueError: If no matching function or primitive is found.
+            ValueError: If no matching function or primitive is found, or if no
+                       selection method (description, function_id, primitive_name) is provided.
         """
         call_kwargs = call_kwargs or {}
+
+        # Validate that at least one selection method is provided
+        if function_id is None and primitive_name is None and description is None:
+            raise ValueError(
+                "Must provide at least one of: description, function_id, or primitive_name",
+            )
 
         # Find the function or primitive
         if primitive_name is not None:
