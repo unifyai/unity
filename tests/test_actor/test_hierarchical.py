@@ -47,8 +47,6 @@ from unity.actor.hierarchical_actor import (
     _HierarchicalHandleState,
 )
 from unity.function_manager.function_manager import FunctionManager
-from unity.conversation_manager.handle import ConversationManagerHandle
-from unity.common.async_tool_loop import SteerableToolHandle
 from unity.controller.browser_backends import BrowserAgentError
 
 
@@ -335,46 +333,33 @@ async def wait_for_log_entry(task, log_substring: str, timeout=60, poll=0.5):
 # ════════════════════════════════════════════════════════════════════════════
 
 
-# --- Updated Test Plan with ConversationManager Call ---
+# --- Test Plan for Action Caching (navigate, act, observe) ---
 CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING = textwrap.dedent(
     """
     async def main_plan():
-        '''Main plan for testing action caching, including conversation_manager.ask.'''
+        '''Main plan for testing action caching with browser primitives.'''
         # --- Need imports inside the plan code ---
         from pydantic import BaseModel, Field
         print("--- Caching Test: Starting ---")
 
         # --- Define Pydantic models inside the plan code ---
-        class UserPreference(BaseModel):
-            item: str = Field(description="The item the user wants.")
-        UserPreference.model_rebuild() # Important!
-
         class PageResult(BaseModel):
             heading: str = Field(description="The main heading of the page.")
         PageResult.model_rebuild() # Important!
         # --- End Model Definitions ---
 
         # Step 1: Navigate (will be cached)
-        print("--- Caching Test: Step 1/4 - Navigating ---")
+        print("--- Caching Test: Step 1/3 - Navigating ---")
         await computer_primitives.navigate("https://example.com/start")
 
         # Step 2: Act (will be cached)
-        print("--- Caching Test: Step 2/4 - Performing an action ---")
+        print("--- Caching Test: Step 2/3 - Performing an action ---")
         await computer_primitives.act(
             "Click the 'Search' button."
         )
 
-        # Step 3: Ask Conversation Manager (will be cached)
-        print("--- Caching Test: Step 3/4 - Asking Conversation Manager ---")
-        conv_handle = await computer_primitives.conversation_manager.ask(
-            "What item are you looking for?",
-            response_format=UserPreference
-        )
-        preference = await conv_handle.result() # Expects UserPreference instance
-        print(f"--- Caching Test: User wants: {preference.item} ---") # Access .item
-
-        # Step 4: Observe (will be cached)
-        print("--- Caching Test: Step 4/4 - Observing the result ---")
+        # Step 3: Observe (will be cached)
+        print("--- Caching Test: Step 3/3 - Observing the result ---")
         page_info = await computer_primitives.observe(
             "What is the main heading?",
             response_format=PageResult
@@ -390,13 +375,19 @@ CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING = textwrap.dedent(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
-async def test_cache_hits_after_interjection_including_conversation_manager_calls():
+async def test_cache_hits_after_interjection_for_browser_primitives():
     """
-    Validates that after an interjection, previously executed actions including
-    conversation_manager.ask result in cache hits. Mocks all external calls.
+    Validates that after an interjection, previously executed browser actions
+    (navigate, act, observe) result in cache hits during replay. Mocks all browser calls.
+
+    Flow:
+    1. Run a plan with navigate -> act -> observe (3 cache misses)
+    2. Interject to add a new action
+    3. Verify the replay uses cached results for the original 3 actions (3 cache hits)
+    4. Verify only the new action causes a cache miss
     """
     print(
-        "\n\n--- Starting Test Harness for 'Interjection Caching with ConvManager' ---",
+        "\n\n--- Starting Test Harness for 'Interjection Caching' ---",
     )
     actor = HierarchicalActor(
         headless=True,
@@ -408,11 +399,6 @@ async def test_cache_hits_after_interjection_including_conversation_manager_call
     active_task = None
     try:
         # --- Define Pydantic models matching those in the plan FOR MOCKING ---
-        class UserPreference(BaseModel):
-            item: str = Field(description="The item the user wants.")
-
-        UserPreference.model_rebuild()
-
         class PageResult(BaseModel):
             heading: str = Field(description="The main heading of the page.")
 
@@ -420,31 +406,12 @@ async def test_cache_hits_after_interjection_including_conversation_manager_call
         # --- End Model Definitions ---
 
         # --- Mock Setup ---
-        # Mock basic action_provider methods
+        # Mock basic browser primitives
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
         actor.computer_primitives.act = AsyncMock(return_value=None)
         actor.computer_primitives.observe = AsyncMock(
             return_value=PageResult(heading="Mock Heading"),
         )
-
-        # Mock ConversationManagerHandle and the handle returned by its ask method
-        mock_cm_handle = MagicMock(spec=ConversationManagerHandle)
-        mock_ask_sub_handle = AsyncMock(
-            spec=SteerableToolHandle,
-        )  # Handle returned by ask
-
-        # Configure the sub-handle's result method
-        mock_ask_sub_handle.result = AsyncMock(
-            return_value=UserPreference(item="mock_item"),
-        )
-
-        # Configure the main handle's ask method to return the sub-handle
-        mock_cm_handle.ask = AsyncMock(
-            return_value=mock_ask_sub_handle,
-        )  # ask returns a handle
-
-        # Mock the property access on the real action_provider
-        actor.computer_primitives._conversation_manager = mock_cm_handle
         # --- End Mock Setup ---
 
         active_task = HierarchicalActorHandle(
@@ -481,8 +448,8 @@ async def test_cache_hits_after_interjection_including_conversation_manager_call
         # --- Count initial cache misses ---
         initial_log = "\n".join(active_task.action_log)
         initial_miss_count = initial_log.count("CACHE MISS")
-        # Expecting misses for: navigate, act, conversation_manager.ask (returns handle), result of the handle, observe
-        expected_misses = 5
+        # Expecting misses for: navigate, act, observe
+        expected_misses = 3
         assert (
             initial_miss_count == expected_misses
         ), f"Expected {expected_misses} initial CACHE MISS logs, found {initial_miss_count}! Log:\n{initial_log}"
@@ -573,14 +540,14 @@ async def test_cache_hits_after_interjection_including_conversation_manager_call
         total_miss_count = final_log.count("CACHE MISS")
         total_hit_count = final_log.count("CACHE HIT")
 
-        # Expecting initial 4 misses + 1 miss for the new 'act("Click Submit")'
+        # Expecting initial 3 misses + 1 miss for the new 'act("Click Submit")'
         expected_total_misses = expected_misses + 1
         assert (
             total_miss_count == expected_total_misses
         ), f"Expected {expected_total_misses} total CACHE MISS logs, found {total_miss_count}!"
 
-        # Expecting hits for: navigate, act, conversation_manager.ask, handle.result(), observe during replay
-        expected_total_hits = 5
+        # Expecting hits for: navigate, act, observe during replay
+        expected_total_hits = 3
         assert (
             total_hit_count == expected_total_hits
         ), f"Expected {expected_total_hits} CACHE HIT logs after interjection, found {total_hit_count}!"
@@ -589,8 +556,7 @@ async def test_cache_hits_after_interjection_including_conversation_manager_call
             f"✅ Found correct number of total cache misses ({expected_total_misses}) and hits ({expected_total_hits}).",
         )
 
-        # 2. Specifically check for conv.ask hit log entry after restart
-        # (Find restart_index again, just to be safe, though it should be the same)
+        # 2. Specifically check for cache hits on browser primitives after restart
         restart_index = -1
         for i, entry in enumerate(active_task.action_log):
             if (
@@ -604,32 +570,28 @@ async def test_cache_hits_after_interjection_including_conversation_manager_call
         ), "Could not find plan restart log entry (for assertion)!"
 
         replay_log_entries = active_task.action_log[restart_index:]
-        # Look for the cache hit on the conversation_manager.ask call
-        conv_ask_hit_found = any(
-            "CACHE HIT" in entry
-            and "conversation_manager" in entry
-            and ".ask(" in entry
-            for entry in replay_log_entries
+        # Look for cache hits on browser primitives
+        navigate_hit_found = any(
+            "CACHE HIT" in entry and "navigate" in entry for entry in replay_log_entries
         )
-        # Look for the cache hit on the subsequent .result() call
-        conv_result_hit_found = any(
-            "CACHE HIT" in entry
-            and "conversation_manager" in entry
-            and "-> .result()" in entry
-            for entry in replay_log_entries
+        act_hit_found = any(
+            "CACHE HIT" in entry and ".act(" in entry for entry in replay_log_entries
+        )
+        observe_hit_found = any(
+            "CACHE HIT" in entry and "observe" in entry for entry in replay_log_entries
         )
 
         assert (
-            conv_ask_hit_found
-        ), "CACHE HIT for conversation_manager.ask was not found in the replay log!"
+            navigate_hit_found
+        ), "CACHE HIT for navigate was not found in the replay log!"
+        assert act_hit_found, "CACHE HIT for act was not found in the replay log!"
         assert (
-            conv_result_hit_found
-        ), "CACHE HIT for conversation_manager handle .result() was not found in the replay log!"
+            observe_hit_found
+        ), "CACHE HIT for observe was not found in the replay log!"
 
-        print("✅ CACHE HIT confirmed for conversation_manager.ask during replay.")
-        print(
-            "✅ CACHE HIT confirmed for conversation_manager handle .result() during replay.",
-        )  # Added confirmation
+        print("✅ CACHE HIT confirmed for navigate during replay.")
+        print("✅ CACHE HIT confirmed for act during replay.")
+        print("✅ CACHE HIT confirmed for observe during replay.")
 
     finally:
         print("\n--- Cleaning up resources... ---")
@@ -1086,12 +1048,12 @@ async def test_action_caching_orchestrator():
     Orchestrates all action caching tests.
 
     Runs the following sub-tests:
-    - test_cache_hits_after_interjection_including_conversation_manager_calls: Validates cache hits after interjections
+    - test_cache_hits_after_interjection_for_browser_primitives: Validates cache hits after interjections
     - test_loop_iterations_get_unique_cache_keys: Ensures loop iterations get unique cache keys
     - test_nested_loop_combinations_get_unique_cache_keys: Validates nested loop cache key uniqueness
     """
     try:
-        await test_cache_hits_after_interjection_including_conversation_manager_calls()
+        await test_cache_hits_after_interjection_for_browser_primitives()
         await test_loop_iterations_get_unique_cache_keys()
         await test_nested_loop_combinations_get_unique_cache_keys()
         print("\n\n🎉🎉🎉 ALL TESTS PASSED! 🎉🎉🎉")
@@ -1962,7 +1924,6 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
     3. Resume execution with the user-provided response
     4. Use the response correctly in subsequent plan steps
 
-    This tests the conversation_manager.ask() integration within plans.
     """
     print("--- Starting Test Harness for 'Clarification Flow' (MOCKED) ---")
 
