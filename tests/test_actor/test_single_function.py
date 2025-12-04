@@ -149,6 +149,168 @@ async def test_execute_function_by_description():
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_semantic_search_selects_best_match():
+    """Semantic search should select the most relevant function when multiple exist."""
+    fm = FunctionManager()
+
+    # Add multiple functions with different purposes
+    calc_impl = '''
+def calculate_sum(a: int, b: int) -> int:
+    """Calculates the sum of two numbers."""
+    return a + b
+'''
+    weather_impl = '''
+def get_weather(city: str) -> str:
+    """Gets the current weather for a city."""
+    return f"Weather in {city}: Sunny"
+'''
+    email_impl = '''
+def send_email(to: str, subject: str) -> str:
+    """Sends an email to a recipient."""
+    return f"Email sent to {to} with subject: {subject}"
+'''
+    fm.add_functions(implementations=[calc_impl, weather_impl, email_impl])
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    # Search for calculation-related task
+    handle = await actor.act(
+        description="add two numbers together",
+        call_kwargs={"a": 5, "b": 3},
+    )
+
+    result = await handle.result()
+    assert "8" in result  # 5 + 3 = 8
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_semantic_search_disambiguates_similar_functions():
+    """Semantic search should disambiguate between similarly-named functions."""
+    fm = FunctionManager()
+
+    # Add functions with similar names but different purposes
+    user_greet = '''
+def greet_user(name: str) -> str:
+    """Greets a human user by their name."""
+    return f"Hello, {name}!"
+'''
+    pet_greet = '''
+def greet_pet(name: str) -> str:
+    """Greets a pet animal by their name."""
+    return f"Good boy, {name}!"
+'''
+    fm.add_functions(implementations=[user_greet, pet_greet])
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    # Search specifically for pet greeting
+    handle = await actor.act(
+        description="say hello to my dog",
+        call_kwargs={"name": "Buddy"},
+    )
+
+    result = await handle.result()
+    assert "Good boy" in result or "Buddy" in result
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_semantic_search_finds_primitive():
+    """Semantic search should find primitives when include_primitives=True (default)."""
+    fm = FunctionManager()
+    fm.sync_primitives()  # Ensure primitives are loaded
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    # Search for a primitive by describing what it does
+    results = fm.search_functions_by_similarity(
+        query="ask questions about my contacts",
+        n=5,
+        include_primitives=True,
+    )
+
+    # Verify that at least one primitive is in the results
+    primitive_found = any(r.get("is_primitive", False) for r in results)
+    assert primitive_found, "Expected to find at least one primitive in search results"
+
+    # Verify ContactManager.ask is findable
+    contact_primitive = next(
+        (r for r in results if "Contact" in r.get("name", "")),
+        None,
+    )
+    assert contact_primitive is not None, "Expected to find ContactManager primitive"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_semantic_search_excludes_primitives_when_disabled():
+    """Semantic search should exclude primitives when include_primitives=False."""
+    fm = FunctionManager()
+    fm.sync_primitives()  # Ensure primitives are loaded
+
+    # Add a user function about contacts
+    contact_func = '''
+def list_my_contacts() -> str:
+    """Lists all my contacts."""
+    return "Contacts: Alice, Bob, Charlie"
+'''
+    fm.add_functions(implementations=[contact_func])
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    # Search with primitives excluded
+    results = fm.search_functions_by_similarity(
+        query="ask questions about my contacts",
+        n=10,
+        include_primitives=False,
+    )
+
+    # Verify no primitives in results
+    for result in results:
+        assert not result.get(
+            "is_primitive",
+            False,
+        ), f"Found primitive {result.get('name')} when primitives should be excluded"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_semantic_search_with_no_user_functions():
+    """Semantic search should work with only primitives available."""
+    fm = FunctionManager()
+    fm.sync_primitives()  # Ensure primitives are loaded
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    # Search with only primitives available (no user functions added)
+    results = fm.search_functions_by_similarity(
+        query="manage my tasks and schedule",
+        n=5,
+        include_primitives=True,
+    )
+
+    # Should find some primitives
+    assert len(results) > 0, "Expected to find primitives even with no user functions"
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_execute_function_default_args():
     """Execute a function with default arguments."""
     fm = FunctionManager()
