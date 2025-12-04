@@ -192,7 +192,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 )
                 if msg is not None:
                     print("got notif", msg)
-                    msg = json.loads(msg["data"])
+                    msg = json.loads(msg["data"])["payload"]
                     chat_ctx = rt.chat_ctx
                     chat_ctx.add_message(
                         role="user",

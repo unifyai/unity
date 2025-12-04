@@ -181,6 +181,16 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.interject_or_run(event.content)
 
 
+@EventHandler.register(AssistantRealtimeGuidance)
+async def _(
+    event: AssistantRealtimeGuidance, cm: "ConversationManager", *args, **kwargs
+):
+    print("received realtime guidance", event)
+    contact_id = event.contact["contact_id"]
+    contact = cm.contact_index.get_contact(contact_id=contact_id)
+    cm.contact_index.push_message(contact, "phone", event.content, role="Guidance")
+
+
 @EventHandler.register((PhoneCallEnded, UnifyCallEnded))
 async def _(
     event: PhoneCallEnded | UnifyCallEnded,
