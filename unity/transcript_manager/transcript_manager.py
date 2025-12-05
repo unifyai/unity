@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
 from pydantic import BaseModel
+from ..common.log_utils import log as unity_log
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message, UNASSIGNED
@@ -482,12 +483,11 @@ class TranscriptManager(BaseTranscriptManager):
         for entries, _orig_msg in zip(msg_entries, normalised_messages):
             # Ensure correct creation order by performing contact creation *before*
             # the logger call (already satisfied above).  Now we can log safely.
-            log = unify.log(
+            log = unity_log(
                 context=self._transcripts_ctx,
                 **entries,
                 new=True,
                 mutable=True,
-                params={},
             )
 
             # Build a Message directly from the POST response
@@ -1034,14 +1034,13 @@ class TranscriptManager(BaseTranscriptManager):
             )
         else:
             # Upsert behaviour – create a new row with empty medium if missing
-            unify.log(
+            unity_log(
                 context=self._exchanges_ctx,
                 exchange_id=int(exchange_id),
                 metadata=dict(metadata or {}),
                 medium="",
                 new=True,
                 mutable=True,
-                params={},
             )
 
         # Read back and return canonical shape
@@ -1156,13 +1155,12 @@ class TranscriptManager(BaseTranscriptManager):
             )
 
         # 3) Create Exchange row FIRST to satisfy FK constraint
-        exchange_log = unify.log(
+        exchange_log = unity_log(
             context=self._exchanges_ctx,
             metadata=dict(exchange_initial_metadata or {}),
             medium=str(payload.get("medium", "")),
             new=True,
             mutable=True,
-            params={},
         )
 
         # Extract the assigned exchange_id
@@ -1181,12 +1179,11 @@ class TranscriptManager(BaseTranscriptManager):
         created_model = Message(**payload)
         entries = created_model.to_post_json()
 
-        log = unify.log(
+        log = unity_log(
             context=self._transcripts_ctx,
             **entries,
             new=True,
             mutable=True,
-            params={},
         )
 
         return exid

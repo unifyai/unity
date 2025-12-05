@@ -4,6 +4,7 @@ from typing import Dict, Optional, Set
 
 import unify
 
+from ..common.log_utils import log as unity_log
 from ..common.context_registry import ContextRegistry
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
@@ -133,14 +134,13 @@ def ensure_exchanges_records(
         missing = [eid for eid in exchange_ids if eid not in existing]
         for eid in missing:
             try:
-                unify.log(
+                unity_log(
                     context=self._exchanges_ctx,
                     exchange_id=int(eid),
                     metadata={},
                     medium=(eid_to_medium or {}).get(int(eid), ""),
                     new=True,
                     mutable=True,
-                    params={},
                 )
             except Exception:
                 # Ignore duplicates or backend races
