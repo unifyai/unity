@@ -260,6 +260,9 @@ class ParallelRunner:
         # Ensure we use random projects mode to avoid interfering with the shared UnityTests project
         run_env["UNIFY_TESTS_RAND_PROJ"] = "True"
         run_env["UNIFY_TESTS_DELETE_PROJ_ON_EXIT"] = "True"
+        # Clear UNIFY_SKIP_SESSION_SETUP - random projects mode needs full session setup
+        # (inherited True from outer parallel_run.sh would conflict with random project creation)
+        run_env["UNIFY_SKIP_SESSION_SETUP"] = "False"
         # Use a consistent socket name for all runs within this runner instance
         # This enables collision detection between sequential runs in the same test
         run_env["UNITY_TEST_SOCKET"] = self._socket_name
