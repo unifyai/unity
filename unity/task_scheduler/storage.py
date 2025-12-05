@@ -16,6 +16,8 @@ import os
 
 import unify
 
+from unity.common.context_store import _PRIVATE_FIELDS
+from unity.common.log_utils import log as unity_log, create_logs as unity_create_logs
 from unity.task_scheduler.types.queue_summary import QueueSummary
 import datetime
 from pydantic import BaseModel
@@ -87,6 +89,55 @@ class TasksStore:
         except Exception:
             normalised = {k: str(v) for k, v in updated.items()}
         self.__dict__["fields"] = normalised
+
+        # Ensure the All/<Ctx> context exists for cross-assistant aggregation
+        all_ctx = self._all_context()
+        if all_ctx is not None:
+            self._ensure_all_context(all_ctx=all_ctx, fields=fields)
+
+    def _all_context(self) -> Optional[str]:
+        """Derive the All/<Ctx> aggregation context from this context."""
+        if "/" not in self._ctx:
+            return None
+        _, suffix = self._ctx.split("/", 1)
+        return f"All/{suffix}"
+
+    def _ensure_all_context(
+        self,
+        *,
+        all_ctx: str,
+        fields: Dict[str, str],
+    ) -> None:
+        """
+        Ensure the All/<Ctx> aggregation context exists with required fields.
+
+        Unlike the main context, this does not use unique_keys or auto_counting
+        since logs are added by reference from multiple assistant contexts.
+        """
+        # Idempotent creation: try to create, tolerate if already exists
+        try:
+            unify.create_context(
+                all_ctx,
+                description=f"Aggregation of {self._ctx.split('/')[-1]} across all assistants",
+            )
+        except Exception:
+            pass  # Already exists or transient failure
+
+        # Merge manager fields with private fields for All context
+        fields_with_private = dict(fields)
+        fields_with_private.update(_PRIVATE_FIELDS)
+
+        # Ensure all required fields exist (idempotent per-field)
+        try:
+            existing = unify.get_fields(context=all_ctx) or {}
+        except Exception:
+            existing = {}
+        missing = {k: v for k, v in fields_with_private.items() if k not in existing}
+        if missing:
+            try:
+                unify.create_fields(missing, context=all_ctx)
+            except Exception:
+                pass  # Fields already exist or transient failure
 
     # ------------------------------- Reads ---------------------------------
     @cached_property
@@ -257,7 +308,7 @@ class TasksStore:
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
         norm_entries = TasksStore._norm(entries)
         # Create with expanded fields so auto-counting applies when ids are omitted
-        return unify.log(context=self._ctx, new=new, **norm_entries)
+        return unity_log(context=self._ctx, new=new, **norm_entries)
 
     def create_many(self, *, entries_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -270,12 +321,12 @@ class TasksStore:
 
         normalised = [{**TasksStore._norm(e)} for e in entries_list]
         try:
-            return unify.create_logs(context=self._ctx, entries=normalised)
+            return unity_create_logs(context=self._ctx, entries=normalised)
         except Exception:
             # Fallback: create sequentially (preserves correctness if batch API is unavailable)
             log_ids: list[int] = []
             for e in normalised:
-                lg = unify.log(context=self._ctx, new=True, **e)
+                lg = unity_log(context=self._ctx, new=True, **e)
                 try:
                     log_ids.append(lg.id)
                 except Exception:
