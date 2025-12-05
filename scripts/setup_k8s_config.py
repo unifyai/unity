@@ -184,6 +184,8 @@ def create_global_configmap(api_client, namespace="default"):
             },
             "data": {
                 "PROJECT_ID": "responsive-city-458413-a2",
+                "VERTEX_PROJECT": "saas-368716",
+                "VERTEX_LOCATION": "global",
             },
         }
 
@@ -231,9 +233,11 @@ def create_global_secrets(api_client, namespace="default"):
             "CARTESIA_API_KEY",
             "ELEVEN_API_KEY",
             "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
             "TAVILY_API_KEY",
             "ORCHESTRA_ADMIN_KEY",
             "SHARED_UNIFY_KEY",
+            "VERTEX_CREDENTIALS",
         ]
 
         print("🔐 Fetching secrets from GCP Secret Manager...")
