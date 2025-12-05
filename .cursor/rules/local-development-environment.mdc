@@ -11,6 +11,12 @@ globs: **/*.py, **/*.toml, .git/hooks/*
 
 ## Running Tests
 
+### Terminal Isolation (Automatic)
+Each terminal session (including each Cursor agent) automatically gets its own **isolated tmux server**. This means:
+- Your tests don't interfere with other agents' tests
+- `tmux kill-server` only affects YOUR terminal's sessions
+- No configuration needed - it's automatic
+
 ### Choosing the Right Command
 
 **CRITICAL: Always use `--wait` to block until tests complete. NEVER run `.parallel_run.sh` in background mode and then poll for results - that defeats the purpose of `--wait`.**
@@ -55,9 +61,9 @@ tests/.parallel_run.sh -t --wait 300 tests/test_contact_manager/
 
 ### Cleanup (REQUIRED)
 - **ALWAYS** kill failed tmux sessions after extracting failure info from `.pytest_logs/`.
-- Logs are persisted in `.pytest_logs/`; keeping sessions open is unnecessary and clutters `tmux ls`.
-- Run: `tests/.kill_failed.sh` to kill all failed sessions (those prefixed with `x ❌`).
-- Alternatively, kill specific sessions: `tmux kill-session -t "<session-name>"`.
+- Logs are persisted in `.pytest_logs/`; keeping sessions open is unnecessary.
+- Run: `tests/.kill_failed.sh` to kill all failed sessions from YOUR terminal.
+- For cross-terminal cleanup: `tests/.kill_failed.sh --all`
 
 ### Permissions
 - Use `required_permissions: ['all']` to ensure access to `.env` and log files.

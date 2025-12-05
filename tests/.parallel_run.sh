@@ -10,6 +10,36 @@ if [ -f "../.env" ]; then
   set +a
 fi
 
+# ---- Terminal-based isolation ----
+# Each terminal session (including Cursor agent terminals) gets its own
+# isolated tmux server via a unique socket. This prevents agents from
+# interfering with each other (e.g., `tmux kill-server` only affects
+# the calling terminal's sessions).
+#
+# The socket is derived from the terminal's TTY device, which is unique
+# and stable for each terminal session.
+_derive_socket_name() {
+  local tty_id
+  # Try to get TTY; if not available (non-interactive shell), use a fallback
+  tty_id=$(tty 2>/dev/null)
+  if [[ "$tty_id" == "not a tty" || -z "$tty_id" || ! "$tty_id" =~ ^/ ]]; then
+    # Non-interactive shell: use parent PID chain as fallback
+    # This provides some isolation but may not be as stable
+    tty_id="pid$$"
+  else
+    # Interactive shell: use TTY path with slashes replaced
+    tty_id=$(echo "$tty_id" | sed 's|/|_|g')
+  fi
+  echo "unity${tty_id}"
+}
+
+TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
+
+# Wrapper for all tmux commands to use our isolated socket
+tmux_cmd() {
+  tmux -L "$TMUX_SOCKET" "$@"
+}
+
 # ---- Configurable directory excludes (by name) ----
 EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode )
 
@@ -224,7 +254,7 @@ run_cmd() {
 # Ensure we don't collide with existing sessions
 unique_session_name() {
   local base="$1" name="$1" n=1
-  while tmux has-session -t "$name" 2>/dev/null; do
+  while tmux_cmd has-session -t "$name" 2>/dev/null; do
     ((n++)); name="${base}-${n}"
   done
   printf "%s" "$name"
@@ -500,17 +530,17 @@ for target in "${files[@]}"; do
   cmd="$(run_cmd "$target" "$log_file" "$MARKER_FILTER")"
 
   # Capture session ID to track this specific run robustly
-  sid=$(tmux new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
+  sid=$(tmux_cmd new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
 
   pending_name="$(unique_session_name "? ⏳ $session")"
-  tmux rename-session -t "$sid" "$pending_name"
+  tmux_cmd rename-session -t "$sid" "$pending_name"
   session="$pending_name"
 
   made_sessions+=( "$session" )
   session_ids+=( "$sid" )
 done
 
-echo "Created ${#made_sessions[@]} tmux sessions:"
+echo "Created ${#made_sessions[@]} tmux sessions (socket: $TMUX_SOCKET):"
 for s in "${made_sessions[@]}"; do
   echo "  - $s"
 done
@@ -532,11 +562,12 @@ echo "  • Run only eval tests:                   ./.parallel_run.sh --eval-onl
 echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic-only tests"
 echo "  • Repeat tests for sampling:             ./.parallel_run.sh --repeat 5 --eval-only tests"
 echo
-echo "Observe:"
-echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
-echo "  • List sessions: tmux ls"
-echo "  • Attach:       tmux attach -t <session>"
-echo "  • Inside tmux:  tmux switch-client -t <session>"
+echo "Observe (this terminal's sessions only):"
+echo "  • Watch sessions:  tests/.watch_tests.sh"
+echo "  • List sessions:   tmux -L $TMUX_SOCKET ls"
+echo "  • Attach:          tmux -L $TMUX_SOCKET attach -t <session>"
+echo
+echo "See all terminals' tests: tests/.list_all_tests.sh"
 
 if (( WAIT_FOR_COMPLETION )); then
   if (( WAIT_TIMEOUT > 0 )); then
@@ -551,7 +582,7 @@ if (( WAIT_FOR_COMPLETION )); then
     pending_count=0
     for sid in "${session_ids[@]}"; do
       # Check name of our specific session IDs only
-      current_name=$(tmux display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+      current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
       # Look for ASCII marker "?" (with or without emoji following) to detect pending state
       if [[ "$current_name" == "?"* ]]; then
         ((pending_count++))
@@ -584,7 +615,7 @@ if (( WAIT_FOR_COMPLETION )); then
 
   failures=0
   for sid in "${session_ids[@]}"; do
-    current_name=$(tmux display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+    current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
     # Look for ASCII marker "x" (with or without emoji following) to detect failure
     if [[ "$current_name" == "x"* ]]; then
       echo "Failure detected in session: $current_name"
