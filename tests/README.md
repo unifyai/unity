@@ -91,20 +91,24 @@ pytest -m "not eval" tests/
 
 ### Shell Setup (Recommended)
 
-Add these aliases to your `~/.zshrc` or `~/.bashrc` for convenient access to test helpers from anywhere:
+Add this single line to your `~/.zshrc` for convenient access to test helpers from anywhere:
 
 ```bash
-# Unity test helper aliases
-alias parallel_run='~/unity/tests/parallel_run.sh'
-alias watch_tests='~/unity/tests/watch_tests.sh'
-alias attach='~/unity/tests/attach.sh'
-alias kill_failed='~/unity/tests/kill_failed.sh'
-alias kill_server='~/unity/tests/kill_server.sh'
-alias list_runs='~/unity/tests/list_runs.sh'
-alias monitor_resources='~/unity/tests/monitor_resources.sh'
+source ~/unity/tests/shell_init.zsh
 ```
 
-After adding, run `source ~/.zshrc` (or restart your terminal). You can then run `parallel_run`, `watch_tests`, etc. from any directory.
+After adding, run `source ~/.zshrc` (or restart your terminal). This sets up:
+
+- **Aliases**: `parallel_run`, `watch_tests`, `attach`, `kill_failed`, `kill_server`, `list_runs`, `monitor_resources`
+- **Tab completion**: Session names for `attach`, test paths and flags for `parallel_run`, etc.
+
+**Example with tab completion:**
+```bash
+attach <TAB>        # Lists all tmux sessions: "r ⏳ test_foo", "f ❌ test_bar", ...
+parallel_run -<TAB> # Shows flags: -t, --wait, --eval-only, ...
+```
+
+> **Note**: For bash users, the completions use zsh-specific features. The aliases will still work, but tab completion won't be available.
 
 ### Quick Start
 
@@ -1126,8 +1130,8 @@ When running parallel tests with heavy network I/O (like LLM API calls), it's es
 # Launch the dashboard
 tests/monitor_resources.sh
 
-# Or add an alias to ~/.zshrc or ~/.bashrc
-alias monitor_resources='~/unity/tests/monitor_resources.sh'
+# Or use the alias (if you've set up shell_init.zsh - see "Shell Setup")
+monitor_resources
 ```
 
 ### Dashboard Layout
