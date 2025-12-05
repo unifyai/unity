@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
+from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import list_private_fields
 from ..common.search_utils import table_search_top_k
 from .execution_env import create_base_globals
@@ -567,7 +568,7 @@ class FunctionManager(BaseFunctionManager):
                     overwrite=True,
                 )
             else:
-                unify.create_logs(
+                unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "primitives_hash": hash_value}],
                 )
@@ -617,7 +618,7 @@ class FunctionManager(BaseFunctionManager):
             entries.append(entry)
 
         try:
-            unify.create_logs(
+            unity_create_logs(
                 context=self._primitives_ctx,
                 entries=entries,
                 batched=True,
@@ -694,7 +695,7 @@ class FunctionManager(BaseFunctionManager):
                 )
             else:
                 # Create the meta row if it doesn't exist
-                unify.create_logs(
+                unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "custom_functions_hash": hash_value}],
                 )
@@ -750,12 +751,20 @@ class FunctionManager(BaseFunctionManager):
         """Insert a new custom function."""
         # Remove function_id if present - let it be auto-assigned
         insert_data = {k: v for k, v in data.items() if k != "function_id"}
-        logs = unify.create_logs(
+        result = unity_create_logs(
             context=self._compositional_ctx,
             entries=[insert_data],
         )
-        if logs and hasattr(logs[0], "entries"):
-            return logs[0].entries.get("function_id")
+        # unity_create_logs returns a dict with log_event_ids
+        log_ids = result.get("log_event_ids", [])
+        if log_ids:
+            logs = unify.get_logs(
+                context=self._compositional_ctx,
+                filter=f"id == {log_ids[0]}",
+                limit=1,
+            )
+            if logs and hasattr(logs[0], "entries"):
+                return logs[0].entries.get("function_id")
         return -1
 
     # ------------------------------------------------------------------ #
@@ -792,7 +801,7 @@ class FunctionManager(BaseFunctionManager):
                     overwrite=True,
                 )
             else:
-                unify.create_logs(
+                unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "custom_venvs_hash": hash_value}],
                 )
@@ -845,12 +854,20 @@ class FunctionManager(BaseFunctionManager):
     def _insert_custom_venv(self, data: Dict[str, Any]) -> int:
         """Insert a new custom venv."""
         insert_data = {k: v for k, v in data.items() if k != "venv_id"}
-        logs = unify.create_logs(
+        result = unity_create_logs(
             context=self._venvs_ctx,
             entries=[insert_data],
         )
-        if logs and hasattr(logs[0], "entries"):
-            return logs[0].entries.get("venv_id")
+        # unity_create_logs returns a dict with log_event_ids
+        log_ids = result.get("log_event_ids", [])
+        if log_ids:
+            logs = unify.get_logs(
+                context=self._venvs_ctx,
+                filter=f"id == {log_ids[0]}",
+                limit=1,
+            )
+            if logs and hasattr(logs[0], "entries"):
+                return logs[0].entries.get("venv_id")
         return -1
 
     def sync_custom_venvs(self) -> Dict[str, int]:
@@ -1257,7 +1274,7 @@ class FunctionManager(BaseFunctionManager):
         # Batch create new functions
         if entries_to_create:
             try:
-                unify.create_logs(
+                unity_create_logs(
                     context=self._compositional_ctx,
                     entries=entries_to_create,
                     batched=True,
@@ -1816,15 +1833,22 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             The auto-assigned venv_id.
         """
-        logs = unify.create_logs(
+        result = unity_create_logs(
             context=self._venvs_ctx,
             entries=[{"venv": venv}],
         )
-        # create_logs returns a list of Log objects; extract venv_id from entries
-        if logs and hasattr(logs[0], "entries"):
-            venv_id = logs[0].entries.get("venv_id")
-            if venv_id is not None:
-                return venv_id
+        # unity_create_logs returns a dict with log_event_ids
+        log_ids = result.get("log_event_ids", [])
+        if log_ids:
+            logs = unify.get_logs(
+                context=self._venvs_ctx,
+                filter=f"id == {log_ids[0]}",
+                limit=1,
+            )
+            if logs and hasattr(logs[0], "entries"):
+                venv_id = logs[0].entries.get("venv_id")
+                if venv_id is not None:
+                    return venv_id
         raise RuntimeError("Failed to retrieve venv_id after creation")
 
     def get_venv(self, *, venv_id: int) -> Optional[Dict[str, Any]]:
