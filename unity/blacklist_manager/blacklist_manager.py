@@ -5,6 +5,7 @@ import functools
 
 import unify
 
+from ..common.log_utils import log as unity_log
 from ..common.data_store import DataStore
 from ..common.model_to_fields import model_to_fields
 from ..common.filter_utils import normalize_filter_expr
@@ -132,7 +133,7 @@ class BlackListManager(BaseBlackListManager):
             contact_detail=contact_detail,
             reason=reason,
         ).to_post_json()
-        log = unify.log(context=self._ctx, new=True, mutable=True, **payload)
+        log = unity_log(context=self._ctx, new=True, mutable=True, **payload)
         self._data_store.put(log.entries)
         return {
             "outcome": "blacklist entry created",
