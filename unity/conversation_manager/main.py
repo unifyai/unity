@@ -6,7 +6,7 @@ load_dotenv()
 import os
 import asyncio
 
-from unity.session_details import SESSION_DETAILS
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.event_broker import get_event_broker
@@ -49,6 +49,26 @@ async def main(project_name: str = "Assistants"):
     # This prevents conflicts when multiple call processes can't run simultaneously
     print("Checking for dangling call processes from previous runs...")
     cleanup_dangling_call_processes()
+
+    # populate SESSION_DETAILS from environment variables
+    # this is needed for local dev because the env vars are already there from the start
+    SESSION_DETAILS.populate(
+        assistant_id=os.getenv("ASSISTANT_ID", DEFAULT_ASSISTANT_ID),
+        assistant_name=os.getenv("ASSISTANT_NAME"),
+        assistant_age=os.getenv("ASSISTANT_AGE"),
+        assistant_nationality=os.getenv("ASSISTANT_NATIONALITY"),
+        assistant_about=os.getenv("ASSISTANT_ABOUT"),
+        assistant_number=os.getenv("ASSISTANT_NUMBER"),
+        assistant_email=os.getenv("ASSISTANT_EMAIL"),
+        user_id=os.getenv("USER_ID"),
+        user_name=os.getenv("USER_NAME"),
+        user_number=os.getenv("USER_NUMBER"),
+        user_whatsapp_number=os.getenv("USER_WHATSAPP_NUMBER"),
+        user_email=os.getenv("USER_EMAIL"),
+        voice_provider=os.getenv("VOICE_PROVIDER"),
+        voice_id=os.getenv("VOICE_ID"),
+        voice_mode=os.getenv("VOICE_MODE"),
+    )
 
     stop = asyncio.Event()
 
