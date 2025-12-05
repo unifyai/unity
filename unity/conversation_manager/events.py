@@ -289,6 +289,35 @@ class ContactInfoResponse(Event):
 
 
 @dataclass
+class StoreChatHistory(Event):
+    chat_history: str
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return f"{self.__class__.__name__}(chat_history_len={len(self.chat_history)})"
+
+
+@dataclass
+class GetChatHistory(Event):
+    loggable: ClassVar[bool] = False
+    chat_history: str
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return f"{self.__class__.__name__}(chat_history_len={len(self.chat_history)})"
+
+
+@dataclass
 class GetBusEventsResponse(Event):
     loggable: ClassVar[bool] = False
     events: list[dict[str, Any]]

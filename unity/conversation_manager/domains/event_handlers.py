@@ -343,13 +343,20 @@ async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwar
     # print(cm.contact_index.contacts)
 
 
-@EventHandler.register(GetBusEventsResponse)
+@EventHandler.register(StoreChatHistory)
 async def _(
-    event: GetBusEventsResponse,
+    event: StoreChatHistory,
     cm: "ConversationManager",
     *args,
     **kwargs,
-): ...
+):
+    print("Received store chat history", event.chat_history)
+
+
+@EventHandler.register(GetChatHistory)
+async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
+    print("Received get chat history", event.chat_history)
+    cm.chat_history.insert(0, event.chat_history)
 
 
 @EventHandler.register(ConductorHandleStarted)

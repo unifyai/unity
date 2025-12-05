@@ -114,7 +114,7 @@ async def main(project_name: str = "Assistants"):
     await stop.wait()
 
     print("Cleaning up conversation manager...")
-    conversation_manager.cleanup()
+    await conversation_manager.cleanup()
     print("Cleanup finished")
 
     print("Shutdown finished")
