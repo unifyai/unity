@@ -219,27 +219,6 @@ def clean_tmux_sessions():
     kill_sessions_matching(pattern)
 
 
-@pytest.fixture
-def clean_pytest_logs():
-    """Fixture that tracks and cleans up pytest log files."""
-    # Record existing log files
-    existing_logs = set()
-    if PYTEST_LOGS_DIR.exists():
-        existing_logs = set(PYTEST_LOGS_DIR.glob("*.txt"))
-
-    yield
-
-    # Clean up new log files created during test
-    if PYTEST_LOGS_DIR.exists():
-        new_logs = set(PYTEST_LOGS_DIR.glob("*.txt")) - existing_logs
-        for log in new_logs:
-            if "fixtures" in log.name or "test_parallel_run" in log.name:
-                try:
-                    log.unlink()
-                except OSError:
-                    pass
-
-
 class ParallelRunner:
     """Helper class to run parallel_run.sh with various arguments."""
 
@@ -363,7 +342,7 @@ class ParallelRunner:
 
 
 @pytest.fixture
-def runner(clean_tmux_sessions, clean_pytest_logs):
+def runner(clean_tmux_sessions):
     """Fixture providing a ParallelRunner instance."""
     r = ParallelRunner()
     yield r
