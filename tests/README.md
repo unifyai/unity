@@ -121,6 +121,40 @@ For faster runs, use either:
 
 This helper script launches one tmux session per test file (or per test function with `-t`) and runs `pytest` in its own window. It searches recursively and can be restricted to specific folders, files, or tests.
 
+### Terminal Isolation (Automatic)
+
+Each terminal session automatically gets its own **isolated tmux server**. This means:
+
+- **Cursor agents don't interfere with each other**: Each agent's tests run in their own isolated tmux server
+- **`tmux kill-server` is safe**: It only kills sessions from the terminal that ran it
+- **No configuration needed**: Isolation is automatic based on the terminal's TTY device
+
+**How it works:** The script derives a unique socket name from your terminal's TTY (e.g., `/dev/ttys042` → socket `unity_dev_ttys042`). All tmux commands use this socket automatically.
+
+**Monitoring your tests:**
+
+```bash
+# Watch YOUR terminal's tests (automatic isolation)
+tests/.watch_tests.sh
+
+# Watch ALL terminals' tests
+tests/.watch_tests.sh --all
+
+# List sessions across all terminals
+tests/.list_all_tests.sh
+tests/.list_all_tests.sh --count  # Summary only
+```
+
+**Cleanup:**
+
+```bash
+# Kill failed sessions from THIS terminal
+tests/.kill_failed.sh
+
+# Kill failed sessions from ALL terminals
+tests/.kill_failed.sh --all
+```
+
 ### Per-Test Mode (`-t`) for Maximum Parallelism
 
 **IMPORTANT:** By default, the script creates one tmux session per *file*. If a single file contains 15 tests, they run serially within that session—potentially blocking for 10+ minutes.
@@ -480,7 +514,8 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 - **Watch session statuses live**:
 
   ```bash
-  watch -n 0.5 'tmux ls'
+  tests/.watch_tests.sh        # Watch THIS terminal's tests
+  tests/.watch_tests.sh --all  # Watch ALL terminals' tests
   ```
 
   As tests start, sessions show a `? ⏳` prefix. They flip to `o ✅` or `x ❌` when pytest exits. Successful sessions auto-close ~10s later.
@@ -488,16 +523,24 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 - **Kill all failed sessions** at once:
 
   ```bash
-  ./.kill_failed.sh       # Kill all sessions starting with "x"
-  ./.kill_failed.sh -n    # Dry run - show what would be killed
+  tests/.kill_failed.sh        # Kill failed sessions from THIS terminal
+  tests/.kill_failed.sh --all  # Kill failed sessions from ALL terminals
+  tests/.kill_failed.sh -n     # Dry run - show what would be killed
   ```
 
-  > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/`. Logs are persisted there, so keeping sessions open just clutters `tmux ls`. Run `./.kill_failed.sh` after investigating failures.
+  > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/`. Logs are persisted there, so keeping sessions open just clutters the output. Run `tests/.kill_failed.sh` after investigating failures.
 
-- **Kill a single session** once a test finishes:
+- **List sessions across all terminals**:
 
   ```bash
-  tmux kill-session -t <session-name>
+  tests/.list_all_tests.sh         # Full session list
+  tests/.list_all_tests.sh --count # Summary counts only
+  ```
+
+- **Kill a single session** once a test finishes (the socket name is printed when tests are launched):
+
+  ```bash
+  tmux -L <socket> kill-session -t <session-name>
   ```
 
   Note: sessions that pass auto-close within ~10 seconds; you typically only need to kill failing sessions.
@@ -508,7 +551,11 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
   nohup ./.parallel_run.sh tests &>/dev/null &
   ```
 
-- **See test output later**: just `tmux attach -t <session-name>` — pytest output stays in the window buffer.
+- **See test output later**: The socket name is printed when tests are launched. Use it to attach:
+
+  ```bash
+  tmux -L <socket> attach -t <session-name>
+  ```
 
 ### Troubleshooting
 
@@ -540,17 +587,33 @@ Open `.parallel_run.sh` and tweak as needed:
 - **`run_cmd()`** — change the command chain (e.g., add flags: `pytest -q -x`).
 - **Session naming** — adjust `session_basename_for()` to your taste.
 
-### Quick Reference (tmux)
+### Quick Reference (tmux with isolation)
 
-- Next/prev session (inside tmux):
-  - Open the command prompt: `Ctrl-b :`
-  - Type: `switch-client -n` (next) / `switch-client -p` (prev)
-- List sessions: `tmux ls`
-- Attach: `tmux attach -t <name>`
-- Switch (inside tmux): `tmux switch-client -t <name>`
-- Kill: `tmux kill-session -t <name>`
+Each terminal uses its own tmux socket (printed when tests launch). Common commands:
 
-That's it! Run it, list sessions, and jump into whichever test you want to watch.
+```bash
+# List sessions for THIS terminal
+tmux -L <socket> ls
+
+# Attach to a session
+tmux -L <socket> attach -t <name>
+
+# Kill a session
+tmux -L <socket> kill-session -t <name>
+
+# Inside tmux, switch sessions
+tmux switch-client -t <name>
+```
+
+**Helper scripts (recommended):**
+
+```bash
+tests/.watch_tests.sh        # Watch this terminal's tests
+tests/.kill_failed.sh        # Kill failed sessions
+tests/.list_all_tests.sh     # See all terminals' tests
+```
+
+That's it! Run tests, use the helpers to monitor, and jump into whichever test you want to watch.
 
 ---
 
