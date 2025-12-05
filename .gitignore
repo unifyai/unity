@@ -31,3 +31,4 @@ unity.egg-info/
 .tmux_logs/
 intranet/logs/
 *:Zone.Identifier
+assets/
