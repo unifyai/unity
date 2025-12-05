@@ -27,8 +27,9 @@ import inspect
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-import unify
 from pydantic import BaseModel
+
+from unity.common.llm_client import new_llm_client
 
 if TYPE_CHECKING:
     from unity.contact_manager.contact_manager import ContactManager
@@ -267,7 +268,7 @@ class ComputerPrimitives:
         Returns:
             The processed text or a Pydantic object, depending on `response_format`.
         """
-        client = unify.AsyncUnify("gemini-2.5-pro@vertex-ai")
+        client = new_llm_client("gemini-2.5-pro@vertex-ai")
         system_message = (
             f"{request}\n\n"
             "### CONTEXT\n"

@@ -33,7 +33,7 @@ from .types.document import (
 )
 from .types.enums import FileFormat, MimeType, extension_to_format, extension_to_mime
 from .summary_utils import generate_summary_with_compression
-from unity.common.llm_client import get_cache_setting
+from unity.common.llm_client import new_llm_client
 from .parser_utils import (
     extract_bbox_with_origin,
     merge_consecutive_table_items,
@@ -2835,12 +2835,7 @@ class DoclingParser(GenericParser[Document]):
         • If all sources fail, the function returns without mutating metadata.
         """
         try:
-            import unify
-
-            client = unify.Unify(
-                "o4-mini@openai",
-                cache=get_cache_setting(),
-            )
+            client = new_llm_client("o4-mini@openai", async_client=False)
 
             # Token accounting (align with main summariser defaults; no fixed caps)
             METADATA_ENCODING = os.environ.get("SUMMARY_ENCODING", "o200k_base")
@@ -3219,10 +3214,7 @@ class DoclingParser(GenericParser[Document]):
             )
 
             # Create a single client for the entire summarization process
-            client = unify.Unify(
-                "o4-mini@openai",
-                cache=get_cache_setting(),
-            )
+            client = new_llm_client("o4-mini@openai", async_client=False)
 
             # ---------- Token accounting (tiktoken-backed) ----------
             # Model/encoding guidance:

@@ -24,6 +24,8 @@ import types
 import weakref
 import unify
 from pydantic import BaseModel, Field
+
+from unity.common.llm_client import new_llm_client
 import importlib.util
 import importlib.machinery
 import uuid
@@ -1993,32 +1995,32 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
                 pass
             self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
 
-        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
+        self.plan_generation_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
         )
-        self.verification_client: unify.AsyncUnify = unify.AsyncUnify(
+        self.verification_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
         )
-        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
+        self.implementation_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
         )
-        self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
+        self.summarization_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
         )
         # TODO: DEPRECATED
-        self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
+        self.course_correction_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
         )
-        self.modification_client: unify.AsyncUnify = unify.AsyncUnify(
+        self.modification_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
         )
-        self.ask_client: unify.AsyncUnify = unify.AsyncUnify(
+        self.ask_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
         )

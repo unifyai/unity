@@ -15,6 +15,8 @@ import functools
 import backoff
 import unify
 import cv2
+
+from unity.common.llm_client import new_llm_client
 import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -173,11 +175,11 @@ class ScreenShareManager:
         self.settings = settings or ScreenShareManagerSettings()
         self._debug = debug
         self._image_manager = image_manager or ImageManager()
-        self._detection_client = detection_client or unify.AsyncUnify(
+        self._detection_client = detection_client or new_llm_client(
             "gpt-4o-mini@openai",
         )
-        self._analysis_client = analysis_client or unify.AsyncUnify("gpt-4o@openai")
-        self._summary_client = summary_client or unify.AsyncUnify("gpt-4o-mini@openai")
+        self._analysis_client = analysis_client or new_llm_client("gpt-4o@openai")
+        self._summary_client = summary_client or new_llm_client("gpt-4o-mini@openai")
         self._cpu_executor = ThreadPoolExecutor(
             max_workers=self.settings.max_frame_workers,
         )

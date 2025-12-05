@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from .base import BaseFileManager, BaseGlobalFileManager
 from ..common.async_tool_loop import SteerableToolHandle
-from ..common.llm_client import new_llm_client, get_cache_setting
+from ..common.llm_client import new_llm_client
 from .prompt_builders import (
     build_file_manager_ask_prompt,
     build_file_manager_ask_about_file_prompt,
@@ -1014,11 +1014,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
 
     def __init__(self, managers: List[BaseFileManager]):
         self._managers: List[BaseFileManager] = list(managers)
-        self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
-            cache=get_cache_setting(),
-            stateful=True,
-        )
+        self._llm = new_llm_client("gpt-4o@openai", stateful=True)
 
         # Build prompt tool lists to mirror class-named exposure
         def _lf() -> List[str]:
