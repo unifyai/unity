@@ -1105,22 +1105,24 @@ This generates 2 models × 5 repeats = 10 runs, useful for comparing pass rates 
 
 ## Resource Monitor Dashboard (`monitor_resources.sh`)
 
-When running parallel tests with heavy network I/O, it's useful to monitor system resources to understand bottlenecks, detect connection leaks, and ensure you're not hitting OS limits.
+When running parallel tests with heavy network I/O (like LLM API calls), it's essential to monitor system resources. This dashboard helps you:
+
+- **Detect bottlenecks**: Is CPU, memory, or network the limiting factor?
+- **Spot connection leaks**: Are file descriptors growing unbounded?
+- **Avoid hitting OS limits**: Are you approaching `ulimit` thresholds?
+- **Understand test behavior**: How much network traffic are tests generating?
 
 ### Supported Platforms
 
-| Platform | Support | Network Monitor |
-|----------|---------|-----------------|
-| **macOS** | ✅ Full | `nettop` (built-in) |
-| **Linux** | ✅ Full | `nethogs`/`iftop` or `ss` stats |
-| **Windows** | ✅ Via WSL | Same as Linux |
+| Platform | Support | Notes |
+|----------|---------|-------|
+| **macOS** | ✅ Full | Uses native tools (`lsof`, `netstat`) |
+| **Linux** | ✅ Full | Uses `/proc` filesystem and `ss` for efficiency |
+| **Windows** | ✅ Via WSL | Run from WSL terminal (Ubuntu recommended) |
 
 ### Quick Start
 
 ```bash
-# Make executable (first time only)
-chmod +x tests/monitor_resources.sh
-
 # Launch the dashboard
 tests/monitor_resources.sh
 
@@ -1128,49 +1130,136 @@ tests/monitor_resources.sh
 alias monitor_resources='~/unity/tests/monitor_resources.sh'
 ```
 
-This launches a tmux-based dashboard with four panes:
+### Dashboard Layout
+
+The dashboard displays four panes in a tmux session:
 
 ```
 ┌──────────────────────────────────────────────┐
 │                    htop                      │
 │          (CPU, Memory, Processes)            │
-├──────────────────────────────────────────────┤
-│              Network Monitor                 │
-│         (Per-process Network I/O)            │
-├──────────────────────┬───────────────────────┤
-│   File Descriptors   │   TCP Connections     │
-│  (Python processes)  │   (Active sockets)    │
-└──────────────────────┴───────────────────────┘
+│                   (70%)                      │
+├──────────────┬──────────────┬────────────────┤
+│   Network    │     FDs      │      TCP       │
+│    (33%)     │    (33%)     │     (33%)      │
+└──────────────┴──────────────┴────────────────┘
 ```
 
 ### What Each Pane Shows
 
-| Pane | macOS | Linux | What to Watch |
-|------|-------|-------|---------------|
-| **Top** | `htop` | `htop` | CPU per core, memory usage, process list. Moderate CPU (20-50%) is normal for async tests. |
-| **Middle** | `nettop` | `nethogs`/`ss` | Per-process network I/O (bytes in/out). Look for Python processes with high bandwidth. |
-| **Bottom Left** | `lsof` | `/proc` | Count of open FDs for Python processes. Each TCP connection = 1 FD. Watch for growth approaching `ulimit`. |
-| **Bottom Right** | `netstat` | `ss` | ESTABLISHED connections (active), TIME_WAIT (closing), LISTEN (servers). |
+#### 1. htop (Top, 70% height) — System Overview
 
-### Interpreting Metrics During Test Runs
+**What it displays:**
+- CPU usage per core (bar graphs)
+- Memory and swap usage
+- Process list sorted by resource consumption
+- Load average and uptime
 
-**CPU:**
-- Expect 20-50% usage from async event loops and SSL handshakes
-- High CPU with low network I/O = potential bottleneck (not our tests, which are network-bound)
+**What to look for during tests:**
 
-**Memory:**
-- Watch for continuous growth during long test runs (potential memory leak)
-- Cached memory is fine—the kernel releases it when needed
+| Metric | Healthy | Warning Signs |
+|--------|---------|---------------|
+| CPU per core | 20-50% | All cores at 100% = CPU bottleneck |
+| Memory | <80% used | Continuous growth = memory leak |
+| Load average | Below core count | Exceeds core count = overloaded |
+| Top processes | Python, redis | Unexpected processes consuming resources |
 
-**File Descriptors:**
-- Default limit is ~256 per process (macOS) or ~1024 (Linux)
-- If approaching limit, you'll see connection failures
-- Fix: run `ulimit -n 4096` before `parallel_run.sh`
+**Why it matters:** Parallel tests spawn many Python processes. If CPU is maxed out, tests will slow down. If memory is exhausted, the OS will start killing processes.
 
-**TIME_WAIT Connections:**
-- Normal after connections close (~60s on macOS, ~30s on Linux)
-- Very high counts indicate excessive connection churn
-- Not usually a problem unless >1000s
+#### 2. Network Activity (Bottom Left) — Throughput & Connections
+
+**What it displays:**
+- Network throughput (bytes/sec in and out)
+- Number of Python network connections
+- Top processes by connection count
+
+**Example output:**
+```
+=== Network Activity ===
+
+Throughput (2s avg):
+  IN:  45 KB/s
+  OUT: 12 KB/s
+
+────────────────────────
+
+Python connections: 190
+
+Top processes:
+  python3      190
+  redis-ser    45
+```
+
+**What to look for during tests:**
+
+| Metric | Healthy | Warning Signs |
+|--------|---------|---------------|
+| Throughput | Varies with test load | Drops to 0 during active tests = network issue |
+| Python connections | Proportional to parallel tests | Growing unbounded = connection leak |
+
+**Why it matters:** LLM API tests are network-bound. Low throughput with high CPU suggests inefficient connection handling. Many Python connections indicate high parallelism.
+
+#### 3. File Descriptors (Bottom Middle) — Resource Limits
+
+**What it displays:**
+- Number of Python processes
+- Total file descriptors (FDs) open across all Python processes
+- Per-process FD limit (`ulimit -n`)
+- Warning if approaching limit
+
+**Example output:**
+```
+=== File Descriptors ===
+
+Procs: 81
+FDs:   16413
+Limit: 256
+
+⚠️ Near limit!
+```
+
+**What to look for during tests:**
+
+| Metric | Healthy | Warning Signs |
+|--------|---------|---------------|
+| Total FDs | Well below (procs × limit) | "Near limit!" warning |
+| FDs per process | <200 (if limit is 256) | Processes failing with "Too many open files" |
+
+**Why it matters:** Each network connection, open file, and pipe consumes one FD. macOS defaults to 256 FDs per process. With 81 Python processes averaging 200 FDs each, some are near the limit!
+
+**Fix:** Run `ulimit -n 4096` before starting tests.
+
+#### 4. TCP Connections (Bottom Right) — Socket States
+
+**What it displays:**
+- ESTABLISHED: Active, open connections
+- TIME_WAIT: Recently closed, waiting for cleanup
+- LISTENING: Server sockets awaiting connections
+- Total active connections
+
+**Example output:**
+```
+=== TCP Connections ===
+
+ESTAB:  190
+T_WAIT: 2
+LISTEN: 189
+────────────
+Active: 192
+```
+
+**What to look for during tests:**
+
+| Metric | Healthy | Warning Signs |
+|--------|---------|---------------|
+| ESTABLISHED | Proportional to active tests | Drops to 0 unexpectedly = connection failures |
+| TIME_WAIT | <100 | Hundreds/thousands = excessive connection churn |
+| LISTENING | Stable count | Unexpected growth = resource leak |
+
+**Why it matters:**
+- **ESTABLISHED** connections show how many API calls are in flight
+- **TIME_WAIT** connections linger for 30-60 seconds after closing; high counts suggest you're opening/closing too many connections (consider connection pooling)
+- **LISTENING** sockets are servers (redis, test fixtures); should stay constant
 
 ### Keyboard Shortcuts
 
@@ -1194,15 +1283,15 @@ tmux kill-session -t unity-monitor
 tmux has-session -t unity-monitor && echo "Running"
 ```
 
-### Pre-Test Tuning (Heavy Parallelism)
+### Pre-Test Tuning
 
-Before running many parallel tests:
+Before running many parallel tests, increase the file descriptor limit:
 
 ```bash
-# All platforms: Increase file descriptor limit (resets on terminal close)
+# Increase FD limit (resets on terminal close)
 ulimit -n 4096
 
-# Check current limit
+# Verify the change
 ulimit -n
 ```
 
@@ -1224,46 +1313,36 @@ sudo sysctl -w net.ipv4.tcp_tw_reuse=1
 
 ```bash
 brew install tmux htop
-# nettop is built-in
 ```
 
 **Ubuntu/Debian:**
 
 ```bash
-sudo apt install tmux htop nethogs iftop
+sudo apt install tmux htop
 ```
 
 **Fedora/RHEL:**
 
 ```bash
-sudo dnf install tmux htop nethogs iftop
-```
-
-**Arch Linux:**
-
-```bash
-sudo pacman -S tmux htop nethogs iftop
+sudo dnf install tmux htop
 ```
 
 **Windows (WSL):**
 
 ```powershell
-# First, install WSL if not already installed
+# Install WSL if needed
 wsl --install
 
-# Then from within WSL (e.g., Ubuntu), install the tools
-sudo apt install tmux htop nethogs iftop
+# Then from within WSL (e.g., Ubuntu)
+sudo apt install tmux htop
 ```
 
-### Requirements Summary
+### Requirements
 
-| Tool | macOS | Linux | Required |
-|------|-------|-------|----------|
-| `tmux` | `brew install tmux` | `apt install tmux` | ✅ Yes |
-| `htop` | `brew install htop` | `apt install htop` | Recommended (falls back to `top`) |
-| `nettop` | Built-in | N/A | macOS only |
-| `nethogs` | N/A | `apt install nethogs` | Recommended for Linux |
-| `iftop` | N/A | `apt install iftop` | Alternative to nethogs |
+| Tool | Required | Notes |
+|------|----------|-------|
+| `tmux` | ✅ Yes | Session manager for the dashboard |
+| `htop` | Recommended | Falls back to `top` if missing |
 
 ---
 

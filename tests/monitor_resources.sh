@@ -21,13 +21,11 @@ set -euo pipefail
 #   ┌──────────────────────────────────────────────┐
 #   │                    htop                      │
 #   │          (CPU, Memory, Processes)            │
-#   ├──────────────────────────────────────────────┤
-#   │              Network Monitor                 │
-#   │         (Per-process Network I/O)            │
-#   ├──────────────────────┬───────────────────────┤
-#   │   File Descriptors   │   TCP Connections     │
-#   │  (Python processes)  │   (Active sockets)    │
-#   └──────────────────────┴───────────────────────┘
+#   │                   (70%)                      │
+#   ├──────────────┬──────────────┬────────────────┤
+#   │   Network    │     FDs      │      TCP       │
+#   │    (33%)     │    (33%)     │     (33%)      │
+#   └──────────────┴──────────────┴────────────────┘
 #
 # Requirements:
 #   - tmux (required on all platforms)
@@ -278,12 +276,8 @@ fi
 setup_network_monitor() {
   case "$OS_TYPE" in
     macos)
-      if command -v nettop &> /dev/null; then
-        NETWORK_MONITOR="nettop -P -d -J bytes_in,bytes_out"
-      else
-        # Fallback for older macOS or missing nettop
-        NETWORK_MONITOR="watch -n 1 'echo \"=== Network Stats (netstat) ===\"; echo; netstat -an | grep -c ESTABLISHED | xargs -I{} echo \"ESTABLISHED: {}\"; netstat -an | grep -c TIME_WAIT | xargs -I{} echo \"TIME_WAIT: {}\"'"
-      fi
+      # Custom network summary - fits in narrow terminals
+      NETWORK_MONITOR='bash -c "set +e; prev_in=0; prev_out=0; while true; do clear; echo \"=== Network Activity ===\"; echo; stats=\$(netstat -ib 2>/dev/null | grep -v \"^Name\" | grep -v \"^lo\" | head -5); curr_in=\$(echo \"\$stats\" | awk \"{sum+=\\\$7} END {print sum+0}\"); curr_out=\$(echo \"\$stats\" | awk \"{sum+=\\\$10} END {print sum+0}\"); if [ \$prev_in -gt 0 ]; then delta_in=\$(( (curr_in - prev_in) / 2 )); delta_out=\$(( (curr_out - prev_out) / 2 )); echo \"Throughput (2s avg):\"; if [ \$delta_in -gt 1048576 ]; then echo \"  IN:  \$(( delta_in / 1048576 )) MB/s\"; elif [ \$delta_in -gt 1024 ]; then echo \"  IN:  \$(( delta_in / 1024 )) KB/s\"; else echo \"  IN:  \$delta_in B/s\"; fi; if [ \$delta_out -gt 1048576 ]; then echo \"  OUT: \$(( delta_out / 1048576 )) MB/s\"; elif [ \$delta_out -gt 1024 ]; then echo \"  OUT: \$(( delta_out / 1024 )) KB/s\"; else echo \"  OUT: \$delta_out B/s\"; fi; else echo \"Throughput: measuring...\"; fi; prev_in=\$curr_in; prev_out=\$curr_out; echo; echo \"────────────────────────\"; echo; py_conns=\$(lsof -i -n 2>/dev/null | grep -c python || echo 0); echo \"Python connections: \$py_conns\"; echo; echo \"Top processes:\"; lsof -i -n 2>/dev/null | awk \"{print \\\$1}\" | sort | uniq -c | sort -rn | head -5 | awk \"{printf \\\"  %-12s %s\\n\\\", \\\$2, \\\$1}\"; sleep 2; done"'
       ;;
     linux|wsl)
       if command -v nethogs &> /dev/null; then
@@ -341,46 +335,41 @@ echo
 
 # Create the tmux session with the layout
 # Layout:
-#   ┌─────────────────────────┐
-#   │          htop           │  (40% height)
-#   ├─────────────────────────┤
-#   │     Network Monitor     │  (35% height)
-#   ├────────────┬────────────┤
-#   │    FDs     │    TCP     │  (25% height)
-#   └────────────┴────────────┘
+#   ┌─────────────────────────────────────────┐
+#   │                  htop                   │  (70% height)
+#   ├─────────────┬─────────────┬─────────────┤
+#   │   Network   │     FDs     │     TCP     │  (30% height, 33% each)
+#   └─────────────┴─────────────┴─────────────┘
 
 # FD monitor command - shows summary only (not per-process) to reduce visual noise
 # Note: Collects all data BEFORE clearing screen to avoid flicker from slow lsof
-FD_CMD='set +e; while true; do total=0; proc_count=0; pids=$(pgrep python 2>/dev/null || true); for pid in $pids; do if [ -n "$pid" ]; then proc_count=$((proc_count + 1)); if [ -d "/proc/$pid/fd" ]; then count=$(ls /proc/$pid/fd 2>/dev/null | wc -l | tr -d " "); else count=$(lsof -p "$pid" 2>/dev/null | wc -l | tr -d " "); fi; count=${count:-0}; total=$((total + count)); fi; done; limit=$(ulimit -n); clear; echo "=== Python File Descriptors ==="; echo; if [ "$proc_count" -eq 0 ]; then echo "(no Python processes)"; else echo "Processes: $proc_count"; echo "Total FDs: $total"; echo; echo "────────────────────"; echo "Limit: $limit per process"; if [ $total -gt $((limit / 2)) ]; then echo; echo "⚠️  Approaching limit!"; fi; fi; sleep 2; done'
+FD_CMD='set +e; while true; do total=0; proc_count=0; pids=$(pgrep python 2>/dev/null || true); for pid in $pids; do if [ -n "$pid" ]; then proc_count=$((proc_count + 1)); if [ -d "/proc/$pid/fd" ]; then count=$(ls /proc/$pid/fd 2>/dev/null | wc -l | tr -d " "); else count=$(lsof -p "$pid" 2>/dev/null | wc -l | tr -d " "); fi; count=${count:-0}; total=$((total + count)); fi; done; limit=$(ulimit -n); clear; echo "=== File Descriptors ==="; echo; if [ "$proc_count" -eq 0 ]; then echo "(no Python procs)"; else echo "Procs: $proc_count"; echo "FDs:   $total"; echo "Limit: $limit"; if [ $total -gt $((limit / 2)) ]; then echo; echo "⚠️ Near limit!"; fi; fi; sleep 2; done'
 
 # TCP monitor command - inline script
 # Note: set +e disables exit-on-error; grep -c returns 1 on no match which would crash without this
-TCP_CMD='set +e; while true; do clear; echo "=== TCP Connections ==="; echo; if command -v ss >/dev/null 2>&1; then est=$(ss -tan state established 2>/dev/null | tail -n +2 | wc -l | tr -d " "); tw=$(ss -tan state time-wait 2>/dev/null | tail -n +2 | wc -l | tr -d " "); listen=$(ss -tln 2>/dev/null | tail -n +2 | wc -l | tr -d " "); else est=$(netstat -an 2>/dev/null | grep -c ESTABLISHED); est=${est:-0}; tw=$(netstat -an 2>/dev/null | grep -c TIME_WAIT); tw=${tw:-0}; listen=$(netstat -an 2>/dev/null | grep -c LISTEN); listen=${listen:-0}; fi; est=${est:-0}; tw=${tw:-0}; listen=${listen:-0}; echo "ESTABLISHED: $est"; echo "TIME_WAIT:   $tw"; echo "LISTENING:   $listen"; echo; echo "────────────────────"; echo "Total active: $((est + tw))"; sleep 1; done'
+TCP_CMD='set +e; while true; do clear; echo "=== TCP Connections ==="; echo; if command -v ss >/dev/null 2>&1; then est=$(ss -tan state established 2>/dev/null | tail -n +2 | wc -l | tr -d " "); tw=$(ss -tan state time-wait 2>/dev/null | tail -n +2 | wc -l | tr -d " "); listen=$(ss -tln 2>/dev/null | tail -n +2 | wc -l | tr -d " "); else est=$(netstat -an 2>/dev/null | grep -c ESTABLISHED); est=${est:-0}; tw=$(netstat -an 2>/dev/null | grep -c TIME_WAIT); tw=${tw:-0}; listen=$(netstat -an 2>/dev/null | grep -c LISTEN); listen=${listen:-0}; fi; est=${est:-0}; tw=${tw:-0}; listen=${listen:-0}; echo "ESTAB: $est"; echo "T_WAIT: $tw"; echo "LISTEN: $listen"; echo "────────────"; echo "Active: $((est + tw))"; sleep 1; done'
 
 # Create session with htop in first pane (pane 0)
 tmux new-session -d -s "$SESSION_NAME" -n "monitor" "$PROCESS_MONITOR"
 
-# Split pane 0 vertically -> creates pane 1 (network) below pane 0 (htop)
+# Split pane 0 vertically -> creates pane 1 (bottom row) below pane 0 (htop)
 tmux split-window -v -t "$SESSION_NAME:0" "$NETWORK_MONITOR"
 
-# Split pane 1 vertically -> creates pane 2 (FD) below pane 1 (network)
-tmux split-window -v -t "$SESSION_NAME:0.1" "bash -c '$FD_CMD'"
+# Split pane 1 horizontally -> creates pane 2 (FDs) to the right of Network
+tmux split-window -h -t "$SESSION_NAME:0.1" "bash -c '$FD_CMD'"
 
-# Split pane 2 horizontally -> creates pane 3 (TCP) to the right of pane 2 (FD)
+# Split pane 2 horizontally -> creates pane 3 (TCP) to the right of FDs
 tmux split-window -h -t "$SESSION_NAME:0.2" "bash -c '$TCP_CMD'"
 
-# Adjust pane sizes for better proportions
-# Layout: htop 50%, nettop 30%, FD+TCP 20%
-# Resize bottom panes first (smallest), then work up
-# This ensures each resize doesn't affect previously set sizes
+# Resize: htop gets 70% vertical, bottom row gets 30%
+tmux resize-pane -t "$SESSION_NAME:0.0" -y 70%
 
-# First, make the bottom row (panes 2,3) small - about 20% of window
-tmux resize-pane -t "$SESSION_NAME:0.2" -y 20%
-
-# Then give htop (pane 0) half the window
-tmux resize-pane -t "$SESSION_NAME:0.0" -y 50%
-
-# Pane 1 (nettop) automatically gets the remaining ~30%
+# Make the three bottom panes roughly equal width (33% each)
+# Pane 1 (Network) gets 33% of window width
+tmux resize-pane -t "$SESSION_NAME:0.1" -x 33%
+# Pane 2 (FDs) gets 50% of remaining (which is ~33% of total)
+tmux resize-pane -t "$SESSION_NAME:0.2" -x 50%
+# Pane 3 (TCP) automatically gets the rest (~33%)
 
 # Select htop pane initially
 tmux select-pane -t "$SESSION_NAME:0.0"
