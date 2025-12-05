@@ -369,13 +369,14 @@ tmux split-window -v -t "$SESSION_NAME:0.1" "bash -c '$FD_CMD'"
 # Split pane 2 horizontally -> creates pane 3 (TCP) to the right of pane 2 (FD)
 tmux split-window -h -t "$SESSION_NAME:0.2" "bash -c '$TCP_CMD'"
 
-# Set layout: main-horizontal with htop on top, rest below
-# Then manually adjust sizes for better proportions
+# Adjust pane sizes using percentages for responsive layout
+# Layout: htop 50%, nettop 30%, FD+TCP 20%
+# Note: We resize from bottom up to get correct proportions
 tmux select-pane -t "$SESSION_NAME:0.0"
-tmux resize-pane -t "$SESSION_NAME:0.0" -y 18
+tmux resize-pane -t "$SESSION_NAME:0.0" -p 50
 
 tmux select-pane -t "$SESSION_NAME:0.1"
-tmux resize-pane -t "$SESSION_NAME:0.1" -y 15
+tmux resize-pane -t "$SESSION_NAME:0.1" -p 60  # 60% of remaining 50% = 30% total
 
 # Select htop pane initially
 tmux select-pane -t "$SESSION_NAME:0.0"
