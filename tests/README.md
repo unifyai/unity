@@ -1037,26 +1037,26 @@ Use the cleanup helper to delete test projects from the Unify backend. By defaul
 
 ```bash
 # first time only, ensure it's executable
-chmod +x tests/.project_cleanup.sh
+chmod +x tests/project_cleanup.sh
 
 # show what would be deleted (no changes), prompt env if needed
-tests/.project_cleanup.sh --dry-run
+tests/project_cleanup.sh --dry-run
 
 # delete all test projects (shared + random) interactively
-tests/.project_cleanup.sh
+tests/project_cleanup.sh
 
 # delete without prompts
-tests/.project_cleanup.sh -y
+tests/project_cleanup.sh -y
 
 # only delete random projects (UnityTests_*), keep the shared one
-tests/.project_cleanup.sh --random-only
+tests/project_cleanup.sh --random-only
 
 # only delete the shared project (UnityTests), keep random ones
-tests/.project_cleanup.sh --shared-only
+tests/project_cleanup.sh --shared-only
 
 # force environment without prompt
-tests/.project_cleanup.sh -s   # staging
-tests/.project_cleanup.sh -p   # production
+tests/project_cleanup.sh -s   # staging
+tests/project_cleanup.sh -p   # production
 ```
 
 | Option | Description |
