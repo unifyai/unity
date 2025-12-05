@@ -33,7 +33,7 @@ async def get_last_store_chat_history() -> StoreChatHistory:
         limit=1,
     )
     if len(bus_events):
-        return Event.from_bus_event(bus_events[0]).to_dict()
+        return Event.from_bus_event(bus_events[0])
     return None
 
 
@@ -484,7 +484,9 @@ async def init_conv_manager(cm: "ConversationManager") -> None:
             if store_chat_history:
                 await cm.event_broker.publish(
                     "app:comms:chat_history",
-                    GetChatHistory(chat_history=store_chat_history.chat_history).to_json(),
+                    GetChatHistory(
+                        chat_history=store_chat_history.chat_history
+                    ).to_json(),
                 )
 
             # Mark as initialized

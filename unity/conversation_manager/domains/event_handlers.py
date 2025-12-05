@@ -365,7 +365,7 @@ async def _(
 @EventHandler.register(GetChatHistory)
 async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
     print("Received get chat history")
-    cm.chat_history.insert(0, event.chat_history)
+    cm.chat_history = event.chat_history + cm.chat_history
 
 
 @EventHandler.register(ConductorHandleStarted)

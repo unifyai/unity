@@ -431,11 +431,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
     async def store_chat_history(self):
-        user_msgs = [msg for msg in self.chat_history if msg["role"] == "user"]
-        if len(user_msgs):
+        if len(self.chat_history) >= 2:
             await self.event_broker.publish(
                 "app:comms:chat_history",
-                StoreChatHistory(chat_history=user_msgs[-1]).to_json()
+                StoreChatHistory(chat_history=self.chat_history[-2:]).to_json(),
             )
             await asyncio.sleep(2)
 

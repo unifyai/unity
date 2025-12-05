@@ -290,7 +290,7 @@ class ContactInfoResponse(Event):
 
 @dataclass
 class StoreChatHistory(Event):
-    chat_history: str
+    chat_history: list[dict]
 
     def __str__(self) -> str:
         return self._repr_truncated()
@@ -305,7 +305,7 @@ class StoreChatHistory(Event):
 @dataclass
 class GetChatHistory(Event):
     loggable: ClassVar[bool] = False
-    chat_history: str
+    chat_history: list[dict]
 
     def __str__(self) -> str:
         return self._repr_truncated()
