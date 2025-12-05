@@ -139,10 +139,6 @@ tests/.watch_tests.sh
 
 # Watch ALL terminals' tests
 tests/.watch_tests.sh --all
-
-# List sessions across all terminals
-tests/.list_all_tests.sh
-tests/.list_all_tests.sh --count  # Summary only
 ```
 
 **Cleanup:**
@@ -536,13 +532,6 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 
   > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/`. Logs are persisted there, so keeping sessions open just clutters the output. Run `tests/.kill_failed.sh` after investigating failures.
 
-- **List sessions across all terminals**:
-
-  ```bash
-  tests/.list_all_tests.sh         # Full session list
-  tests/.list_all_tests.sh --count # Summary counts only
-  ```
-
 - **Kill a single session** once a test finishes (the socket name is printed when tests are launched):
 
   ```bash
@@ -616,7 +605,7 @@ tmux switch-client -t <name>
 ```bash
 tests/.watch_tests.sh        # Watch this terminal's tests
 tests/.kill_failed.sh        # Kill failed sessions
-tests/.list_all_tests.sh     # See all terminals' tests
+tests/.kill_server.sh        # Kill all sessions (entire server)
 ```
 
 That's it! Run tests, use the helpers to monitor, and jump into whichever test you want to watch.
