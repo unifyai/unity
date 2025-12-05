@@ -4,9 +4,9 @@ set -euo pipefail
 # Kill all failed tmux sessions (those starting with "f")
 #
 # Usage:
-#   ./.kill_failed.sh        # Kill all failed sessions in THIS terminal
-#   ./.kill_failed.sh -n     # Dry run - show what would be killed
-#   ./.kill_failed.sh --all  # Kill failed sessions across ALL terminals
+#   ./kill_failed.sh        # Kill all failed sessions in THIS terminal
+#   ./kill_failed.sh -n     # Dry run - show what would be killed
+#   ./kill_failed.sh --all  # Kill failed sessions across ALL terminals
 
 # ---- Terminal-based isolation ----
 # Uses the same socket detection as parallel_run.sh
@@ -42,7 +42,7 @@ while (( "$#" )); do
       shift
       ;;
     -h|--help)
-      echo "Usage: ./.kill_failed.sh [-n|--dry-run] [--all]"
+      echo "Usage: ./kill_failed.sh [-n|--dry-run] [--all]"
       echo ""
       echo "Kill all failed tmux sessions (those starting with 'f')."
       echo ""

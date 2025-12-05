@@ -90,8 +90,8 @@ class TestHelperScripts:
         assert os.access(script, os.X_OK), f"Script not executable: {script}"
 
     def test_kill_failed_supports_all_flag(self):
-        """The .kill_failed.sh script should support --all flag."""
-        script = TESTS_DIR / ".kill_failed.sh"
+        """The kill_failed.sh script should support --all flag."""
+        script = TESTS_DIR / "kill_failed.sh"
         result = subprocess.run(
             [str(script), "--help"],
             capture_output=True,

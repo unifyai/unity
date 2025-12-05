@@ -321,13 +321,47 @@ run_cmd() {
   printf 'bash -lc %q' "$inner"
 }
 
-# Ensure we don't collide with existing sessions
+# Ensure we don't collide with existing sessions.
+# Checks status prefix variants (r ⏳, p ✅, f ❌) since sessions get renamed
+# after completion, which could cause race conditions with subsequent runs.
+#
+# When called WITHOUT a prefix: checks unprefixed AND all prefixed variants
+# When called WITH a prefix: only checks prefixed variants (the unprefixed
+#   session is the one we just created and are about to rename)
 unique_session_name() {
-  local base="$1" name="$1" n=1
-  while tmux_cmd has-session -t "$name" 2>/dev/null; do
-    ((n++)); name="${base}-${n}"
+  local input="$1" n=1
+
+  # Strip any status prefix to get the base name for collision checking
+  local base="$input"
+  local prefix=""
+  case "$input" in
+    "r ⏳ "*) base="${input#r ⏳ }"; prefix="r ⏳ " ;;
+    "p ✅ "*) base="${input#p ✅ }"; prefix="p ✅ " ;;
+    "f ❌ "*) base="${input#f ❌ }"; prefix="f ❌ " ;;
+  esac
+
+  local candidate="$base"
+  while true; do
+    local found=0
+    # If input had NO prefix, check unprefixed version too
+    # (If it had a prefix, skip - that's our just-created session we're renaming)
+    if [[ -z "$prefix" ]]; then
+      tmux_cmd has-session -t "$candidate" 2>/dev/null && found=1
+    fi
+    # Always check all prefixed versions to detect renamed sessions
+    tmux_cmd has-session -t "r ⏳ $candidate" 2>/dev/null && found=1
+    tmux_cmd has-session -t "p ✅ $candidate" 2>/dev/null && found=1
+    tmux_cmd has-session -t "f ❌ $candidate" 2>/dev/null && found=1
+
+    if (( found == 0 )); then
+      break
+    fi
+    ((n++))
+    candidate="${base}-${n}"
   done
-  printf "%s" "$name"
+
+  # Return with original prefix (if any)
+  printf "%s%s" "$prefix" "$candidate"
 }
 
 # Turn a file path (or pytest node id) into a session base name
@@ -441,7 +475,9 @@ else
 fi
 
 # Build a safe find pipeline:
-# find <roots> \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "test_*.py" -print0 \)
+# find <roots> -mindepth 1 \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "test_*.py" -print0 \)
+# Note: -mindepth 1 ensures root directories aren't pruned even if they match EXCLUDE_DIRS
+# (e.g., explicitly passing "fixtures/" should search it, not prune it)
 build_find_cmd() {
   local -a cmd=( find )
   if (( ${#roots[@]} )); then
@@ -450,7 +486,8 @@ build_find_cmd() {
     cmd+=( "." )
   fi
 
-  cmd+=( "(" -type d "(" )
+  # -mindepth 1: don't apply exclusions to root directories themselves
+  cmd+=( -mindepth 1 "(" -type d "(" )
   local first=1
   for d in "${EXCLUDE_DIRS[@]}"; do
     if (( first )); then
