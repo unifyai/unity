@@ -101,6 +101,7 @@ alias attach='~/unity/tests/attach.sh'
 alias kill_failed='~/unity/tests/kill_failed.sh'
 alias kill_server='~/unity/tests/kill_server.sh'
 alias list_runs='~/unity/tests/list_runs.sh'
+alias monitor_resources='~/unity/tests/monitor_resources.sh'
 ```
 
 After adding, run `source ~/.zshrc` (or restart your terminal). You can then run `parallel_run`, `watch_tests`, etc. from any directory.
@@ -1099,6 +1100,117 @@ Grid search composes with all `parallel_run.sh` features:
 ```
 
 This generates 2 models × 5 repeats = 10 runs, useful for comparing pass rates across models.
+
+---
+
+## Resource Monitor Dashboard (`monitor_resources.sh`)
+
+When running parallel tests with heavy network I/O, it's useful to monitor system resources to understand bottlenecks, detect connection leaks, and ensure you're not hitting OS limits.
+
+### Quick Start
+
+```bash
+# Make executable (first time only)
+chmod +x tests/monitor_resources.sh
+
+# Launch the dashboard
+tests/monitor_resources.sh
+
+# Or add an alias to ~/.zshrc
+alias monitor_resources='~/unity/tests/monitor_resources.sh'
+```
+
+This launches a tmux-based dashboard with four panes:
+
+```
+┌──────────────────────────────────────────────┐
+│                    htop                      │
+│          (CPU, Memory, Processes)            │
+├──────────────────────────────────────────────┤
+│                   nettop                     │
+│         (Per-process Network I/O)            │
+├──────────────────────┬───────────────────────┤
+│   File Descriptors   │   TCP Connections     │
+│  (Python processes)  │   (Active sockets)    │
+└──────────────────────┴───────────────────────┘
+```
+
+### What Each Pane Shows
+
+| Pane | Tool | What to Watch |
+|------|------|---------------|
+| **Top** | `htop` | CPU per core, memory usage, process list. Moderate CPU (20-50%) is normal for async tests. |
+| **Middle** | `nettop` | Per-process network I/O (bytes in/out). Look for Python processes with high bandwidth. |
+| **Bottom Left** | File Descriptors | Count of open FDs for Python processes. Each TCP connection = 1 FD. Watch for growth approaching `ulimit`. |
+| **Bottom Right** | TCP Connections | ESTABLISHED connections (active), TIME_WAIT (closing), LISTEN (servers). High TIME_WAIT is normal after connection bursts. |
+
+### Interpreting Metrics During Test Runs
+
+**CPU:**
+- Expect 20-50% usage from async event loops and SSL handshakes
+- High CPU with low network I/O = potential bottleneck (not our tests, which are network-bound)
+
+**Memory:**
+- Watch for continuous growth during long test runs (potential memory leak)
+- Cached memory is fine—the kernel releases it when needed
+
+**File Descriptors:**
+- Default macOS limit is ~256 per process
+- If approaching limit, you'll see connection failures
+- Fix: run `ulimit -n 4096` before `parallel_run.sh`
+
+**TIME_WAIT Connections:**
+- Normal after connections close (lasts ~60s on macOS)
+- Very high counts indicate excessive connection churn
+- Not usually a problem unless >1000s
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl-b + arrow` | Move between panes |
+| `Ctrl-b + z` | Zoom current pane (toggle fullscreen) |
+| `Ctrl-b + d` | Detach from session (keeps running in background) |
+| `Ctrl-c` | Stop the current pane's command |
+
+### Managing the Dashboard
+
+```bash
+# Re-attach to a running dashboard
+tmux attach -t unity-monitor
+
+# Kill the dashboard
+tmux kill-session -t unity-monitor
+
+# Check if dashboard is running
+tmux has-session -t unity-monitor && echo "Running"
+```
+
+### Pre-Test Tuning (Heavy Parallelism)
+
+Before running many parallel tests:
+
+```bash
+# Increase file descriptor limit (resets on terminal close)
+ulimit -n 4096
+
+# Check current limit
+ulimit -n
+```
+
+For extreme parallelism (hundreds of concurrent connections):
+
+```bash
+# macOS kernel tuning (requires sudo, resets on reboot)
+sudo sysctl -w kern.maxfiles=65536
+sudo sysctl -w kern.maxfilesperproc=65536
+```
+
+### Requirements
+
+- **tmux**: `brew install tmux` (required)
+- **htop**: `brew install htop` (recommended, falls back to `top`)
+- **nettop**: Built into macOS (no install needed)
 
 ---
 
