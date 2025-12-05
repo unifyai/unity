@@ -205,9 +205,10 @@ def clean_tmux_sessions():
     """Fixture that cleans up any test-related tmux sessions before and after."""
     # Pattern to match ONLY the fixture test sessions created by tests, NOT parent sessions.
     # Parent sessions are named like "test_parallel_run-test_isolation" (from the test file path).
-    # Fixture sessions are named like "r ⏳ fixtures-test_always_pass" (from the fixtures/ directory).
+    # Fixture sessions are named like "r ⏳ test_parallel_run-fixtures-test_always_pass"
+    # (from the fixtures/ directory path: tests/test_parallel_run/fixtures/).
     # We only want to clean up the fixture sessions, not kill our parent session!
-    pattern = r"^[pfr]\s*[✅❌⏳]\s*fixtures-"
+    pattern = r"^[pfr]\s*[✅❌⏳]\s*test_parallel_run-fixtures-"
 
     # Clean before
     kill_sessions_matching(pattern)
@@ -227,6 +228,9 @@ class ParallelRunner:
         self.fixtures_dir = FIXTURES_DIR
         self.repo_root = REPO_ROOT
         self._created_sessions: List[tuple[str, str]] = []  # (socket, session_name)
+        # Generate a unique socket name for this runner instance so all runs
+        # within the same test use the same socket (enables collision detection)
+        self._socket_name = f"unity_test_{os.getpid()}"
 
     def run(
         self,
@@ -262,6 +266,9 @@ class ParallelRunner:
         # Ensure we use random projects mode to avoid interfering with the shared UnityTests project
         run_env["UNIFY_TESTS_RAND_PROJ"] = "True"
         run_env["UNIFY_TESTS_DELETE_PROJ_ON_EXIT"] = "True"
+        # Use a consistent socket name for all runs within this runner instance
+        # This enables collision detection between sequential runs in the same test
+        run_env["UNITY_TEST_SOCKET"] = self._socket_name
         if env:
             run_env.update(env)
 

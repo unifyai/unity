@@ -312,25 +312,28 @@ class TestMultipleRuns:
 
     def test_second_run_creates_new_sessions(self, runner):
         """Second run with same file should create sessions with unique names."""
+        # Start first run WITHOUT waiting (so session exists when second run starts)
         result1 = runner.run(
             runner.fixture_path("test_single_test.py"),
-            wait_for_completion=True,
+            wait_for_completion=False,
         )
 
+        # Start second run immediately (while first session still exists)
+        # This should detect the collision and create a unique name
         result2 = runner.run(
             runner.fixture_path("test_single_test.py"),
-            wait_for_completion=True,
+            wait_for_completion=True,  # Wait for both to complete
         )
 
-        # Both should succeed
+        # Both should succeed in creating sessions
         assert result1.exit_code == 0
         assert result2.exit_code == 0
 
-        # Sessions should have unique names (e.g., appended -2)
+        # Sessions should have unique names (e.g., second gets -2 appended)
         all_sessions = result1.sessions_created + result2.sessions_created
         assert len(set(all_sessions)) == len(
             all_sessions,
-        ), "Session names should be unique"
+        ), f"Session names should be unique: {all_sessions}"
 
 
 class TestPerTestEdgeCases:
