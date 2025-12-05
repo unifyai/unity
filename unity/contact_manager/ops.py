@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Set
 import unify
 from pydantic import ValidationError
 
+from ..common.log_utils import log as unity_log
 from ..common.tool_outcome import ToolOutcome
 from .types.contact import Contact
 from .custom_columns import sanitize_custom_columns
@@ -113,7 +114,7 @@ def create_contact(
 
     _assert_no_duplicate_unique(self, contact_details)
 
-    log = unify.log(context=self._ctx, **contact_details, new=True, mutable=True)
+    log = unity_log(context=self._ctx, **contact_details, new=True, mutable=True)
     try:
         self._data_store.put(log.entries)
     except Exception:
