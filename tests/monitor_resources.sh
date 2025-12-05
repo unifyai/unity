@@ -324,121 +324,6 @@ ss -tanp 2>/dev/null | grep -oP "users:\(\(\"\K[^\"]+|pid=\K[0-9]+" | paste - - 
 
 setup_network_monitor
 
-# ============================================================================
-# File Descriptor Monitor (platform-specific)
-# ============================================================================
-setup_fd_monitor() {
-  case "$OS_TYPE" in
-    macos)
-      FD_MONITOR='watch -n 1 '\''
-echo "=== Python File Descriptors ==="
-echo
-total=0
-for pid in $(pgrep -x python 2>/dev/null || pgrep -x python3 2>/dev/null || echo ""); do
-  if [ -n "$pid" ]; then
-    count=$(lsof -p "$pid" 2>/dev/null | wc -l | tr -d " ")
-    cmd=$(ps -p "$pid" -o comm= 2>/dev/null || echo "python")
-    echo "PID $pid ($cmd): $count FDs"
-    total=$((total + count))
-  fi
-done
-echo
-if [ $total -eq 0 ]; then
-  echo "(no Python processes found)"
-else
-  echo "────────────────────"
-  echo "Total: $total FDs"
-  limit=$(ulimit -n)
-  echo "Limit: $limit per process"
-  if [ $total -gt $((limit / 2)) ]; then
-    echo "⚠️  Warning: approaching limit"
-  fi
-fi
-'\'''
-      ;;
-    linux|wsl)
-      # Linux can use /proc for faster FD counting
-      FD_MONITOR='watch -n 1 '\''
-echo "=== Python File Descriptors ==="
-echo
-total=0
-for pid in $(pgrep -x python 2>/dev/null; pgrep -x python3 2>/dev/null); do
-  if [ -n "$pid" ] && [ -d "/proc/$pid/fd" ]; then
-    count=$(ls -1 /proc/$pid/fd 2>/dev/null | wc -l)
-    cmd=$(cat /proc/$pid/comm 2>/dev/null || echo "python")
-    echo "PID $pid ($cmd): $count FDs"
-    total=$((total + count))
-  fi
-done
-echo
-if [ $total -eq 0 ]; then
-  echo "(no Python processes found)"
-else
-  echo "────────────────────"
-  echo "Total: $total FDs"
-  limit=$(ulimit -n)
-  echo "Limit: $limit per process"
-  if [ $total -gt $((limit / 2)) ]; then
-    echo "⚠️  Warning: approaching limit"
-  fi
-fi
-'\'''
-      ;;
-  esac
-}
-
-setup_fd_monitor
-
-# ============================================================================
-# TCP Connection Monitor (platform-specific)
-# ============================================================================
-setup_tcp_monitor() {
-  case "$OS_TYPE" in
-    macos)
-      TCP_MONITOR='watch -n 1 '\''
-echo "=== TCP Connections ==="
-echo
-est=$(netstat -an 2>/dev/null | grep -c ESTABLISHED || echo 0)
-tw=$(netstat -an 2>/dev/null | grep -c TIME_WAIT || echo 0)
-listen=$(netstat -an 2>/dev/null | grep -c LISTEN || echo 0)
-echo "ESTABLISHED: $est"
-echo "TIME_WAIT:   $tw"
-echo "LISTENING:   $listen"
-echo
-echo "────────────────────"
-echo "Total active: $((est + tw))"
-echo
-if [ $tw -gt 100 ]; then
-  echo "⚠️  High TIME_WAIT count"
-  echo "   (normal after many connections close)"
-fi
-'\'''
-      ;;
-    linux|wsl)
-      # Linux: use ss for faster socket stats
-      TCP_MONITOR='watch -n 1 '\''
-echo "=== TCP Connections ==="
-echo
-est=$(ss -tan state established 2>/dev/null | tail -n +2 | wc -l)
-tw=$(ss -tan state time-wait 2>/dev/null | tail -n +2 | wc -l)
-listen=$(ss -tln 2>/dev/null | tail -n +2 | wc -l)
-echo "ESTABLISHED: $est"
-echo "TIME_WAIT:   $tw"
-echo "LISTENING:   $listen"
-echo
-echo "────────────────────"
-echo "Total active: $((est + tw))"
-echo
-if [ $tw -gt 100 ]; then
-  echo "⚠️  High TIME_WAIT count"
-  echo "   (normal after many connections close)"
-fi
-'\'''
-      ;;
-  esac
-}
-
-setup_tcp_monitor
 
 # ============================================================================
 # Launch Dashboard
@@ -457,35 +342,40 @@ echo
 # Create the tmux session with the layout
 # Layout:
 #   ┌─────────────────────────┐
-#   │          htop           │  (45% height)
+#   │          htop           │  (40% height)
 #   ├─────────────────────────┤
 #   │     Network Monitor     │  (35% height)
 #   ├────────────┬────────────┤
-#   │    FDs     │    TCP     │  (20% height)
+#   │    FDs     │    TCP     │  (25% height)
 #   └────────────┴────────────┘
 
-# Create session with htop in first pane
+# FD monitor command - inline script avoids quoting issues
+FD_CMD='while true; do clear; echo "=== Python File Descriptors ==="; echo; total=0; for pid in $(pgrep python 2>/dev/null); do if [ -n "$pid" ]; then if [ -d "/proc/$pid/fd" ]; then count=$(ls /proc/$pid/fd 2>/dev/null | wc -l); else count=$(lsof -p "$pid" 2>/dev/null | wc -l); fi; cmd=$(ps -p "$pid" -o comm= 2>/dev/null || echo python); echo "PID $pid ($cmd): $count FDs"; total=$((total + count)); fi; done; echo; if [ $total -eq 0 ]; then echo "(no Python processes)"; else echo "────────────────────"; echo "Total: $total FDs"; echo "Limit: $(ulimit -n) per process"; fi; sleep 1; done'
+
+# TCP monitor command - inline script
+TCP_CMD='while true; do clear; echo "=== TCP Connections ==="; echo; if command -v ss >/dev/null 2>&1; then est=$(ss -tan state established 2>/dev/null | tail -n +2 | wc -l); tw=$(ss -tan state time-wait 2>/dev/null | tail -n +2 | wc -l); listen=$(ss -tln 2>/dev/null | tail -n +2 | wc -l); else est=$(netstat -an 2>/dev/null | grep -c ESTABLISHED || echo 0); tw=$(netstat -an 2>/dev/null | grep -c TIME_WAIT || echo 0); listen=$(netstat -an 2>/dev/null | grep -c LISTEN || echo 0); fi; echo "ESTABLISHED: $est"; echo "TIME_WAIT:   $tw"; echo "LISTENING:   $listen"; echo; echo "────────────────────"; echo "Total active: $((est + tw))"; sleep 1; done'
+
+# Create session with htop in first pane (pane 0)
 tmux new-session -d -s "$SESSION_NAME" -n "monitor" "$PROCESS_MONITOR"
 
-# Split horizontally for network monitor (bottom half initially)
-tmux split-window -v -t "$SESSION_NAME" "$NETWORK_MONITOR"
+# Split pane 0 vertically -> creates pane 1 (network) below pane 0 (htop)
+tmux split-window -v -t "$SESSION_NAME:0" "$NETWORK_MONITOR"
 
-# Split the bottom pane again for the stats panes
-tmux split-window -v -t "$SESSION_NAME" "bash -c '$FD_MONITOR'"
+# Split pane 1 vertically -> creates pane 2 (FD) below pane 1 (network)
+tmux split-window -v -t "$SESSION_NAME:0.1" "bash -c '$FD_CMD'"
 
-# Split the bottom-most pane horizontally
-tmux split-window -h -t "$SESSION_NAME" "bash -c '$TCP_MONITOR'"
+# Split pane 2 horizontally -> creates pane 3 (TCP) to the right of pane 2 (FD)
+tmux split-window -h -t "$SESSION_NAME:0.2" "bash -c '$TCP_CMD'"
 
-# Adjust pane sizes (top pane gets more space)
-# Select pane 0 (htop) and resize
+# Set layout: main-horizontal with htop on top, rest below
+# Then manually adjust sizes for better proportions
 tmux select-pane -t "$SESSION_NAME:0.0"
-tmux resize-pane -t "$SESSION_NAME:0.0" -y 45%
+tmux resize-pane -t "$SESSION_NAME:0.0" -y 18
 
-# Select pane 1 (network) and resize
 tmux select-pane -t "$SESSION_NAME:0.1"
-tmux resize-pane -t "$SESSION_NAME:0.1" -y 35%
+tmux resize-pane -t "$SESSION_NAME:0.1" -y 15
 
-# Select pane 0 initially (htop)
+# Select htop pane initially
 tmux select-pane -t "$SESSION_NAME:0.0"
 
 # Print usage info
