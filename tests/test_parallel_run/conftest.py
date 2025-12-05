@@ -269,7 +269,7 @@ class ParallelRunner:
         Returns:
             RunResult with exit code, output, created sessions, etc.
         """
-        # Record existing sessions (across all unity sockets)
+        # Record existing sessions (will be filtered by socket later for parallel isolation)
         existing_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
         existing_logs = set()
         if PYTEST_LOGS_DIR.exists():
@@ -309,10 +309,21 @@ class ParallelRunner:
         socket_match = re.search(r"\(socket:\s*(\S+)\)", stdout)
         socket_name = socket_match.group(1) if socket_match else ""
 
-        # Find new sessions
+        # Find new sessions - filter by the specific socket to avoid cross-test interference
         time.sleep(0.3)  # Brief pause for sessions to register
-        current_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
-        new_session_tuples = list(current_sessions - existing_sessions)
+        if socket_name:
+            # Only list sessions from THIS test's socket (parallel test isolation)
+            current_sessions = {
+                (s.socket, s.name) for s in list_tmux_sessions(socket=socket_name)
+            }
+            filtered_existing = {
+                (sock, name) for sock, name in existing_sessions if sock == socket_name
+            }
+        else:
+            # Fallback to all sockets if we couldn't extract socket name
+            current_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
+            filtered_existing = existing_sessions
+        new_session_tuples = list(current_sessions - filtered_existing)
         new_sessions = [name for _, name in new_session_tuples]
         self._created_sessions.extend(new_session_tuples)
 
