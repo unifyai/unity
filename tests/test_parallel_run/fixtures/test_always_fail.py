@@ -1,6 +1,6 @@
 """
 Fixture test file that always fails.
-Used for testing .parallel_run.sh behavior with failing tests.
+Used for testing parallel_run.sh behavior with failing tests.
 """
 
 

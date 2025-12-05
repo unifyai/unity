@@ -1,5 +1,5 @@
 """
-Individual flag tests for .parallel_run.sh.
+Individual flag tests for parallel_run.sh.
 
 Tests each flag in isolation:
 - --wait / -w

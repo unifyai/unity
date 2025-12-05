@@ -97,7 +97,6 @@ Add these aliases to your `~/.zshrc` or `~/.bashrc` for convenient access to tes
 # Unity test helper aliases
 alias parallel_run='~/unity/tests/parallel_run.sh'
 alias watch_tests='~/unity/tests/watch_tests.sh'
-alias attach='~/unity/tests/attach.sh'
 alias kill_failed='~/unity/tests/kill_failed.sh'
 alias kill_server='~/unity/tests/kill_server.sh'
 ```
@@ -154,9 +153,6 @@ tests/watch_tests.sh
 
 # Watch ALL terminals' tests
 tests/watch_tests.sh --all
-
-# Attach to a specific session to see its output
-tests/attach.sh '<session-name>'
 ```
 
 **Cleanup:**
@@ -246,7 +242,7 @@ In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` whic
 
 ### Live Status and Auto-Close
 
-- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. The leading ASCII character makes tab-completion easy in shells like zsh.
+- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
 - **Auto-close on success**: Sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
 - You can still attach before auto-close; you'll see the final message (e.g., `pytest exited with code: 0`) and a short notice that auto-close is scheduled.
 
@@ -622,7 +618,6 @@ tmux switch-client -t <name>
 
 ```bash
 tests/watch_tests.sh        # Watch this terminal's tests
-tests/attach.sh '<name>'    # Attach to a session
 tests/kill_failed.sh        # Kill failed sessions
 tests/kill_server.sh        # Kill all sessions (entire server)
 ```

@@ -1,5 +1,5 @@
 """
-Basic functionality tests for .parallel_run.sh.
+Basic functionality tests for parallel_run.sh.
 
 Tests different input types:
 - Single file

@@ -1,5 +1,5 @@
 """
-Combination tests for .parallel_run.sh.
+Combination tests for parallel_run.sh.
 
 Tests various flag combinations to ensure they work together correctly.
 This is essentially a grid search across the flag space.
@@ -540,7 +540,7 @@ class TestInputTypeCombinations:
         """Multiple explicit node IDs with -t and --wait should block and wait.
 
         This tests the exact scenario of:
-            .parallel_run.sh -t --wait file.py::test_a file.py::test_b ...
+            parallel_run.sh -t --wait file.py::test_a file.py::test_b ...
 
         The --wait flag should cause the script to block until all tests complete,
         regardless of whether -t is specified (which is somewhat redundant with
