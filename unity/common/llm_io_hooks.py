@@ -70,8 +70,22 @@ def _ensure_io_dir() -> str | None:
     return _LLM_IO_DIR
 
 
-def _write_llm_io(header: str, body: Any, *, label: str | None = None) -> None:
-    """Write a single LLM I/O artifact to the debug folder."""
+def _write_llm_io(
+    header: str,
+    body: Any,
+    *,
+    label: str | None = None,
+    kind: str = "io",
+) -> None:
+    """Write a single LLM I/O artifact to the debug folder.
+
+    Args:
+        header: Header line for the file content.
+        body: The payload to write (dict, str, or other serializable).
+        label: Optional label (e.g., endpoint name) to include in header.
+        kind: Type of I/O - "request" or "response". Included in filename
+              after timestamp to maintain alphabetical ordering.
+    """
     io_dir = _ensure_io_dir()
     if io_dir is None:
         return
@@ -80,7 +94,8 @@ def _write_llm_io(header: str, body: Any, *, label: str | None = None) -> None:
         now = datetime.now(timezone.utc)
         hhmmss = now.strftime("%H%M%S")
         ns = time.time_ns() % 1_000_000_000
-        base = f"{hhmmss}_{ns:09d}"
+        # Include kind in filename after timestamp for alphabetical ordering
+        base = f"{hhmmss}_{ns:09d}_{kind}"
         path = Path(io_dir) / f"{base}.txt"
 
         # Handle filename collision
@@ -106,7 +121,6 @@ def _write_llm_io(header: str, body: Any, *, label: str | None = None) -> None:
         try:
             from unity.constants import LOGGER
 
-            kind = "request" if "request" in header.lower() else "response"
             LOGGER.info(f"📝 LLM {kind} written to {path}")
         except Exception:
             pass
@@ -171,6 +185,7 @@ def _wrap_generate_non_stream(
                     "LLM request ➡️:",
                     _serialize_kw(kw),
                     label=endpoint,
+                    kind="request",
                 )
             except Exception:
                 pass
@@ -188,6 +203,7 @@ def _wrap_generate_non_stream(
                     "LLM response ⬅️:",
                     resp_body,
                     label=endpoint,
+                    kind="response",
                 )
             except Exception:
                 pass
@@ -220,6 +236,7 @@ def _wrap_generate_non_stream(
                     "LLM request ➡️:",
                     _serialize_kw(kw),
                     label=endpoint,
+                    kind="request",
                 )
             except Exception:
                 pass
@@ -237,6 +254,7 @@ def _wrap_generate_non_stream(
                     "LLM response ⬅️:",
                     resp_body,
                     label=endpoint,
+                    kind="response",
                 )
             except Exception:
                 pass
