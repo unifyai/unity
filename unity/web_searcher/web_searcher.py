@@ -7,6 +7,7 @@ import asyncio
 import unify
 import functools
 from pathlib import Path
+from unity.common.log_utils import log as unity_log
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
@@ -458,7 +459,7 @@ class WebSearcher(BaseWebSearcher):
             "actor_entrypoint": actor_entrypoint,
             "notes": notes or "",
         }
-        unify.log(context=self._websites_ctx, **entries, new=True, mutable=True)
+        unity_log(context=self._websites_ctx, **entries, new=True, mutable=True)
         return {"outcome": "website created", "details": {"host": host}}
 
     def _filter_websites(
