@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./.watch_tests.sh --all # Watch tests from ALL terminals
 
 # ---- Terminal-based isolation ----
-# Uses the same socket detection as .parallel_run.sh
+# Uses the same socket detection as parallel_run.sh
 _derive_socket_name() {
   local tty_id
   tty_id=$(tty 2>/dev/null)
