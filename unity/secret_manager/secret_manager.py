@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import unify
 from unity.common.llm_client import new_llm_client
+from unity.common.log_utils import log as unity_log
 import functools
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -836,7 +837,7 @@ class SecretManager(BaseSecretManager):
             "value": value,
             "description": description or "",
         }
-        log = unify.log(context=self._ctx, **entries, new=True, mutable=True)
+        log = unity_log(context=self._ctx, **entries, new=True, mutable=True)
 
         # .env sync (best-effort)
         try:
