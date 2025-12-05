@@ -35,7 +35,7 @@ show_help() {
   echo "  -h, --help      Show this help"
   echo ""
   echo "Examples:"
-  echo "  attach.sh 'd ✅ test_contact_manager-test_ask'"
+  echo "  attach.sh 'p ✅ test_contact_manager-test_ask'"
   echo "  attach.sh 'f ❌ test_actor-test_code_act'"
 }
 

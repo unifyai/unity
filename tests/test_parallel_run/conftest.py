@@ -50,7 +50,7 @@ class TmuxSession:
 
     @property
     def is_passed(self) -> bool:
-        return self.name.startswith("d")
+        return self.name.startswith("p")
 
     @property
     def is_failed(self) -> bool:
@@ -59,7 +59,7 @@ class TmuxSession:
     @property
     def base_name(self) -> str:
         """Strip the status prefix from the session name."""
-        for prefix in ["d ✅ ", "f ❌ ", "r ⏳ "]:
+        for prefix in ["p ✅ ", "f ❌ ", "r ⏳ "]:
             if self.name.startswith(prefix):
                 return self.name[len(prefix) :]
         return self.name
@@ -207,7 +207,7 @@ def clean_tmux_sessions():
     # Parent sessions are named like "test_parallel_run-test_isolation" (from the test file path).
     # Fixture sessions are named like "r ⏳ fixtures-test_always_pass" (from the fixtures/ directory).
     # We only want to clean up the fixture sessions, not kill our parent session!
-    pattern = r"^[dfr]\s*[✅❌⏳]\s*fixtures-"
+    pattern = r"^[pfr]\s*[✅❌⏳]\s*fixtures-"
 
     # Clean before
     kill_sessions_matching(pattern)
