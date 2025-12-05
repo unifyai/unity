@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 import unify
 
+from ..common.log_utils import log as unity_log
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
@@ -750,7 +751,7 @@ class GuidanceManager(BaseGuidanceManager):
             function_ids=function_ids or [],
         )
         payload = g.to_post_json()
-        log = unify.log(
+        log = unity_log(
             context=self._ctx,
             **payload,
             new=True,
