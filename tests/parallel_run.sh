@@ -35,6 +35,20 @@ _derive_socket_name() {
 
 TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
 
+# ---- Log directory naming ----
+# Log subdirectories use a datetime-prefixed format for natural time-based
+# ordering in the filesystem. Format: YYYY-MM-DDTHH-MM-SS_{socket_name}
+# This makes it easy to find recent test runs while preserving terminal isolation.
+_derive_log_subdir() {
+  local socket_name="$1"
+  local datetime
+  datetime=$(date +"%Y-%m-%dT%H-%M-%S")
+  echo "${datetime}_${socket_name}"
+}
+
+# Generate log subdir once at script start (stable for this run)
+LOG_SUBDIR="${UNITY_LOG_SUBDIR:-$(_derive_log_subdir "$TMUX_SOCKET")}"
+
 # Wrapper for all tmux commands to use our isolated socket
 # LC_ALL=en_US.UTF-8 ensures Unicode emojis work in session names
 tmux_cmd() {
@@ -234,8 +248,11 @@ is_var_in_env_overrides() {
 build_env_exports() {
   local exports=""
 
-  # Always export the socket name for log directory scoping
+  # Always export the socket name for tmux isolation
   exports="$exports UNITY_TEST_SOCKET=$TMUX_SOCKET"
+
+  # Export the log subdir for datetime-prefixed log directory naming
+  exports="$exports UNITY_LOG_SUBDIR=$LOG_SUBDIR"
 
   # Add all --env flag overrides
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
@@ -656,8 +673,8 @@ done
 
 echo
 echo "========================================================================"
-echo "📁 Test logs for THIS terminal: .pytest_logs/$TMUX_SOCKET/"
-echo "📂 All terminals' logs:         .pytest_logs/*/"
+echo "📁 Test logs for THIS run: .pytest_logs/$LOG_SUBDIR/"
+echo "📂 All log directories:    .pytest_logs/*/"
 echo "========================================================================"
 echo
 echo "Trigger:"
@@ -738,7 +755,7 @@ if (( WAIT_FOR_COMPLETION )); then
   done
 
   if (( failures )); then
-    echo "Failures detected. Logs are available in .pytest_logs/$TMUX_SOCKET/"
+    echo "Failures detected. Logs are available in .pytest_logs/$LOG_SUBDIR/"
     exit 1
   else
     echo "All tests passed!"

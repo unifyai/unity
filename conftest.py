@@ -162,12 +162,18 @@ def _derive_log_name_from_args(args: list) -> str:
 
 
 def _get_log_subdir() -> str:
-    """Determine the log subdirectory based on terminal/socket context.
+    """Determine the log subdirectory for pytest logs.
 
-    Returns:
-        - Socket name (e.g., 'unity_dev_ttys042') if UNITY_TEST_SOCKET is set
-        - 'standalone' for direct pytest invocations
+    Returns a datetime-prefixed directory name for natural time-based ordering:
+        - UNITY_LOG_SUBDIR if set (e.g., '2025-12-05T14-30-45_unity_dev_ttys042')
+        - Falls back to UNITY_TEST_SOCKET for legacy compatibility
+        - 'standalone' for direct pytest invocations outside parallel_run.sh
     """
+    # Prefer the datetime-prefixed log subdir if available
+    log_subdir = os.environ.get("UNITY_LOG_SUBDIR", "").strip()
+    if log_subdir:
+        return log_subdir
+    # Fallback to socket name for backward compatibility
     socket = os.environ.get("UNITY_TEST_SOCKET", "").strip()
     if socket:
         return socket
@@ -219,13 +225,11 @@ def pytest_sessionstart(session):
 
     root_path = Path(config.rootpath)
 
-    # Determine subdirectory based on terminal context (socket name or 'standalone')
+    # Determine subdirectory based on terminal context
+    # Directory names are datetime-prefixed for natural time-based ordering
     subdir = _get_log_subdir()
     logs_dir = root_path / ".pytest_logs" / subdir
     logs_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build timestamp suffix for uniqueness
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # Derive semantic name from command-line args
     semantic_name = _derive_log_name_from_args(list(config.args))
@@ -242,8 +246,14 @@ def pytest_sessionstart(session):
             except FileExistsError:
                 suffix_index += 1
 
-    # Build the log filename: semantic_name_timestamp.txt
-    base_path = logs_dir / f"{semantic_name}_{ts}.txt"
+    # Build the log filename
+    # For datetime-prefixed directories (UNITY_LOG_SUBDIR set), use just semantic name
+    # For standalone (no parallel_run.sh), add timestamp to distinguish runs
+    if subdir == "standalone":
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        base_path = logs_dir / f"{semantic_name}_{ts}.txt"
+    else:
+        base_path = logs_dir / f"{semantic_name}.txt"
     log_path, fh = _open_unique(base_path)
 
     global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR
@@ -290,9 +300,9 @@ def pytest_unconfigure(config):
         tr.write_line("=" * 72)
         tr.write_line(f"📄 Test log: {log_file}")
         tr.write_line(
-            f"📁 This terminal's logs: {root_path / '.pytest_logs' / subdir}/",
+            f"📁 This run's logs: {root_path / '.pytest_logs' / subdir}/",
         )
-        tr.write_line(f"📂 All terminals' logs:  {root_path / '.pytest_logs'}/*/")
+        tr.write_line(f"📂 All log directories:  {root_path / '.pytest_logs'}/*/")
         tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.
     if _TEE_FILE_HANDLE is not None:
