@@ -41,7 +41,9 @@ tmux_cmd() {
 }
 
 # ---- Configurable directory excludes (by name) ----
-EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode )
+# Note: 'fixtures' is excluded because those are test data files, not tests themselves.
+# They get run explicitly by the test harness (e.g., test_parallel_run tests).
+EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode fixtures )
 
 # ---- Modes ----
 # Default: one session per file.
