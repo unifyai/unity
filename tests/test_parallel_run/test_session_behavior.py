@@ -1,5 +1,5 @@
 """
-Tests for tmux session behavior in .parallel_run.sh.
+Tests for tmux session behavior in parallel_run.sh.
 
 Verifies:
 - Session naming conventions
@@ -82,8 +82,10 @@ class TestStatusPrefixes:
                 s
                 for s in sessions
                 if any(
-                    result.sessions_created[0].strip("? ⏳ ").strip("o ✅ ")
-                    in s.name.strip("? ⏳ ").strip("o ✅ ").strip("x ❌ ")
+                    result.sessions_created[0].replace("? ⏳ ", "").replace("o ✅ ", "")
+                    in s.name.replace("? ⏳ ", "")
+                    .replace("o ✅ ", "")
+                    .replace("x ❌ ", "")
                     for name in result.sessions_created
                 )
             ]
