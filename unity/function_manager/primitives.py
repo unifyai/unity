@@ -268,7 +268,11 @@ class ComputerPrimitives:
         Returns:
             The processed text or a Pydantic object, depending on `response_format`.
         """
-        client = new_llm_client("gemini-2.5-pro@vertex-ai")
+        client = new_llm_client(
+            "gemini-2.5-pro@vertex-ai",
+            reasoning_effort=None,
+            service_tier=None,
+        )
         system_message = (
             f"{request}\n\n"
             "### CONTEXT\n"

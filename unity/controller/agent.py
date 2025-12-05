@@ -20,7 +20,11 @@ from .sys_msgs import (
 from ..constants import LOGGER
 from ..common.llm_client import new_llm_client
 
-client = new_llm_client(async_client=False)
+client = new_llm_client(
+    async_client=False,
+    reasoning_effort=None,
+    service_tier=None,
+)
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 
 SCROLLING_STATE = None

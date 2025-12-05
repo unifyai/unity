@@ -177,9 +177,19 @@ class ScreenShareManager:
         self._image_manager = image_manager or ImageManager()
         self._detection_client = detection_client or new_llm_client(
             "gpt-4o-mini@openai",
+            reasoning_effort=None,
+            service_tier=None,
         )
-        self._analysis_client = analysis_client or new_llm_client("gpt-4o@openai")
-        self._summary_client = summary_client or new_llm_client("gpt-4o-mini@openai")
+        self._analysis_client = analysis_client or new_llm_client(
+            "gpt-4o@openai",
+            reasoning_effort=None,
+            service_tier=None,
+        )
+        self._summary_client = summary_client or new_llm_client(
+            "gpt-4o-mini@openai",
+            reasoning_effort=None,
+            service_tier=None,
+        )
         self._cpu_executor = ThreadPoolExecutor(
             max_workers=self.settings.max_frame_workers,
         )

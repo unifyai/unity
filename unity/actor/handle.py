@@ -87,8 +87,16 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._tool_policy = tool_policy
         self._computer_primitives = computer_primitives
 
-        self._client = new_llm_client("claude-4.5-sonnet@anthropic")
-        self._ask_client = new_llm_client("claude-4.5-sonnet@anthropic")
+        self._client = new_llm_client(
+            "claude-4.5-sonnet@anthropic",
+            reasoning_effort=None,
+            service_tier=None,
+        )
+        self._ask_client = new_llm_client(
+            "claude-4.5-sonnet@anthropic",
+            reasoning_effort=None,
+            service_tier=None,
+        )
 
         if not self._main_event_loop:
             try:
