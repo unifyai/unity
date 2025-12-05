@@ -205,9 +205,10 @@ def clean_tmux_sessions():
     """Fixture that cleans up any test-related tmux sessions before and after."""
     # Pattern to match ONLY the fixture test sessions created by tests, NOT parent sessions.
     # Parent sessions are named like "test_parallel_run-test_isolation" (from the test file path).
-    # Fixture sessions are named like "r ⏳ fixtures-test_always_pass" (from the fixtures/ directory).
+    # Fixture sessions are named like "r ⏳ test_parallel_run-fixtures-test_always_pass"
+    # (from the fixtures/ directory path: tests/test_parallel_run/fixtures/).
     # We only want to clean up the fixture sessions, not kill our parent session!
-    pattern = r"^[pfr]\s*[✅❌⏳]\s*fixtures-"
+    pattern = r"^[pfr]\s*[✅❌⏳]\s*test_parallel_run-fixtures-"
 
     # Clean before
     kill_sessions_matching(pattern)
@@ -227,6 +228,9 @@ class ParallelRunner:
         self.fixtures_dir = FIXTURES_DIR
         self.repo_root = REPO_ROOT
         self._created_sessions: List[tuple[str, str]] = []  # (socket, session_name)
+        # Generate a unique socket name for this runner instance so all runs
+        # within the same test use the same socket (enables collision detection)
+        self._socket_name = f"unity_test_{os.getpid()}"
 
     def run(
         self,
@@ -262,6 +266,9 @@ class ParallelRunner:
         # Ensure we use random projects mode to avoid interfering with the shared UnityTests project
         run_env["UNIFY_TESTS_RAND_PROJ"] = "True"
         run_env["UNIFY_TESTS_DELETE_PROJ_ON_EXIT"] = "True"
+        # Use a consistent socket name for all runs within this runner instance
+        # This enables collision detection between sequential runs in the same test
+        run_env["UNITY_TEST_SOCKET"] = self._socket_name
         if env:
             run_env.update(env)
 
@@ -283,25 +290,18 @@ class ParallelRunner:
             stdout = e.stdout.decode() if e.stdout else ""
             stderr = e.stderr.decode() if e.stderr else ""
 
-        # Extract the socket name from stdout
-        # Format: "Created N tmux sessions (socket: unity_dev_ttys042):"
-        socket_match = re.search(r"\(socket:\s*(\S+)\)", stdout)
-        socket_name = socket_match.group(1) if socket_match else ""
+        # Use our known socket name (set via UNITY_TEST_SOCKET env var)
+        # This is more reliable than parsing stdout, especially if the subprocess times out
+        socket_name = self._socket_name
 
-        # Find new sessions - filter by the specific socket to avoid cross-test interference
+        # Find new sessions - filter by our specific socket to avoid cross-test interference
         time.sleep(0.3)  # Brief pause for sessions to register
-        if socket_name:
-            # Only list sessions from THIS test's socket (parallel test isolation)
-            current_sessions = {
-                (s.socket, s.name) for s in list_tmux_sessions(socket=socket_name)
-            }
-            filtered_existing = {
-                (sock, name) for sock, name in existing_sessions if sock == socket_name
-            }
-        else:
-            # Fallback to all sockets if we couldn't extract socket name
-            current_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
-            filtered_existing = existing_sessions
+        current_sessions = {
+            (s.socket, s.name) for s in list_tmux_sessions(socket=socket_name)
+        }
+        filtered_existing = {
+            (sock, name) for sock, name in existing_sessions if sock == socket_name
+        }
         new_session_tuples = list(current_sessions - filtered_existing)
         new_sessions = [name for _, name in new_session_tuples]
         self._created_sessions.extend(new_session_tuples)
@@ -312,7 +312,7 @@ class ParallelRunner:
             wait_for_sessions_to_complete(
                 patterns,
                 timeout=completion_timeout,
-                socket=socket_name if socket_name else None,
+                socket=socket_name,
             )
 
         # Find new log files
