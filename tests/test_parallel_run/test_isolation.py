@@ -14,7 +14,6 @@ import os
 import subprocess
 
 from tests.test_parallel_run.conftest import (
-    REPO_ROOT,
     TESTS_DIR,
     list_tmux_sessions,
     get_unity_sockets,
@@ -90,12 +89,6 @@ class TestHelperScripts:
         assert script.exists(), f"Script not found: {script}"
         assert os.access(script, os.X_OK), f"Script not executable: {script}"
 
-    def test_list_all_tests_script_exists(self):
-        """The .list_all_tests.sh helper should exist and be executable."""
-        script = TESTS_DIR / ".list_all_tests.sh"
-        assert script.exists(), f"Script not found: {script}"
-        assert os.access(script, os.X_OK), f"Script not executable: {script}"
-
     def test_kill_failed_supports_all_flag(self):
         """The .kill_failed.sh script should support --all flag."""
         script = TESTS_DIR / ".kill_failed.sh"
@@ -117,27 +110,6 @@ class TestHelperScripts:
             timeout=5,
         )
         assert "--all" in result.stdout, "watch_tests.sh should support --all flag"
-
-    def test_list_all_tests_runs(self, runner):
-        """The .list_all_tests.sh script should run successfully."""
-        # First create a session so there's something to list
-        result = runner.run(
-            runner.fixture_path("test_always_pass.py"),
-            wait_for_completion=True,
-        )
-
-        # Now run list_all_tests
-        script = TESTS_DIR / ".list_all_tests.sh"
-        list_result = subprocess.run(
-            [str(script), "--count"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=str(REPO_ROOT),
-        )
-
-        # Should succeed
-        assert list_result.returncode == 0
 
 
 class TestSocketNaming:
@@ -184,16 +156,6 @@ class TestObserveOutputFormat:
         assert (
             ".watch_tests.sh" in result.stdout
         ), "Output should mention watch_tests.sh helper"
-
-    def test_output_shows_list_all_helper(self, runner):
-        """Output should mention the list_all_tests.sh helper."""
-        result = runner.run(
-            runner.fixture_path("test_always_pass.py"),
-        )
-
-        assert (
-            ".list_all_tests.sh" in result.stdout
-        ), "Output should mention list_all_tests.sh helper"
 
     def test_output_shows_socket_specific_commands(self, runner):
         """Output should show socket-specific tmux commands."""
