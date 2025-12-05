@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Kill all failed tmux sessions (those starting with "x")
+# Kill all failed tmux sessions (those starting with "f")
 #
 # Usage:
 #   ./.kill_failed.sh        # Kill all failed sessions in THIS terminal
@@ -44,7 +44,7 @@ while (( "$#" )); do
     -h|--help)
       echo "Usage: ./.kill_failed.sh [-n|--dry-run] [--all]"
       echo ""
-      echo "Kill all failed tmux sessions (those starting with 'x')."
+      echo "Kill all failed tmux sessions (those starting with 'f')."
       echo ""
       echo "By default, only kills sessions from THIS terminal (isolated socket)."
       echo ""
@@ -77,12 +77,12 @@ else
   SOCKETS=( "$TMUX_SOCKET" )
 fi
 
-# Get all session names starting with "x" (failed sessions)
+# Get all session names starting with "f" (failed sessions)
 failed_sessions=()
 for socket in "${SOCKETS[@]}"; do
   while IFS= read -r line; do
     session_name="${line%%:*}"
-    if [[ "$session_name" == "x"* ]]; then
+    if [[ "$session_name" == "f"* ]]; then
       failed_sessions+=( "$socket:$session_name" )
     fi
   done < <(LC_ALL=en_US.UTF-8 tmux -L "$socket" ls 2>/dev/null || true)
