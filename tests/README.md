@@ -1107,6 +1107,14 @@ This generates 2 models × 5 repeats = 10 runs, useful for comparing pass rates 
 
 When running parallel tests with heavy network I/O, it's useful to monitor system resources to understand bottlenecks, detect connection leaks, and ensure you're not hitting OS limits.
 
+### Supported Platforms
+
+| Platform | Support | Network Monitor |
+|----------|---------|-----------------|
+| **macOS** | ✅ Full | `nettop` (built-in) |
+| **Linux** | ✅ Full | `nethogs`/`iftop` or `ss` stats |
+| **Windows** | ✅ Via WSL | Same as Linux |
+
 ### Quick Start
 
 ```bash
@@ -1116,7 +1124,7 @@ chmod +x tests/monitor_resources.sh
 # Launch the dashboard
 tests/monitor_resources.sh
 
-# Or add an alias to ~/.zshrc
+# Or add an alias to ~/.zshrc or ~/.bashrc
 alias monitor_resources='~/unity/tests/monitor_resources.sh'
 ```
 
@@ -1127,7 +1135,7 @@ This launches a tmux-based dashboard with four panes:
 │                    htop                      │
 │          (CPU, Memory, Processes)            │
 ├──────────────────────────────────────────────┤
-│                   nettop                     │
+│              Network Monitor                 │
 │         (Per-process Network I/O)            │
 ├──────────────────────┬───────────────────────┤
 │   File Descriptors   │   TCP Connections     │
@@ -1137,12 +1145,12 @@ This launches a tmux-based dashboard with four panes:
 
 ### What Each Pane Shows
 
-| Pane | Tool | What to Watch |
-|------|------|---------------|
-| **Top** | `htop` | CPU per core, memory usage, process list. Moderate CPU (20-50%) is normal for async tests. |
-| **Middle** | `nettop` | Per-process network I/O (bytes in/out). Look for Python processes with high bandwidth. |
-| **Bottom Left** | File Descriptors | Count of open FDs for Python processes. Each TCP connection = 1 FD. Watch for growth approaching `ulimit`. |
-| **Bottom Right** | TCP Connections | ESTABLISHED connections (active), TIME_WAIT (closing), LISTEN (servers). High TIME_WAIT is normal after connection bursts. |
+| Pane | macOS | Linux | What to Watch |
+|------|-------|-------|---------------|
+| **Top** | `htop` | `htop` | CPU per core, memory usage, process list. Moderate CPU (20-50%) is normal for async tests. |
+| **Middle** | `nettop` | `nethogs`/`ss` | Per-process network I/O (bytes in/out). Look for Python processes with high bandwidth. |
+| **Bottom Left** | `lsof` | `/proc` | Count of open FDs for Python processes. Each TCP connection = 1 FD. Watch for growth approaching `ulimit`. |
+| **Bottom Right** | `netstat` | `ss` | ESTABLISHED connections (active), TIME_WAIT (closing), LISTEN (servers). |
 
 ### Interpreting Metrics During Test Runs
 
@@ -1155,12 +1163,12 @@ This launches a tmux-based dashboard with four panes:
 - Cached memory is fine—the kernel releases it when needed
 
 **File Descriptors:**
-- Default macOS limit is ~256 per process
+- Default limit is ~256 per process (macOS) or ~1024 (Linux)
 - If approaching limit, you'll see connection failures
 - Fix: run `ulimit -n 4096` before `parallel_run.sh`
 
 **TIME_WAIT Connections:**
-- Normal after connections close (lasts ~60s on macOS)
+- Normal after connections close (~60s on macOS, ~30s on Linux)
 - Very high counts indicate excessive connection churn
 - Not usually a problem unless >1000s
 
@@ -1191,7 +1199,7 @@ tmux has-session -t unity-monitor && echo "Running"
 Before running many parallel tests:
 
 ```bash
-# Increase file descriptor limit (resets on terminal close)
+# All platforms: Increase file descriptor limit (resets on terminal close)
 ulimit -n 4096
 
 # Check current limit
@@ -1204,13 +1212,58 @@ For extreme parallelism (hundreds of concurrent connections):
 # macOS kernel tuning (requires sudo, resets on reboot)
 sudo sysctl -w kern.maxfiles=65536
 sudo sysctl -w kern.maxfilesperproc=65536
+
+# Linux kernel tuning (requires sudo, resets on reboot)
+sudo sysctl -w net.core.somaxconn=65535
+sudo sysctl -w net.ipv4.tcp_tw_reuse=1
 ```
 
-### Requirements
+### Installation
 
-- **tmux**: `brew install tmux` (required)
-- **htop**: `brew install htop` (recommended, falls back to `top`)
-- **nettop**: Built into macOS (no install needed)
+**macOS:**
+
+```bash
+brew install tmux htop
+# nettop is built-in
+```
+
+**Ubuntu/Debian:**
+
+```bash
+sudo apt install tmux htop nethogs iftop
+```
+
+**Fedora/RHEL:**
+
+```bash
+sudo dnf install tmux htop nethogs iftop
+```
+
+**Arch Linux:**
+
+```bash
+sudo pacman -S tmux htop nethogs iftop
+```
+
+**Windows (WSL):**
+
+```powershell
+# First, install WSL if not already installed
+wsl --install
+
+# Then from within WSL (e.g., Ubuntu), install the tools
+sudo apt install tmux htop nethogs iftop
+```
+
+### Requirements Summary
+
+| Tool | macOS | Linux | Required |
+|------|-------|-------|----------|
+| `tmux` | `brew install tmux` | `apt install tmux` | ✅ Yes |
+| `htop` | `brew install htop` | `apt install htop` | Recommended (falls back to `top`) |
+| `nettop` | Built-in | N/A | macOS only |
+| `nethogs` | N/A | `apt install nethogs` | Recommended for Linux |
+| `iftop` | N/A | `apt install iftop` | Alternative to nethogs |
 
 ---
 
