@@ -9,9 +9,8 @@ from typing import Optional, Type, TypeVar, TYPE_CHECKING
 import redis.asyncio as redis
 from pydantic import BaseModel
 from enum import Enum
-import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
-from unity.common.llm_client import get_cache_setting
+from unity.common.llm_client import new_llm_client
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from .base import BaseConversationManagerHandle
 from .events import (
@@ -494,9 +493,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         # ──────────────────────────────────────────────────────────────────
         # 3. START THE LOOP
         # ──────────────────────────────────────────────────────────────────
-        llm = unify.AsyncUnify(
+        llm = new_llm_client(
             "gemini-2.5-flash@vertex-ai",
-            cache=get_cache_setting(),
             return_full_completion=False,
         )
         inner_handle = start_async_tool_loop(
