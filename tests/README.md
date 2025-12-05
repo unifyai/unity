@@ -97,6 +97,7 @@ Add these aliases to your `~/.zshrc` or `~/.bashrc` for convenient access to tes
 # Unity test helper aliases
 alias parallel_run='~/unity/tests/parallel_run.sh'
 alias watch_tests='~/unity/tests/watch_tests.sh'
+alias attach='~/unity/tests/attach.sh'
 alias kill_failed='~/unity/tests/kill_failed.sh'
 alias kill_server='~/unity/tests/kill_server.sh'
 ```
@@ -153,6 +154,9 @@ tests/watch_tests.sh
 
 # Watch ALL terminals' tests
 tests/watch_tests.sh --all
+
+# Attach to a specific session to see its output
+tests/attach.sh '<session-name>'
 ```
 
 **Cleanup:**
@@ -618,6 +622,7 @@ tmux switch-client -t <name>
 
 ```bash
 tests/watch_tests.sh        # Watch this terminal's tests
+tests/attach.sh '<name>'    # Attach to a session
 tests/kill_failed.sh        # Kill failed sessions
 tests/kill_server.sh        # Kill all sessions (entire server)
 ```
