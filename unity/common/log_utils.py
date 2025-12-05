@@ -155,7 +155,7 @@ def create_logs(
     entries: List[Dict[str, Any]],
     mirror_to_all: bool = True,
     **kwargs: Any,
-) -> Dict[str, Any]:
+) -> Any:
     """
     Wrapper around unify.create_logs with private field injection and All/<Ctx> mirroring.
 
@@ -172,14 +172,23 @@ def create_logs(
 
     Returns
     -------
-    Dict[str, Any]
-        Response from unify.create_logs containing log_event_ids, etc.
+    Dict[str, Any] | List[unify.Log]
+        Response from unify.create_logs. Returns a dict with log_event_ids normally,
+        or a list of Log objects when batched=True.
     """
     entries = [_inject_private_fields(e) for e in entries]
     result = unify.create_logs(context=context, entries=entries, **kwargs)
 
     if mirror_to_all:
-        log_ids = result.get("log_event_ids", [])
+        # Handle both dict (normal) and list (batched=True) return types
+        if isinstance(result, dict):
+            log_ids = result.get("log_event_ids", [])
+        elif isinstance(result, list):
+            # batched=True returns a list of Log objects
+            log_ids = [lg.id for lg in result if hasattr(lg, "id")]
+        else:
+            log_ids = []
+
         if log_ids:
             _mirror_to_all(log_ids, context)
 
