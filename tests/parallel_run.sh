@@ -166,31 +166,90 @@ elif (( SYMBOLIC_ONLY )); then
 fi
 
 # ---------------------------------------------------------------------------
-# Helper: check if random projects mode is enabled via --env
+# Helper: check if a boolean env var is truthy (via --env flags OR system env)
+# Usage: is_env_truthy VAR_NAME
 # ---------------------------------------------------------------------------
-is_random_projects_mode() {
+is_env_truthy() {
+  local var_name="$1"
+  # Check --env flags first
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     case "$kv" in
-      UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
+      "${var_name}=true"|"${var_name}=True"|"${var_name}=1")
         return 0 ;;
+      "${var_name}=false"|"${var_name}=False"|"${var_name}=0"|"${var_name}=")
+        return 1 ;;
     esac
   done
-  return 1
+  # Fall back to system environment variable
+  local val="${!var_name:-}"
+  case "$val" in
+    true|True|1) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
-# Helper: build environment exports string from --env overrides and --tags
+# Helper: get env var value (--env flags take precedence over system env)
+# Usage: get_env_value VAR_NAME [DEFAULT]
+# ---------------------------------------------------------------------------
+get_env_value() {
+  local var_name="$1"
+  local default="${2:-}"
+  # Check --env flags first
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    if [[ "$kv" == "${var_name}="* ]]; then
+      echo "${kv#${var_name}=}"
+      return 0
+    fi
+  done
+  # Fall back to system environment variable
+  local val="${!var_name:-$default}"
+  echo "$val"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: check if random projects mode is enabled
+# ---------------------------------------------------------------------------
+is_random_projects_mode() {
+  is_env_truthy "UNIFY_TESTS_RAND_PROJ"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: build environment exports string from --env overrides, system env, and --tags
 # ---------------------------------------------------------------------------
 build_env_exports() {
   local exports=""
+  # Track which vars are already set via --env flags
+  declare -A env_set
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     exports="$exports $kv"
+    local var_name="${kv%%=*}"
+    env_set["$var_name"]=1
   done
+
+  # Propagate relevant system environment variables if not already set via --env
+  local propagate_vars=(
+    "UNIFY_TESTS_RAND_PROJ"
+    "UNIFY_TESTS_DELETE_PROJ_ON_EXIT"
+    "UNIFY_SKIP_SESSION_SETUP"
+    "UNIFY_CACHE"
+    "UNIFY_KEY"
+    "UNIFY_BASE_URL"
+  )
+  for var_name in "${propagate_vars[@]}"; do
+    if [[ -z "${env_set[$var_name]:-}" && -n "${!var_name:-}" ]]; then
+      exports="$exports ${var_name}=${!var_name}"
+    fi
+  done
+
   # Append UNIFY_TEST_TAGS if any tags were specified via --tags
   if (( ${#TAGS[@]} > 0 )); then
     local joined_tags
     joined_tags=$(IFS=','; echo "${TAGS[*]}")
     exports="$exports UNIFY_TEST_TAGS=$joined_tags"
+  elif [[ -z "${env_set[UNIFY_TEST_TAGS]:-}" && -n "${UNIFY_TEST_TAGS:-}" ]]; then
+    # Propagate from system env if not set via --tags or --env
+    exports="$exports UNIFY_TEST_TAGS=$UNIFY_TEST_TAGS"
   fi
   echo "$exports"
 }
