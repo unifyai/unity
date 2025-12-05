@@ -29,11 +29,11 @@ set -euo pipefail
 # Resolve script directory and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-PARALLEL_RUN="$SCRIPT_DIR/.parallel_run.sh"
+PARALLEL_RUN="$SCRIPT_DIR/parallel_run.sh"
 
-# Check that .parallel_run.sh exists
+# Check that parallel_run.sh exists
 if [[ ! -x "$PARALLEL_RUN" ]]; then
-  echo "Error: .parallel_run.sh not found or not executable at $PARALLEL_RUN" >&2
+  echo "Error: parallel_run.sh not found or not executable at $PARALLEL_RUN" >&2
   exit 1
 fi
 
@@ -63,7 +63,7 @@ Options:
   --wait-all            Wait for all grid runs to complete (runs sequentially with --wait)
   -h, --help            Show this help
 
-All other options and arguments are passed through to .parallel_run.sh.
+All other options and arguments are passed through to parallel_run.sh.
 
 Auto-Tagging:
   Each run is automatically tagged with all --env values passed to this script,
@@ -86,7 +86,7 @@ Examples:
   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
 
 Notes:
-  - Each combination spawns a separate .parallel_run.sh invocation
+  - Each combination spawns a separate parallel_run.sh invocation
   - All runs execute concurrently by default (unless --wait-all is used)
   - Results are logged to the Combined context with tags and full settings for filtering
   - Use --wait-all to run combinations sequentially (useful for resource-constrained environments)
