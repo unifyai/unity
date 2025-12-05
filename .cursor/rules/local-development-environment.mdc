@@ -11,32 +11,47 @@ globs: **/*.py, **/*.toml, .git/hooks/*
 
 ## Running Tests
 
+### Terminal Isolation (Automatic)
+Each terminal session (including each Cursor agent) automatically gets its own **isolated tmux server**. This means:
+- Your tests don't interfere with other agents' tests
+- `tmux kill-server` only affects YOUR terminal's sessions
+- No configuration needed - it's automatic
+
 ### Choosing the Right Command
 
-**CRITICAL: Use `-t` for test runs on a small number of test files, to avoid blocking the chat for many minutes where `-t` would enable much faster completion, without cluttering with excess tmux panes (as would be the case for a large number of test files).**
+**CRITICAL: Always use `--wait` to block until tests complete. NEVER run `parallel_run.sh` in background mode and then poll for results - that defeats the purpose of `--wait`.**
 
 | Scenario | Command |
 |----------|---------|
-| **1-20 tests** (single file, few files, or specific tests) | `tests/.parallel_run.sh -t --wait [path]` |
-| **Many files/directories** (20+ tests across many files) | `tests/.parallel_run.sh --wait [path]` |
+| **1-20 tests** (single file, few files, or specific tests) | `tests/parallel_run.sh -t --wait [path]` |
+| **Many files/directories** (20+ tests across many files) | `tests/parallel_run.sh --wait [path]` |
+| **With timeout** (useful for long-running tests) | `tests/parallel_run.sh --wait 300 [path]` |
 
-**Why this matters:**
+**Why `--wait` matters:**
+- `--wait` blocks until all tests complete, then reports success (exit 0), failure (exit 1), or timeout (exit 2).
+- `--wait N` adds a timeout of N seconds - useful when you want to cap how long to wait.
+- Do NOT run with `is_background: true` - this defeats the purpose as the command returns immediately.
+
+**Why `-t` matters:**
 - Without `-t`: One tmux session per *file*. If a file has 15 tests, they run serially (10+ min wait).
 - With `-t`: One tmux session per *test*. All 15 tests run concurrently (~1 min wait).
 
 **Examples:**
 ```bash
 # Single test file with multiple tests → USE -t
-tests/.parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
+tests/parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
 
 # Specific test functions → USE -t
-tests/.parallel_run.sh -t --wait tests/test_foo.py::test_one tests/test_bar.py::test_two
+tests/parallel_run.sh -t --wait tests/test_foo.py::test_one tests/test_bar.py::test_two
 
 # Small directory (< 20 tests total) → USE -t
-tests/.parallel_run.sh -t --wait tests/test_actor/
+tests/parallel_run.sh -t --wait tests/test_actor/
 
 # Large test suite (entire tests/ directory) → omit -t to avoid hundreds of sessions
-tests/.parallel_run.sh --wait tests/
+tests/parallel_run.sh --wait tests/
+
+# With timeout (wait up to 5 minutes)
+tests/parallel_run.sh -t --wait 300 tests/test_contact_manager/
 ```
 
 ### Failure Handling
@@ -46,9 +61,10 @@ tests/.parallel_run.sh --wait tests/
 
 ### Cleanup (REQUIRED)
 - **ALWAYS** kill failed tmux sessions after extracting failure info from `.pytest_logs/`.
-- Logs are persisted in `.pytest_logs/`; keeping sessions open is unnecessary and clutters `tmux ls`.
-- Run: `tests/.kill_failed.sh` to kill all failed sessions (those prefixed with `x ❌`).
-- Alternatively, kill specific sessions: `tmux kill-session -t "<session-name>"`.
+- Logs are persisted in `.pytest_logs/`; keeping sessions open is unnecessary.
+- Run: `tests/kill_failed.sh` to kill all failed sessions from YOUR terminal.
+- Run: `tests/kill_server.sh` to kill the entire tmux server for YOUR terminal.
+- For cross-terminal cleanup: `tests/kill_failed.sh --all` or `tests/kill_server.sh --all`
 
 ### Permissions
 - Use `required_permissions: ['all']` to ensure access to `.env` and log files.

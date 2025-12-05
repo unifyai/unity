@@ -127,7 +127,7 @@ _install_llm_io_hooks()
 
 _INITIALISED = False
 ASSISTANT = None  # Will hold the selected assistant record once init() runs
-ASSISTANT_CONTEXT = None
+ASSISTANT_CONTEXT = None  # String used for Unify context (e.g., "JohnSmith")
 
 
 def _list_all_assistants() -> list[dict]:
@@ -167,6 +167,9 @@ def init(
     if _INITIALISED:
         return
 
+    # 0. Validate LLM provider credentials are present
+    _SETTINGS.validate_llm_providers()
+
     # 1. Ensure Unify project is active
     if not unify.active_project():
         unify.activate(project_name, overwrite)
@@ -199,7 +202,7 @@ def init(
         ASSISTANT = default_assistant
         ctx = "Assistant"
 
-    # 2. Set the assistant context *after* validation
+    # 2. Set the Unify context name *after* validation
     ASSISTANT_CONTEXT = ctx
 
     # Idempotent context setup: tolerate concurrent creation from parallel processes

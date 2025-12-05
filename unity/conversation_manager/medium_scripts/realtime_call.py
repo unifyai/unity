@@ -27,7 +27,6 @@ from livekit.plugins.openai import realtime as openai_realtime
 load_dotenv()
 
 from unity.conversation_manager.utils import dispatch_agent
-from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 
 # NEW: shared helpers
@@ -94,7 +93,7 @@ async def entrypoint(ctx: JobContext) -> None:
     voice_id = os.environ.get("VOICE_ID")
     outbound = os.environ.get("OUTBOUND") == "True"
     channel = os.environ.get("CHANNEL")
-    assistant_bio = os.environ.get("ASSISTANT_BIO")
+    assistant_bio = os.environ.get("ASSISTANT_ABOUT")
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)

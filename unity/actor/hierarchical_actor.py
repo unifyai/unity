@@ -14,6 +14,8 @@ import sys
 import os
 import textwrap
 import traceback
+
+from unity.session_details import SESSION_DETAILS
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
@@ -4388,7 +4390,7 @@ class HierarchicalActor(BaseActor):
         """
         orchestra_url = os.getenv("UNIFY_BASE_URL")
         unify_key = os.getenv("UNIFY_KEY")
-        assistant_name = (os.getenv("ASSISTANT_NAME") or "").strip()
+        assistant_name = SESSION_DETAILS.assistant.name.strip()
 
         if not orchestra_url or not unify_key or not assistant_name:
             return agent_server_url

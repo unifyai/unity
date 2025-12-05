@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import contextlib
 
+from unity.session_details import SESSION_DETAILS
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager import debug_logger
@@ -259,7 +260,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 if parsed_out.get("phone_guidance"):
                     event = AssistantRealtimeGuidance(
                         self.contact_index.get_contact(
-                            contact_id=self.call_manager.call_contact["contact_id"]
+                            contact_id=self.call_manager.call_contact["contact_id"],
                         ),
                         parsed_out["phone_guidance"],
                     )
@@ -359,10 +360,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """
         self.user_turn_end_callback = callback
 
-    # This can be moved to event handlers actually
-    # and sets the Assistant dataclass instead of calling the conversation manager's
     def set_details(self, payload: dict):
-        """Populate assistant/user/voice details and update environment variables."""
+        """Populate assistant/user/voice details into SESSION_DETAILS."""
         self.user_id = payload["user_id"]
         self.assistant_id = payload["assistant_id"]
         self.assistant_name = payload["assistant_name"]
@@ -381,17 +380,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.build_response_model()
         if payload.get("api_key"):
             os.environ["UNIFY_KEY"] = payload["api_key"]
-        os.environ["USER_ID"] = self.user_id
-        os.environ["USER_NAME"] = self.user_name
-        os.environ["USER_NUMBER"] = self.user_number
-        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
-        os.environ["USER_EMAIL"] = self.user_email
-        os.environ["ASSISTANT_NAME"] = self.assistant_name
-        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
-        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
-        os.environ["VOICE_PROVIDER"] = self.voice_provider
-        os.environ["VOICE_ID"] = self.voice_id
-        os.environ["VOICE_MODE"] = self.voice_mode
+        # Populate the global SessionDetails singleton
+        SESSION_DETAILS.populate(
+            assistant_id=self.assistant_id,
+            assistant_name=self.assistant_name,
+            assistant_age=self.assistant_age,
+            assistant_nationality=self.assistant_nationality,
+            assistant_about=self.assistant_about,
+            assistant_number=self.assistant_number,
+            assistant_email=self.assistant_email,
+            user_id=self.user_id,
+            user_name=self.user_name,
+            user_number=self.user_number,
+            user_whatsapp_number=self.user_whatsapp_number,
+            user_email=self.user_email,
+            voice_provider=self.voice_provider,
+            voice_id=self.voice_id,
+            voice_mode=self.voice_mode,
+        )
+        # Export to env vars for subprocess inheritance
+        SESSION_DETAILS.export_to_env()
 
     def get_details(self) -> dict:
         return {
@@ -502,7 +510,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             skip_initial_wait: If True, skip the initial 8s wait (used when rescheduling after a false decision)
         """
         print(
-            f"[Proactive Speech] schedule_proactive_speech called, mode={self.mode}, skip_initial_wait={skip_initial_wait}"
+            f"[Proactive Speech] schedule_proactive_speech called, mode={self.mode}, skip_initial_wait={skip_initial_wait}",
         )
         await self.cancel_proactive_speech()
 
@@ -516,7 +524,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         print("[Proactive Speech] Creating proactive speech task...")
         # Create a task to run the decision and potential wait
         self._proactive_speech_task = asyncio.create_task(
-            self._proactive_speech_loop(skip_initial_wait=skip_initial_wait)
+            self._proactive_speech_loop(skip_initial_wait=skip_initial_wait),
         )
         self._proactive_speech_task.add_done_callback(log_task_exc)
 
@@ -539,7 +547,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await asyncio.sleep(10)
             else:
                 print(
-                    "[Proactive Speech] Skipping initial wait (reschedule after false decision)"
+                    "[Proactive Speech] Skipping initial wait (reschedule after false decision)",
                 )
 
             print("[Proactive Speech] Entering _proactive_speech_loop")
@@ -549,7 +557,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             last_message_timestamp = None
 
             contact = self.call_manager.call_contact or self.contact_index.get_contact(
-                contact_id=1
+                contact_id=1,
             )
             if (
                 contact
@@ -594,7 +602,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 elapsed_seconds=elapsed_seconds,
             )
             print(
-                f"[Proactive Speech] Decision: should_speak={decision.should_speak}, delay={decision.delay}s"
+                f"[Proactive Speech] Decision: should_speak={decision.should_speak}, delay={decision.delay}s",
             )
 
             if not decision.should_speak:
@@ -602,13 +610,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 # Otherwise, wait until we hit ~12s threshold (but cap at 7s max wait)
                 if elapsed_seconds < 10:
                     wait_time = min(
-                        12 - elapsed_seconds, 7
+                        12 - elapsed_seconds,
+                        7,
                     )  # Wait until ~12s, but max 7s
                 else:
                     wait_time = 5  # Already past 10s, check every 5s
 
                 print(
-                    f"[Proactive Speech] Not speaking (LLM chose delay={decision.delay}s), will check again in {wait_time:.1f}s"
+                    f"[Proactive Speech] Not speaking (LLM chose delay={decision.delay}s), will check again in {wait_time:.1f}s",
                 )
                 await asyncio.sleep(wait_time)
                 # Skip initial wait when rescheduling since we just waited
@@ -622,7 +631,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             # Record in contact_index
             contact = self.call_manager.call_contact or self.contact_index.get_contact(
-                contact_id=1
+                contact_id=1,
             )
             if contact:
                 self.contact_index.push_message(

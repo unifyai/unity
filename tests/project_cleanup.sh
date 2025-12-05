@@ -26,7 +26,7 @@ DELETE_RANDOM=1
 
 usage() {
   cat <<'USAGE'
-Usage: .project_cleanup.sh [--dry-run] [-y|--yes] [--shared-only|--random-only] [--staging|-s|--production|-p]
+Usage: project_cleanup.sh [--dry-run] [-y|--yes] [--shared-only|--random-only] [--staging|-s|--production|-p]
 
 Options:
   --dry-run           Show matching projects without deleting

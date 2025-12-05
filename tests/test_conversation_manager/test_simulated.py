@@ -217,18 +217,18 @@ async def test_pause_and_resume(monkeypatch):
     original_pause = SimulatedConversationManagerHandle.pause
 
     @functools.wraps(original_pause)
-    def wrapped_pause(self, *args, **kwargs):
+    async def wrapped_pause(self, *args, **kwargs):
         counts["pause"] += 1
-        return original_pause(self, *args, **kwargs)
+        return await original_pause(self, *args, **kwargs)
 
     monkeypatch.setattr(SimulatedConversationManagerHandle, "pause", wrapped_pause)
 
     original_resume = SimulatedConversationManagerHandle.resume
 
     @functools.wraps(original_resume)
-    def wrapped_resume(self, *args, **kwargs):
+    async def wrapped_resume(self, *args, **kwargs):
         counts["resume"] += 1
-        return original_resume(self, *args, **kwargs)
+        return await original_resume(self, *args, **kwargs)
 
     monkeypatch.setattr(SimulatedConversationManagerHandle, "resume", wrapped_resume)
 
@@ -237,13 +237,13 @@ async def test_pause_and_resume(monkeypatch):
         contact_id="test_contact",
     )
 
-    pause_reply = cm_handle.pause()
+    pause_reply = await cm_handle.pause()
     assert "paused" in pause_reply.lower()
 
     # In this simulation, pause is a state flag, so we just check the flag and resume
     assert cm_handle._paused is True, "Pause flag should be set"
 
-    resume_reply = cm_handle.resume()
+    resume_reply = await cm_handle.resume()
     assert "resumed" in resume_reply.lower()
 
     assert cm_handle._paused is False, "Pause flag should be unset"

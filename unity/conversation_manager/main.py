@@ -6,6 +6,7 @@ load_dotenv()
 import os
 import asyncio
 
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.event_broker import get_event_broker
@@ -49,30 +50,51 @@ async def main(project_name: str = "Assistants"):
     print("Checking for dangling call processes from previous runs...")
     cleanup_dangling_call_processes()
 
+    # populate SESSION_DETAILS from environment variables
+    # this is needed for local dev because the env vars are already there from the start
+    SESSION_DETAILS.populate(
+        assistant_id=os.getenv("ASSISTANT_ID", DEFAULT_ASSISTANT_ID),
+        assistant_name=os.getenv("ASSISTANT_NAME"),
+        assistant_age=os.getenv("ASSISTANT_AGE"),
+        assistant_nationality=os.getenv("ASSISTANT_NATIONALITY"),
+        assistant_about=os.getenv("ASSISTANT_ABOUT"),
+        assistant_number=os.getenv("ASSISTANT_NUMBER"),
+        assistant_email=os.getenv("ASSISTANT_EMAIL"),
+        user_id=os.getenv("USER_ID"),
+        user_name=os.getenv("USER_NAME"),
+        user_number=os.getenv("USER_NUMBER"),
+        user_whatsapp_number=os.getenv("USER_WHATSAPP_NUMBER"),
+        user_email=os.getenv("USER_EMAIL"),
+        voice_provider=os.getenv("VOICE_PROVIDER"),
+        voice_id=os.getenv("VOICE_ID"),
+        voice_mode=os.getenv("VOICE_MODE"),
+    )
+
     stop = asyncio.Event()
 
     # passes events around, uses redis
     event_broker = get_event_broker()
 
     # directly talks with the user
+    # Use values from SESSION_DETAILS if already populated, otherwise defaults
     conversation_manager = ConversationManager(
         event_broker,
         os.getenv("JOB_NAME", ""),
-        os.getenv("USER_ID", ""),
-        os.getenv("ASSISTANT_ID", ""),
-        os.getenv("USER_NAME", ""),
-        os.getenv("ASSISTANT_NAME", ""),
-        os.getenv("ASSISTANT_AGE", ""),
-        os.getenv("ASSISTANT_NATIONALITY", ""),
-        os.getenv("ASSISTANT_ABOUT", ""),
-        os.getenv("ASSISTANT_NUMBER", ""),
-        os.getenv("ASSISTANT_EMAIL", ""),
-        os.getenv("USER_NUMBER", ""),
-        os.getenv("USER_WHATSAPP_NUMBER", ""),
-        os.getenv("USER_EMAIL", ""),
-        os.getenv("VOICE_PROVIDER", "cartesia"),
-        os.getenv("VOICE_ID", None),
-        os.getenv("VOICE_MODE", "tts"),
+        SESSION_DETAILS.user.id,
+        SESSION_DETAILS.assistant.id,
+        SESSION_DETAILS.user.name,
+        SESSION_DETAILS.assistant.name,
+        SESSION_DETAILS.assistant.age,
+        SESSION_DETAILS.assistant.nationality,
+        SESSION_DETAILS.assistant.about,
+        SESSION_DETAILS.assistant.number,
+        SESSION_DETAILS.assistant.email,
+        SESSION_DETAILS.user.number,
+        SESSION_DETAILS.user.whatsapp_number,
+        SESSION_DETAILS.user.email,
+        SESSION_DETAILS.voice.provider,
+        SESSION_DETAILS.voice.id or None,
+        SESSION_DETAILS.voice.mode,
         project_name=project_name,
         stop=stop,
         user_turn_end_callback=None,

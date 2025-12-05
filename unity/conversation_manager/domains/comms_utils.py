@@ -3,11 +3,24 @@ import json
 import os
 import asyncio
 import aiohttp
-from google.cloud import pubsub_v1
+
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 
 load_dotenv()
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
-publisher = pubsub_v1.PublisherClient()
+
+# Lazily initialized publisher (avoids import-time GCP auth failures in tests)
+_publisher = None
+
+
+def _get_publisher():
+    """Get or create the GCP Pub/Sub publisher client."""
+    global _publisher
+    if _publisher is None:
+        from google.cloud import pubsub_v1
+
+        _publisher = pubsub_v1.PublisherClient()
+    return _publisher
 
 
 async def send_sms_message_via_number(to_number: str, message: str) -> str:
@@ -21,7 +34,7 @@ async def send_sms_message_via_number(to_number: str, message: str) -> str:
     Returns:
         str: The response from the SMS API
     """
-    from_number = os.getenv("ASSISTANT_NUMBER")
+    from_number = SESSION_DETAILS.assistant.number
     if not from_number:
         return {"success": False}
 
@@ -48,20 +61,14 @@ async def send_unify_message(message: str) -> str:
     """
     Send a message to the boss chat.
     """
-    topic_name = (
-        "unity-"
-        + (
-            os.getenv("ASSISTANT_ID")
-            if os.getenv("ASSISTANT_ID")
-            else "default-assistant"
-        )
-        + (
-            "-staging"
-            if os.getenv("STAGING")
-            and "default-assistant" not in os.getenv("ASSISTANT_ID", "")
-            else ""
-        )
+    assistant_id = SESSION_DETAILS.assistant.id
+    staging_suffix = (
+        "-staging"
+        if os.getenv("STAGING") and DEFAULT_ASSISTANT_ID not in assistant_id
+        else ""
     )
+    topic_name = f"unity-{assistant_id}{staging_suffix}"
+    publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
     print(f"Sending unify message: {message}")
@@ -105,7 +112,7 @@ async def send_email_via_address(
     Returns:
         str: The response from the email API
     """
-    from_email = os.getenv("ASSISTANT_EMAIL")
+    from_email = SESSION_DETAILS.assistant.email
     if not from_email:
         return {"success": False}
 
@@ -141,7 +148,7 @@ async def start_call(to_number: str) -> str:
     Returns:
         str: The response
     """
-    from_number = os.getenv("ASSISTANT_NUMBER")
+    from_number = SESSION_DETAILS.assistant.number
     print(f"Sending call from {from_number} to {to_number}")
     if not from_number:
         return {"success": False}

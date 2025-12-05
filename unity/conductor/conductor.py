@@ -7,10 +7,12 @@ import asyncio
 import json
 import os
 
+import contextlib
 import functools
 import inspect
 import weakref
-import contextlib
+
+from unity.session_details import SESSION_DETAILS
 
 
 from ..conversation_manager.base import BaseConversationManagerHandle
@@ -173,7 +175,7 @@ class Conductor(BaseConductor):
             )
             if SETTINGS.UNITY_CONVERSATION_IMPL == "simulated":
                 self._cm_handle = conversation_cls(
-                    assistant_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+                    assistant_id=SESSION_DETAILS.assistant.id,
                     contact_id=os.getenv("CONTACT_ID", "1"),
                     description=description,
                     simulation_guidance=simulation_guidance,

@@ -6,7 +6,7 @@ set -euo pipefail
 # Runs tests across all combinations of settings values.
 #
 # Usage:
-#   ./.grid_search.sh --env KEY=val1|val2 --env KEY2=a|b|c [options] [targets...]
+#   ./grid_search.sh --env KEY=val1|val2 --env KEY2=a|b|c [options] [targets...]
 #
 # The pipe character "|" separates multiple values for a setting.
 # A full Cartesian product (grid) of all combinations is generated.
@@ -18,7 +18,7 @@ set -euo pipefail
 #   Only explicitly passed --env values are tagged (not values from .env files).
 #
 # Example:
-#   ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+#   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
 #
 # Generates 4 runs with auto-tags:
 #   1. UNIFY_MODEL=gpt-4o UNIFY_CACHE=true   → tags: "UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true"
@@ -29,11 +29,11 @@ set -euo pipefail
 # Resolve script directory and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-PARALLEL_RUN="$SCRIPT_DIR/.parallel_run.sh"
+PARALLEL_RUN="$SCRIPT_DIR/parallel_run.sh"
 
-# Check that .parallel_run.sh exists
+# Check that parallel_run.sh exists
 if [[ ! -x "$PARALLEL_RUN" ]]; then
-  echo "Error: .parallel_run.sh not found or not executable at $PARALLEL_RUN" >&2
+  echo "Error: parallel_run.sh not found or not executable at $PARALLEL_RUN" >&2
   exit 1
 fi
 
@@ -54,7 +54,7 @@ Grid Search Runner
 Run tests across all combinations of settings values.
 
 Usage:
-  ./.grid_search.sh [options] --env KEY=val1|val2 [--env KEY2=a|b] [targets...]
+  ./grid_search.sh [options] --env KEY=val1|val2 [--env KEY2=a|b] [targets...]
 
 Options:
   --env KEY=val1|val2   Specify multiple values for a setting (pipe-separated)
@@ -63,7 +63,7 @@ Options:
   --wait-all            Wait for all grid runs to complete (runs sequentially with --wait)
   -h, --help            Show this help
 
-All other options and arguments are passed through to .parallel_run.sh.
+All other options and arguments are passed through to parallel_run.sh.
 
 Auto-Tagging:
   Each run is automatically tagged with all --env values passed to this script,
@@ -74,19 +74,19 @@ Auto-Tagging:
 Examples:
   # Grid search across models and cache settings
   # (auto-tags: UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true etc.)
-  ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
 
   # With additional pass-through options
-  ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --eval-only --wait tests/
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --eval-only --wait tests/
 
   # Dry run to see what would be executed (including auto-tags)
-  ./.grid_search.sh -n --env UNIFY_MODEL="gpt-4o|claude-3" tests/
+  ./grid_search.sh -n --env UNIFY_MODEL="gpt-4o|claude-3" tests/
 
   # Add a constant variable to all runs (also included in tags)
-  ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
 
 Notes:
-  - Each combination spawns a separate .parallel_run.sh invocation
+  - Each combination spawns a separate parallel_run.sh invocation
   - All runs execute concurrently by default (unless --wait-all is used)
   - Results are logged to the Combined context with tags and full settings for filtering
   - Use --wait-all to run combinations sequentially (useful for resource-constrained environments)

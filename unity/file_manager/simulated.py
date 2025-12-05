@@ -150,23 +150,12 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 sys_msg = getattr(self._llm, "system_message", None)
             except Exception:
                 sys_msg = None
-            # Set response_format if provided
-            old_response_format = None
-            if self._response_format is not None:
-                old_response_format = getattr(self._llm, "response_format", None)
-                self._llm.response_format = self._response_format
-            try:
-                answer = await simulated_llm_roundtrip(
-                    self._llm,
-                    label=self._log_label,
-                    prompt=prompt,
-                )
-            finally:
-                if self._response_format is not None:
-                    if old_response_format is not None:
-                        self._llm.response_format = old_response_format
-                    elif hasattr(self._llm, "response_format"):
-                        del self._llm.response_format
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=prompt,
+                response_format=self._response_format,
+            )
             self._answer = answer
             self._messages = [
                 {"role": "user", "content": prompt},

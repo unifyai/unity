@@ -7,6 +7,7 @@ import asyncio
 from google.cloud import pubsub_v1
 import json
 import os
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.conversation_manager.events import *
 from unity.constants import ASYNCIO_DEBUG
 import redis.asyncio as redis
@@ -18,25 +19,29 @@ project_id = "responsive-city-458413-a2"
 startup_subscription_id = (
     "unity-startup" + ("-staging" if os.getenv("STAGING") else "") + "-sub"
 )
-subscription_id = (
-    "unity-"
-    + (os.getenv("ASSISTANT_ID") if os.getenv("ASSISTANT_ID") else "default-assistant")
-    + (
+
+
+def _get_subscription_id() -> str:
+    """Build subscription ID from current assistant context."""
+    assistant_id = SESSION_DETAILS.assistant.id
+    staging_suffix = (
         "-staging"
-        if (
-            os.getenv("STAGING")
-            and "default-assistant" not in os.getenv("ASSISTANT_ID", "")
-        )
+        if os.getenv("STAGING") and DEFAULT_ASSISTANT_ID not in assistant_id
         else ""
     )
-) + "-sub"
-local_contact = {
-    "contact_id": -1,
-    "first_name": os.getenv("USER_NAME"),
-    "surname": "",
-    "phone_number": os.getenv("USER_NUMBER"),
-    "email_address": os.getenv("USER_EMAIL"),
-}
+    return f"unity-{assistant_id}{staging_suffix}-sub"
+
+
+def _get_local_contact() -> dict:
+    """Build local contact dict from current assistant context."""
+    return {
+        "contact_id": -1,
+        "first_name": SESSION_DETAILS.user.name,
+        "surname": "",
+        "phone_number": SESSION_DETAILS.user.number,
+        "email_address": SESSION_DETAILS.user.email,
+    }
+
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
@@ -68,8 +73,6 @@ class CommsManager:
             if thread in ["startup", "assistant_update"]:
                 message.ack()
                 if thread == "startup":
-                    global subscription_id, startup_subscription_id
-
                     # acknowledge message and cancel startup subscription
                     while startup_subscription_id not in self.subscribers:
                         time.sleep(0.1)
@@ -93,18 +96,11 @@ class CommsManager:
                     except Exception as e:
                         print(f"Failed to update VNC password: {e}")
 
-                    # subscribe to the assistant's subscription
-                    os.environ["ASSISTANT_ID"] = event["assistant_id"]
-                    subscription_id = (
-                        "unity-"
-                        + (
-                            os.getenv("ASSISTANT_ID")
-                            if os.getenv("ASSISTANT_ID")
-                            else "default-assistant"
-                        )
-                        + ("-staging" if os.getenv("STAGING") else "")
-                    ) + "-sub"
-                    self.subscribe_to_topic(subscription_id)
+                    # Update assistant context and subscribe to the assistant's subscription
+                    # Note: Full context is populated by ConversationManager.set_details()
+                    # Here we just need to set assistant_id early for subscription
+                    SESSION_DETAILS.assistant.id = event["assistant_id"]
+                    self.subscribe_to_topic(_get_subscription_id())
 
                 # publish
                 details = {
@@ -168,7 +164,7 @@ class CommsManager:
                 message.ack()
             elif thread in events_map:
                 # Publish contacts
-                contacts = [*event.get("contacts", []), local_contact]
+                contacts = [*event.get("contacts", []), _get_local_contact()]
                 asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
                         f"app:comms:contacts",
@@ -203,7 +199,7 @@ class CommsManager:
                             asyncio.run_coroutine_threadsafe(
                                 add_email_attachments(
                                     attachments,
-                                    os.getenv("ASSISTANT_EMAIL"),
+                                    SESSION_DETAILS.assistant.email,
                                     event.get("gmail_message_id", ""),
                                 ),
                                 self.loop,
@@ -242,7 +238,7 @@ class CommsManager:
                 message.ack()
             elif thread == "log_pre_hire_chats":
                 try:
-                    contacts = [*event.get("contacts", []), local_contact]
+                    contacts = [*event.get("contacts", []), _get_local_contact()]
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",
@@ -292,7 +288,7 @@ class CommsManager:
             elif "call" in thread:
                 try:
                     # Publish contacts
-                    contacts = [*event.get("contacts", []), local_contact]
+                    contacts = [*event.get("contacts", []), _get_local_contact()]
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",
@@ -375,14 +371,14 @@ class CommsManager:
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
-        if not os.getenv("ASSISTANT_ID"):
+        if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
             # Start the startup subscription
             self.subscribe_to_topic(startup_subscription_id)
             # Start ping mechanism for idle containers
             asyncio.create_task(self.send_pings())
         else:
             # Start subscription
-            self.subscribe_to_topic(subscription_id)
+            self.subscribe_to_topic(_get_subscription_id())
 
         # Keep the connection alive
         try:
@@ -411,9 +407,8 @@ class CommsManager:
                 # Wait 30 seconds before next ping (half the inactivity timeout)
                 await asyncio.sleep(30)
 
-                # Check if we've received a startup message (indicated by ASSISTANT_ID being set)
-                current_assistant_id = os.getenv("ASSISTANT_ID")
-                if current_assistant_id:
+                # Check if we've received a startup message (indicated by assistant_id changed)
+                if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID:
                     print("Startup received, stopping ping mechanism")
                     break
 

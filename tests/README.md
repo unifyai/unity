@@ -75,10 +75,10 @@ Use the parallel runner flags to filter by test category:
 
 ```bash
 # Run only eval tests (end-to-end LLM reasoning)
-./.parallel_run.sh --eval-only tests
+./parallel_run.sh --eval-only tests
 
 # Run only symbolic tests (infrastructure/deterministic)
-./.parallel_run.sh --symbolic-only tests
+./parallel_run.sh --symbolic-only tests
 
 # Standard pytest also works
 pytest -m eval tests/
@@ -88,6 +88,21 @@ pytest -m "not eval" tests/
 ---
 
 ## Running Tests
+
+### Shell Setup (Recommended)
+
+Add these aliases to your `~/.zshrc` or `~/.bashrc` for convenient access to test helpers from anywhere:
+
+```bash
+# Unity test helper aliases
+alias parallel_run='~/unity/tests/parallel_run.sh'
+alias watch_tests='~/unity/tests/watch_tests.sh'
+alias attach='~/unity/tests/attach.sh'
+alias kill_failed='~/unity/tests/kill_failed.sh'
+alias kill_server='~/unity/tests/kill_server.sh'
+```
+
+After adding, run `source ~/.zshrc` (or restart your terminal). You can then run `parallel_run`, `watch_tests`, etc. from any directory.
 
 ### Quick Start
 
@@ -111,15 +126,54 @@ For faster runs, use either:
    pytest -n auto tests/
    ```
 
-2. **`.parallel_run.sh`** (better debugging experience—see below)
+2. **`parallel_run.sh`** (better debugging experience—see below)
 
-> **⚡ Speed Tip:** When running a small number of tests (1-20), always use `-t` with `.parallel_run.sh` to run each test in its own tmux session. Without `-t`, tests within the same file run serially, which can block for 10+ minutes unnecessarily. See [Per-Test Mode](#per-test-mode--t-for-maximum-parallelism) below.
+> **⚡ Speed Tip:** When running a small number of tests (1-20), always use `-t` with `parallel_run.sh` to run each test in its own tmux session. Without `-t`, tests within the same file run serially, which can block for 10+ minutes unnecessarily. See [Per-Test Mode](#per-test-mode--t-for-maximum-parallelism) below.
 
 ---
 
-## Parallel Test Runner (`.parallel_run.sh`)
+## Parallel Test Runner (`parallel_run.sh`)
 
 This helper script launches one tmux session per test file (or per test function with `-t`) and runs `pytest` in its own window. It searches recursively and can be restricted to specific folders, files, or tests.
+
+### Terminal Isolation (Automatic)
+
+Each terminal session automatically gets its own **isolated tmux server**. This means:
+
+- **Cursor agents don't interfere with each other**: Each agent's tests run in their own isolated tmux server
+- **`tmux kill-server` is safe**: It only kills sessions from the terminal that ran it
+- **No configuration needed**: Isolation is automatic based on the terminal's TTY device
+
+**How it works:** The script derives a unique socket name from your terminal's TTY (e.g., `/dev/ttys042` → socket `unity_dev_ttys042`). All tmux commands use this socket automatically.
+
+**Monitoring your tests:**
+
+```bash
+# Watch YOUR terminal's tests (automatic isolation)
+tests/watch_tests.sh
+
+# Watch ALL terminals' tests
+tests/watch_tests.sh --all
+
+# Attach to a specific session to see its output
+tests/attach.sh '<session-name>'
+```
+
+**Cleanup:**
+
+```bash
+# Kill failed sessions from THIS terminal
+tests/kill_failed.sh
+
+# Kill failed sessions from ALL terminals
+tests/kill_failed.sh --all
+
+# Kill the entire tmux server for THIS terminal
+tests/kill_server.sh
+
+# Kill ALL unity test tmux servers
+tests/kill_server.sh --all
+```
 
 ### Per-Test Mode (`-t`) for Maximum Parallelism
 
@@ -129,10 +183,10 @@ Use `-t/--per-test` to create one session per *test function*, enabling full par
 
 ```bash
 # WITHOUT -t: 15 tests in one file run serially (~10 min)
-./.parallel_run.sh --wait tests/test_contact_manager/test_ask.py
+./parallel_run.sh --wait tests/test_contact_manager/test_ask.py
 
 # WITH -t: 15 tests run concurrently in 15 sessions (~1 min)
-./.parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
+./parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
 ```
 
 **When to use `-t`:**
@@ -148,13 +202,13 @@ Use `-t/--per-test` to create one session per *test function*, enabling full par
 
 ### Why not just pytest-xdist?
 
-pytest-xdist works fine for basic parallel execution. However, `.parallel_run.sh` provides a significantly better **debugging experience** for our LLM-heavy async tests:
+pytest-xdist works fine for basic parallel execution. However, `parallel_run.sh` provides a significantly better **debugging experience** for our LLM-heavy async tests:
 
-| Feature | `.parallel_run.sh` | pytest-xdist |
+| Feature | `parallel_run.sh` | pytest-xdist |
 |---------|-------------------|--------------|
 | **Interactive debugging** | `tmux attach -t <session>` to any running/failed test | Output multiplexed across workers; hard to isolate |
 | **Post-failure inspection** | Failed sessions stay open with full scrollback | Just a failure message in terminal |
-| **Visual status** | Real-time `? ⏳` / `o ✅` / `x ❌` per test file | Single progress bar |
+| **Visual status** | Real-time `p ✅` / `f ❌` / `r ⏳` per test file | Single progress bar |
 | **Log isolation** | Per-session files in `.pytest_logs/` | Merged output (requires extra config) |
 | **Load balancing** | Static (1 session = 1 target) | Dynamic redistribution |
 
@@ -166,7 +220,7 @@ pytest-xdist works fine for basic parallel execution. However, `.parallel_run.sh
 
 ### Shared Project Mode (Default)
 
-By default, `.parallel_run.sh` uses a **shared project mode** where all parallel test sessions log to the same `UnityTests` project. This enables:
+By default, `parallel_run.sh` uses a **shared project mode** where all parallel test sessions log to the same `UnityTests` project. This enables:
 
 - **Unified duration logging**: All test durations and LLM I/O are recorded in a single `Combined` context, making it easy to compare runtimes and review LLM calls across different test files.
 - **Race-free parallel execution**: The script automatically runs an internal prepare module (`_prepare_shared_project.py`) before spawning sessions. This module idempotently creates the shared project and contexts once, eliminating race conditions.
@@ -185,14 +239,14 @@ pytest <target>
 For isolation purposes, you can use `--env` to give each tmux session its own isolated project:
 
 ```bash
-./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+./parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 ```
 
 In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` which is deleted on exit. The script auto-detects when `UNIFY_TESTS_RAND_PROJ=true` is set and skips the shared project preparation.
 
 ### Live Status and Auto-Close
 
-- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
+- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `r ⏳` while the test runs, `p ✅` on success (passed), or `f ❌` on failure. The letters are chosen to sort alphabetically as failed→passed→running, so failing tests appear first in listings. This also makes tab-completion easy in shells like zsh.
 - **Auto-close on success**: Sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
 - You can still attach before auto-close; you'll see the final message (e.g., `pytest exited with code: 0`) and a short notice that auto-close is scheduled.
 
@@ -201,7 +255,7 @@ In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` whic
 Save the script at the repository root as a hidden file and make it executable:
 
 ```bash
-chmod +x .parallel_run.sh
+chmod +x parallel_run.sh
 ```
 
 ### Requirements
@@ -215,7 +269,7 @@ chmod +x .parallel_run.sh
 From the repository root, run:
 
 ```bash
-./.parallel_run.sh
+./parallel_run.sh
 ```
 
 What happens:
@@ -224,7 +278,7 @@ What happens:
 2. **Discovery**: Recursively finds all `test_*.py` files (excluding caches/venvs; see excludes below).
 3. **Sessions**: Creates one tmux session per file.
 4. **Window name**: The file's basename without `.py`.
-5. **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `? ⏳ unit-test_math` (then `o ✅ unit-test_math` or `x ❌ unit-test_math`).
+5. **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `r ⏳ unit-test_math` (then `p ✅ unit-test_math` or `f ❌ unit-test_math`).
 
 Common tmux actions:
 
@@ -240,52 +294,52 @@ Limit the search by passing directories and/or `.py` files. Examples:
 
 ```bash
 # Only run files under a single folder
-./.parallel_run.sh tests/integration
+./parallel_run.sh tests/integration
 
 # Multiple roots
-./.parallel_run.sh tests/unit tests/integration
+./parallel_run.sh tests/unit tests/integration
 
 # Specific files
-./.parallel_run.sh tests/foo_test.py tests/bar_test.py
+./parallel_run.sh tests/foo_test.py tests/bar_test.py
 
 # Specific tests (pytest node ids)
-./.parallel_run.sh tests/foo_test.py::TestClass::test_something tests/bar_test.py::test_case
+./parallel_run.sh tests/foo_test.py::TestClass::test_something tests/bar_test.py::test_case
 
 # Per-test mode (create a session per test for all inputs)
-./.parallel_run.sh -t                         # per-test across the whole repo
-./.parallel_run.sh -t tests                   # per-test across a folder
-./.parallel_run.sh -t tests/foo_test.py       # per-test across a single file
-./.parallel_run.sh -t tests tests/foo_test.py # mix folders and files, all per-test
+./parallel_run.sh -t                         # per-test across the whole repo
+./parallel_run.sh -t tests                   # per-test across a folder
+./parallel_run.sh -t tests/foo_test.py       # per-test across a single file
+./parallel_run.sh -t tests tests/foo_test.py # mix folders and files, all per-test
 
 # Mix files and directories
-./.parallel_run.sh tests/api tests/db/test_migrations.py
+./parallel_run.sh tests/api tests/db/test_migrations.py
 
 # Wait for completion and log to files (CI / Agent mode)
-./.parallel_run.sh --wait tests/unit
+./parallel_run.sh --wait tests/unit
 
 # Set environment variables (see "Environment Variable Overrides" below)
-./.parallel_run.sh --env UNIFY_CACHE=false tests
-./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+./parallel_run.sh --env UNIFY_CACHE=false tests
+./parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
 
 # Use isolated random projects
-./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+./parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 
 # Run only eval tests (end-to-end LLM reasoning tests)
-./.parallel_run.sh --eval-only tests
+./parallel_run.sh --eval-only tests
 
 # Run only symbolic tests (infrastructure/deterministic tests)
-./.parallel_run.sh --symbolic-only tests
+./parallel_run.sh --symbolic-only tests
 
 # Repeat tests for statistical sampling (see below)
-./.parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager
+./parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager
 
 # Tag test runs for filtering (logged to Combined context)
-./.parallel_run.sh --tags "experiment-1" tests
-./.parallel_run.sh --tags "model-compare,gpt-4o" tests
+./parallel_run.sh --tags "experiment-1" tests
+./parallel_run.sh --tags "model-compare,gpt-4o" tests
 
 # Combine with other options
-./.parallel_run.sh --eval-only --wait tests/test_contact_manager
-./.parallel_run.sh --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
+./parallel_run.sh --eval-only --wait tests/test_contact_manager
+./parallel_run.sh --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
 ```
 
 How it interprets arguments:
@@ -297,20 +351,34 @@ How it interprets arguments:
   - When you do not specify individual tests, the script creates one session per file.
   - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
 
-### Wait Mode and Logs (`--wait`)
+### Wait Mode and Logs (`--wait [N]`)
 
 Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipelines or automated agents.
 
 ```bash
-./.parallel_run.sh --wait tests/my_tests
+# Wait indefinitely until all tests complete
+./parallel_run.sh --wait tests/my_tests
+
+# Wait up to 120 seconds, then timeout
+./parallel_run.sh --wait 120 tests/my_tests
 ```
 
 **Behavior:**
-- Blocks until all tmux sessions complete.
+- Blocks until all tmux sessions complete (or timeout is reached).
 - If all pass, exits with code `0`.
 - If any fail, exits with code `1` and lists the failed sessions.
+- If timeout is reached before completion, exits with code `2`.
 - **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/unit-test_math.txt`).
 - **Debugging**: When running with `--wait`, inspect these log files to diagnose failures instead of attaching to tmux sessions (though sessions remain open for inspection if they fail).
+
+**Timeout examples:**
+```bash
+# Quick sanity check with 60s timeout
+./parallel_run.sh --wait 60 -t tests/test_basic.py
+
+# Long-running tests with 5 minute timeout
+./parallel_run.sh --wait 300 tests/test_slow_suite/
+```
 
 ### Match Tests by Filename (Glob-Style)
 
@@ -320,7 +388,7 @@ Examples:
 
 ```bash
 # Run all "docstring" focused tests (each in its own tmux session)
-./.parallel_run.sh -m "*_tool_docstring*"
+./parallel_run.sh -m "*_tool_docstring*"
 ```
 
 This one-liner matches files such as:
@@ -349,16 +417,16 @@ The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions
 
 ```bash
 # Single override
-./.parallel_run.sh --env UNIFY_CACHE=false tests
+./parallel_run.sh --env UNIFY_CACHE=false tests
 
 # Multiple overrides (flag can be repeated)
-./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+./parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
 
 # Disable caching for fresh LLM calls
-./.parallel_run.sh --env UNIFY_CACHE=false tests
+./parallel_run.sh --env UNIFY_CACHE=false tests
 
 # Use isolated random projects (each session gets its own project)
-./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+./parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 ```
 
 **Available Variables:**
@@ -408,7 +476,7 @@ The `--env` approach is intentionally generic. Any variable from either class is
 
 | Option | Description |
 |--------|-------------|
-| `-w`, `--wait` | Block until all tests complete; exit 0 on success, 1 on any failure |
+| `-w [N]`, `--wait [N]` | Block until all tests complete; exit 0 on success, 1 on failure, 2 on timeout. Optional `N` sets timeout in seconds. |
 | `-t`, `--per-test` | Create one session per test function instead of per file |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |
@@ -439,10 +507,10 @@ The `--repeat N` flag runs each test target N times, creating N separate tmux se
 
 ```bash
 # Run a specific eval test 10 times without caching
-./.parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
+./parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
 
 # Run all eval tests 5 times each, wait for completion
-./.parallel_run.sh --env UNIFY_CACHE=false --repeat 5 --eval-only --wait tests
+./parallel_run.sh --env UNIFY_CACHE=false --repeat 5 --eval-only --wait tests
 ```
 
 Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to avoid name collisions) and its own log file in `.pytest_logs/`. After completion, you can analyze the logs to compute statistics.
@@ -457,7 +525,7 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
 - **Names**:
-  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `? ⏳ unit-test_math` → `o ✅ unit-test_math` or `x ❌ unit-test_math`.
+  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `r ⏳ unit-test_math` → `p ✅ unit-test_math` or `f ❌ unit-test_math`.
   - Window: `<filename-without-.py>`.
   - If a session name already exists, the script appends `-2`, `-3`, … to avoid collisions.
 
@@ -466,24 +534,26 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 - **Watch session statuses live**:
 
   ```bash
-  watch -n 0.5 'tmux ls'
+  tests/watch_tests.sh        # Watch THIS terminal's tests
+  tests/watch_tests.sh --all  # Watch ALL terminals' tests
   ```
 
-  As tests start, sessions show a `? ⏳` prefix. They flip to `o ✅` or `x ❌` when pytest exits. Successful sessions auto-close ~10s later.
+  As tests start, sessions show a `r ⏳` prefix. They flip to `p ✅` or `f ❌` when pytest exits. Successful sessions auto-close ~10s later.
 
 - **Kill all failed sessions** at once:
 
   ```bash
-  ./.kill_failed.sh       # Kill all sessions starting with "x"
-  ./.kill_failed.sh -n    # Dry run - show what would be killed
+  tests/kill_failed.sh        # Kill failed sessions from THIS terminal
+  tests/kill_failed.sh --all  # Kill failed sessions from ALL terminals
+  tests/kill_failed.sh -n     # Dry run - show what would be killed
   ```
 
-  > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/`. Logs are persisted there, so keeping sessions open just clutters `tmux ls`. Run `./.kill_failed.sh` after investigating failures.
+  > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/`. Logs are persisted there, so keeping sessions open just clutters the output. Run `tests/kill_failed.sh` after investigating failures.
 
-- **Kill a single session** once a test finishes:
+- **Kill a single session** once a test finishes (the socket name is printed when tests are launched):
 
   ```bash
-  tmux kill-session -t <session-name>
+  tmux -L <socket> kill-session -t <session-name>
   ```
 
   Note: sessions that pass auto-close within ~10 seconds; you typically only need to kill failing sessions.
@@ -491,10 +561,14 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 - **Run in the background** (script exits immediately; sessions keep running):
 
   ```bash
-  nohup ./.parallel_run.sh tests &>/dev/null &
+  nohup ./parallel_run.sh tests &>/dev/null &
   ```
 
-- **See test output later**: just `tmux attach -t <session-name>` — pytest output stays in the window buffer.
+- **See test output later**: The socket name is printed when tests are launched. Use it to attach:
+
+  ```bash
+  tmux -L <socket> attach -t <session-name>
+  ```
 
 ### Troubleshooting
 
@@ -515,28 +589,45 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
   - Make the script executable:
 
     ```bash
-    chmod +x .parallel_run.sh
+    chmod +x parallel_run.sh
     ```
 
 ### Customization
 
-Open `.parallel_run.sh` and tweak as needed:
+Open `parallel_run.sh` and tweak as needed:
 
 - **`EXCLUDE_DIRS=( ... )`** — add/remove directories to skip.
 - **`run_cmd()`** — change the command chain (e.g., add flags: `pytest -q -x`).
 - **Session naming** — adjust `session_basename_for()` to your taste.
 
-### Quick Reference (tmux)
+### Quick Reference (tmux with isolation)
 
-- Next/prev session (inside tmux):
-  - Open the command prompt: `Ctrl-b :`
-  - Type: `switch-client -n` (next) / `switch-client -p` (prev)
-- List sessions: `tmux ls`
-- Attach: `tmux attach -t <name>`
-- Switch (inside tmux): `tmux switch-client -t <name>`
-- Kill: `tmux kill-session -t <name>`
+Each terminal uses its own tmux socket (printed when tests launch). Common commands:
 
-That's it! Run it, list sessions, and jump into whichever test you want to watch.
+```bash
+# List sessions for THIS terminal
+tmux -L <socket> ls
+
+# Attach to a session
+tmux -L <socket> attach -t <name>
+
+# Kill a session
+tmux -L <socket> kill-session -t <name>
+
+# Inside tmux, switch sessions
+tmux switch-client -t <name>
+```
+
+**Helper scripts (recommended):**
+
+```bash
+tests/watch_tests.sh        # Watch this terminal's tests
+tests/attach.sh '<name>'    # Attach to a session
+tests/kill_failed.sh        # Kill failed sessions
+tests/kill_server.sh        # Kill all sessions (entire server)
+```
+
+That's it! Run tests, use the helpers to monitor, and jump into whichever test you want to watch.
 
 ---
 
@@ -691,15 +782,15 @@ By default, test contexts persist across runs (useful for debugging). To auto-de
 
 ```bash
 # Delete context after each test
-./.parallel_run.sh --env UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+./parallel_run.sh --env UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
 
 # Or delete entire project after session
-./.parallel_run.sh --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+./parallel_run.sh --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 ```
 
 ---
 
-## Grid Search (`.grid_search.sh`)
+## Grid Search (`grid_search.sh`)
 
 Run tests across all combinations of settings values. This is useful for:
 
@@ -711,26 +802,26 @@ Run tests across all combinations of settings values. This is useful for:
 
 ```bash
 # Make executable (first time only)
-chmod +x tests/.grid_search.sh
+chmod +x tests/grid_search.sh
 
 # Grid search across models
-./.grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" tests/test_contact_manager/
+./grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" tests/test_contact_manager/
 
 # Grid search across models AND cache settings (2×2 = 4 combinations)
-./.grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" --env UNIFY_CACHE="true|false" tests/
+./grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" --env UNIFY_CACHE="true|false" tests/
 ```
 
 ### How It Works
 
 1. **Parse grid variables**: Settings with `|` separators define the search space
 2. **Generate combinations**: Full Cartesian product of all values
-3. **Launch runs**: Each combination spawns a separate `.parallel_run.sh` invocation
+3. **Launch runs**: Each combination spawns a separate `parallel_run.sh` invocation
 4. **Auto-tag**: Each run is automatically tagged with its `--env` values for easy filtering
 5. **Log results**: Each run logs both tags and full settings dict to `Combined`
 
 ### Auto-Tagging
 
-Each run is **automatically tagged** with all `--env` values passed to `.grid_search.sh`. This makes post-hoc analysis trivial—you can filter results by the exact configuration used for each run.
+Each run is **automatically tagged** with all `--env` values passed to `grid_search.sh`. This makes post-hoc analysis trivial—you can filter results by the exact configuration used for each run.
 
 **How it works:**
 
@@ -746,7 +837,7 @@ When running a grid search, you want to filter results by the variables you're a
 **Example:**
 
 ```bash
-./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
 ```
 
 Generates 4 runs with these auto-tags:
@@ -761,7 +852,7 @@ Generates 4 runs with these auto-tags:
 With a constant variable:
 
 ```bash
-./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
+./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
 ```
 
 Generates 2 runs:
@@ -774,12 +865,12 @@ Generates 2 runs:
 ### Syntax
 
 ```bash
-./.grid_search.sh [options] --env KEY=val1|val2|val3 [--env KEY2=a|b] [targets...]
+./grid_search.sh [options] --env KEY=val1|val2|val3 [--env KEY2=a|b] [targets...]
 ```
 
 - **Pipe (`|`)**: Separates values to grid over
 - **No pipe**: Single value passed through to all runs
-- **Targets**: Test files/directories (same as `.parallel_run.sh`)
+- **Targets**: Test files/directories (same as `parallel_run.sh`)
 
 ### Options
 
@@ -791,14 +882,14 @@ Generates 2 runs:
 | `--wait-all` | Run combinations sequentially (with `--wait` per run) |
 | `-h`, `--help` | Show help |
 
-All other options are passed through to `.parallel_run.sh`.
+All other options are passed through to `parallel_run.sh`.
 
 ### Examples
 
 **Model comparison with eval tests:**
 
 ```bash
-./.grid_search.sh \
+./grid_search.sh \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic|gemini-2.5-pro@google" \
   --env UNIFY_CACHE="false" \
   --eval-only \
@@ -810,7 +901,7 @@ This generates 3 runs (one per model), each with fresh LLM calls.
 **Feature flag ablation:**
 
 ```bash
-./.grid_search.sh \
+./grid_search.sh \
   --env FIRST_ASK_TOOL_IS_SEARCH="true|false" \
   --env FIRST_MUTATION_TOOL_IS_ASK="true|false" \
   tests/test_conductor/
@@ -821,7 +912,7 @@ This generates 4 runs (2×2 grid) testing all combinations of these two feature 
 **Dry run to preview:**
 
 ```bash
-./.grid_search.sh -n \
+./grid_search.sh -n \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
   --env UNIFY_CACHE="true|false" \
   tests/
@@ -846,8 +937,8 @@ Generated runs:
 
 Dry run - commands that would be executed:
 
-  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=true --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=true tests/
-  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=false tests/
+  tests/parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=true --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=true tests/
+  tests/parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=false tests/
   ...
 ```
 
@@ -856,7 +947,7 @@ Note that each run includes `--tags` with the specific configuration values—th
 **Sequential execution (resource-constrained):**
 
 ```bash
-./.grid_search.sh --wait-all \
+./grid_search.sh --wait-all \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
   tests/
 ```
@@ -890,11 +981,11 @@ Or use the Unify dashboard to filter by `tags` (exact match) or `settings.UNIFY_
 
 ### Combining with Other Features
 
-Grid search composes with all `.parallel_run.sh` features:
+Grid search composes with all `parallel_run.sh` features:
 
 ```bash
 # Grid + eval-only + repeat for statistical sampling
-./.grid_search.sh \
+./grid_search.sh \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
   --env UNIFY_CACHE="false" \
   --eval-only \

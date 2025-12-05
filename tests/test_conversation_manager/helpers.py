@@ -3,7 +3,6 @@ import json
 
 from unity.conversation_manager.events import (
     ConductorClarificationRequest,
-    ConductorClarificationResponse,
     ConductorHandleResponse,
     ConductorHandleStarted,
     EmailReceived,
@@ -297,7 +296,11 @@ async def capture_conductor_handle_response(
     assert isinstance(response, ConductorHandleResponse)
     assert response.handle_id == handle_id
     assert response.action_name == action_name
-    if action_name in ["conductor_handle_ask", "conductor_handle_interject", "conductor_handle_answer_clarification"]:
+    if action_name in [
+        "conductor_handle_ask",
+        "conductor_handle_interject",
+        "conductor_handle_answer_clarification",
+    ]:
         assert len(response.query) > 0
     if call_id:
         assert response.call_id == call_id

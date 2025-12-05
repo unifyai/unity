@@ -10,16 +10,50 @@ if [ -f "../.env" ]; then
   set +a
 fi
 
+# ---- Terminal-based isolation ----
+# Each terminal session (including Cursor agent terminals) gets its own
+# isolated tmux server via a unique socket. This prevents agents from
+# interfering with each other (e.g., `tmux kill-server` only affects
+# the calling terminal's sessions).
+#
+# The socket is derived from the terminal's TTY device, which is unique
+# and stable for each terminal session.
+_derive_socket_name() {
+  local tty_id
+  # Try to get TTY; if not available (non-interactive shell), use a fallback
+  tty_id=$(tty 2>/dev/null)
+  if [[ "$tty_id" == "not a tty" || -z "$tty_id" || ! "$tty_id" =~ ^/ ]]; then
+    # Non-interactive shell: use parent PID chain as fallback
+    # This provides some isolation but may not be as stable
+    tty_id="pid$$"
+  else
+    # Interactive shell: use TTY path with slashes replaced
+    tty_id=$(echo "$tty_id" | sed 's|/|_|g')
+  fi
+  echo "unity${tty_id}"
+}
+
+TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
+
+# Wrapper for all tmux commands to use our isolated socket
+# LC_ALL=en_US.UTF-8 ensures Unicode emojis work in session names
+tmux_cmd() {
+  LC_ALL=en_US.UTF-8 tmux -L "$TMUX_SOCKET" "$@"
+}
+
 # ---- Configurable directory excludes (by name) ----
-EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode )
+# Note: 'fixtures' is excluded because those are test data files, not tests themselves.
+# They get run explicitly by the test harness (e.g., test_parallel_run tests).
+EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode fixtures )
 
 # ---- Modes ----
 # Default: one session per file.
 # With -t/--per-test: one session per collected pytest node id across provided dirs/files.
 PER_TEST=0
 
-# Wait for completion flag
+# Wait for completion flag and optional timeout
 WAIT_FOR_COMPLETION=0
+WAIT_TIMEOUT=0  # 0 means no timeout (wait indefinitely)
 
 # Optional filename match (glob-like, e.g., "*_tool_docstring*")
 NAME_PATTERN=""
@@ -50,7 +84,13 @@ while (( "$#" )); do
   case "$1" in
     -w|--wait)
       WAIT_FOR_COMPLETION=1
-      shift
+      # Check if next arg is an optional timeout (positive integer)
+      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
+        WAIT_TIMEOUT="$2"
+        shift 2
+      else
+        shift
+      fi
       ;;
     -t|--per-test)
       PER_TEST=1
@@ -126,31 +166,95 @@ elif (( SYMBOLIC_ONLY )); then
 fi
 
 # ---------------------------------------------------------------------------
-# Helper: check if random projects mode is enabled via --env
+# Helper: check if a boolean env var is truthy (via --env flags OR system env)
+# Usage: is_env_truthy VAR_NAME
 # ---------------------------------------------------------------------------
-is_random_projects_mode() {
+is_env_truthy() {
+  local var_name="$1"
+  # Check --env flags first
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     case "$kv" in
-      UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
+      "${var_name}=true"|"${var_name}=True"|"${var_name}=1")
         return 0 ;;
+      "${var_name}=false"|"${var_name}=False"|"${var_name}=0"|"${var_name}=")
+        return 1 ;;
     esac
+  done
+  # Fall back to system environment variable
+  local val="${!var_name:-}"
+  case "$val" in
+    true|True|1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Helper: get env var value (--env flags take precedence over system env)
+# Usage: get_env_value VAR_NAME [DEFAULT]
+# ---------------------------------------------------------------------------
+get_env_value() {
+  local var_name="$1"
+  local default="${2:-}"
+  # Check --env flags first
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    if [[ "$kv" == "${var_name}="* ]]; then
+      echo "${kv#${var_name}=}"
+      return 0
+    fi
+  done
+  # Fall back to system environment variable
+  local val="${!var_name:-$default}"
+  echo "$val"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: check if random projects mode is enabled
+# ---------------------------------------------------------------------------
+is_random_projects_mode() {
+  is_env_truthy "UNIFY_TESTS_RAND_PROJ"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: check if a var name is in the --env overrides
+# Usage: is_var_in_env_overrides VAR_NAME
+# ---------------------------------------------------------------------------
+is_var_in_env_overrides() {
+  local var_name="$1"
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    if [[ "$kv" == "${var_name}="* ]]; then
+      return 0
+    fi
   done
   return 1
 }
 
 # ---------------------------------------------------------------------------
-# Helper: build environment exports string from --env overrides and --tags
+# Helper: build environment exports string from --env overrides, system env, and --tags
 # ---------------------------------------------------------------------------
 build_env_exports() {
   local exports=""
+
+  # Add all --env flag overrides
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     exports="$exports $kv"
   done
+
+  # Propagate relevant system environment variables if not already set via --env
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_TESTS_DELETE_PROJ_ON_EXIT UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL"
+  for var_name in $propagate_vars; do
+    if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
+      exports="$exports ${var_name}=${!var_name}"
+    fi
+  done
+
   # Append UNIFY_TEST_TAGS if any tags were specified via --tags
   if (( ${#TAGS[@]} > 0 )); then
     local joined_tags
     joined_tags=$(IFS=','; echo "${TAGS[*]}")
     exports="$exports UNIFY_TEST_TAGS=$joined_tags"
+  elif ! is_var_in_env_overrides "UNIFY_TEST_TAGS" && [[ -n "${UNIFY_TEST_TAGS:-}" ]]; then
+    # Propagate from system env if not set via --tags or --env
+    exports="$exports UNIFY_TEST_TAGS=$UNIFY_TEST_TAGS"
   fi
   echo "$exports"
 }
@@ -210,17 +314,54 @@ run_cmd() {
   else
     pytest_cmd=$(printf 'pytest %q' "$target")
   fi
-  inner=$(printf '%s PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$log_file" "$REPO_ROOT" "$pytest_cmd")
+  # Build inner command with socket name directly interpolated (not via env var)
+  # This ensures tmux commands target the correct isolated server
+  # Note: LC_ALL=en_US.UTF-8 is required for Unicode emoji support in tmux session names
+  inner=$(printf '%s PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$log_file" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
   printf 'bash -lc %q' "$inner"
 }
 
-# Ensure we don't collide with existing sessions
+# Ensure we don't collide with existing sessions.
+# Checks status prefix variants (r ⏳, p ✅, f ❌) since sessions get renamed
+# after completion, which could cause race conditions with subsequent runs.
+#
+# When called WITHOUT a prefix: checks unprefixed AND all prefixed variants
+# When called WITH a prefix: only checks prefixed variants (the unprefixed
+#   session is the one we just created and are about to rename)
 unique_session_name() {
-  local base="$1" name="$1" n=1
-  while tmux has-session -t "$name" 2>/dev/null; do
-    ((n++)); name="${base}-${n}"
+  local input="$1" n=1
+
+  # Strip any status prefix to get the base name for collision checking
+  local base="$input"
+  local prefix=""
+  case "$input" in
+    "r ⏳ "*) base="${input#r ⏳ }"; prefix="r ⏳ " ;;
+    "p ✅ "*) base="${input#p ✅ }"; prefix="p ✅ " ;;
+    "f ❌ "*) base="${input#f ❌ }"; prefix="f ❌ " ;;
+  esac
+
+  local candidate="$base"
+  while true; do
+    local found=0
+    # If input had NO prefix, check unprefixed version too
+    # (If it had a prefix, skip - that's our just-created session we're renaming)
+    if [[ -z "$prefix" ]]; then
+      tmux_cmd has-session -t "$candidate" 2>/dev/null && found=1
+    fi
+    # Always check all prefixed versions to detect renamed sessions
+    tmux_cmd has-session -t "r ⏳ $candidate" 2>/dev/null && found=1
+    tmux_cmd has-session -t "p ✅ $candidate" 2>/dev/null && found=1
+    tmux_cmd has-session -t "f ❌ $candidate" 2>/dev/null && found=1
+
+    if (( found == 0 )); then
+      break
+    fi
+    ((n++))
+    candidate="${base}-${n}"
   done
-  printf "%s" "$name"
+
+  # Return with original prefix (if any)
+  printf "%s%s" "$prefix" "$candidate"
 }
 
 # Turn a file path (or pytest node id) into a session base name
@@ -334,7 +475,9 @@ else
 fi
 
 # Build a safe find pipeline:
-# find <roots> \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "test_*.py" -print0 \)
+# find <roots> -mindepth 1 \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "test_*.py" -print0 \)
+# Note: -mindepth 1 ensures root directories aren't pruned even if they match EXCLUDE_DIRS
+# (e.g., explicitly passing "fixtures/" should search it, not prune it)
 build_find_cmd() {
   local -a cmd=( find )
   if (( ${#roots[@]} )); then
@@ -343,7 +486,8 @@ build_find_cmd() {
     cmd+=( "." )
   fi
 
-  cmd+=( "(" -type d "(" )
+  # -mindepth 1: don't apply exclusions to root directories themselves
+  cmd+=( -mindepth 1 "(" -type d "(" )
   local first=1
   for d in "${EXCLUDE_DIRS[@]}"; do
     if (( first )); then
@@ -493,17 +637,17 @@ for target in "${files[@]}"; do
   cmd="$(run_cmd "$target" "$log_file" "$MARKER_FILTER")"
 
   # Capture session ID to track this specific run robustly
-  sid=$(tmux new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
+  sid=$(tmux_cmd new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
 
-  pending_name="$(unique_session_name "? ⏳ $session")"
-  tmux rename-session -t "$sid" "$pending_name"
+  pending_name="$(unique_session_name "r ⏳ $session")"
+  tmux_cmd rename-session -t "$sid" "$pending_name"
   session="$pending_name"
 
   made_sessions+=( "$session" )
   session_ids+=( "$sid" )
 done
 
-echo "Created ${#made_sessions[@]} tmux sessions:"
+echo "Created ${#made_sessions[@]} tmux sessions (socket: $TMUX_SOCKET):"
 for s in "${made_sessions[@]}"; do
   echo "  - $s"
 done
@@ -525,22 +669,29 @@ echo "  • Run only eval tests:                   ./.parallel_run.sh --eval-onl
 echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic-only tests"
 echo "  • Repeat tests for sampling:             ./.parallel_run.sh --repeat 5 --eval-only tests"
 echo
-echo "Observe:"
-echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
-echo "  • List sessions: tmux ls"
-echo "  • Attach:       tmux attach -t <session>"
-echo "  • Inside tmux:  tmux switch-client -t <session>"
+echo "Observe (this terminal's sessions only):"
+echo "  • Watch sessions:  tests/watch_tests.sh"
+echo "  • List sessions:   tmux -L $TMUX_SOCKET ls"
+echo "  • Attach:          tmux -L $TMUX_SOCKET attach -t <session>"
+echo
+echo "See all terminals' tests: tests/.list_all_tests.sh"
 
 if (( WAIT_FOR_COMPLETION )); then
-  echo "Waiting for tests to complete..."
+  if (( WAIT_TIMEOUT > 0 )); then
+    echo "Waiting for tests to complete (timeout: ${WAIT_TIMEOUT}s)..."
+  else
+    echo "Waiting for tests to complete..."
+  fi
 
+  wait_start=$(date +%s)
+  timed_out=0
   while true; do
     pending_count=0
     for sid in "${session_ids[@]}"; do
       # Check name of our specific session IDs only
-      current_name=$(tmux display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-      # Look for ASCII marker "?" (with or without emoji following) to detect pending state
-      if [[ "$current_name" == "?"* ]]; then
+      current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+      # Look for "r" prefix to detect pending state (r ⏳)
+      if [[ "$current_name" == "r"* ]]; then
         ((pending_count++))
       fi
     done
@@ -548,16 +699,32 @@ if (( WAIT_FOR_COMPLETION )); then
     if (( pending_count == 0 )); then
       break
     fi
+
+    # Check timeout if specified
+    if (( WAIT_TIMEOUT > 0 )); then
+      elapsed=$(( $(date +%s) - wait_start ))
+      if (( elapsed >= WAIT_TIMEOUT )); then
+        timed_out=1
+        echo "Timeout reached after ${WAIT_TIMEOUT}s. ${pending_count} session(s) still running."
+        break
+      fi
+    fi
+
     sleep 1
   done
+
+  if (( timed_out )); then
+    echo "Tests did not complete within timeout. Check tmux sessions manually."
+    exit 2
+  fi
 
   echo "All tests completed."
 
   failures=0
   for sid in "${session_ids[@]}"; do
-    current_name=$(tmux display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-    # Look for ASCII marker "x" (with or without emoji following) to detect failure
-    if [[ "$current_name" == "x"* ]]; then
+    current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+    # Look for "f" prefix to detect failure (f ❌)
+    if [[ "$current_name" == "f"* ]]; then
       echo "Failure detected in session: $current_name"
       failures=1
     fi

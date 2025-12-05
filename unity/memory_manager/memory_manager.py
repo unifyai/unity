@@ -9,6 +9,7 @@ from typing import Optional, Callable, Dict, Any
 from dataclasses import dataclass
 
 
+from ..session_details import SESSION_DETAILS
 from ..common.llm_client import new_llm_client
 from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
@@ -161,7 +162,8 @@ class MemoryManager(BaseMemoryManager):
             # Otherwise use regular create_task (called from async context)
             if loop is not None:
                 loop.call_soon_threadsafe(
-                    loop.create_task, self._setup_message_callbacks()
+                    loop.create_task,
+                    self._setup_message_callbacks(),
                 )
             else:
                 asyncio.create_task(self._setup_message_callbacks())
@@ -186,7 +188,8 @@ class MemoryManager(BaseMemoryManager):
             #     in the transcript chunk payloads passed to the LLM.
             if loop is not None:
                 loop.call_soon_threadsafe(
-                    loop.create_task, self._setup_explicit_call_callbacks()
+                    loop.create_task,
+                    self._setup_explicit_call_callbacks(),
                 )
             else:
                 asyncio.create_task(self._setup_explicit_call_callbacks())
@@ -954,11 +957,8 @@ class MemoryManager(BaseMemoryManager):
                 # ── 2. Per-contact updates (bio & rolling summary) ──────────────────
                 contact_ids: set[int] = set()
 
-                # Attempt to exclude the assistant contact (id provided via env-var or 0)
-                try:
-                    assistant_id = int(os.getenv("ASSISTANT_CONTACT_ID", "0"))
-                except ValueError:
-                    assistant_id = 0
+                # Exclude the assistant's own contact from updates
+                assistant_id = SESSION_DETAILS.assistant.contact_id
 
                 for item in messages:
                     if item.get("kind") != "message":
