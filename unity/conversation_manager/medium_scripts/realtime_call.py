@@ -22,9 +22,15 @@ from livekit.agents import (
     UserStateChangedEvent,
 )
 from livekit import agents
-from livekit.plugins.openai import realtime as openai_realtime
 
 load_dotenv()
+
+# OpenAI Realtime API (voice-to-voice) requires livekit-plugins-openai;
+# not available through unify due to different API architecture.
+try:
+    from livekit.plugins.openai import realtime as openai_realtime
+except ImportError:
+    openai_realtime = None
 
 from unity.conversation_manager.utils import dispatch_agent
 from unity.conversation_manager.events import *
@@ -103,7 +109,15 @@ async def entrypoint(ctx: JobContext) -> None:
     contact = json.loads(os.getenv("CONTACT", "{}"))
     boss = json.loads(os.getenv("BOSS", "{}"))
 
-    # configure the OpenAI Realtime model.
+    # Configure the OpenAI Realtime model.
+    # This requires the livekit-plugins-openai package with OpenAI's Realtime API.
+    if openai_realtime is None:
+        raise RuntimeError(
+            "OpenAI Realtime API is required for voice_mode='sts' (speech-to-speech). "
+            "This API is not available through unify. Install livekit-plugins-openai "
+            "and configure OPENAI_API_KEY to use realtime voice mode.",
+        )
+
     llm_model = openai_realtime.RealtimeModel(
         model="gpt-realtime",
         voice=voice_id,
