@@ -196,13 +196,13 @@ async def test_pause_and_resume(monkeypatch):
     ws = SimulatedWebSearcher()
     handle = await ws.ask("Give a concise overview of Q1 trends.")
 
-    pause_msg = handle.pause()
+    pause_msg = await handle.pause()
     assert "pause" in pause_msg.lower()
 
     res_task = asyncio.create_task(handle.result())
     await _assert_blocks_while_paused(res_task)
 
-    resume_msg = handle.resume()
+    resume_msg = await handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     answer = await res_task
@@ -300,7 +300,7 @@ async def test_update_basic_completion():
 async def test_stop_while_paused_finishes_immediately():
     ws = SimulatedWebSearcher()
     h = await ws.ask("Generate a very long market report.")
-    h.pause()
+    await h.pause()
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()

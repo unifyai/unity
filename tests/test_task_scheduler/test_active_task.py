@@ -138,9 +138,9 @@ async def test_pause_resume(monkeypatch):
         task_description="Run SEO audit for the website.",
     )
     # Pause, wait a moment to ensure the thread blocks, then resume.
-    task.pause()
+    await task.pause()
     await asyncio.sleep(0.1)
-    task.resume()
+    await task.resume()
     # Stop the task to finish quickly and collect counts.
     task.stop(cancel=False)
     await task.result()
