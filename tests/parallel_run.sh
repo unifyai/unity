@@ -632,11 +632,9 @@ for target in "${files[@]}"; do
   fname="${target##*/}"
   wname="${fname%.py}"
 
-  # Ensure the socket-scoped log directory exists
-  # (conftest.py will create it too, but this ensures it's ready for the first run)
-  mkdir -p "$REPO_ROOT/.pytest_logs/$TMUX_SOCKET"
-
   # Create the session first (no command), set remain-on-exit, then send the command.
+  # Note: Log directory is created lazily by conftest.py only when a log file is
+  # actually written, avoiding empty directories when sessions fail/are interrupted.
   # Note: Log paths are auto-derived by conftest.py (semantic name + timestamp in socket subdir)
   cmd="$(run_cmd "$target" "$MARKER_FILTER")"
 
