@@ -63,7 +63,8 @@ tests/.parallel_run.sh -t --wait 300 tests/test_contact_manager/
 - **ALWAYS** kill failed tmux sessions after extracting failure info from `.pytest_logs/`.
 - Logs are persisted in `.pytest_logs/`; keeping sessions open is unnecessary.
 - Run: `tests/.kill_failed.sh` to kill all failed sessions from YOUR terminal.
-- For cross-terminal cleanup: `tests/.kill_failed.sh --all`
+- Run: `tests/.kill_server.sh` to kill the entire tmux server for YOUR terminal.
+- For cross-terminal cleanup: `tests/.kill_failed.sh --all` or `tests/.kill_server.sh --all`
 
 ### Permissions
 - Use `required_permissions: ['all']` to ensure access to `.env` and log files.
