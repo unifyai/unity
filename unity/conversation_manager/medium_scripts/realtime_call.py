@@ -26,12 +26,8 @@ from livekit.plugins.openai import realtime as openai_realtime
 
 load_dotenv()
 
-from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager.utils import dispatch_agent
 from unity.conversation_manager.events import *
-
-# Populate context from env vars (this runs as a subprocess)
-SESSION_DETAILS.populate_from_env()
 
 # NEW: shared helpers
 from unity.conversation_manager.medium_scripts.common import (
@@ -93,11 +89,11 @@ async def entrypoint(ctx: JobContext) -> None:
     print("Connected to room")
 
     # read static config
-    voice_provider = SESSION_DETAILS.voice.provider
-    voice_id = SESSION_DETAILS.voice.id
+    voice_provider = os.environ.get("VOICE_PROVIDER")
+    voice_id = os.environ.get("VOICE_ID")
     outbound = os.environ.get("OUTBOUND") == "True"
     channel = os.environ.get("CHANNEL")
-    assistant_bio = SESSION_DETAILS.assistant.about
+    assistant_bio = os.environ.get("ASSISTANT_ABOUT")
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)
