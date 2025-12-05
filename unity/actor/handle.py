@@ -8,14 +8,11 @@ import logging
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-import unify
-from unify import AsyncUnify
-
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.common.llm_client import get_cache_setting
+from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import _strip_image_keys
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from unity.image_manager.types.image_refs import ImageRefs
@@ -90,15 +87,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._tool_policy = tool_policy
         self._computer_primitives = computer_primitives
 
-        self._client = AsyncUnify(
-            "claude-4.5-sonnet@anthropic",
-            cache=get_cache_setting(),
-        )
-
-        self._ask_client = unify.AsyncUnify(
-            "claude-4.5-sonnet@anthropic",
-            cache=get_cache_setting(),
-        )
+        self._client = new_llm_client("claude-4.5-sonnet@anthropic")
+        self._ask_client = new_llm_client("claude-4.5-sonnet@anthropic")
 
         if not self._main_event_loop:
             try:
