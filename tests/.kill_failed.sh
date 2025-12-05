@@ -82,10 +82,10 @@ failed_sessions=()
 for socket in "${SOCKETS[@]}"; do
   while IFS= read -r line; do
     session_name="${line%%:*}"
-    if [[ "$session_name" == x* ]]; then
+    if [[ "$session_name" == "x"* ]]; then
       failed_sessions+=( "$socket:$session_name" )
     fi
-  done < <(tmux -L "$socket" ls 2>/dev/null || true)
+  done < <(LC_ALL=en_US.UTF-8 tmux -L "$socket" ls 2>/dev/null || true)
 done
 
 if (( ${#failed_sessions[@]} == 0 )); then

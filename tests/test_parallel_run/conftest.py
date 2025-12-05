@@ -1,5 +1,5 @@
 """
-Pytest configuration for .parallel_run.sh tests.
+Pytest configuration for parallel_run.sh tests.
 
 Provides fixtures for:
 - Managing tmux sessions
@@ -22,7 +22,7 @@ import pytest
 # Paths
 REPO_ROOT = Path(__file__).parent.parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
-SCRIPT_PATH = TESTS_DIR / ".parallel_run.sh"
+SCRIPT_PATH = TESTS_DIR / "parallel_run.sh"
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PYTEST_LOGS_DIR = REPO_ROOT / ".pytest_logs"
 
@@ -59,8 +59,7 @@ class TmuxSession:
     @property
     def base_name(self) -> str:
         """Strip the status prefix from the session name."""
-        # Remove status prefixes like "? ⏳ ", "o ✅ ", "x ❌ "
-        for prefix in ["? ⏳ ", "o ✅ ", "x ❌ ", "⏳ ", "✅ ", "❌ "]:
+        for prefix in ["o ✅ ", "x ❌ ", "? ⏳ "]:
             if self.name.startswith(prefix):
                 return self.name[len(prefix) :]
         return self.name
@@ -68,7 +67,7 @@ class TmuxSession:
 
 @dataclass
 class RunResult:
-    """Result of running .parallel_run.sh."""
+    """Result of running parallel_run.sh."""
 
     exit_code: int
     stdout: str
@@ -204,8 +203,11 @@ def wait_for_sessions_to_complete(
 @pytest.fixture
 def clean_tmux_sessions():
     """Fixture that cleans up any test-related tmux sessions before and after."""
-    # Pattern to match our fixture test sessions
-    pattern = r"test_parallel_run|fixtures"
+    # Pattern to match ONLY the fixture test sessions created by tests, NOT parent sessions.
+    # Parent sessions are named like "test_parallel_run-test_isolation" (from the test file path).
+    # Fixture sessions are named like "? ⏳ fixtures-test_always_pass" (from the fixtures/ directory).
+    # We only want to clean up the fixture sessions, not kill our parent session!
+    pattern = r"^[?ox]\s*[✅❌⏳]\s*fixtures-"
 
     # Clean before
     kill_sessions_matching(pattern)
@@ -239,7 +241,7 @@ def clean_pytest_logs():
 
 
 class ParallelRunner:
-    """Helper class to run .parallel_run.sh with various arguments."""
+    """Helper class to run parallel_run.sh with various arguments."""
 
     def __init__(self):
         self.script_path = SCRIPT_PATH
@@ -255,7 +257,7 @@ class ParallelRunner:
         completion_timeout: float = 60,
         env: Optional[dict] = None,
     ) -> RunResult:
-        """Run .parallel_run.sh with the given arguments.
+        """Run parallel_run.sh with the given arguments.
 
         Args:
             *args: Arguments to pass to the script

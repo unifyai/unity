@@ -36,8 +36,9 @@ _derive_socket_name() {
 TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
 
 # Wrapper for all tmux commands to use our isolated socket
+# LC_ALL=en_US.UTF-8 ensures Unicode emojis work in session names
 tmux_cmd() {
-  tmux -L "$TMUX_SOCKET" "$@"
+  LC_ALL=en_US.UTF-8 tmux -L "$TMUX_SOCKET" "$@"
 }
 
 # ---- Configurable directory excludes (by name) ----
@@ -249,7 +250,10 @@ run_cmd() {
   else
     pytest_cmd=$(printf 'pytest %q' "$target")
   fi
-  inner=$(printf '%s PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$log_file" "$REPO_ROOT" "$pytest_cmd")
+  # Build inner command with socket name directly interpolated (not via env var)
+  # This ensures tmux commands target the correct isolated server
+  # Note: LC_ALL=en_US.UTF-8 is required for Unicode emoji support in tmux session names
+  inner=$(printf '%s PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$log_file" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -565,7 +569,7 @@ echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic
 echo "  • Repeat tests for sampling:             ./.parallel_run.sh --repeat 5 --eval-only tests"
 echo
 echo "Observe (this terminal's sessions only):"
-echo "  • Watch sessions:  tests/.watch_tests.sh"
+echo "  • Watch sessions:  tests/watch_tests.sh"
 echo "  • List sessions:   tmux -L $TMUX_SOCKET ls"
 echo "  • Attach:          tmux -L $TMUX_SOCKET attach -t <session>"
 echo
@@ -585,7 +589,7 @@ if (( WAIT_FOR_COMPLETION )); then
     for sid in "${session_ids[@]}"; do
       # Check name of our specific session IDs only
       current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-      # Look for ASCII marker "?" (with or without emoji following) to detect pending state
+      # Look for "?" prefix to detect pending state
       if [[ "$current_name" == "?"* ]]; then
         ((pending_count++))
       fi
@@ -618,7 +622,7 @@ if (( WAIT_FOR_COMPLETION )); then
   failures=0
   for sid in "${session_ids[@]}"; do
     current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-    # Look for ASCII marker "x" (with or without emoji following) to detect failure
+    # Look for "x" prefix to detect failure
     if [[ "$current_name" == "x"* ]]; then
       echo "Failure detected in session: $current_name"
       failures=1
