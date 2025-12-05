@@ -1,6 +1,7 @@
 import unify
 from unify import create_context, create_fields
 from unity.common.state_managers import BaseStateManager
+from unity.common.context_store import _PRIVATE_FIELDS
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Any, Union, Type
 from pydantic import BaseModel
@@ -144,9 +145,45 @@ class ContextRegistry:
             except Exception:
                 pass  # Fields already exist or transient failure
 
+        # Also create the All/<Ctx> aggregation context for cross-assistant queries
+        cls._ensure_all_context(target_name, table)
+
         cls._registry[(manager_name, table.name)] = target_name
 
         return target_name
+
+    @classmethod
+    def _ensure_all_context(cls, target_name: str, table: TableContext) -> None:
+        """
+        Ensure the All/<suffix> context exists for cross-assistant aggregation.
+
+        This context:
+        - Has the same fields as the source context (for consistent querying)
+        - Includes private fields (_assistant, _assistant_id, _user_id)
+        - Has NO unique_keys or auto_counting (logs are added by reference)
+        """
+        if "/" not in target_name:
+            return
+        _, suffix = target_name.split("/", 1)
+        all_ctx = f"All/{suffix}"
+
+        # Idempotent creation: try to create, tolerate if already exists
+        try:
+            create_context(
+                all_ctx,
+                description=f"Aggregation of {table.name} across all assistants",
+            )
+        except Exception:
+            pass  # Already exists or transient failure
+
+        # Mirror fields from source context + add private fields
+        if table.fields:
+            fields_with_private = dict(table.fields)
+            fields_with_private.update(_PRIVATE_FIELDS)
+            try:
+                create_fields(fields_with_private, context=all_ctx)
+            except Exception:
+                pass  # Fields already exist or transient failure
 
     @classmethod
     def refresh(
