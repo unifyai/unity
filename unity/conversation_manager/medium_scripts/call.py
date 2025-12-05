@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.plugins import (
-    openai,
     cartesia,
     deepgram,
     elevenlabs,
@@ -45,23 +44,20 @@ current_running_response: asyncio.Task | None = None
 
 # globals initialized lazily or via prewarm to avoid duplicate heavy init
 STT = None
-LLM = None
 VAD = None
 
 
 def prewarm(_ctx=None):
-    global STT, LLM, VAD
+    global STT, VAD
     try:
-        print("Prewarm: initializing STT, LLM, VAD and turn detector...")
+        print("Prewarm: initializing STT, VAD and turn detector...")
         STT = deepgram.STT(model="nova-3", language="en-GB")
-        LLM = openai.LLM(model="gpt-4o")
         VAD = silero.VAD.load(min_speech_duration=0.15)
         print("Prewarm complete")
     except Exception as e:  # noqa: BLE001
         print(f"Prewarm failed: {e}")
         # ensure fallback path runs by resetting all globals
         STT = None
-        LLM = None
         VAD = None
 
 
@@ -77,7 +73,7 @@ class Assistant(Agent):
         )
         self.call_received = not outbound
 
-        super().__init__(instructions="", llm=LLM)
+        super().__init__(instructions="")
 
     def set_call_received(self):
         self.call_received = True
@@ -118,7 +114,7 @@ class Assistant(Agent):
 
 
 async def entrypoint(ctx: agents.JobContext):
-    global STT, LLM, VAD
+    global STT, VAD
 
     print("Connecting to room...")
     await ctx.connect()
@@ -140,12 +136,11 @@ async def entrypoint(ctx: agents.JobContext):
     # fallback for whenever pre-loading fails
     if STT is None:
         STT = deepgram.STT(model="nova-3", language="en-GB")
-        LLM = openai.LLM(model="gpt-4o")
         VAD = silero.VAD.load(min_speech_duration=0.15)
 
+    # LLM inference handled by Assistant.llm_node override via Redis/ConversationManager
     session = AgentSession(
         stt=STT,
-        llm=LLM,
         tts=(
             elevenlabs.TTS(
                 voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,

@@ -1,14 +1,13 @@
-import os
 import json
-from openai import AsyncOpenAI
+from typing import Awaitable, Callable, Optional
 
 from pydantic_core import from_json
-from typing import Awaitable, Callable, Optional
+
+from unity.common.llm_client import new_llm_client
 
 
 class LLM:
     def __init__(self, model: str, event_broker=None):
-        self.client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
         self.model = model
         self.event_broker = event_broker
 
@@ -23,27 +22,24 @@ class LLM:
     ):
         if not stream_to_call:
             return await self._run_non_stream(system_prompt, messages, response_model)
-        else:
-            if not call_type:
-                raise Exception("call type must be specified if using stream_to_call")
-            return await self._run_stream(
-                system_prompt,
-                messages,
-                response_model,
-                call_type,
-                before_stream_start,
-            )
+        if not call_type:
+            raise Exception("call type must be specified if using stream_to_call")
+        return await self._run_stream(
+            system_prompt,
+            messages,
+            response_model,
+            call_type,
+            before_stream_start,
+        )
 
     async def _run_non_stream(self, system_prompt, messages, response_model):
-        out = await self.client.responses.parse(
-            model=self.model,
-            instructions=system_prompt,
-            input=messages,
-            text_format=response_model,
-            reasoning={"effort": "low"},
+        client = new_llm_client(self.model, reasoning_effort="low")
+        client.set_response_format(response_model)
+        return await client.generate(
+            system_message=system_prompt,
+            messages=messages if isinstance(messages, list) else None,
+            user_message=messages if isinstance(messages, str) else None,
         )
-        out = out.output[1].content[0].text
-        return out
 
     async def _run_stream(
         self,
@@ -53,50 +49,73 @@ class LLM:
         call_type,
         before_stream_start: Optional[Callable[[], Awaitable[None]]],
     ):
-        last_phone_utterance = ""
+        client = new_llm_client(self.model, reasoning_effort="low")
+        client.set_response_format(self._to_streaming_format(response_model))
+
         out = ""
-        async with self.client.responses.stream(
-            model=self.model,
-            instructions=system_prompt,
-            # input=self.chat_history + input_message,
-            input=messages,
-            text_format=response_model,
-            reasoning={"effort": "low"},
-        ) as stream:
-            done = False
-            first_chunk = False
-            async for event in stream:
-                if event.type == "response.output_text.delta":
-                    out += event.delta
-                    parsed_out = from_json(out, allow_partial="trailing-strings")
-                    if "actions" in parsed_out and not done:
-                        await self.event_broker.publish(
-                            f"app:{call_type}:response_gen",
-                            json.dumps({"type": "end_gen"}),
-                        )
-                        done = True
-                    elif parsed_out.get("phone_utterance"):
-                        if len(last_phone_utterance) != len(
-                            parsed_out["phone_utterance"],
-                        ):
-                            if not first_chunk:
-                                if before_stream_start:
-                                    await before_stream_start()
-                                await self.event_broker.publish(
-                                    f"app:{call_type}:response_gen",
-                                    json.dumps({"type": "start_gen"}),
-                                )
-                                first_chunk = True
-                            await self.event_broker.publish(
-                                f"app:{call_type}:response_gen",
-                                json.dumps(
-                                    {
-                                        "type": "gen_chunk",
-                                        "chunk": parsed_out["phone_utterance"][
-                                            len(last_phone_utterance) :
-                                        ],
-                                    },
-                                ),
-                            )
-                            last_phone_utterance = parsed_out["phone_utterance"]
+        last_utterance_len = 0
+        done = False
+        started = False
+
+        stream = await client.generate(
+            system_message=system_prompt,
+            messages=messages if isinstance(messages, list) else None,
+            user_message=messages if isinstance(messages, str) else None,
+            stream=True,
+        )
+
+        async for chunk in stream:
+            out += chunk
+            try:
+                parsed = from_json(out, allow_partial="trailing-strings")
+            except Exception:
+                continue
+
+            if not isinstance(parsed, dict):
+                continue
+
+            if "actions" in parsed and not done:
+                await self.event_broker.publish(
+                    f"app:{call_type}:response_gen",
+                    json.dumps({"type": "end_gen"}),
+                )
+                done = True
+
+            utterance = parsed.get("phone_utterance", "")
+            if len(utterance) > last_utterance_len:
+                if not started:
+                    if before_stream_start:
+                        await before_stream_start()
+                    await self.event_broker.publish(
+                        f"app:{call_type}:response_gen",
+                        json.dumps({"type": "start_gen"}),
+                    )
+                    started = True
+
+                await self.event_broker.publish(
+                    f"app:{call_type}:response_gen",
+                    json.dumps(
+                        {
+                            "type": "gen_chunk",
+                            "chunk": utterance[last_utterance_len:],
+                        },
+                    ),
+                )
+                last_utterance_len = len(utterance)
+
         return out
+
+    def _to_streaming_format(self, response_model) -> dict:
+        """Convert Pydantic model to json_schema format for streaming."""
+        schema = response_model.model_json_schema()
+        schema.setdefault("additionalProperties", False)
+        for def_schema in schema.get("$defs", {}).values():
+            def_schema.setdefault("additionalProperties", False)
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "schema": schema,
+                "strict": True,
+            },
+        }
