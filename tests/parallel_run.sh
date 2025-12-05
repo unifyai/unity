@@ -10,6 +10,12 @@ if [ -f "../.env" ]; then
   set +a
 fi
 
+# ---- Increase file descriptor limit ----
+# Parallel tests open many network connections. Each connection uses a file
+# descriptor. macOS defaults to 256 per process, which is easily exceeded.
+# This setting is inherited by all child processes (tmux sessions, pytest).
+ulimit -n 4096 2>/dev/null || true
+
 # ---- Terminal-based isolation ----
 # Each terminal session (including Cursor agent terminals) gets its own
 # isolated tmux server via a unique socket. This prevents agents from
