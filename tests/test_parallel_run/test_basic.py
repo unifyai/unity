@@ -42,7 +42,7 @@ class TestSingleFile:
         session_name = result.sessions_created[0]
 
         # Session name should contain the file identifier (without test_ prefix and .py)
-        # After status prefix like "? ⏳ " or "o ✅ "
+        # After status prefix like "r ⏳ " or "d ✅ "
         assert "always_pass" in session_name or "test_always_pass" in session_name
 
 

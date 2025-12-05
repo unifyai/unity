@@ -208,7 +208,7 @@ pytest-xdist works fine for basic parallel execution. However, `parallel_run.sh`
 |---------|-------------------|--------------|
 | **Interactive debugging** | `tmux attach -t <session>` to any running/failed test | Output multiplexed across workers; hard to isolate |
 | **Post-failure inspection** | Failed sessions stay open with full scrollback | Just a failure message in terminal |
-| **Visual status** | Real-time `? ⏳` / `o ✅` / `x ❌` per test file | Single progress bar |
+| **Visual status** | Real-time `d ✅` / `f ❌` / `r ⏳` per test file | Single progress bar |
 | **Log isolation** | Per-session files in `.pytest_logs/` | Merged output (requires extra config) |
 | **Load balancing** | Static (1 session = 1 target) | Dynamic redistribution |
 
@@ -246,7 +246,7 @@ In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` whic
 
 ### Live Status and Auto-Close
 
-- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
+- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `r ⏳` while the test runs, `d ✅` on success (done), or `f ❌` on failure. The letters are chosen to sort alphabetically as done→failed→running, so passing tests appear first in listings. This also makes tab-completion easy in shells like zsh.
 - **Auto-close on success**: Sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
 - You can still attach before auto-close; you'll see the final message (e.g., `pytest exited with code: 0`) and a short notice that auto-close is scheduled.
 
@@ -278,7 +278,7 @@ What happens:
 2. **Discovery**: Recursively finds all `test_*.py` files (excluding caches/venvs; see excludes below).
 3. **Sessions**: Creates one tmux session per file.
 4. **Window name**: The file's basename without `.py`.
-5. **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `? ⏳ unit-test_math` (then `o ✅ unit-test_math` or `x ❌ unit-test_math`).
+5. **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `r ⏳ unit-test_math` (then `d ✅ unit-test_math` or `f ❌ unit-test_math`).
 
 Common tmux actions:
 
@@ -525,7 +525,7 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
 - **Names**:
-  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `? ⏳ unit-test_math` → `o ✅ unit-test_math` or `x ❌ unit-test_math`.
+  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `r ⏳ unit-test_math` → `d ✅ unit-test_math` or `f ❌ unit-test_math`.
   - Window: `<filename-without-.py>`.
   - If a session name already exists, the script appends `-2`, `-3`, … to avoid collisions.
 
@@ -538,7 +538,7 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
   tests/watch_tests.sh --all  # Watch ALL terminals' tests
   ```
 
-  As tests start, sessions show a `? ⏳` prefix. They flip to `o ✅` or `x ❌` when pytest exits. Successful sessions auto-close ~10s later.
+  As tests start, sessions show a `r ⏳` prefix. They flip to `d ✅` or `f ❌` when pytest exits. Successful sessions auto-close ~10s later.
 
 - **Kill all failed sessions** at once:
 

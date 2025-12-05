@@ -82,10 +82,10 @@ class TestStatusPrefixes:
                 s
                 for s in sessions
                 if any(
-                    result.sessions_created[0].replace("? ⏳ ", "").replace("o ✅ ", "")
-                    in s.name.replace("? ⏳ ", "")
-                    .replace("o ✅ ", "")
-                    .replace("x ❌ ", "")
+                    result.sessions_created[0].replace("r ⏳ ", "").replace("d ✅ ", "")
+                    in s.name.replace("r ⏳ ", "")
+                    .replace("d ✅ ", "")
+                    .replace("f ❌ ", "")
                     for name in result.sessions_created
                 )
             ]
