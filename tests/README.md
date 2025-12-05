@@ -100,6 +100,7 @@ alias watch_tests='~/unity/tests/watch_tests.sh'
 alias attach='~/unity/tests/attach.sh'
 alias kill_failed='~/unity/tests/kill_failed.sh'
 alias kill_server='~/unity/tests/kill_server.sh'
+alias list_runs='~/unity/tests/list_runs.sh'
 ```
 
 After adding, run `source ~/.zshrc` (or restart your terminal). You can then run `parallel_run`, `watch_tests`, etc. from any directory.
@@ -157,6 +158,25 @@ tests/watch_tests.sh --all
 
 # Attach to a specific session to see its output
 tests/attach.sh '<session-name>'
+```
+
+**Recovering orphaned runs (when you close the original terminal):**
+
+```bash
+# List all active test runs across all terminals
+tests/list_runs.sh
+
+# Watch tests from a specific socket (orphaned run)
+tests/watch_tests.sh --socket unity_dev_ttys042
+
+# Attach to a session in a specific socket
+tests/attach.sh --socket unity_dev_ttys042 'f ❌ test_actor-test_code_act'
+
+# Kill failed sessions in a specific socket
+tests/kill_failed.sh --socket unity_dev_ttys042
+
+# Kill a specific socket's server
+tests/kill_server.sh --socket unity_dev_ttys042
 ```
 
 **Cleanup:**
@@ -621,10 +641,24 @@ tmux switch-client -t <name>
 **Helper scripts (recommended):**
 
 ```bash
+tests/list_runs.sh          # List all active test runs (all sockets)
 tests/watch_tests.sh        # Watch this terminal's tests
 tests/attach.sh '<name>'    # Attach to a session
 tests/kill_failed.sh        # Kill failed sessions
 tests/kill_server.sh        # Kill all sessions (entire server)
+```
+
+**Recovering orphaned runs:**
+
+```bash
+# If you close a terminal, the tests keep running. Use list_runs to find them:
+tests/list_runs.sh
+
+# Then use --socket to target the orphaned run from any terminal:
+tests/watch_tests.sh --socket <socket-name>
+tests/attach.sh --socket <socket-name> '<session-name>'
+tests/kill_failed.sh --socket <socket-name>
+tests/kill_server.sh --socket <socket-name>
 ```
 
 That's it! Run tests, use the helpers to monitor, and jump into whichever test you want to watch.
