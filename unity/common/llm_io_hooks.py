@@ -28,12 +28,18 @@ _LLM_IO_DIR: str | None = None
 
 
 def _get_socket_subdir() -> str:
-    """Determine the log subdirectory based on terminal/socket context.
+    """Determine the log subdirectory for LLM I/O debug files.
 
-    Returns:
-        - Socket name (e.g., 'unity_dev_ttys042') if UNITY_TEST_SOCKET is set
-        - 'standalone' for direct invocations
+    Returns a datetime-prefixed directory name for natural time-based ordering:
+        - UNITY_LOG_SUBDIR if set (e.g., '2025-12-05T14-30-45_unity_dev_ttys042')
+        - Falls back to UNITY_TEST_SOCKET for legacy compatibility
+        - 'standalone' for direct invocations outside parallel_run.sh
     """
+    # Prefer the datetime-prefixed log subdir if available
+    log_subdir = os.environ.get("UNITY_LOG_SUBDIR", "").strip()
+    if log_subdir:
+        return log_subdir
+    # Fallback to socket name for backward compatibility
     socket = os.environ.get("UNITY_TEST_SOCKET", "").strip()
     if socket:
         return socket

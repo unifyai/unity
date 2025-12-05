@@ -229,7 +229,7 @@ pytest-xdist works fine for basic parallel execution. However, `parallel_run.sh`
 | **Interactive debugging** | `tmux attach -t <session>` to any running/failed test | Output multiplexed across workers; hard to isolate |
 | **Post-failure inspection** | Failed sessions stay open with full scrollback | Just a failure message in terminal |
 | **Visual status** | Real-time `p ✅` / `f ❌` / `r ⏳` per test file | Single progress bar |
-| **Log isolation** | Per-terminal folders in `.pytest_logs/{socket}/` | Merged output (requires extra config) |
+| **Log isolation** | Per-run folders in `.pytest_logs/{datetime}_{socket}/` | Merged output (requires extra config) |
 | **Load balancing** | Static (1 session = 1 target) | Dynamic redistribution |
 
 **When tmux shines:** Our tests involve complex async LLM tool loops with steering, pausing, resuming, and interjections. When something fails, you need the complete context—the LLM I/O, the async flow, the interleaved logs. Being able to `tmux attach` to a failing test, scroll through its full history, and even interact with it is invaluable.
@@ -388,7 +388,7 @@ Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipeli
 - If all pass, exits with code `0`.
 - If any fail, exits with code `1` and lists the failed sessions.
 - If timeout is reached before completion, exits with code `2`.
-- **Logs**: Each session writes its full pytest output to a terminal-scoped folder in `.pytest_logs/{socket}/` with semantic + timestamp naming (e.g., `.pytest_logs/unity_dev_ttys042/test_contact_manager-test_ask_2025-12-05_14-30-22.txt`).
+- **Logs**: Each session writes its full pytest output to a datetime-prefixed folder in `.pytest_logs/{datetime}_{socket}/` with semantic naming (e.g., `.pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/test_contact_manager-test_ask.txt`).
 - **Debugging**: When running with `--wait`, inspect these log files to diagnose failures instead of attaching to tmux sessions (though sessions remain open for inspection if they fail).
 
 **Timeout examples:**
@@ -533,7 +533,7 @@ The `--repeat N` flag runs each test target N times, creating N separate tmux se
 ./parallel_run.sh --env UNIFY_CACHE=false --repeat 5 --eval-only --wait tests
 ```
 
-Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to avoid name collisions) and its own log file in `.pytest_logs/{socket}/`. After completion, you can analyze the logs to compute statistics.
+Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to avoid name collisions) and its own log file in `.pytest_logs/{datetime}_{socket}/`. After completion, you can analyze the logs to compute statistics.
 
 ### Defaults & Conventions
 
@@ -568,7 +568,7 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
   tests/kill_failed.sh -n     # Dry run - show what would be killed
   ```
 
-  > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/{socket}/`. Logs are persisted there, so keeping sessions open just clutters the output. Run `tests/kill_failed.sh` after investigating failures.
+  > **Best Practice:** Always clean up failed sessions after you've extracted the failure info from `.pytest_logs/`. Logs are persisted there, so keeping sessions open just clutters the output. Run `tests/kill_failed.sh` after investigating failures.
 
 - **Kill a single session** once a test finishes (the socket name is printed when tests are launched):
 
@@ -667,40 +667,46 @@ That's it! Run tests, use the helpers to monitor, and jump into whichever test y
 
 ## Log Directory Structure
 
-Test logs are organized into **terminal-scoped directories** to prevent confusion when multiple agents or users run tests concurrently.
+Test logs are organized into **datetime-prefixed directories** for natural time-based ordering and to prevent confusion when multiple agents or users run tests concurrently.
 
 ### Directory Layout
 
+Directory names follow the format: `YYYY-MM-DDTHH-MM-SS_{socket_name}`
+- The datetime prefix enables chronological sorting in filesystem listings
+- The socket name identifies the terminal session for isolation
+
 ```
 .pytest_logs/
-├── unity_dev_ttys042/                    # Terminal A (user)
-│   ├── test_contact-test_ask_2025-12-05_14-30-22.txt
-│   └── test_task-test_update_2025-12-05_14-31-45.txt
-├── unity_dev_ttys099/                    # Terminal B (agent 1)
-│   └── test_contact-test_ask_2025-12-05_14-32-10.txt
-├── unity_pid12345/                       # Non-interactive shell (agent 2)
+├── 2025-12-05T09-15-22_unity_dev_ttys042/    # Run at 09:15 from Terminal A
+│   ├── test_contact-test_ask.txt
+│   └── test_task-test_update.txt
+├── 2025-12-05T10-30-45_unity_dev_ttys099/    # Run at 10:30 from Terminal B (agent)
+│   └── test_contact-test_ask.txt
+├── 2025-12-05T14-22-18_unity_dev_ttys042/    # Run at 14:22 from Terminal A (new run)
+│   └── test_foo.txt
+├── 2025-12-05T14-35-00_unity_pid12345/       # Non-interactive shell
 │   └── ...
-└── standalone/                           # Direct pytest runs (no parallel_run.sh)
+└── standalone/                               # Direct pytest runs (no parallel_run.sh)
     └── test_foo_2025-12-05_14-35-00.txt
 
 .llm_io_debug/
-├── unity_dev_ttys042/                    # Same terminal-scoped structure
-│   └── 2025-12-05T14-30-22/
+├── 2025-12-05T09-15-22_unity_dev_ttys042/    # Same datetime-prefixed structure
+│   └── {session_id}/
 │       └── *.txt
 └── ...
 ```
 
 ### Log File Naming
 
-All log files use **semantic naming with timestamp suffix**:
+All log files use **semantic naming** within datetime-prefixed directories:
 
 | Command | Log File |
 |---------|----------|
-| `pytest tests/test_contact_manager/test_ask.py` | `test_contact_manager-test_ask_2025-12-05_14-30-22.txt` |
-| `pytest tests/test_contact_manager/test_ask.py::test_foo` | `test_contact_manager-test_ask--test_foo_2025-12-05_14-30-22.txt` |
-| `pytest tests/test_contact_manager/` | `test_contact_manager_2025-12-05_14-30-22.txt` |
-| `pytest tests/` | `tests_2025-12-05_14-30-22.txt` |
-| `pytest` (no args) | `all_2025-12-05_14-30-22.txt` |
+| `pytest tests/test_contact_manager/test_ask.py` | `test_contact_manager-test_ask.txt` |
+| `pytest tests/test_contact_manager/test_ask.py::test_foo` | `test_contact_manager-test_ask--test_foo.txt` |
+| `pytest tests/test_contact_manager/` | `test_contact_manager.txt` |
+| `pytest tests/` | `tests.txt` |
+| `pytest` (no args) | `all.txt` |
 
 ### Finding Your Logs
 
@@ -708,18 +714,24 @@ At the end of every test run, a banner shows exactly where logs are:
 
 ```
 ========================================================================
-📄 Test log: /Users/you/unity/.pytest_logs/unity_dev_ttys042/test_foo_2025-12-05_14-30-22.txt
-📁 This terminal's logs: /Users/you/unity/.pytest_logs/unity_dev_ttys042/
-📂 All terminals' logs:  /Users/you/unity/.pytest_logs/*/
+📄 Test log: /Users/you/unity/.pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/test_foo.txt
+📁 This run's logs: /Users/you/unity/.pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/
+📂 All log directories:  /Users/you/unity/.pytest_logs/*/
 ========================================================================
 ```
 
-**For agents:** Read the terminal output to find the exact log path. The socket name (e.g., `unity_dev_ttys042`) matches the tmux socket printed when tests are launched.
-
-**For cross-terminal analysis:** Use glob patterns to search across all terminals:
+**Finding recent runs:** Directories are sorted chronologically, so recent runs appear at the bottom of `ls` output:
 ```bash
-ls .pytest_logs/*/          # List all terminal directories
-ls .pytest_logs/*/*.txt     # List all log files across all terminals
+ls .pytest_logs/              # Oldest first, newest last
+ls -r .pytest_logs/           # Newest first
+```
+
+**For agents:** Read the terminal output to find the exact log path. The directory name (e.g., `2025-12-05T14-30-22_unity_dev_ttys042`) is printed when tests start via `parallel_run.sh`.
+
+**For cross-run analysis:** Use glob patterns to search across all runs:
+```bash
+ls .pytest_logs/*/            # List all run directories
+ls .pytest_logs/*/*.txt       # List all log files across all runs
 ```
 
 ---
