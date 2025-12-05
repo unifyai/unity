@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from ..common.llm_client import new_llm_client
+from ..common.log_utils import log as unity_log, create_logs as unity_create_logs
 import unify
 from google.cloud import storage
 from google.oauth2 import service_account
@@ -1059,7 +1060,7 @@ class ImageManager(BaseImageManager):
 
         # Fast path: batch create to avoid O(N) round trips and allow parallelism upstream
         try:
-            resp = unify.create_logs(context=self._ctx, entries=prepared, batched=True)
+            resp = unity_create_logs(context=self._ctx, entries=prepared, batched=True)
 
             # Helper: write-through to DataStore with a given row payload
             def _put_row(row: Dict[str, Any]) -> None:
@@ -1161,7 +1162,12 @@ class ImageManager(BaseImageManager):
             # Fallback: per-item create; on failure return None for that entry
             for i, payload in enumerate(prepared):
                 try:
-                    lg = unify.log(context=self._ctx, **payload, new=True, mutable=None)
+                    lg = unity_log(
+                        context=self._ctx,
+                        **payload,
+                        new=True,
+                        mutable=False,
+                    )
                     try:
                         self._put_preserve_temp(lg.entries)
                     except Exception:
