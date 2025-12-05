@@ -163,24 +163,42 @@ class TestEmptyResults:
         assert "No tests" in result.stdout or len(result.sessions_created) == 0
 
     def test_eval_only_no_eval_tests(self, runner):
-        """--eval-only with no eval tests should find no tests."""
+        """--eval-only in per-file mode creates session even if no tests match.
+
+        In per-file mode (default), the marker filter is passed to pytest inside
+        the session. The script doesn't pre-filter files by marker - it creates
+        a session for each file and lets pytest handle the filtering.
+
+        Use per-test mode (-t) if you want to skip files with no matching tests.
+        """
         result = runner.run(
             "--eval-only",
             runner.fixture_path("test_symbolic_only.py"),
         )
 
-        # test_symbolic_only.py has no eval marks
-        assert "No tests" in result.stdout or len(result.sessions_created) == 0
+        # test_symbolic_only.py has no eval marks, but session is still created
+        # in per-file mode (marker filtering happens inside pytest)
+        assert result.exit_code == 0
+        assert len(result.sessions_created) == 1
 
     def test_symbolic_only_all_eval_tests(self, runner):
-        """--symbolic-only with all eval tests should find no tests."""
+        """--symbolic-only in per-file mode creates session even if no tests match.
+
+        In per-file mode (default), the marker filter is passed to pytest inside
+        the session. The script doesn't pre-filter files by marker - it creates
+        a session for each file and lets pytest handle the filtering.
+
+        Use per-test mode (-t) if you want to skip files with no matching tests.
+        """
         result = runner.run(
             "--symbolic-only",
             runner.fixture_path("test_eval_marked.py"),
         )
 
-        # test_eval_marked.py is all eval
-        assert "No tests" in result.stdout or len(result.sessions_created) == 0
+        # test_eval_marked.py is all eval, but session is still created
+        # in per-file mode (marker filtering happens inside pytest)
+        assert result.exit_code == 0
+        assert len(result.sessions_created) == 1
 
 
 class TestPathFormats:
