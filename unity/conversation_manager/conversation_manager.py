@@ -430,8 +430,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
             realtime=self.call_manager.realtime,
         )
 
-    def cleanup(self):
+    async def store_chat_history(self):
+        if len(self.chat_history) >= 2:
+            await self.event_broker.publish(
+                "app:comms:chat_history",
+                StoreChatHistory(chat_history=self.chat_history[-2:]).to_json(),
+            )
+            await asyncio.sleep(2)
+
+    async def cleanup(self):
         """Clean up any running call processes"""
+        await self.store_chat_history()
         self.call_manager.cleanup_call_proc()
         if self.job_name and self.assistant_id:
             print(f"Marking job {self.job_name} done")

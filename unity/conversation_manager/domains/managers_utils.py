@@ -27,9 +27,14 @@ event_broker = get_event_broker()
 
 
 # EVENT BUS
-async def get_bus_events():
-    bus_events = await EVENT_BUS.search(filter='type == "Comms"', limit=50)
-    return [Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
+async def get_last_store_chat_history() -> StoreChatHistory:
+    bus_events = await EVENT_BUS.search(
+        filter='type == "Comms" and payload_cls == "StoreChatHistory"',
+        limit=1,
+    )
+    if len(bus_events):
+        return Event.from_bus_event(bus_events[0])
+    return None
 
 
 async def publish_bus_events(event):
@@ -474,6 +479,15 @@ async def init_conv_manager(cm: "ConversationManager") -> None:
 
             # Run all manager initialization in a thread (non-blocking)
             await asyncio.to_thread(_init_managers, cm, loop)
+
+            store_chat_history = await get_last_store_chat_history()
+            if store_chat_history:
+                await cm.event_broker.publish(
+                    "app:comms:chat_history",
+                    GetChatHistory(
+                        chat_history=store_chat_history.chat_history
+                    ).to_json(),
+                )
 
             # Mark as initialized
             cm.initialized = True
