@@ -75,9 +75,9 @@ class TestStatusPrefixes:
             runner.fixture_path("test_always_pass.py"),
         )
 
-        # Check immediately after launch
+        # Check immediately after launch - filter by socket to avoid cross-test interference
         if result.sessions_created:
-            sessions = list_tmux_sessions()
+            sessions = list_tmux_sessions(socket=result.socket)
             our_sessions = [
                 s
                 for s in sessions
@@ -99,8 +99,8 @@ class TestStatusPrefixes:
             runner.fixture_path("test_always_pass.py"),
         )
 
-        # After --wait returns, check the session status
-        sessions = list_tmux_sessions()
+        # After --wait returns, check the session status (filter by socket)
+        sessions = list_tmux_sessions(socket=result.socket)
         # Note: session may have auto-closed by now, so just verify exit code
         assert result.exit_code == 0
 
@@ -111,8 +111,8 @@ class TestStatusPrefixes:
             runner.fixture_path("test_always_fail.py"),
         )
 
-        # After failure, session should still exist with fail prefix
-        sessions = list_tmux_sessions()
+        # After failure, session should still exist with fail prefix (filter by socket)
+        sessions = list_tmux_sessions(socket=result.socket)
         fail_sessions = [s for s in sessions if s.is_failed]
 
         # Should have at least one failed session
@@ -135,8 +135,8 @@ class TestAutoClose:
         # Wait for auto-close (script schedules 10s delay)
         time.sleep(12)
 
-        # Check if session is gone
-        sessions = list_tmux_sessions()
+        # Check if session is gone (filter by socket to avoid cross-test interference)
+        sessions = list_tmux_sessions(socket=result.socket)
         our_sessions = [
             s for s in sessions if "always_pass" in s.name or "fixtures" in s.name
         ]
@@ -158,8 +158,8 @@ class TestAutoClose:
         # Wait a bit (but not the full auto-close time)
         time.sleep(2)
 
-        # Check if session still exists
-        sessions = list_tmux_sessions()
+        # Check if session still exists (filter by socket to avoid cross-test interference)
+        sessions = list_tmux_sessions(socket=result.socket)
         fail_sessions = [s for s in sessions if s.is_failed]
 
         # Failed session should still exist
