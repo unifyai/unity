@@ -475,7 +475,9 @@ else
 fi
 
 # Build a safe find pipeline:
-# find <roots> \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "test_*.py" -print0 \)
+# find <roots> -mindepth 1 \( -type d \( -name EX1 -o EX2 ... \) -prune \) -o \( -type f -name "test_*.py" -print0 \)
+# Note: -mindepth 1 ensures root directories aren't pruned even if they match EXCLUDE_DIRS
+# (e.g., explicitly passing "fixtures/" should search it, not prune it)
 build_find_cmd() {
   local -a cmd=( find )
   if (( ${#roots[@]} )); then
@@ -484,7 +486,8 @@ build_find_cmd() {
     cmd+=( "." )
   fi
 
-  cmd+=( "(" -type d "(" )
+  # -mindepth 1: don't apply exclusions to root directories themselves
+  cmd+=( -mindepth 1 "(" -type d "(" )
   local first=1
   for d in "${EXCLUDE_DIRS[@]}"; do
     if (( first )); then
