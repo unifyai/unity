@@ -89,7 +89,11 @@ class ProactiveSpeech:
         ]
 
         try:
-            client = new_llm_client(self.model)
+            client = new_llm_client(
+                self.model,
+                reasoning_effort=None,
+                service_tier=None,
+            )
             client.set_response_format(ProactiveDecision)
 
             # Create a single prompt from all messages

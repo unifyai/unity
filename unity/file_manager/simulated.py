@@ -1014,7 +1014,12 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
 
     def __init__(self, managers: List[BaseFileManager]):
         self._managers: List[BaseFileManager] = list(managers)
-        self._llm = new_llm_client("gpt-4o@openai", stateful=True)
+        self._llm = new_llm_client(
+            "gpt-4o@openai",
+            stateful=True,
+            reasoning_effort=None,
+            service_tier=None,
+        )
 
         # Build prompt tool lists to mirror class-named exposure
         def _lf() -> List[str]:

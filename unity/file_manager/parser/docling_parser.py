@@ -2835,7 +2835,12 @@ class DoclingParser(GenericParser[Document]):
         • If all sources fail, the function returns without mutating metadata.
         """
         try:
-            client = new_llm_client("o4-mini@openai", async_client=False)
+            client = new_llm_client(
+                "o4-mini@openai",
+                async_client=False,
+                reasoning_effort=None,
+                service_tier=None,
+            )
 
             # Token accounting (align with main summariser defaults; no fixed caps)
             METADATA_ENCODING = os.environ.get("SUMMARY_ENCODING", "o200k_base")
@@ -3214,7 +3219,12 @@ class DoclingParser(GenericParser[Document]):
             )
 
             # Create a single client for the entire summarization process
-            client = new_llm_client("o4-mini@openai", async_client=False)
+            client = new_llm_client(
+                "o4-mini@openai",
+                async_client=False,
+                reasoning_effort=None,
+                service_tier=None,
+            )
 
             # ---------- Token accounting (tiktoken-backed) ----------
             # Model/encoding guidance:

@@ -1998,31 +1998,45 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self.plan_generation_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
+            reasoning_effort=None,
+            service_tier=None,
         )
         self.verification_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
+            reasoning_effort=None,
+            service_tier=None,
         )
         self.implementation_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
+            reasoning_effort=None,
+            service_tier=None,
         )
         self.summarization_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
+            reasoning_effort=None,
+            service_tier=None,
         )
         # TODO: DEPRECATED
         self.course_correction_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
+            reasoning_effort=None,
+            service_tier=None,
         )
         self.modification_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
+            reasoning_effort=None,
+            service_tier=None,
         )
         self.ask_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
+            reasoning_effort=None,
+            service_tier=None,
         )
 
     def _get_computer_primitives(self) -> ComputerPrimitives:

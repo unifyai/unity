@@ -496,6 +496,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         llm = new_llm_client(
             "gemini-2.5-flash@vertex-ai",
             return_full_completion=False,
+            reasoning_effort=None,
+            service_tier=None,
         )
         inner_handle = start_async_tool_loop(
             client=llm,
