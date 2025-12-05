@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./.kill_server.sh --all # Kill ALL unity test tmux servers
 
 # ---- Terminal-based isolation ----
-# Uses the same socket detection as .parallel_run.sh
+# Uses the same socket detection as parallel_run.sh
 _derive_socket_name() {
   local tty_id
   tty_id=$(tty 2>/dev/null)
