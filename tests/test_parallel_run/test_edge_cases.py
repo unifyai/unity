@@ -1,5 +1,5 @@
 """
-Edge case and error handling tests for .parallel_run.sh.
+Edge case and error handling tests for parallel_run.sh.
 
 Tests unusual inputs, error conditions, and boundary cases:
 - Empty directories

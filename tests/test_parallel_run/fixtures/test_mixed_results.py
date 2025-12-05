@@ -1,6 +1,6 @@
 """
 Fixture test file with mixed pass/fail results.
-Used for testing .parallel_run.sh behavior with partial failures.
+Used for testing parallel_run.sh behavior with partial failures.
 """
 
 

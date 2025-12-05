@@ -1,5 +1,5 @@
 """
-Tests for terminal-based isolation in .parallel_run.sh.
+Tests for terminal-based isolation in parallel_run.sh.
 
 Verifies:
 - Each run uses an isolated tmux socket
@@ -84,8 +84,8 @@ class TestHelperScripts:
     """Tests for helper scripts with isolation."""
 
     def test_watch_tests_script_exists(self):
-        """The .watch_tests.sh helper should exist and be executable."""
-        script = TESTS_DIR / ".watch_tests.sh"
+        """The watch_tests.sh helper should exist and be executable."""
+        script = TESTS_DIR / "watch_tests.sh"
         assert script.exists(), f"Script not found: {script}"
         assert os.access(script, os.X_OK), f"Script not executable: {script}"
 
@@ -101,8 +101,8 @@ class TestHelperScripts:
         assert "--all" in result.stdout, "kill_failed.sh should support --all flag"
 
     def test_watch_tests_supports_all_flag(self):
-        """The .watch_tests.sh script should support --all flag."""
-        script = TESTS_DIR / ".watch_tests.sh"
+        """The watch_tests.sh script should support --all flag."""
+        script = TESTS_DIR / "watch_tests.sh"
         result = subprocess.run(
             [str(script), "--help"],
             capture_output=True,
@@ -154,7 +154,7 @@ class TestObserveOutputFormat:
         )
 
         assert (
-            ".watch_tests.sh" in result.stdout
+            "watch_tests.sh" in result.stdout
         ), "Output should mention watch_tests.sh helper"
 
     def test_output_shows_socket_specific_commands(self, runner):

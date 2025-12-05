@@ -6,7 +6,7 @@ set -euo pipefail
 # Runs tests across all combinations of settings values.
 #
 # Usage:
-#   ./.grid_search.sh --env KEY=val1|val2 --env KEY2=a|b|c [options] [targets...]
+#   ./grid_search.sh --env KEY=val1|val2 --env KEY2=a|b|c [options] [targets...]
 #
 # The pipe character "|" separates multiple values for a setting.
 # A full Cartesian product (grid) of all combinations is generated.
@@ -18,7 +18,7 @@ set -euo pipefail
 #   Only explicitly passed --env values are tagged (not values from .env files).
 #
 # Example:
-#   ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+#   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
 #
 # Generates 4 runs with auto-tags:
 #   1. UNIFY_MODEL=gpt-4o UNIFY_CACHE=true   → tags: "UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true"
@@ -54,7 +54,7 @@ Grid Search Runner
 Run tests across all combinations of settings values.
 
 Usage:
-  ./.grid_search.sh [options] --env KEY=val1|val2 [--env KEY2=a|b] [targets...]
+  ./grid_search.sh [options] --env KEY=val1|val2 [--env KEY2=a|b] [targets...]
 
 Options:
   --env KEY=val1|val2   Specify multiple values for a setting (pipe-separated)
@@ -74,16 +74,16 @@ Auto-Tagging:
 Examples:
   # Grid search across models and cache settings
   # (auto-tags: UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true etc.)
-  ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
 
   # With additional pass-through options
-  ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --eval-only --wait tests/
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --eval-only --wait tests/
 
   # Dry run to see what would be executed (including auto-tags)
-  ./.grid_search.sh -n --env UNIFY_MODEL="gpt-4o|claude-3" tests/
+  ./grid_search.sh -n --env UNIFY_MODEL="gpt-4o|claude-3" tests/
 
   # Add a constant variable to all runs (also included in tags)
-  ./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
 
 Notes:
   - Each combination spawns a separate .parallel_run.sh invocation

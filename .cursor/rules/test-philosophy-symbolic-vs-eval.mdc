@@ -73,16 +73,16 @@ async def test_natural_language_query():
 
 ```bash
 # Run only eval tests
-./.parallel_run.sh --eval-only tests
+./parallel_run.sh --eval-only tests
 
 # Run only symbolic tests
-./.parallel_run.sh --symbolic-only tests
+./parallel_run.sh --symbolic-only tests
 
 # Re-evaluate LLM behavior (fresh calls, no cache)
-./.parallel_run.sh --no-cache tests
+./parallel_run.sh --no-cache tests
 
 # Statistical sampling for eval reliability
-./.parallel_run.sh --no-cache --repeat 10 --eval-only tests/test_contact_manager
+./parallel_run.sh --no-cache --repeat 10 --eval-only tests/test_contact_manager
 ```
 
 ## When Debugging Failing Tests

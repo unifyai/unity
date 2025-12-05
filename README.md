@@ -241,16 +241,16 @@ For faster runs, use the parallel test runner:
 
 ```bash
 # Run all tests in parallel (one tmux session per file)
-tests/.parallel_run.sh tests/
+tests/parallel_run.sh tests/
 
 # Wait for completion and capture logs
-tests/.parallel_run.sh --wait tests/
+tests/parallel_run.sh --wait tests/
 
 # Run only eval tests
-tests/.parallel_run.sh --eval-only tests/
+tests/parallel_run.sh --eval-only tests/
 
 # Run only symbolic tests
-tests/.parallel_run.sh --symbolic-only tests/
+tests/parallel_run.sh --symbolic-only tests/
 ```
 
 ### LLM Response Caching
@@ -263,7 +263,7 @@ By default (`UNIFY_CACHE=true`), LLM responses are cached in `.cache.ndjson`:
 To force fresh LLM calls:
 
 ```bash
-tests/.parallel_run.sh --env UNIFY_CACHE=false tests/
+tests/parallel_run.sh --env UNIFY_CACHE=false tests/
 ```
 
 ### Detailed Documentation
@@ -351,7 +351,7 @@ unity/
 1. Create a feature branch
 2. Make your changes
 3. Run pre-commit hooks: `.venv/bin/python -m pre_commit run --all-files`
-4. Run relevant tests: `tests/.parallel_run.sh --wait tests/test_<manager>/`
+4. Run relevant tests: `tests/parallel_run.sh --wait tests/test_<manager>/`
 5. Submit a pull request
 
 ### Code Style

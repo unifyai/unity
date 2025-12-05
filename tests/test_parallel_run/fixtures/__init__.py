@@ -1,1 +1,1 @@
-# Fixture test files for testing .parallel_run.sh
+# Fixture test files for testing parallel_run.sh
