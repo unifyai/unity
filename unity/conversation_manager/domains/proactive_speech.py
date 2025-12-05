@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
-import unify
-from unity.common.llm_client import get_cache_setting
+from unity.common.llm_client import new_llm_client
 
 
 class ProactiveDecision(BaseModel):
@@ -90,10 +89,7 @@ class ProactiveSpeech:
         ]
 
         try:
-            client = unify.AsyncUnify(
-                self.model,
-                cache=get_cache_setting(),
-            )
+            client = new_llm_client(self.model)
             client.set_response_format(ProactiveDecision)
 
             # Create a single prompt from all messages
