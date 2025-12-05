@@ -26,7 +26,7 @@ def _get_subscription_id() -> str:
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
         "-staging"
-        if os.getenv("STAGING") and "default-assistant" not in assistant_id
+        if os.getenv("STAGING") and DEFAULT_ASSISTANT_ID not in assistant_id
         else ""
     )
     return f"unity-{assistant_id}{staging_suffix}-sub"
