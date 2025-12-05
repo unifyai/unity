@@ -188,7 +188,7 @@ async def test_handle_pause_and_resume(monkeypatch):
     tools_initial = handle.valid_tools
     assert "pause" in tools_initial and "resume" not in tools_initial
 
-    pause_msg = handle.pause()
+    pause_msg = await handle.pause()
     assert "pause" in pause_msg.lower()
 
     tools_after_pause = handle.valid_tools
@@ -197,7 +197,7 @@ async def test_handle_pause_and_resume(monkeypatch):
     res_task = asyncio.create_task(handle.result())
     await _assert_blocks_while_paused(res_task)
 
-    resume_msg = handle.resume()
+    resume_msg = await handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     tools_after_resume = handle.valid_tools
@@ -285,7 +285,7 @@ async def test_from_and_to_placeholder_roundtrip():
 async def test_stop_while_paused_finishes_immediately():
     sm = SimulatedSecretManager()
     h = await sm.ask("Produce a long secrets audit.")
-    h.pause()
+    await h.pause()
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
