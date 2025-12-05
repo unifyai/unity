@@ -60,7 +60,7 @@ class GuidanceManager(BaseGuidanceManager):
                     },
                     {
                         "name": "function_ids[*]",
-                        "references": "Functions.function_id",  # TODO: change to the actual context
+                        "references": "Functions/Compositional.function_id",
                         "on_delete": "CASCADE",  # pop on function deletion
                         "on_update": "CASCADE",
                     },

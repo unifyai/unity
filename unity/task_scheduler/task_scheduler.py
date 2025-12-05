@@ -131,7 +131,7 @@ class TaskScheduler(BaseTaskScheduler):
                 foreign_keys=[
                     {
                         "name": "entrypoint",
-                        "references": "Functions.function_id",  # TODO: change to the actual context
+                        "references": "Functions/Compositional.function_id",
                         "on_delete": "SET NULL",
                         "on_update": "CASCADE",
                     },
