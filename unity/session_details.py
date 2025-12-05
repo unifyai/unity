@@ -4,8 +4,7 @@ unity/session_details.py
 
 Runtime details for the active assistant session.
 
-These values are populated dynamically when the ConversationManager receives
-a StartupEvent, NOT read from environment variables or .env files.
+Populated dynamically when the ConversationManager receives a StartupEvent.
 
 Usage:
     from unity.session_details import SESSION_DETAILS
