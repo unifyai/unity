@@ -674,7 +674,7 @@ echo "  • Watch sessions:  tests/watch_tests.sh"
 echo "  • List sessions:   tmux -L $TMUX_SOCKET ls"
 echo "  • Attach:          tmux -L $TMUX_SOCKET attach -t <session>"
 echo
-echo "See all terminals' tests: tests/.list_all_tests.sh"
+echo "See all terminals' tests: tests/list_runs.sh"
 
 if (( WAIT_FOR_COMPLETION )); then
   if (( WAIT_TIMEOUT > 0 )); then

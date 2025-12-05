@@ -4,9 +4,10 @@ set -euo pipefail
 # Kill all failed tmux sessions (those starting with "f")
 #
 # Usage:
-#   ./kill_failed.sh        # Kill all failed sessions in THIS terminal
-#   ./kill_failed.sh -n     # Dry run - show what would be killed
-#   ./kill_failed.sh --all  # Kill failed sessions across ALL terminals
+#   kill_failed.sh                    # Kill failed sessions in THIS terminal
+#   kill_failed.sh -n                 # Dry run - show what would be killed
+#   kill_failed.sh --all              # Kill failed sessions across ALL terminals
+#   kill_failed.sh --socket <name>    # Kill failed sessions in a specific socket
 
 # ---- Terminal-based isolation ----
 # Uses the same socket detection as parallel_run.sh
@@ -30,6 +31,7 @@ tmux_cmd() {
 
 DRY_RUN=0
 KILL_ALL=0
+EXPLICIT_SOCKET=""
 
 while (( "$#" )); do
   case "$1" in
@@ -41,17 +43,32 @@ while (( "$#" )); do
       KILL_ALL=1
       shift
       ;;
+    -s|--socket)
+      if [[ -n "${2-}" ]]; then
+        EXPLICIT_SOCKET="$2"
+        shift 2
+      else
+        echo "Error: --socket requires a socket name argument." >&2
+        echo "Use 'list_runs.sh' to see available sockets." >&2
+        exit 2
+      fi
+      ;;
     -h|--help)
-      echo "Usage: ./kill_failed.sh [-n|--dry-run] [--all]"
+      echo "Usage: kill_failed.sh [-n|--dry-run] [--all] [--socket <name>]"
       echo ""
       echo "Kill all failed tmux sessions (those starting with 'f')."
       echo ""
       echo "By default, only kills sessions from THIS terminal (isolated socket)."
       echo ""
       echo "Options:"
-      echo "  -n, --dry-run  Show which sessions would be killed without killing them"
-      echo "  --all          Kill failed sessions across ALL terminals"
-      echo "  -h, --help     Show this help"
+      echo "  -n, --dry-run      Show which sessions would be killed without killing them"
+      echo "  --all              Kill failed sessions across ALL terminals"
+      echo "  -s, --socket NAME  Kill failed sessions in a specific socket"
+      echo "  -h, --help         Show this help"
+      echo ""
+      echo "Examples:"
+      echo "  kill_failed.sh                              # Current terminal"
+      echo "  kill_failed.sh --socket unity_dev_ttys042   # Specific socket"
       exit 0
       ;;
     *)
@@ -60,6 +77,11 @@ while (( "$#" )); do
       ;;
   esac
 done
+
+# Use explicit socket if provided
+if [[ -n "$EXPLICIT_SOCKET" ]]; then
+  TMUX_SOCKET="$EXPLICIT_SOCKET"
+fi
 
 # Collect all sockets to check
 if (( KILL_ALL )); then
