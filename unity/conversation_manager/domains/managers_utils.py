@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import unity
 
-from unity.session_details import SESSION_DETAILS
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
@@ -185,7 +185,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         minutes, seconds = divmod(int(delta.total_seconds()), 60)
         # ToDo: Make this MM:SS once we have explicit types working
         call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
-    if "default-assistant" not in cm.assistant_id:
+    if DEFAULT_ASSISTANT_ID not in SESSION_DETAILS.assistant.id:
         call_url = (
             "https://storage.cloud.google.com/assistant-call-recordings/staging/"
             f"{cm.assistant_id}/{cm.call_manager.conference_name}.mp3"
@@ -317,32 +317,25 @@ def _init_managers(
     """
     start_time = perf_counter()
 
-    # 0. Initialize unity
+    # 0. Initialize unity using SESSION_DETAILS (the canonical source of session config)
     print("[ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
-    payload = {
-        "agent_id": cm.assistant_id,
-        "first_name": cm.assistant_name,
-        "age": cm.assistant_age,
-        "nationality": cm.assistant_nationality,
-        "about": cm.assistant_about,
-        "phone": cm.assistant_number,
-        "email": cm.assistant_email,
-        "user_phone": cm.user_number,
-        "user_whatsapp_number": cm.user_whatsapp_number,
-        "assistant_whatsapp_number": cm.assistant_number,
-    }
     if not unity.ASSISTANT:
+        # When default_assistant is provided, unity.init() uses it directly
+        # and ignores the assistant_id parameter entirely
         unity.init(
-            assistant_id=int(
-                payload.get("agent_id", "0").replace(
-                    "default-assistant-",
-                    "",
-                ),
-            ),
             default_assistant={
-                **payload,
-                "user_id": "default-user",
+                "agent_id": SESSION_DETAILS.assistant.id,
+                "first_name": SESSION_DETAILS.assistant.name,
+                "age": SESSION_DETAILS.assistant.age,
+                "nationality": SESSION_DETAILS.assistant.nationality,
+                "about": SESSION_DETAILS.assistant.about,
+                "phone": SESSION_DETAILS.assistant.number or None,
+                "email": SESSION_DETAILS.assistant.email or None,
+                "user_id": SESSION_DETAILS.user.id,
+                "user_phone": SESSION_DETAILS.user.number or None,
+                "user_whatsapp_number": SESSION_DETAILS.user.whatsapp_number or None,
+                "assistant_whatsapp_number": SESSION_DETAILS.assistant.number or None,
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
                 "surname": "",
@@ -351,12 +344,6 @@ def _init_managers(
                 "profile_photo": None,
                 "country": None,
                 "user_last_name": "",
-                "phone": payload["phone"] or None,
-                "email": payload["email"] or None,
-                "user_phone": payload["user_phone"] or None,
-                "user_whatsapp_number": payload["user_whatsapp_number"] or None,
-                "assistant_whatsapp_number": payload["assistant_whatsapp_number"]
-                or None,
             },
         )
     print(

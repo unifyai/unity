@@ -4,7 +4,7 @@ import os
 import asyncio
 import aiohttp
 
-from unity.session_details import SESSION_DETAILS
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 
 load_dotenv()
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
@@ -64,7 +64,7 @@ async def send_unify_message(message: str) -> str:
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
         "-staging"
-        if os.getenv("STAGING") and "default-assistant" not in assistant_id
+        if os.getenv("STAGING") and DEFAULT_ASSISTANT_ID not in assistant_id
         else ""
     )
     topic_name = f"unity-{assistant_id}{staging_suffix}"
