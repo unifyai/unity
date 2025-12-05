@@ -653,8 +653,8 @@ if (( WAIT_FOR_COMPLETION )); then
     for sid in "${session_ids[@]}"; do
       # Check name of our specific session IDs only
       current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-      # Look for "?" prefix to detect pending state
-      if [[ "$current_name" == "?"* ]]; then
+      # Look for "r" prefix to detect pending state (r ⏳)
+      if [[ "$current_name" == "r"* ]]; then
         ((pending_count++))
       fi
     done
@@ -686,8 +686,8 @@ if (( WAIT_FOR_COMPLETION )); then
   failures=0
   for sid in "${session_ids[@]}"; do
     current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-    # Look for "x" prefix to detect failure
-    if [[ "$current_name" == "x"* ]]; then
+    # Look for "f" prefix to detect failure (f ❌)
+    if [[ "$current_name" == "f"* ]]; then
       echo "Failure detected in session: $current_name"
       failures=1
     fi
