@@ -359,12 +359,12 @@ async def _(
     *args,
     **kwargs,
 ):
-    print("Received store chat history", event.chat_history)
+    print("Received store chat history")
 
 
 @EventHandler.register(GetChatHistory)
 async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
-    print("Received get chat history", event.chat_history)
+    print("Received get chat history")
     cm.chat_history.insert(0, event.chat_history)
 
 
