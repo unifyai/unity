@@ -349,9 +349,9 @@ echo
 #   │    FDs     │    TCP     │  (25% height)
 #   └────────────┴────────────┘
 
-# FD monitor command - inline script avoids quoting issues
+# FD monitor command - shows summary only (not per-process) to reduce visual noise
 # Note: set +e disables exit-on-error to prevent crashes from grep/command failures
-FD_CMD='set +e; while true; do clear; echo "=== Python File Descriptors ==="; echo; total=0; for pid in $(pgrep python 2>/dev/null || true); do if [ -n "$pid" ]; then if [ -d "/proc/$pid/fd" ]; then count=$(ls /proc/$pid/fd 2>/dev/null | wc -l | tr -d " "); else count=$(lsof -p "$pid" 2>/dev/null | wc -l | tr -d " "); fi; count=${count:-0}; cmd=$(ps -p "$pid" -o comm= 2>/dev/null || echo python); echo "PID $pid ($cmd): $count FDs"; total=$((total + count)); fi; done; echo; if [ "$total" -eq 0 ]; then echo "(no Python processes)"; else echo "────────────────────"; echo "Total: $total FDs"; echo "Limit: $(ulimit -n) per process"; fi; sleep 1; done'
+FD_CMD='set +e; while true; do clear; echo "=== Python File Descriptors ==="; echo; total=0; proc_count=0; for pid in $(pgrep python 2>/dev/null || true); do if [ -n "$pid" ]; then proc_count=$((proc_count + 1)); if [ -d "/proc/$pid/fd" ]; then count=$(ls /proc/$pid/fd 2>/dev/null | wc -l | tr -d " "); else count=$(lsof -p "$pid" 2>/dev/null | wc -l | tr -d " "); fi; count=${count:-0}; total=$((total + count)); fi; done; echo; if [ "$proc_count" -eq 0 ]; then echo "(no Python processes)"; else echo "Processes: $proc_count"; echo "Total FDs: $total"; echo; echo "────────────────────"; echo "Limit: $(ulimit -n) per process"; if [ $total -gt $(($(ulimit -n) / 2)) ]; then echo; echo "⚠️  Approaching limit!"; fi; fi; sleep 2; done'
 
 # TCP monitor command - inline script
 # Note: set +e disables exit-on-error; grep -c returns 1 on no match which would crash without this
