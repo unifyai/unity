@@ -215,29 +215,34 @@ is_random_projects_mode() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: check if a var name is in the --env overrides
+# Usage: is_var_in_env_overrides VAR_NAME
+# ---------------------------------------------------------------------------
+is_var_in_env_overrides() {
+  local var_name="$1"
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    if [[ "$kv" == "${var_name}="* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # Helper: build environment exports string from --env overrides, system env, and --tags
 # ---------------------------------------------------------------------------
 build_env_exports() {
   local exports=""
-  # Track which vars are already set via --env flags
-  declare -A env_set
+
+  # Add all --env flag overrides
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     exports="$exports $kv"
-    local var_name="${kv%%=*}"
-    env_set["$var_name"]=1
   done
 
   # Propagate relevant system environment variables if not already set via --env
-  local propagate_vars=(
-    "UNIFY_TESTS_RAND_PROJ"
-    "UNIFY_TESTS_DELETE_PROJ_ON_EXIT"
-    "UNIFY_SKIP_SESSION_SETUP"
-    "UNIFY_CACHE"
-    "UNIFY_KEY"
-    "UNIFY_BASE_URL"
-  )
-  for var_name in "${propagate_vars[@]}"; do
-    if [[ -z "${env_set[$var_name]:-}" && -n "${!var_name:-}" ]]; then
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_TESTS_DELETE_PROJ_ON_EXIT UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL"
+  for var_name in $propagate_vars; do
+    if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
       exports="$exports ${var_name}=${!var_name}"
     fi
   done
@@ -247,7 +252,7 @@ build_env_exports() {
     local joined_tags
     joined_tags=$(IFS=','; echo "${TAGS[*]}")
     exports="$exports UNIFY_TEST_TAGS=$joined_tags"
-  elif [[ -z "${env_set[UNIFY_TEST_TAGS]:-}" && -n "${UNIFY_TEST_TAGS:-}" ]]; then
+  elif ! is_var_in_env_overrides "UNIFY_TEST_TAGS" && [[ -n "${UNIFY_TEST_TAGS:-}" ]]; then
     # Propagate from system env if not set via --tags or --env
     exports="$exports UNIFY_TEST_TAGS=$UNIFY_TEST_TAGS"
   fi
