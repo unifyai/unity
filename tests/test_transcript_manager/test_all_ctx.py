@@ -196,3 +196,57 @@ def test_private_fields_excluded_from_filter_messages():
     assert not hasattr(message, "_assistant"), "_assistant should not be exposed"
     assert not hasattr(message, "_assistant_id"), "_assistant_id should not be exposed"
     assert not hasattr(message, "_user_id"), "_user_id should not be exposed"
+
+
+@_handle_project
+def test_deleting_message_removes_from_all_ctx():
+    """Deleting a message should also remove it from All/<Ctx>."""
+    tm = TranscriptManager()
+
+    # Create a message
+    msg = Message(
+        medium="email",
+        sender_id=0,
+        receiver_ids=[1],
+        timestamp=datetime.now(UTC),
+        content="Message to be deleted",
+        exchange_id=0,
+    )
+    tm.log_messages(msg)
+
+    result = tm._filter_messages(filter="content == 'Message to be deleted'")
+    messages = result["messages"]
+    assert len(messages) >= 1
+    message_id = messages[0].message_id
+
+    # Derive the All/<Ctx> context
+    all_ctx = _derive_all_context(tm._transcripts_ctx)
+    assert all_ctx is not None, "All context should be derivable"
+
+    # Verify it exists in All/<Ctx> before deletion
+    all_logs_before = unify.get_logs(
+        context=all_ctx,
+        filter=f"message_id == {message_id}",
+    )
+    assert (
+        len(all_logs_before) >= 1
+    ), "Message should exist in All/<Ctx> before deletion"
+
+    # Delete the message using unify.delete_logs
+    logs_to_delete = unify.get_logs(
+        context=tm._transcripts_ctx,
+        filter=f"message_id == {message_id}",
+    )
+    if logs_to_delete:
+        log_ids = [lg.id for lg in logs_to_delete]
+        unify.delete_logs(logs=log_ids, context=tm._transcripts_ctx)
+    print("project", unify.active_project(), "context", tm._transcripts_ctx)
+
+    # Verify it's removed from All/<Ctx> after deletion
+    all_logs_after = unify.get_logs(
+        context=all_ctx,
+        filter=f"message_id == {message_id}",
+    )
+    assert (
+        len(all_logs_after) == 0
+    ), "Message should be removed from All/<Ctx> after deletion"
