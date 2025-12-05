@@ -252,14 +252,6 @@ class ParallelRunner:
         Returns:
             RunResult with exit code, output, created sessions, etc.
         """
-        # Record existing sessions (will be filtered by socket later for parallel isolation)
-        existing_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
-        existing_logs = set()
-        # Logs are now in socket-scoped subdirectories
-        socket_logs_dir = PYTEST_LOGS_DIR / self._socket_name
-        if socket_logs_dir.exists():
-            existing_logs = set(socket_logs_dir.glob("*.txt"))
-
         # Build command
         cmd = [str(self.script_path)] + list(args)
 
@@ -273,6 +265,17 @@ class ParallelRunner:
         run_env["UNITY_TEST_SOCKET"] = self._socket_name
         if env:
             run_env.update(env)
+
+        # Determine the actual socket name (user override takes precedence)
+        actual_socket = run_env.get("UNITY_TEST_SOCKET", self._socket_name)
+
+        # Record existing sessions and logs (using actual socket for correct isolation)
+        existing_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
+        existing_logs = set()
+        # Logs are now in socket-scoped subdirectories
+        socket_logs_dir = PYTEST_LOGS_DIR / actual_socket
+        if socket_logs_dir.exists():
+            existing_logs = set(socket_logs_dir.glob("*.txt"))
 
         # Run the script
         try:
@@ -292,9 +295,8 @@ class ParallelRunner:
             stdout = e.stdout.decode() if e.stdout else ""
             stderr = e.stderr.decode() if e.stderr else ""
 
-        # Use our known socket name (set via UNITY_TEST_SOCKET env var)
-        # This is more reliable than parsing stdout, especially if the subprocess times out
-        socket_name = self._socket_name
+        # Use the actual socket name (respects user overrides via env parameter)
+        socket_name = actual_socket
 
         # Find new sessions - filter by our specific socket to avoid cross-test interference
         time.sleep(0.3)  # Brief pause for sessions to register
