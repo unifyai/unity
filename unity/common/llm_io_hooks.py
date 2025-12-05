@@ -27,8 +27,25 @@ _HOOKS_INSTALLED = False
 _LLM_IO_DIR: str | None = None
 
 
+def _get_socket_subdir() -> str:
+    """Determine the log subdirectory based on terminal/socket context.
+
+    Returns:
+        - Socket name (e.g., 'unity_dev_ttys042') if UNITY_TEST_SOCKET is set
+        - 'standalone' for direct invocations
+    """
+    socket = os.environ.get("UNITY_TEST_SOCKET", "").strip()
+    if socket:
+        return socket
+    return "standalone"
+
+
 def _ensure_io_dir() -> str | None:
-    """Ensure the per-session LLM I/O debug directory exists."""
+    """Ensure the per-session LLM I/O debug directory exists.
+
+    Directory structure:
+        .llm_io_debug/{socket_or_standalone}/{session_id}/
+    """
     global _LLM_IO_DIR
     if _LLM_IO_DIR is not None:
         return _LLM_IO_DIR
@@ -39,7 +56,9 @@ def _ensure_io_dir() -> str | None:
         return None
 
     try:
-        root = Path(os.getcwd()) / ".llm_io_debug"
+        # Socket-scoped subdirectory for terminal isolation
+        socket_subdir = _get_socket_subdir()
+        root = Path(os.getcwd()) / ".llm_io_debug" / socket_subdir
         root.mkdir(parents=True, exist_ok=True)
         session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", str(SESSION_ID))
         session_dir = root / session_safe

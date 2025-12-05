@@ -255,8 +255,10 @@ class ParallelRunner:
         # Record existing sessions (will be filtered by socket later for parallel isolation)
         existing_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
         existing_logs = set()
-        if PYTEST_LOGS_DIR.exists():
-            existing_logs = set(PYTEST_LOGS_DIR.glob("*.txt"))
+        # Logs are now in socket-scoped subdirectories
+        socket_logs_dir = PYTEST_LOGS_DIR / self._socket_name
+        if socket_logs_dir.exists():
+            existing_logs = set(socket_logs_dir.glob("*.txt"))
 
         # Build command
         cmd = [str(self.script_path)] + list(args)
@@ -315,10 +317,11 @@ class ParallelRunner:
                 socket=socket_name,
             )
 
-        # Find new log files
+        # Find new log files in the socket-scoped directory
         new_logs = []
-        if PYTEST_LOGS_DIR.exists():
-            new_logs = list(set(PYTEST_LOGS_DIR.glob("*.txt")) - existing_logs)
+        socket_logs_dir = PYTEST_LOGS_DIR / socket_name
+        if socket_logs_dir.exists():
+            new_logs = list(set(socket_logs_dir.glob("*.txt")) - existing_logs)
 
         return RunResult(
             exit_code=exit_code,

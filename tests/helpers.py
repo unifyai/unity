@@ -56,20 +56,40 @@ def _test_fpath(fn: Callable, fn_name: str) -> str:
     return f"{rel_path}::{fn_name}"
 
 
+def _get_socket_subdir() -> str:
+    """Determine the log subdirectory based on terminal/socket context.
+
+    Returns:
+        - Socket name (e.g., 'unity_dev_ttys042') if UNITY_TEST_SOCKET is set
+        - 'standalone' for direct invocations
+    """
+    import os
+
+    socket = os.environ.get("UNITY_TEST_SOCKET", "").strip()
+    if socket:
+        return socket
+    return "standalone"
+
+
 def _get_llm_io_dir() -> Path | None:
-    """Get the LLM I/O debug directory for the current session."""
+    """Get the LLM I/O debug directory for the current session.
+
+    Directory structure:
+        .llm_io_debug/{socket_or_standalone}/{session_id}/
+    """
     try:
         from unity.constants import SESSION_ID
     except ImportError:
         return None
 
-    root = Path(".llm_io_debug")
+    import re
+
+    socket_subdir = _get_socket_subdir()
+    root = Path(".llm_io_debug") / socket_subdir
     if not root.exists():
         return None
 
     # Match the sanitization used in the async_tool loop
-    import re
-
     session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
     session_dir = root / session_safe
     if session_dir.exists():
