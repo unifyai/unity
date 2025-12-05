@@ -292,13 +292,14 @@ class TestTripleCombinations:
         # 1 test * 2 repeats = 2 sessions, all should pass
         assert result.exit_code == 0
 
-    def test_wait_per_test_eval_only(self, runner, fixtures_dir):
+    def test_wait_per_test_eval_only(self, runner):
         """--wait + -t + --eval-only should all work together."""
+        # Use specific file instead of whole directory to avoid slow collection
         result = runner.run(
             "--wait",
             "-t",
             "--eval-only",
-            fixtures_dir,
+            runner.fixture_path("test_eval_marked.py"),
         )
 
         # Should wait for eval tests and return success
@@ -386,15 +387,16 @@ class TestQuadrupleCombinations:
         # test_single_test.py has 1 test, repeated 2 times
         assert result.exit_code == 0
 
-    def test_wait_per_test_eval_only_tags(self, runner, fixtures_dir):
+    def test_wait_per_test_eval_only_tags(self, runner):
         """--wait + -t + --eval-only + --tags should all work together."""
+        # Use specific file instead of whole directory to avoid slow collection
         result = runner.run(
             "--wait",
             "-t",
             "--eval-only",
             "--tags",
             "quad-combo",
-            fixtures_dir,
+            runner.fixture_path("test_eval_marked.py"),
         )
 
         assert result.exit_code == 0
