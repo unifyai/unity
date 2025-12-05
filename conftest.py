@@ -37,6 +37,79 @@ def _path_to_name(path: str) -> str:
     return name.replace("/", "-").replace("\\", "-")
 
 
+def _derive_multi_target_name(paths: list) -> str:
+    """Derive a meaningful name when multiple test targets are provided.
+
+    Strategy:
+    1. If all targets are from the same .py file, use file name + first test + count
+    2. If all targets share a common directory, use that + first file/test + count
+    3. Otherwise, use first target + count
+    """
+    # Extract base file (before ::) for each path
+    bases = []
+    nodes = []
+    for p in paths:
+        if "::" in p:
+            base, node = p.split("::", 1)
+            bases.append(base)
+            nodes.append(node)
+        else:
+            bases.append(p)
+            nodes.append(None)
+
+    # Check if all from the same file
+    unique_bases = set(bases)
+    if len(unique_bases) == 1:
+        # All targets from the same file
+        base_name = _path_to_name(bases[0])
+        if nodes[0]:
+            # Sanitize node: replace :: with -, remove brackets
+            first_node = nodes[0].replace("::", "-").replace("[", "-").replace("]", "")
+            # Truncate if too long
+            if len(first_node) > 40:
+                first_node = first_node[:37] + "..."
+            extra = len(paths) - 1
+            if extra > 0:
+                return f"{base_name}--{first_node}+{extra}more"
+            return f"{base_name}--{first_node}"
+        extra = len(paths) - 1
+        return f"{base_name}+{extra}more" if extra > 0 else base_name
+
+    # Check for common directory prefix
+    def get_dir(p: str) -> str:
+        # Get directory part of a path
+        if "/" in p:
+            return p.rsplit("/", 1)[0]
+        if "\\" in p:
+            return p.rsplit("\\", 1)[0]
+        return ""
+
+    dirs = [get_dir(b) for b in bases]
+    unique_dirs = set(dirs)
+    if len(unique_dirs) == 1 and dirs[0]:
+        # All from same directory
+        dir_name = _path_to_name(dirs[0])
+        first_file = _path_to_name(bases[0])
+        # Remove directory prefix from first_file for brevity
+        if first_file.startswith(dir_name + "-"):
+            first_file = first_file[len(dir_name) + 1 :]
+        extra = len(paths) - 1
+        if extra > 0:
+            return f"{dir_name}--{first_file}+{extra}more"
+        return f"{dir_name}--{first_file}"
+
+    # Fallback: use first target + count
+    first_name = _path_to_name(paths[0].split("::")[0])
+    if "::" in paths[0]:
+        node = paths[0].split("::", 1)[1]
+        node = node.replace("::", "-").replace("[", "-").replace("]", "")
+        if len(node) > 30:
+            node = node[:27] + "..."
+        first_name = f"{first_name}--{node}"
+    extra = len(paths) - 1
+    return f"{first_name}+{extra}more" if extra > 0 else first_name
+
+
 def _derive_log_name_from_args(args: list) -> str:
     """Derive a semantic log filename from pytest command-line args.
 
@@ -51,6 +124,10 @@ def _derive_log_name_from_args(args: list) -> str:
             → 'tests'
         [] (no args)
             → 'all'
+        Multiple from same file:
+            → 'test_session_behavior--TestA-test_x+1more'
+        Multiple from same directory:
+            → 'test_contact_manager--test_ask+2more'
     """
     if not args:
         return "all"
@@ -80,9 +157,8 @@ def _derive_log_name_from_args(args: list) -> str:
             return f"{base_name}--{node_name}"
         return _path_to_name(target)
 
-    # Multiple targets: try to find common structure or use generic name
-    # For now, just use "multi" - could be enhanced later
-    return "multi"
+    # Multiple targets: find common structure for a meaningful name
+    return _derive_multi_target_name(paths)
 
 
 def _get_log_subdir() -> str:
