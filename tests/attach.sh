@@ -35,8 +35,8 @@ show_help() {
   echo "  -h, --help      Show this help"
   echo ""
   echo "Examples:"
-  echo "  attach.sh 'o ✅ test_contact_manager-test_ask'"
-  echo "  attach.sh 'x ❌ test_actor-test_code_act'"
+  echo "  attach.sh 'd ✅ test_contact_manager-test_ask'"
+  echo "  attach.sh 'f ❌ test_actor-test_code_act'"
 }
 
 if [[ $# -eq 0 ]]; then
