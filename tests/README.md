@@ -153,6 +153,12 @@ tests/.kill_failed.sh
 
 # Kill failed sessions from ALL terminals
 tests/.kill_failed.sh --all
+
+# Kill the entire tmux server for THIS terminal
+tests/.kill_server.sh
+
+# Kill ALL unity test tmux servers
+tests/.kill_server.sh --all
 ```
 
 ### Per-Test Mode (`-t`) for Maximum Parallelism
