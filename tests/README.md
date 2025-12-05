@@ -1227,7 +1227,7 @@ Limit: 256
 
 **Why it matters:** Each network connection, open file, and pipe consumes one FD. macOS defaults to 256 FDs per process. With 81 Python processes averaging 200 FDs each, some are near the limit!
 
-**Fix:** Run `ulimit -n 4096` before starting tests.
+**Fix:** `parallel_run.sh` automatically sets `ulimit -n 4096`, so this is handled for you. If running pytest directly, run `ulimit -n 4096` first.
 
 #### 4. TCP Connections (Bottom Right) — Socket States
 
@@ -1285,7 +1285,7 @@ tmux has-session -t unity-monitor && echo "Running"
 
 ### Pre-Test Tuning
 
-Before running many parallel tests, increase the file descriptor limit:
+**File descriptor limit:** `parallel_run.sh` automatically sets `ulimit -n 4096` before spawning test sessions, so no manual configuration is needed. If you're running pytest directly (not through `parallel_run.sh`), increase the limit manually:
 
 ```bash
 # Increase FD limit (resets on terminal close)
