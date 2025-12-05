@@ -13,6 +13,91 @@ _TEE_STREAM_ATTR: Optional[str] = None
 _TEE_LOG_PATH: Optional[Path] = None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Semantic Log Naming Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _path_to_name(path: str) -> str:
+    """Convert a test path to a filename-safe string.
+
+    Examples:
+        tests/test_contact_manager/test_ask.py → test_contact_manager-test_ask
+        test_foo.py → test_foo
+    """
+    name = path.rstrip("/\\")
+    # Strip common prefixes
+    for prefix in ("tests/", "tests\\", "./", ".\\"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+    # Strip .py suffix
+    if name.endswith(".py"):
+        name = name[:-3]
+    # Replace path separators with dashes
+    return name.replace("/", "-").replace("\\", "-")
+
+
+def _derive_log_name_from_args(args: list) -> str:
+    """Derive a semantic log filename from pytest command-line args.
+
+    Examples:
+        ['tests/test_contact_manager/test_ask.py']
+            → 'test_contact_manager-test_ask'
+        ['tests/test_contact_manager/test_ask.py::test_foo']
+            → 'test_contact_manager-test_ask--test_foo'
+        ['tests/test_contact_manager/']
+            → 'test_contact_manager'
+        ['tests/']
+            → 'tests'
+        [] (no args)
+            → 'all'
+    """
+    if not args:
+        return "all"
+
+    # Filter to actual test paths (ignore flags like -v, --tb=short, etc.)
+    paths = []
+    for a in args:
+        if isinstance(a, str) and not a.startswith("-"):
+            # Looks like a path or node id
+            if a.endswith(".py") or "::" in a or "/" in a or "\\" in a:
+                paths.append(a)
+            elif os.path.exists(a):
+                paths.append(a)
+
+    if not paths:
+        return "all"
+
+    # For single target, use detailed naming
+    if len(paths) == 1:
+        target = paths[0]
+        # Handle pytest node ids (path::test_name or path::Class::test_name)
+        if "::" in target:
+            base, node = target.split("::", 1)
+            base_name = _path_to_name(base)
+            # Sanitize node: replace :: with -, remove brackets
+            node_name = node.replace("::", "-").replace("[", "-").replace("]", "")
+            return f"{base_name}--{node_name}"
+        return _path_to_name(target)
+
+    # Multiple targets: try to find common structure or use generic name
+    # For now, just use "multi" - could be enhanced later
+    return "multi"
+
+
+def _get_log_subdir() -> str:
+    """Determine the log subdirectory based on terminal/socket context.
+
+    Returns:
+        - Socket name (e.g., 'unity_dev_ttys042') if UNITY_TEST_SOCKET is set
+        - 'standalone' for direct pytest invocations
+    """
+    socket = os.environ.get("UNITY_TEST_SOCKET", "").strip()
+    if socket:
+        return socket
+    return "standalone"
+
+
 class _TeeStream:
     def __init__(self, primary, mirror):
         self._primary = primary
@@ -57,17 +142,20 @@ def pytest_sessionstart(session):
         return
 
     root_path = Path(config.rootpath)
-    logs_dir = root_path / ".pytest_logs"
+
+    # Determine subdirectory based on terminal context (socket name or 'standalone')
+    subdir = _get_log_subdir()
+    logs_dir = root_path / ".pytest_logs" / subdir
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build a readable, second-precision timestamp (e.g., 2025-10-31_14-05-23)
-    explicit_log_path = os.getenv("PYTEST_LOG_PATH")
+    # Build timestamp suffix for uniqueness
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Derive semantic name from command-line args
+    semantic_name = _derive_log_name_from_args(list(config.args))
 
     # Open a unique file using exclusive creation to avoid races across concurrent runs
     def _open_unique(path_no_suffix: Path):
-        if path_no_suffix.exists():
-            # We still use exclusive open below; the check is just a fast path to pick a suffix
-            pass
         suffix_index = 0
         while True:
             name = f"{path_no_suffix.stem}{'' if suffix_index == 0 else f' ({suffix_index})'}{path_no_suffix.suffix}"
@@ -78,17 +166,9 @@ def pytest_sessionstart(session):
             except FileExistsError:
                 suffix_index += 1
 
-    if explicit_log_path:
-        base_path = Path(explicit_log_path)
-        if not base_path.is_absolute():
-            base_path = root_path / base_path
-        log_path = base_path
-        # Overwrite if exists; caller ensures uniqueness
-        fh = open(log_path, mode="w", encoding="utf-8")
-    else:
-        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        base_path = logs_dir / f"{ts}.txt"
-        log_path, fh = _open_unique(base_path)
+    # Build the log filename: semantic_name_timestamp.txt
+    base_path = logs_dir / f"{semantic_name}_{ts}.txt"
+    log_path, fh = _open_unique(base_path)
 
     global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR
     _TEE_FILE_HANDLE = fh
@@ -126,7 +206,18 @@ def pytest_unconfigure(config):
         log_file = (
             _TEE_LOG_PATH or (Path(config.rootpath) / ".pytest_logs" / "unknown.txt")
         ).resolve()
-        tr.write_line(f"Test logs saved here: {log_file}")
+        root_path = Path(config.rootpath)
+        subdir = _get_log_subdir()
+
+        # Print a clear banner showing where logs are
+        tr.write_line("")
+        tr.write_line("=" * 72)
+        tr.write_line(f"📄 Test log: {log_file}")
+        tr.write_line(
+            f"📁 This terminal's logs: {root_path / '.pytest_logs' / subdir}/",
+        )
+        tr.write_line(f"📂 All terminals' logs:  {root_path / '.pytest_logs'}/*/")
+        tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.
     if _TEE_FILE_HANDLE is not None:
         _TEE_FILE_HANDLE.write("Finished running tests!\n")

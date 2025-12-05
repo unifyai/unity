@@ -234,6 +234,9 @@ is_var_in_env_overrides() {
 build_env_exports() {
   local exports=""
 
+  # Always export the socket name for log directory scoping
+  exports="$exports UNITY_TEST_SOCKET=$TMUX_SOCKET"
+
   # Add all --env flag overrides
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     exports="$exports $kv"
@@ -289,8 +292,7 @@ fi
 # Build the command to run in each tmux session
 run_cmd() {
   local target="$1"   # pytest target (file path or node id)
-  local log_file="$2" # pytest log file path
-  local marker_arg="$3"  # optional marker filter (e.g., "-m eval")
+  local marker_arg="$2"  # optional marker filter (e.g., "-m eval")
   # Build the inner script first with safe %q for path/target, then quote the whole script with %q
   local inner
   local env_exports
@@ -301,7 +303,7 @@ run_cmd() {
     # Shared project mode: skip session setup (already done by prepare script)
     env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
   fi
-  # Append user-provided --env overrides
+  # Append user-provided --env overrides (includes UNITY_TEST_SOCKET for log scoping)
   local user_overrides
   user_overrides="$(build_env_exports)"
   if [[ -n "$user_overrides" ]]; then
@@ -317,7 +319,8 @@ run_cmd() {
   # Build inner command with socket name directly interpolated (not via env var)
   # This ensures tmux commands target the correct isolated server
   # Note: LC_ALL=en_US.UTF-8 is required for Unicode emoji support in tmux session names
-  inner=$(printf '%s PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$log_file" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
+  # Note: Log paths are now auto-derived by conftest.py using UNITY_TEST_SOCKET + semantic naming
+  inner=$(printf '%s; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -629,12 +632,13 @@ for target in "${files[@]}"; do
   fname="${target##*/}"
   wname="${fname%.py}"
 
-  # Define log file in .pytest_logs
-  mkdir -p "$REPO_ROOT/.pytest_logs"
-  log_file=".pytest_logs/${session}.txt"
+  # Ensure the socket-scoped log directory exists
+  # (conftest.py will create it too, but this ensures it's ready for the first run)
+  mkdir -p "$REPO_ROOT/.pytest_logs/$TMUX_SOCKET"
 
   # Create the session first (no command), set remain-on-exit, then send the command.
-  cmd="$(run_cmd "$target" "$log_file" "$MARKER_FILTER")"
+  # Note: Log paths are auto-derived by conftest.py (semantic name + timestamp in socket subdir)
+  cmd="$(run_cmd "$target" "$MARKER_FILTER")"
 
   # Capture session ID to track this specific run robustly
   sid=$(tmux_cmd new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
@@ -652,6 +656,11 @@ for s in "${made_sessions[@]}"; do
   echo "  - $s"
 done
 
+echo
+echo "========================================================================"
+echo "📁 Test logs for THIS terminal: .pytest_logs/$TMUX_SOCKET/"
+echo "📂 All terminals' logs:         .pytest_logs/*/"
+echo "========================================================================"
 echo
 echo "Trigger:"
 echo "  • Run everything under current dir:     ./parallel_run.sh"
@@ -731,7 +740,7 @@ if (( WAIT_FOR_COMPLETION )); then
   done
 
   if (( failures )); then
-    echo "Failures detected. Logs are available in .pytest_logs/"
+    echo "Failures detected. Logs are available in .pytest_logs/$TMUX_SOCKET/"
     exit 1
   else
     echo "All tests passed!"
