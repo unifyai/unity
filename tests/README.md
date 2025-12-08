@@ -225,6 +225,19 @@ Use `-t/--per-test` to create one session per *test function*, enabling full par
 - Running many files where per-file grouping helps organization
 - When you prefer fewer, more manageable tmux sessions
 
+**Concurrency limits:** By default, `parallel_run.sh` limits concurrent sessions to **50** to prevent resource exhaustion. Use `-j N` to adjust:
+
+```bash
+# Lower concurrency for resource-constrained systems
+./parallel_run.sh -t -j 8 tests/test_contact_manager/
+
+# Higher concurrency for powerful machines
+./parallel_run.sh -t -j 100 tests/
+
+# Unlimited (not recommended for large test suites)
+./parallel_run.sh -t -j 0 tests/
+```
+
 ### Why not just pytest-xdist?
 
 pytest-xdist works fine for basic parallel execution. However, `parallel_run.sh` provides a significantly better **debugging experience** for our LLM-heavy async tests:
@@ -335,6 +348,10 @@ Limit the search by passing directories and/or `.py` files. Examples:
 ./parallel_run.sh -t tests                   # per-test across a folder
 ./parallel_run.sh -t tests/foo_test.py       # per-test across a single file
 ./parallel_run.sh -t tests tests/foo_test.py # mix folders and files, all per-test
+
+# Limit concurrency (default: 50 concurrent sessions)
+./parallel_run.sh -t -j 8 tests              # max 8 concurrent sessions
+./parallel_run.sh -t --jobs 20 tests         # max 20 concurrent sessions
 
 # Mix files and directories
 ./parallel_run.sh tests/api tests/db/test_migrations.py
@@ -503,6 +520,7 @@ The `--env` approach is intentionally generic. Any variable from either class is
 |--------|-------------|
 | `-w [N]`, `--wait [N]` | Block until all tests complete; exit 0 on success, 1 on failure, 2 on timeout. Optional `N` sets timeout in seconds. |
 | `-t`, `--per-test` | Create one session per test function instead of per file |
+| `-j N`, `--jobs N` | Limit concurrent tmux sessions (default: 50). Prevents resource exhaustion during high-parallelism runs. Use `-j 0` for unlimited (not recommended). |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |
 | `--tags TAG` | Tag test runs for filtering (shorthand for `--env UNIFY_TEST_TAGS=...`; repeatable, comma-separated) |
