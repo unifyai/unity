@@ -200,6 +200,55 @@ def wait_for_sessions_to_complete(
     return list_tmux_sessions(socket=socket)
 
 
+def wait_for_sessions_adaptive(
+    session_base_names: List[str],
+    socket: str,
+    no_progress_timeout: float = 60,
+    poll_interval: float = 0.5,
+) -> tuple[List[TmuxSession], bool]:
+    """Wait for sessions with adaptive timeout based on progress.
+
+    Instead of a fixed total timeout, this waits until no progress is made
+    for `no_progress_timeout` seconds. Progress is defined as any session
+    transitioning from pending to completed.
+
+    Args:
+        session_base_names: Base names (without status prefix) of sessions to wait for
+        socket: The tmux socket to query
+        no_progress_timeout: Seconds to wait without progress before timing out
+        poll_interval: How often to poll for session status
+
+    Returns:
+        Tuple of (final sessions list, whether all completed successfully)
+    """
+    last_progress_time = time.time()
+    last_completed_count = 0
+    base_names_set = set(session_base_names)
+
+    while True:
+        sessions = list_tmux_sessions(socket=socket)
+
+        # Find sessions matching our base names
+        matching = [s for s in sessions if s.base_name in base_names_set]
+        pending = [s for s in matching if s.is_pending]
+        completed = [s for s in matching if not s.is_pending]
+
+        # Check if all done
+        if not pending and matching:
+            return matching, True
+
+        # Check for progress (more sessions completed than before)
+        if len(completed) > last_completed_count:
+            last_progress_time = time.time()
+            last_completed_count = len(completed)
+
+        # Check for timeout (no progress for too long)
+        if time.time() - last_progress_time > no_progress_timeout:
+            return matching, False
+
+        time.sleep(poll_interval)
+
+
 @pytest.fixture
 def clean_tmux_sessions():
     """Fixture that provides socket-scoped cleanup for parallel test isolation.
@@ -230,18 +279,18 @@ class ParallelRunner:
     def run(
         self,
         *args: str,
-        timeout: float = 120,
+        timeout: float = 500,
         wait_for_completion: bool = False,
-        completion_timeout: float = 60,
+        completion_timeout: float = 120,
         env: Optional[dict] = None,
     ) -> RunResult:
         """Run parallel_run.sh with the given arguments.
 
         Args:
             *args: Arguments to pass to the script
-            timeout: Subprocess timeout
+            timeout: Subprocess timeout (default 500s to handle high concurrency)
             wait_for_completion: If True, wait for sessions to complete even if --wait not passed
-            completion_timeout: How long to wait for session completion
+            completion_timeout: How long to wait for session completion (no-progress timeout)
             env: Additional environment variables
 
         Returns:
@@ -255,12 +304,6 @@ class ParallelRunner:
         # Ensure UTF-8 locale for proper emoji handling in tmux session names
         run_env["LC_ALL"] = "en_US.UTF-8"
         run_env["LANG"] = "en_US.UTF-8"
-        # Ensure we use random projects mode to avoid interfering with the shared UnityTests project
-        run_env["UNIFY_TESTS_RAND_PROJ"] = "True"
-        run_env["UNIFY_TESTS_DELETE_PROJ_ON_EXIT"] = "True"
-        # Clear UNIFY_SKIP_SESSION_SETUP - random projects mode needs full session setup
-        # (inherited True from outer parallel_run.sh would conflict with random project creation)
-        run_env["UNIFY_SKIP_SESSION_SETUP"] = "False"
         # Clear UNITY_LOG_SUBDIR so the nested script derives its own datetime-prefixed subdir
         # (otherwise it inherits the outer parallel_run.sh's log subdir)
         run_env.pop("UNITY_LOG_SUBDIR", None)
@@ -309,13 +352,22 @@ class ParallelRunner:
         new_sessions = [name for _, name in new_session_tuples]
         self._created_sessions.extend(new_session_tuples)
 
-        # If wait_for_completion requested, wait for sessions
+        # If wait_for_completion requested, wait for sessions using adaptive timeout
         if wait_for_completion and new_sessions:
-            patterns = [re.escape(s) for s in new_sessions]
-            wait_for_sessions_to_complete(
-                patterns,
-                timeout=completion_timeout,
+            # Extract base names for adaptive waiting
+            base_names = []
+            for session_name in new_sessions:
+                base = session_name
+                for prefix in ["p ✅ ", "f ❌ ", "r ⏳ "]:
+                    if session_name.startswith(prefix):
+                        base = session_name[len(prefix) :]
+                        break
+                base_names.append(base)
+
+            wait_for_sessions_adaptive(
+                base_names,
                 socket=socket_name,
+                no_progress_timeout=completion_timeout,
             )
 
         # Parse log subdir from script output (format: "📁 Test logs for THIS run: .pytest_logs/{subdir}/")
