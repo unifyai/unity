@@ -128,7 +128,7 @@ REPEAT_COUNT=1
 
 # Maximum concurrent sessions (default 50 for balanced parallelism)
 # With -j/--jobs N: limit to N concurrent running sessions
-# Use -j 0 for unlimited (not recommended for large test suites)
+# Use -j 0 (or -j none/unlimited) for no limit (not recommended for large test suites)
 MAX_JOBS=50
 
 # Environment variable overrides (accumulated via --env KEY=VALUE)
@@ -208,13 +208,21 @@ while (( "$#" )); do
       fi
       ;;
     -j|--jobs)
-      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
-        MAX_JOBS="$2"
-        shift 2
-      else
-        echo "Error: -j|--jobs requires a positive integer argument (e.g., --jobs 8)." >&2
+      if [[ -z "${2-}" ]]; then
+        echo "Error: -j|--jobs requires an argument (e.g., --jobs 8, --jobs 0, --jobs none)." >&2
         exit 2
       fi
+      # Accept positive integers, 0, or keywords for unlimited
+      arg_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+      if [[ "$2" =~ ^[0-9]+$ ]]; then
+        MAX_JOBS="$2"
+      elif [[ "$arg_lower" == "none" || "$arg_lower" == "unlimited" || "$arg_lower" == "inf" ]]; then
+        MAX_JOBS=0
+      else
+        echo "Error: -j|--jobs requires a non-negative integer or 'none'/'unlimited' (e.g., --jobs 8, --jobs 0, --jobs none)." >&2
+        exit 2
+      fi
+      shift 2
       ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
@@ -742,6 +750,8 @@ declare -a session_ids=()
 
 if (( MAX_JOBS > 0 )); then
   echo "Concurrency limit: $MAX_JOBS simultaneous sessions"
+else
+  echo "Concurrency limit: unlimited"
 fi
 
 for target in "${files[@]}"; do
