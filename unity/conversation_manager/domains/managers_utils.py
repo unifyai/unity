@@ -485,7 +485,7 @@ async def init_conv_manager(cm: "ConversationManager") -> None:
                 await cm.event_broker.publish(
                     "app:comms:chat_history",
                     GetChatHistory(
-                        chat_history=store_chat_history.chat_history
+                        chat_history=store_chat_history.chat_history,
                     ).to_json(),
                 )
 
