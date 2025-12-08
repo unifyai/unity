@@ -310,6 +310,10 @@ class ParallelRunner:
         # Use a consistent socket name for all runs within this runner instance
         # This enables collision detection between sequential runs in the same test
         run_env["UNITY_TEST_SOCKET"] = self._socket_name
+        # Skip the heavyweight shared project preparation for nested parallel_run.sh calls.
+        # The fixture tests don't need the real UnityTests project, and the outer test runner
+        # has already prepared it. This dramatically speeds up nested invocations.
+        run_env["UNITY_SKIP_SHARED_PROJECT_PREP"] = "1"
         if env:
             run_env.update(env)
 

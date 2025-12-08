@@ -326,7 +326,7 @@ build_env_exports() {
   done
 
   # Propagate relevant system environment variables if not already set via --env
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_TESTS_DELETE_PROJ_ON_EXIT UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL"
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_TESTS_DELETE_PROJ_ON_EXIT UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP"
   for var_name in $propagate_vars; do
     if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
       exports="$exports ${var_name}=${!var_name}"
@@ -352,9 +352,15 @@ set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 cd "$REPO_ROOT"
 
 # ---------------------------------------------------------------------------
-# Prepare the shared project (unless using random projects mode)
+# Prepare the shared project (unless using random projects mode or skipped)
 # ---------------------------------------------------------------------------
-if is_random_projects_mode; then
+# UNITY_SKIP_SHARED_PROJECT_PREP: When set, skip the heavyweight project
+# preparation entirely. Useful for:
+# - Nested parallel_run.sh calls inside tests (the outer call already prepared)
+# - Running fixture tests that don't need the real UnityTests project
+if [[ -n "${UNITY_SKIP_SHARED_PROJECT_PREP:-}" ]]; then
+  echo "Skipping shared project preparation (UNITY_SKIP_SHARED_PROJECT_PREP set)..."
+elif is_random_projects_mode; then
   echo "Random projects mode detected; skipping shared project preparation..."
 else
   echo "Preparing shared UnityTests project..."
@@ -710,8 +716,39 @@ if (( PER_TEST )); then
   if (( ${#direct_nodes[@]} )); then
     printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
   fi
+elif [[ -n "$MARKER_FILTER" ]]; then
+  # Default mode WITH marker filter: collect nodes first to find which files
+  # have matching tests, then create one session per file (not per-node).
+  # This prevents creating sessions for files with 0 matching tests.
+  all_targets=()
+  if (( ${#direct_files[@]} )); then
+    all_targets+=( "${direct_files[@]}" )
+  fi
+  if (( ${#found_files[@]} )); then
+    all_targets+=( "${found_files[@]}" )
+  fi
+  if (( ${#all_targets[@]} )); then
+    # Collect node ids, extract unique file paths (bash 3.x compatible)
+    # Use a temp file + sort -u to get unique file paths
+    tmp_files="$(mktemp)"
+    while IFS= read -r nid; do
+      if [[ -n "$nid" && "$nid" == *"::"* ]]; then
+        # Extract file path (everything before first ::)
+        file_path="${nid%%::*}"
+        echo "$file_path" >> "$tmp_files"
+      fi
+    done < <(collect_nodes_batch "$MARKER_FILTER" "${all_targets[@]}")
+    # Output unique files that have matching tests
+    while IFS= read -r file_path; do
+      [[ -n "$file_path" ]] && printf '%s\0' "$file_path" >> "$tmp"
+    done < <(sort -u "$tmp_files")
+    rm -f "$tmp_files"
+  fi
+  if (( ${#direct_nodes[@]} )); then
+    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
+  fi
 else
-  # Default mode: one session per file; explicit node ids are respected
+  # Default mode without marker filter: one session per file
   if (( ${#direct_files[@]} )); then
     printf '%s\0' "${direct_files[@]}" >> "$tmp"
   fi
