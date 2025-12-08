@@ -10,6 +10,13 @@ if [ -f "../.env" ]; then
   set +a
 fi
 
+# ---- Ensure UTF-8 locale for Unicode emoji support ----
+# Session names use emojis (⏳ ✅ ❌) to indicate status. Without proper locale,
+# these get corrupted to underscores, breaking prefix detection and failure detection.
+# This must be set before any tmux commands and inherited by all child processes.
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
+
 # ---- Increase file descriptor limit ----
 # Parallel tests open many network connections. Each connection uses a file
 # descriptor. macOS defaults to 256 per process, which is easily exceeded.
@@ -60,6 +67,37 @@ LOG_SUBDIR="${UNITY_LOG_SUBDIR:-$(_derive_log_subdir "$TMUX_SOCKET")}"
 tmux_cmd() {
   LC_ALL=en_US.UTF-8 tmux -L "$TMUX_SOCKET" "$@"
 }
+
+# ---- Cleanup on interrupt ----
+# Track session IDs for cleanup on SIGINT/SIGTERM
+declare -a CREATED_SESSION_IDS=()
+
+_cleanup_sessions() {
+  local sig="${1:-}"
+  if (( ${#CREATED_SESSION_IDS[@]} > 0 )); then
+    echo ""
+    echo "Caught signal${sig:+ ($sig)}. Cleaning up ${#CREATED_SESSION_IDS[@]} session(s)..."
+    for sid in "${CREATED_SESSION_IDS[@]}"; do
+      # Send SIGTERM to allow graceful Python shutdown, then kill session
+      # First, send SIGTERM to all processes in the session
+      tmux_cmd list-panes -t "$sid" -F '#{pane_pid}' 2>/dev/null | while read -r pid; do
+        if [[ -n "$pid" ]]; then
+          # Kill the entire process group to catch child processes
+          kill -TERM "-$pid" 2>/dev/null || true
+        fi
+      done
+      # Brief wait for graceful shutdown
+      sleep 0.1
+      # Then kill the tmux session
+      tmux_cmd kill-session -t "$sid" 2>/dev/null || true
+    done
+    echo "Cleanup complete."
+  fi
+}
+
+# Set up signal handlers for graceful cleanup
+trap '_cleanup_sessions INT; exit 130' INT
+trap '_cleanup_sessions TERM; exit 143' TERM
 
 # ---- Configurable directory excludes (by name) ----
 # Note: 'fixtures' is excluded because those are test data files, not tests themselves.
@@ -319,12 +357,14 @@ run_cmd() {
   # Build the inner script first with safe %q for path/target, then quote the whole script with %q
   local inner
   local env_exports
+  # Always export UTF-8 locale for proper emoji handling in session names
+  env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8'
   if is_random_projects_mode; then
     # Random projects mode: each session gets its own project
-    env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
+    env_exports="$env_exports UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True"
   else
     # Shared project mode: skip session setup (already done by prepare script)
-    env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
+    env_exports="$env_exports UNIFY_SKIP_SESSION_SETUP=True"
   fi
   # Append user-provided --env overrides (includes UNITY_TEST_SOCKET for log scoping)
   local user_overrides
@@ -528,28 +568,40 @@ build_find_cmd() {
   printf '%q ' "${cmd[@]}"
 }
 
-# Collect pytest node ids for a given target (file or directory)
-collect_nodes_for_target() {
-  local target="$1"
-  local marker_arg="$2"  # optional marker filter
-  local cmd
-  local env_exports
-  if is_random_projects_mode; then
-    env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
-  else
-    env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
+# Collect pytest node ids for multiple targets at once (batch collection)
+# This is much faster than calling pytest --collect-only per file, as pytest
+# initialization (~10s) happens only once instead of per file.
+collect_nodes_batch() {
+  local marker_arg="$1"  # optional marker filter (e.g., "-m eval")
+  shift
+  local targets=("$@")
+
+  if (( ${#targets[@]} == 0 )); then
+    return 0
   fi
+
+  local cmd
+  # Always use UNIFY_SKIP_SESSION_SETUP for collection - we only need test IDs,
+  # not a real project. This avoids slow project creation/deletion per collection.
+  local env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
   # Append user-provided --env overrides
   local user_overrides
   user_overrides="$(build_env_exports)"
   if [[ -n "$user_overrides" ]]; then
     env_exports="$env_exports$user_overrides"
   fi
+
+  # Build target list with proper quoting
+  local quoted_targets=""
+  for t in "${targets[@]}"; do
+    quoted_targets+=" $(printf '%q' "$t")"
+  done
+
   # Build collection command with optional marker filter
   if [[ -n "$marker_arg" ]]; then
-    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s %q' "$env_exports" "$marker_arg" "$target")
+    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s %s' "$env_exports" "$marker_arg" "$quoted_targets")
   else
-    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %q' "$env_exports" "$target")
+    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s' "$env_exports" "$quoted_targets")
   fi
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   bash -lc "$cmd" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true
@@ -592,20 +644,19 @@ fi
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 if (( PER_TEST )); then
-  # Per-test mode: expand directories/files into node ids
+  # Per-test mode: expand directories/files into node ids using batch collection
+  # Combine all targets for a single pytest --collect-only call (much faster)
+  all_targets=()
   if (( ${#direct_files[@]} )); then
-    for f in "${direct_files[@]}"; do
-      while IFS= read -r nid; do
-        [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
-      done < <(collect_nodes_for_target "$f" "$MARKER_FILTER")
-    done
+    all_targets+=( "${direct_files[@]}" )
   fi
   if (( ${#found_files[@]} )); then
-    for f in "${found_files[@]}"; do
-      while IFS= read -r nid; do
-        [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
-      done < <(collect_nodes_for_target "$f" "$MARKER_FILTER")
-    done
+    all_targets+=( "${found_files[@]}" )
+  fi
+  if (( ${#all_targets[@]} )); then
+    while IFS= read -r nid; do
+      [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
+    done < <(collect_nodes_batch "$MARKER_FILTER" "${all_targets[@]}")
   fi
   if (( ${#direct_nodes[@]} )); then
     printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
@@ -670,6 +721,8 @@ for target in "${files[@]}"; do
 
   made_sessions+=( "$session" )
   session_ids+=( "$sid" )
+  # Track for cleanup on interrupt (SIGINT/SIGTERM)
+  CREATED_SESSION_IDS+=( "$sid" )
 done
 
 echo "Created ${#made_sessions[@]} tmux sessions (socket: $TMUX_SOCKET):"

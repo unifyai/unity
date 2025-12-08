@@ -48,6 +48,7 @@ while (( "$#" )); do
       echo "Kill the tmux server for test sessions."
       echo ""
       echo "By default, kills only THIS terminal's tmux server (isolated socket)."
+      echo "Sends SIGTERM to processes before killing tmux for graceful shutdown."
       echo ""
       echo "Options:"
       echo "  --all              Kill ALL unity test tmux servers across all terminals"
@@ -71,13 +72,37 @@ if [[ -n "$EXPLICIT_SOCKET" ]]; then
   TMUX_SOCKET="$EXPLICIT_SOCKET"
 fi
 
+# Helper: gracefully kill processes in a tmux socket before killing the server
+_graceful_kill_socket() {
+  local sock="$1"
+
+  # Get all pane PIDs from all sessions in this socket
+  local pids
+  pids=$(tmux -L "$sock" list-panes -a -F '#{pane_pid}' 2>/dev/null || true)
+
+  if [[ -n "$pids" ]]; then
+    # Send SIGTERM to process groups for graceful shutdown
+    for pid in $pids; do
+      if [[ -n "$pid" ]]; then
+        # Kill process group to catch all child processes
+        kill -TERM "-$pid" 2>/dev/null || true
+      fi
+    done
+    # Brief wait for graceful shutdown
+    sleep 0.2
+  fi
+
+  # Now kill the tmux server
+  tmux -L "$sock" kill-server 2>/dev/null
+}
+
 if (( KILL_ALL )); then
   # Kill all unity* servers
   count=0
   for sock in /tmp/tmux-"$(id -u)"/unity*; do
     [ -e "$sock" ] || continue
     name=$(basename "$sock")
-    if tmux -L "$name" kill-server 2>/dev/null; then
+    if _graceful_kill_socket "$name"; then
       echo "Killed server: $name"
       ((count++)) || true
     fi
@@ -89,7 +114,7 @@ if (( KILL_ALL )); then
   fi
 else
   # Kill just the specified (or current terminal's) server
-  if tmux -L "$TMUX_SOCKET" kill-server 2>/dev/null; then
+  if _graceful_kill_socket "$TMUX_SOCKET"; then
     echo "Killed server: $TMUX_SOCKET"
   else
     echo "No server running for socket: $TMUX_SOCKET"

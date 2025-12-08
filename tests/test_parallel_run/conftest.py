@@ -272,13 +272,8 @@ class ParallelRunner:
         # Determine the actual socket name (user override takes precedence)
         actual_socket = run_env.get("UNITY_TEST_SOCKET", self._socket_name)
 
-        # Record existing sessions and logs (using actual socket for correct isolation)
+        # Record existing sessions (log subdir will be parsed from script output)
         existing_sessions = {(s.socket, s.name) for s in list_tmux_sessions()}
-        existing_logs = set()
-        # Logs are now in socket-scoped subdirectories
-        socket_logs_dir = PYTEST_LOGS_DIR / actual_socket
-        if socket_logs_dir.exists():
-            existing_logs = set(socket_logs_dir.glob("*.txt"))
 
         # Run the script
         try:
@@ -322,11 +317,22 @@ class ParallelRunner:
                 socket=socket_name,
             )
 
-        # Find new log files in the socket-scoped directory
+        # Parse log subdir from script output (format: "📁 Test logs for THIS run: .pytest_logs/{subdir}/")
+        # This is more robust than trying to predict the datetime-prefixed name
+        log_subdir = None
+        log_subdir_match = re.search(
+            r"Test logs for THIS run: \.pytest_logs/([^/]+)/",
+            stdout,
+        )
+        if log_subdir_match:
+            log_subdir = log_subdir_match.group(1)
+
+        # Find new log files in the parsed log directory
         new_logs = []
-        socket_logs_dir = PYTEST_LOGS_DIR / socket_name
-        if socket_logs_dir.exists():
-            new_logs = list(set(socket_logs_dir.glob("*.txt")) - existing_logs)
+        if log_subdir:
+            logs_dir = PYTEST_LOGS_DIR / log_subdir
+            if logs_dir.exists():
+                new_logs = list(logs_dir.glob("*.txt"))
 
         return RunResult(
             exit_code=exit_code,
