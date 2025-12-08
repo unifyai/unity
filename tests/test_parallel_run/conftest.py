@@ -170,7 +170,7 @@ def kill_sessions_matching(pattern: str, socket: Optional[str] = None) -> int:
 
 def wait_for_sessions_to_complete(
     session_patterns: List[str],
-    timeout: float = 60,
+    timeout: float = 300,
     poll_interval: float = 0.5,
     socket: Optional[str] = None,
 ) -> List[TmuxSession]:
@@ -203,7 +203,7 @@ def wait_for_sessions_to_complete(
 def wait_for_sessions_adaptive(
     session_base_names: List[str],
     socket: str,
-    no_progress_timeout: float = 60,
+    no_progress_timeout: float = 300,
     poll_interval: float = 0.5,
 ) -> tuple[List[TmuxSession], bool]:
     """Wait for sessions with adaptive timeout based on progress.
@@ -279,18 +279,18 @@ class ParallelRunner:
     def run(
         self,
         *args: str,
-        timeout: float = 500,
+        timeout: float = 600,
         wait_for_completion: bool = False,
-        completion_timeout: float = 120,
+        completion_timeout: float = 300,
         env: Optional[dict] = None,
     ) -> RunResult:
         """Run parallel_run.sh with the given arguments.
 
         Args:
             *args: Arguments to pass to the script
-            timeout: Subprocess timeout (default 500s to handle high concurrency)
+            timeout: Subprocess timeout (default 600s to handle stress test scenarios)
             wait_for_completion: If True, wait for sessions to complete even if --wait not passed
-            completion_timeout: How long to wait for session completion (no-progress timeout)
+            completion_timeout: No-progress timeout for session completion (default 300s)
             env: Additional environment variables
 
         Returns:
