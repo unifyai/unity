@@ -202,22 +202,17 @@ def wait_for_sessions_to_complete(
 
 @pytest.fixture
 def clean_tmux_sessions():
-    """Fixture that cleans up any test-related tmux sessions before and after."""
-    # Pattern to match ONLY the fixture test sessions created by tests, NOT parent sessions.
-    # Parent sessions are named like "test_parallel_run-test_isolation" (from the test file path).
-    # Fixture sessions are named like "r ⏳ test_parallel_run-fixtures-test_always_pass"
-    # (from the fixtures/ directory path: tests/test_parallel_run/fixtures/).
-    # We only want to clean up the fixture sessions, not kill our parent session!
-    pattern = r"^[pfr]\s*[✅❌⏳]\s*test_parallel_run-fixtures-"
+    """Fixture that provides socket-scoped cleanup for parallel test isolation.
 
-    # Clean before
-    kill_sessions_matching(pattern)
+    Each ParallelRunner instance has its own unique socket (based on PID), so
+    cleanup is handled by ParallelRunner.cleanup() which only kills sessions
+    from its own socket. This fixture is now a no-op but kept for API compatibility.
 
+    Previously this fixture killed sessions across ALL sockets, which caused
+    cross-test interference when running in parallel with -t.
+    """
+    # No-op: cleanup is handled by ParallelRunner.cleanup() which is socket-scoped
     yield
-
-    # Clean after - give sessions time to auto-close
-    time.sleep(0.5)
-    kill_sessions_matching(pattern)
 
 
 class ParallelRunner:
@@ -257,12 +252,18 @@ class ParallelRunner:
 
         # Set up environment
         run_env = os.environ.copy()
+        # Ensure UTF-8 locale for proper emoji handling in tmux session names
+        run_env["LC_ALL"] = "en_US.UTF-8"
+        run_env["LANG"] = "en_US.UTF-8"
         # Ensure we use random projects mode to avoid interfering with the shared UnityTests project
         run_env["UNIFY_TESTS_RAND_PROJ"] = "True"
         run_env["UNIFY_TESTS_DELETE_PROJ_ON_EXIT"] = "True"
         # Clear UNIFY_SKIP_SESSION_SETUP - random projects mode needs full session setup
         # (inherited True from outer parallel_run.sh would conflict with random project creation)
         run_env["UNIFY_SKIP_SESSION_SETUP"] = "False"
+        # Clear UNITY_LOG_SUBDIR so the nested script derives its own datetime-prefixed subdir
+        # (otherwise it inherits the outer parallel_run.sh's log subdir)
+        run_env.pop("UNITY_LOG_SUBDIR", None)
         # Use a consistent socket name for all runs within this runner instance
         # This enables collision detection between sequential runs in the same test
         run_env["UNITY_TEST_SOCKET"] = self._socket_name
