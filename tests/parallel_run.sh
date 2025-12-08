@@ -754,6 +754,9 @@ else
   echo "Concurrency limit: unlimited"
 fi
 
+# Print header before drip-feeding session creation
+echo "Creating tmux sessions (socket: $TMUX_SOCKET):"
+
 for target in "${files[@]}"; do
   # If job limit is set, wait for a slot before creating new session
   wait_for_job_slot
@@ -778,16 +781,16 @@ for target in "${files[@]}"; do
   tmux_cmd rename-session -t "$sid" "$pending_name"
   session="$pending_name"
 
+  # Print session as it's created (drip-feed)
+  echo "  - $session"
+
   made_sessions+=( "$session" )
   session_ids+=( "$sid" )
   # Track for cleanup on interrupt (SIGINT/SIGTERM)
   CREATED_SESSION_IDS+=( "$sid" )
 done
 
-echo "Created ${#made_sessions[@]} tmux sessions (socket: $TMUX_SOCKET):"
-for s in "${made_sessions[@]}"; do
-  echo "  - $s"
-done
+echo "Created ${#made_sessions[@]} tmux sessions."
 
 echo
 echo "========================================================================"
