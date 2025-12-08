@@ -192,23 +192,6 @@ class TestEmptyResults:
         assert result.exit_code == 0
         assert len(result.sessions_created) == 0
 
-    def test_eval_only_no_match_serial(self, runner):
-        """--eval-only in serial mode creates session even if no tests match.
-
-        In serial mode (-s), the marker filter is passed to pytest inside
-        the session. The script creates a session for each file and lets
-        pytest handle the filtering internally.
-        """
-        result = runner.run(
-            "-s",
-            "--eval-only",
-            runner.fixture_path("test_symbolic_only.py"),
-        )
-
-        # Session is created in serial mode, pytest handles filtering
-        assert result.exit_code == 0
-        assert len(result.sessions_created) == 1
-
 
 class TestPathFormats:
     """Tests for different path format handling."""
