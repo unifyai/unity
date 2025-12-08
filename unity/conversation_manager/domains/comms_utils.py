@@ -121,7 +121,7 @@ async def send_email_via_address(
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/email/send",
+            f"{os.getenv('UNITY_COMMS_URL')}/gmail/send",
             headers=headers,
             json={
                 "from": from_email,
@@ -192,7 +192,7 @@ async def add_email_attachments(
                 # very basic filename sanitization
                 safe_filename = os.path.basename(raw_filename)
 
-                url = f"{os.getenv('UNITY_COMMS_URL')}/email/attachment"
+                url = f"{os.getenv('UNITY_COMMS_URL')}/gmail/attachment"
                 params = {
                     "receiver_email": receiver_email,
                     "gmail_message_id": gmail_message_id,
