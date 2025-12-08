@@ -236,6 +236,8 @@ Use `-t/--per-test` to create one session per *test function*, enabling full par
 
 # Unlimited (not recommended for large test suites)
 ./parallel_run.sh -t -j 0 tests/
+./parallel_run.sh -t -j none tests/      # equivalent
+./parallel_run.sh -t -j unlimited tests/ # equivalent
 ```
 
 ### Why not just pytest-xdist?
@@ -352,6 +354,7 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Limit concurrency (default: 50 concurrent sessions)
 ./parallel_run.sh -t -j 8 tests              # max 8 concurrent sessions
 ./parallel_run.sh -t --jobs 20 tests         # max 20 concurrent sessions
+./parallel_run.sh -t -j none tests           # unlimited (no throttling)
 
 # Mix files and directories
 ./parallel_run.sh tests/api tests/db/test_migrations.py
@@ -520,7 +523,7 @@ The `--env` approach is intentionally generic. Any variable from either class is
 |--------|-------------|
 | `-w [N]`, `--wait [N]` | Block until all tests complete; exit 0 on success, 1 on failure, 2 on timeout. Optional `N` sets timeout in seconds. |
 | `-t`, `--per-test` | Create one session per test function instead of per file |
-| `-j N`, `--jobs N` | Limit concurrent tmux sessions (default: 50). Prevents resource exhaustion during high-parallelism runs. Use `-j 0` for unlimited (not recommended). |
+| `-j N`, `--jobs N` | Limit concurrent tmux sessions (default: 50). Prevents resource exhaustion during high-parallelism runs. Use `-j 0` or `-j none` for unlimited (not recommended). |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |
 | `--tags TAG` | Tag test runs for filtering (shorthand for `--env UNIFY_TEST_TAGS=...`; repeatable, comma-separated) |
