@@ -210,7 +210,7 @@ def wait_for_sessions_adaptive(
 
     Instead of a fixed total timeout, this waits until no progress is made
     for `no_progress_timeout` seconds. Progress is defined as any session
-    transitioning from pending to completed.
+    transitioning from pending to completed (or disappearing after completion).
 
     Args:
         session_base_names: Base names (without status prefix) of sessions to wait for
@@ -223,6 +223,7 @@ def wait_for_sessions_adaptive(
     """
     last_progress_time = time.time()
     last_completed_count = 0
+    seen_sessions = False  # Track if we've ever seen the sessions
     base_names_set = set(session_base_names)
 
     while True:
@@ -232,15 +233,29 @@ def wait_for_sessions_adaptive(
         matching = [s for s in sessions if s.base_name in base_names_set]
         pending = [s for s in matching if s.is_pending]
         completed = [s for s in matching if not s.is_pending]
+        failed = [s for s in matching if s.is_failed]
 
-        # Check if all done
-        if not pending and matching:
-            return matching, True
+        # Track if we've seen any of our sessions
+        if matching:
+            seen_sessions = True
 
-        # Check for progress (more sessions completed than before)
-        if len(completed) > last_completed_count:
+        # Check if all done: no pending sessions AND (we have completed ones OR we saw them before)
+        # Sessions that pass auto-close after 10s, so "seen but now gone" means success
+        if not pending:
+            if matching:
+                # Sessions exist and none pending - done
+                return matching, not any(s.is_failed for s in matching)
+            elif seen_sessions:
+                # Sessions existed before but are now gone - they passed and auto-closed
+                return [], True
+
+        # Check for progress (more sessions completed/gone than before)
+        current_done_count = len(completed) + (
+            len(base_names_set) - len(matching) if seen_sessions else 0
+        )
+        if current_done_count > last_completed_count:
             last_progress_time = time.time()
-            last_completed_count = len(completed)
+            last_completed_count = current_done_count
 
         # Check for timeout (no progress for too long)
         if time.time() - last_progress_time > no_progress_timeout:
