@@ -350,9 +350,31 @@ class ParallelRunner:
         return str(path.relative_to(self.repo_root))
 
     def cleanup(self):
-        """Kill all sessions created by this runner."""
-        for socket, session in self._created_sessions:
-            kill_tmux_session(session, socket=socket)
+        """Kill all sessions created by this runner.
+
+        Session names change during their lifecycle (r ⏳ → p ✅ or f ❌),
+        so we match by base_name to find sessions regardless of current status.
+        """
+        if not self._created_sessions:
+            return
+
+        # Build set of base names we need to clean up
+        base_names_to_kill: set[str] = set()
+        for _, session_name in self._created_sessions:
+            # Extract base name (strip status prefix)
+            base = session_name
+            for prefix in ["p ✅ ", "f ❌ ", "r ⏳ "]:
+                if session_name.startswith(prefix):
+                    base = session_name[len(prefix) :]
+                    break
+            base_names_to_kill.add(base)
+
+        # Find current sessions in our socket and kill any matching base names
+        current_sessions = list_tmux_sessions(socket=self._socket_name)
+        for session in current_sessions:
+            if session.base_name in base_names_to_kill:
+                kill_tmux_session(session.name, socket=session.socket)
+
         self._created_sessions.clear()
 
 
