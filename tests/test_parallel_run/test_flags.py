@@ -95,7 +95,7 @@ class TestWaitWithTimeout:
         start = time.time()
         result = runner.run(
             "--wait",
-            "120",  # 2 minute timeout - plenty of time
+            "300",  # 5 minute timeout - handles stress test scenarios
             runner.fixture_path("test_always_pass.py"),
         )
         elapsed = time.time() - start
@@ -125,7 +125,7 @@ class TestWaitWithTimeout:
         """-w N should work the same as --wait N."""
         result = runner.run(
             "-w",
-            "120",
+            "300",  # 5 minute timeout - handles stress test scenarios
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -137,7 +137,7 @@ class TestWaitWithTimeout:
         """--wait N should work correctly with default per-test mode."""
         result = runner.run(
             "--wait",
-            "120",
+            "300",  # 5 minute timeout - handles stress test scenarios
             runner.fixture_path("test_always_pass.py"),
         )
 
