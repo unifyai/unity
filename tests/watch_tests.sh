@@ -72,15 +72,23 @@ if [[ -n "$EXPLICIT_SOCKET" ]]; then
 fi
 
 if (( WATCH_ALL )); then
-  # Watch all unity sockets
+  # Watch all unity sockets that have active sessions
   exec watch -n 0.5 '
+    found=0
     for sock in /tmp/tmux-$(id -u)/unity*; do
       [ -e "$sock" ] || continue
       name=$(basename "$sock")
+      sessions=$(tmux -L "$name" ls 2>/dev/null)
+      # Skip sockets with no sessions
+      [ -z "$sessions" ] && continue
+      found=1
       echo "=== $name ==="
-      tmux -L "$name" ls 2>/dev/null || echo "(no sessions)"
+      echo "$sessions"
       echo
     done
+    if [ "$found" -eq 0 ]; then
+      echo "(no active test sessions)"
+    fi
   '
 else
   # Watch just the specified (or current terminal's) socket
