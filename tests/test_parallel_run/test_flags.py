@@ -3,7 +3,7 @@ Individual flag tests for parallel_run.sh.
 
 Tests each flag in isolation:
 - --wait / -w
-- --per-test / -t
+- --serial / -s
 - --match / -m
 - --env / -e
 - --eval-only
@@ -133,10 +133,9 @@ class TestWaitWithTimeout:
             result.exit_code == 0
         ), f"Short -w with timeout should work: {result.stderr}"
 
-    def test_wait_timeout_with_per_test(self, runner):
-        """--wait N with -t should work correctly."""
+    def test_wait_timeout_default_per_test(self, runner):
+        """--wait N should work correctly with default per-test mode."""
         result = runner.run(
-            "-t",
             "--wait",
             "120",
             runner.fixture_path("test_always_pass.py"),
@@ -145,13 +144,79 @@ class TestWaitWithTimeout:
         assert result.exit_code == 0, f"Should pass: {result.stderr}"
 
 
-class TestPerTestFlag:
-    """Tests for --per-test / -t flag."""
+class TestSerialFlag:
+    """Tests for --serial / -s flag."""
 
-    def test_per_test_creates_session_per_function(self, runner):
-        """--per-test should create one session per test function."""
+    def test_serial_creates_session_per_file(self, runner):
+        """--serial should create one session per file (not per test)."""
         result = runner.run(
-            "-t",
+            "-s",
+            runner.fixture_path("test_always_pass.py"),
+            wait_for_completion=True,
+        )
+
+        # test_always_pass.py has 3 test functions, but -s creates 1 session per file
+        assert (
+            len(result.sessions_created) == 1
+        ), f"Expected 1 session (one per file), got {len(result.sessions_created)}: {result.sessions_created}"
+
+    def test_serial_session_names_include_file_name(self, runner):
+        """Serial mode session names should include the file name."""
+        result = runner.run(
+            "-s",
+            runner.fixture_path("test_always_pass.py"),
+            wait_for_completion=True,
+        )
+
+        assert len(result.sessions_created) == 1
+        session_name = result.sessions_created[0]
+        # Session name should contain file identifier
+        assert (
+            "always_pass" in session_name or "test_always_pass" in session_name
+        ), f"Session name should reference file name: {session_name}"
+
+    def test_serial_long_flag(self, runner):
+        """--serial should work same as -s."""
+        result = runner.run(
+            "--serial",
+            runner.fixture_path("test_always_pass.py"),
+            wait_for_completion=True,
+        )
+
+        assert len(result.sessions_created) == 1
+
+    def test_serial_with_directory(self, runner, fixtures_dir):
+        """--serial with directory should create session per file."""
+        # Just test with subdirectory to keep it manageable
+        result = runner.run(
+            "-s",
+            runner.fixture_path("subdir"),
+            wait_for_completion=True,
+        )
+
+        # subdir has 1 test file (test_in_subdir.py)
+        assert (
+            len(result.sessions_created) == 1
+        ), f"Expected 1 session, got {len(result.sessions_created)}"
+
+    def test_serial_with_wait(self, runner):
+        """--serial with --wait should wait for all file sessions."""
+        result = runner.run(
+            "-s",
+            "--wait",
+            runner.fixture_path("test_always_pass.py"),
+        )
+
+        # Should block and return success
+        assert result.exit_code == 0
+
+
+class TestDefaultPerTestMode:
+    """Tests verifying default per-test behavior."""
+
+    def test_default_creates_session_per_function(self, runner):
+        """Default mode should create one session per test function."""
+        result = runner.run(
             runner.fixture_path("test_always_pass.py"),
             wait_for_completion=True,
         )
@@ -161,10 +226,9 @@ class TestPerTestFlag:
             len(result.sessions_created) == 3
         ), f"Expected 3 sessions (one per test), got {len(result.sessions_created)}: {result.sessions_created}"
 
-    def test_per_test_session_names_include_test_name(self, runner):
-        """Per-test session names should include the test function name."""
+    def test_default_session_names_include_test_name(self, runner):
+        """Default mode session names should include the test function name."""
         result = runner.run(
-            "-t",
             runner.fixture_path("test_always_pass.py"),
             wait_for_completion=True,
         )
@@ -176,21 +240,10 @@ class TestPerTestFlag:
             or "pass" in session_names_joined.lower()
         ), f"Session names should reference test names: {result.sessions_created}"
 
-    def test_per_test_long_flag(self, runner):
-        """--per-test should work same as -t."""
-        result = runner.run(
-            "--per-test",
-            runner.fixture_path("test_always_pass.py"),
-            wait_for_completion=True,
-        )
-
-        assert len(result.sessions_created) == 3
-
-    def test_per_test_with_directory(self, runner, fixtures_dir):
-        """--per-test with directory should create session per test function."""
+    def test_default_with_directory(self, runner, fixtures_dir):
+        """Default mode with directory should create session per test function."""
         # Just test with subdirectory to keep it manageable
         result = runner.run(
-            "-t",
             runner.fixture_path("subdir"),
             wait_for_completion=True,
         )
@@ -200,17 +253,6 @@ class TestPerTestFlag:
             len(result.sessions_created) == 2
         ), f"Expected 2 sessions, got {len(result.sessions_created)}"
 
-    def test_per_test_with_wait(self, runner):
-        """--per-test with --wait should wait for all test sessions."""
-        result = runner.run(
-            "-t",
-            "--wait",
-            runner.fixture_path("test_always_pass.py"),
-        )
-
-        # Should block and return success
-        assert result.exit_code == 0
-
 
 class TestMatchFlag:
     """Tests for --match / -m flag."""
@@ -218,13 +260,14 @@ class TestMatchFlag:
     def test_match_filters_by_filename(self, runner, fixtures_dir):
         """--match should filter files by name pattern."""
         result = runner.run(
+            "-s",  # Serial mode for predictable session count
             "--match",
             "*docstring*",
             fixtures_dir,
             wait_for_completion=True,
         )
 
-        # Should only find test_docstring_pattern.py
+        # Should only find test_docstring_pattern.py (1 file)
         assert (
             len(result.sessions_created) == 1
         ), f"Expected 1 matching file, got {len(result.sessions_created)}"
@@ -232,13 +275,14 @@ class TestMatchFlag:
     def test_match_with_wildcard(self, runner, fixtures_dir):
         """--match should support wildcard patterns."""
         result = runner.run(
+            "-s",  # Serial mode for predictable session count
             "-m",
             "*always*",
             fixtures_dir,
             wait_for_completion=True,
         )
 
-        # Should find test_always_pass.py and test_always_fail.py
+        # Should find test_always_pass.py and test_always_fail.py (2 files)
         assert (
             len(result.sessions_created) == 2
         ), f"Expected 2 matching files, got {len(result.sessions_created)}"
@@ -303,21 +347,21 @@ class TestEvalOnlyFlag:
             wait_for_completion=True,
         )
 
-        # Should create a session for the eval-marked file
-        assert len(result.sessions_created) == 1
+        # test_eval_marked.py has 2 eval tests, default is per-test mode
+        assert len(result.sessions_created) == 2
         assert result.exit_code == 0
 
-    def test_eval_only_with_per_test(self, runner, fixtures_dir):
-        """--eval-only with -t should create sessions only for eval test functions."""
+    def test_eval_only_with_serial(self, runner, fixtures_dir):
+        """--eval-only with -s should create one session per file with eval tests."""
         result = runner.run(
             "--eval-only",
-            "-t",
+            "-s",
             fixtures_dir,
             wait_for_completion=True,
         )
 
-        # Should find the eval tests (2 in test_eval_marked.py)
-        assert len(result.sessions_created) >= 1
+        # Should find 1 file with eval tests (test_eval_marked.py)
+        assert len(result.sessions_created) == 1
 
 
 class TestSymbolicOnlyFlag:
@@ -332,21 +376,21 @@ class TestSymbolicOnlyFlag:
             wait_for_completion=True,
         )
 
-        # Should create a session for the symbolic-only file
-        assert len(result.sessions_created) == 1
+        # test_symbolic_only.py has 2 tests, none marked as eval (default per-test mode)
+        assert len(result.sessions_created) == 2
         assert result.exit_code == 0
 
-    def test_symbolic_only_with_per_test(self, runner):
-        """--symbolic-only with -t should work correctly."""
+    def test_symbolic_only_with_serial(self, runner):
+        """--symbolic-only with -s should create one session per file."""
         result = runner.run(
             "--symbolic-only",
-            "-t",
+            "-s",
             runner.fixture_path("test_symbolic_only.py"),
             wait_for_completion=True,
         )
 
-        # test_symbolic_only.py has 2 tests, none marked as eval
-        assert len(result.sessions_created) == 2
+        # Should create 1 session (per-file mode)
+        assert len(result.sessions_created) == 1
 
 
 class TestEvalSymbolicMutualExclusion:
@@ -381,12 +425,11 @@ class TestRepeatFlag:
             len(result.sessions_created) == 3
         ), f"Expected 3 sessions, got {len(result.sessions_created)}"
 
-    def test_repeat_with_per_test(self, runner):
-        """--repeat with -t should multiply sessions correctly."""
+    def test_repeat_default_per_test(self, runner):
+        """--repeat with default per-test mode should multiply correctly."""
         result = runner.run(
             "--repeat",
             "2",
-            "-t",
             runner.fixture_path("test_single_test.py"),
             wait_for_completion=True,
         )

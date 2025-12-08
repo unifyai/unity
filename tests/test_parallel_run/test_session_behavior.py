@@ -191,11 +191,10 @@ class TestLogFiles:
         # Should contain pytest output
         assert "test" in log_content.lower() or "pass" in log_content.lower()
 
-    def test_per_test_creates_multiple_logs(self, runner):
-        """--per-test should create log file per test."""
+    def test_default_creates_multiple_logs(self, runner):
+        """Default per-test mode should create log file per test."""
         result = runner.run(
             "--wait",
-            "-t",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -221,9 +220,10 @@ class TestLogFiles:
 class TestSessionCount:
     """Tests verifying correct number of sessions are created."""
 
-    def test_one_session_per_file_default(self, runner):
-        """Default mode should create one session per file."""
+    def test_one_session_per_file_serial(self, runner):
+        """Serial mode should create one session per file."""
         result = runner.run(
+            "-s",
             runner.fixture_path("test_always_pass.py"),
             runner.fixture_path("test_single_test.py"),
             wait_for_completion=True,
@@ -231,10 +231,9 @@ class TestSessionCount:
 
         assert len(result.sessions_created) == 2
 
-    def test_one_session_per_test_with_t(self, runner):
-        """-t mode should create one session per test function."""
+    def test_one_session_per_test_default(self, runner):
+        """Default mode should create one session per test function."""
         result = runner.run(
-            "-t",
             runner.fixture_path("test_always_pass.py"),  # 3 tests
             runner.fixture_path("test_single_test.py"),  # 1 test
             wait_for_completion=True,
@@ -253,10 +252,9 @@ class TestSessionCount:
 
         assert len(result.sessions_created) == 3
 
-    def test_repeat_with_per_test(self, runner):
-        """--repeat with -t should multiply correctly."""
+    def test_repeat_default(self, runner):
+        """--repeat with default per-test mode should multiply correctly."""
         result = runner.run(
-            "-t",
             "--repeat",
             "2",
             runner.fixture_path("test_always_pass.py"),  # 3 tests
