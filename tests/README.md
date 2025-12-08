@@ -105,7 +105,7 @@ After adding, run `source ~/.zshrc` (or restart your terminal). This sets up:
 **Example with tab completion:**
 ```bash
 attach <TAB>        # Lists all tmux sessions: "r ⏳ test_foo", "f ❌ test_bar", ...
-parallel_run -<TAB> # Shows flags: -t, --wait, --eval-only, ...
+parallel_run -<TAB> # Shows flags: -s, --wait, --eval-only, ...
 ```
 
 > **Note**: For bash users, the completions use zsh-specific features. The aliases will still work, but tab completion won't be available.
@@ -134,13 +134,13 @@ For faster runs, use either:
 
 2. **`parallel_run.sh`** (better debugging experience—see below)
 
-> **⚡ Speed Tip:** When running a small number of tests (1-20), always use `-t` with `parallel_run.sh` to run each test in its own tmux session. Without `-t`, tests within the same file run serially, which can block for 10+ minutes unnecessarily. See [Per-Test Mode](#per-test-mode--t-for-maximum-parallelism) below.
+> **Note:** By default, `parallel_run.sh` runs each test in its own tmux session (maximum parallelism). Use `-s/--serial` if you prefer one session per file (tests within a file run serially). See [Serial Mode](#serial-mode--s-for-per-file-grouping) below.
 
 ---
 
 ## Parallel Test Runner (`parallel_run.sh`)
 
-This helper script launches one tmux session per test file (or per test function with `-t`) and runs `pytest` in its own window. It searches recursively and can be restricted to specific folders, files, or tests.
+This helper script launches one tmux session per test function by default (or per file with `-s/--serial`) and runs `pytest` in its own window. It searches recursively and can be restricted to specific folders, files, or tests.
 
 ### Terminal Isolation (Automatic)
 
@@ -201,44 +201,44 @@ tests/kill_server.sh
 tests/kill_server.sh --all
 ```
 
-### Per-Test Mode (`-t`) for Maximum Parallelism
+### Serial Mode (`-s`) for Per-File Grouping
 
-**IMPORTANT:** By default, the script creates one tmux session per *file*. If a single file contains 15 tests, they run serially within that session—potentially blocking for 10+ minutes.
+By default, the script creates one tmux session per *test function* for maximum parallelism. If a file contains 15 tests, all 15 run concurrently in separate sessions.
 
-Use `-t/--per-test` to create one session per *test function*, enabling full parallelism:
+Use `-s/--serial` to create one session per *file* instead (tests within a file run serially):
 
 ```bash
-# WITHOUT -t: 15 tests in one file run serially (~10 min)
+# DEFAULT: 15 tests run concurrently in 15 sessions (~1 min)
 ./parallel_run.sh --wait tests/test_contact_manager/test_ask.py
 
-# WITH -t: 15 tests run concurrently in 15 sessions (~1 min)
-./parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
+# WITH -s: 15 tests in one file run serially (~10 min)
+./parallel_run.sh -s --wait tests/test_contact_manager/test_ask.py
 ```
 
-**When to use `-t`:**
+**When to use `-s`:**
+- Running the entire test suite (hundreds of tests) where per-file grouping helps organization
+- When you prefer fewer, more manageable tmux sessions
+- Debugging scenarios where you want related tests grouped together
+
+**When to omit `-s` (default behavior):**
 - Running a single test file with multiple tests
 - Running a small number of specific tests
-- Running a small directory (< 20 tests total)
-- Anytime you want maximum speed and don't mind many tmux sessions
+- Running a small directory (< 100 tests total)
+- Anytime you want maximum speed
 
-**When to omit `-t`:**
-- Running the entire test suite (hundreds of tests)
-- Running many files where per-file grouping helps organization
-- When you prefer fewer, more manageable tmux sessions
-
-**Concurrency limits:** By default, `parallel_run.sh` limits concurrent sessions to **50** to prevent resource exhaustion. Use `-j N` to adjust:
+**Concurrency limits:** By default, `parallel_run.sh` limits concurrent sessions to **40** to prevent resource exhaustion. Use `-j N` to adjust:
 
 ```bash
 # Lower concurrency for resource-constrained systems
-./parallel_run.sh -t -j 8 tests/test_contact_manager/
+./parallel_run.sh -j 8 tests/test_contact_manager/
 
 # Higher concurrency for powerful machines
-./parallel_run.sh -t -j 100 tests/
+./parallel_run.sh -j 100 tests/
 
 # Unlimited (not recommended for large test suites)
-./parallel_run.sh -t -j 0 tests/
-./parallel_run.sh -t -j none tests/      # equivalent
-./parallel_run.sh -t -j unlimited tests/ # equivalent
+./parallel_run.sh -j 0 tests/
+./parallel_run.sh -j none tests/      # equivalent
+./parallel_run.sh -j unlimited tests/ # equivalent
 ```
 
 ### Why not just pytest-xdist?
@@ -346,16 +346,14 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Specific tests (pytest node ids)
 ./parallel_run.sh tests/foo_test.py::TestClass::test_something tests/bar_test.py::test_case
 
-# Per-test mode (create a session per test for all inputs)
-./parallel_run.sh -t                         # per-test across the whole repo
-./parallel_run.sh -t tests                   # per-test across a folder
-./parallel_run.sh -t tests/foo_test.py       # per-test across a single file
-./parallel_run.sh -t tests tests/foo_test.py # mix folders and files, all per-test
+# Serial mode (one session per file instead of per test)
+./parallel_run.sh -s tests                   # serial across a folder
+./parallel_run.sh -s tests/foo_test.py       # serial for a single file
 
 # Limit concurrency (default: 40 concurrent sessions)
-./parallel_run.sh -t -j 8 tests              # max 8 concurrent sessions
-./parallel_run.sh -t --jobs 20 tests         # max 20 concurrent sessions
-./parallel_run.sh -t -j none tests           # unlimited (no throttling)
+./parallel_run.sh -j 8 tests                 # max 8 concurrent sessions
+./parallel_run.sh --jobs 20 tests            # max 20 concurrent sessions
+./parallel_run.sh -j none tests              # unlimited (no throttling)
 
 # Mix files and directories
 ./parallel_run.sh tests/api tests/db/test_migrations.py
@@ -394,8 +392,8 @@ How it interprets arguments:
 - **Files**: Run exactly as provided (no recursion).
 - **Tests**: Pytest node ids like `path/to/test_file.py::TestClass::test_case` or `path/to/test_file.py::test_case` are run exactly as provided (one session per node id).
   - If you specify individual tests, only those tests are run (one session per test).
-  - When you do not specify individual tests, the script creates one session per file.
-  - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
+  - By default, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
+  - With `-s/--serial`, the script creates one session per file instead (tests within a file run serially).
 
 ### Wait Mode and Logs (`--wait [N]`)
 
@@ -420,7 +418,7 @@ Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipeli
 **Timeout examples:**
 ```bash
 # Quick sanity check with 60s timeout
-./parallel_run.sh --wait 60 -t tests/test_basic.py
+./parallel_run.sh --wait 60 tests/test_basic.py
 
 # Long-running tests with 5 minute timeout
 ./parallel_run.sh --wait 300 tests/test_slow_suite/
@@ -523,8 +521,8 @@ The `--env` approach is intentionally generic. Any variable from either class is
 | Option | Description |
 |--------|-------------|
 | `-w [N]`, `--wait [N]` | Block until all tests complete; exit 0 on success, 1 on failure, 2 on timeout. Optional `N` sets timeout in seconds. |
-| `-t`, `--per-test` | Create one session per test function instead of per file |
-| `-j N`, `--jobs N` | Limit concurrent tmux sessions (default: 50). Prevents resource exhaustion during high-parallelism runs. Use `-j 0` or `-j none` for unlimited (not recommended). |
+| `-s`, `--serial` | Create one session per file instead of per test (tests within a file run serially) |
+| `-j N`, `--jobs N` | Limit concurrent tmux sessions (default: 40). Prevents resource exhaustion during high-parallelism runs. Use `-j 0` or `-j none` for unlimited (not recommended). |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |
 | `--tags TAG` | Tag test runs for filtering (shorthand for `--env UNIFY_TEST_TAGS=...`; repeatable, comma-separated) |

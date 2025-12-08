@@ -23,8 +23,8 @@ Each terminal session (including each Cursor agent) automatically gets its own *
 
 | Scenario | Command |
 |----------|---------|
-| **1-20 tests** (single file, few files, or specific tests) | `tests/parallel_run.sh -t --wait [path]` |
-| **Many files/directories** (20+ tests across many files) | `tests/parallel_run.sh --wait [path]` |
+| **Default** (most cases) | `tests/parallel_run.sh --wait [path]` |
+| **Serial mode** (one session per file) | `tests/parallel_run.sh -s --wait [path]` |
 | **With timeout** (useful for long-running tests) | `tests/parallel_run.sh --wait 300 [path]` |
 
 **Why `--wait` matters:**
@@ -32,26 +32,26 @@ Each terminal session (including each Cursor agent) automatically gets its own *
 - `--wait N` adds a timeout of N seconds - useful when you want to cap how long to wait.
 - Do NOT run with `is_background: true` - this defeats the purpose as the command returns immediately.
 
-**Why `-t` matters:**
-- Without `-t`: One tmux session per *file*. If a file has 15 tests, they run serially (10+ min wait).
-- With `-t`: One tmux session per *test*. All 15 tests run concurrently (~1 min wait).
+**Default behavior (per-test parallelism):**
+- By default: One tmux session per *test*. All tests run concurrently (maximum speed).
+- With `-s`: One tmux session per *file*. Tests within a file run serially.
 
 **Examples:**
 ```bash
-# Single test file with multiple tests → USE -t
-tests/parallel_run.sh -t --wait tests/test_contact_manager/test_ask.py
+# Single test file with multiple tests (default: runs all tests concurrently)
+tests/parallel_run.sh --wait tests/test_contact_manager/test_ask.py
 
-# Specific test functions → USE -t
-tests/parallel_run.sh -t --wait tests/test_foo.py::test_one tests/test_bar.py::test_two
+# Specific test functions
+tests/parallel_run.sh --wait tests/test_foo.py::test_one tests/test_bar.py::test_two
 
-# Small directory (< 20 tests total) → USE -t
-tests/parallel_run.sh -t --wait tests/test_actor/
+# Small directory
+tests/parallel_run.sh --wait tests/test_actor/
 
-# Large test suite (entire tests/ directory) → omit -t to avoid hundreds of sessions
-tests/parallel_run.sh --wait tests/
+# Large test suite with serial mode (one session per file, fewer total sessions)
+tests/parallel_run.sh -s --wait tests/
 
 # With timeout (wait up to 5 minutes)
-tests/parallel_run.sh -t --wait 300 tests/test_contact_manager/
+tests/parallel_run.sh --wait 300 tests/test_contact_manager/
 ```
 
 ### Failure Handling

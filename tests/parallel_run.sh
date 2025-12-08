@@ -105,9 +105,9 @@ trap '_cleanup_sessions TERM; exit 143' TERM
 EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode fixtures )
 
 # ---- Modes ----
-# Default: one session per file.
-# With -t/--per-test: one session per collected pytest node id across provided dirs/files.
-PER_TEST=0
+# Default: one session per test (maximum parallelism).
+# With -s/--serial: one session per file (tests within a file run serially).
+SERIAL=0
 
 # Wait for completion flag and optional timeout
 WAIT_FOR_COMPLETION=0
@@ -155,8 +155,8 @@ while (( "$#" )); do
         shift
       fi
       ;;
-    -t|--per-test)
-      PER_TEST=1
+    -s|--serial)
+      SERIAL=1
       shift
       ;;
     -m|--match)
@@ -698,8 +698,8 @@ fi
 # Combine targets based on mode; sort deterministically (and de-duplicate)
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-if (( PER_TEST )); then
-  # Per-test mode: expand directories/files into node ids using batch collection
+if (( ! SERIAL )); then
+  # Default mode (per-test): expand directories/files into node ids using batch collection
   # Combine all targets for a single pytest --collect-only call (much faster)
   all_targets=()
   if (( ${#direct_files[@]} )); then
@@ -841,9 +841,8 @@ echo "  • Only a folder:                         ./parallel_run.sh test_cats"
 echo "  • Multiple roots:                        ./parallel_run.sh tests/unit tests/integration"
 echo "  • Specific files:                        ./parallel_run.sh tests/test_foo.py tests/test_bar.py"
 echo "  • Specific tests:                        ./parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
-echo "  • Per-test (dirs/files):                 ./parallel_run.sh -t tests tests/test_foo.py"
-echo "  • Per-test (everything here):            ./parallel_run.sh -t"
-echo "  • Limit concurrency:                     ./parallel_run.sh -j 8 -t tests"
+echo "  • Serial (one session per file):         ./parallel_run.sh -s tests tests/test_foo.py"
+echo "  • Limit concurrency:                     ./parallel_run.sh -j 8 tests"
 echo "  • Set environment variables:             ./parallel_run.sh --env UNIFY_CACHE=false tests"
 echo "  • Multiple env vars:                     ./parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests"
 echo "  • Tag test runs:                         ./parallel_run.sh --tags experiment-1 tests"
