@@ -126,10 +126,10 @@ SYMBOLIC_ONLY=0
 # With --repeat N: run each test N times (useful for eval tests)
 REPEAT_COUNT=1
 
-# Maximum concurrent sessions (default 50 for balanced parallelism)
+# Maximum concurrent sessions (default 40 for balanced parallelism)
 # With -j/--jobs N: limit to N concurrent running sessions
 # Use -j 0 (or -j none/unlimited) for no limit (not recommended for large test suites)
-MAX_JOBS=50
+MAX_JOBS=40
 
 # Environment variable overrides (accumulated via --env KEY=VALUE)
 declare -a ENV_OVERRIDES=()

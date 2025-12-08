@@ -352,7 +352,7 @@ Limit the search by passing directories and/or `.py` files. Examples:
 ./parallel_run.sh -t tests/foo_test.py       # per-test across a single file
 ./parallel_run.sh -t tests tests/foo_test.py # mix folders and files, all per-test
 
-# Limit concurrency (default: 50 concurrent sessions)
+# Limit concurrency (default: 40 concurrent sessions)
 ./parallel_run.sh -t -j 8 tests              # max 8 concurrent sessions
 ./parallel_run.sh -t --jobs 20 tests         # max 20 concurrent sessions
 ./parallel_run.sh -t -j none tests           # unlimited (no throttling)
