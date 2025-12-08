@@ -174,8 +174,9 @@ tests/list_runs.sh
 # Watch tests from a specific socket (orphaned run)
 tests/watch_tests.sh --socket unity_dev_ttys042
 
-# Attach to a session in a specific socket
+# Attach to a session in a specific socket (two equivalent syntaxes)
 tests/attach.sh --socket unity_dev_ttys042 'f ❌ test_actor-test_code_act'
+tests/attach.sh 'unity_dev_ttys042:f ❌ test_actor-test_code_act'  # shorthand
 
 # Kill failed sessions in a specific socket
 tests/kill_failed.sh --socket unity_dev_ttys042
@@ -682,7 +683,8 @@ tests/list_runs.sh
 
 # Then use --socket to target the orphaned run from any terminal:
 tests/watch_tests.sh --socket <socket-name>
-tests/attach.sh --socket <socket-name> '<session-name>'
+tests/attach.sh '<socket-name>:<session-name>'  # shorthand
+tests/attach.sh --socket <socket-name> '<session-name>'  # equivalent
 tests/kill_failed.sh --socket <socket-name>
 tests/kill_server.sh --socket <socket-name>
 ```
