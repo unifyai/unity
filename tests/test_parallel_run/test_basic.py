@@ -17,8 +17,9 @@ class TestSingleFile:
     """Tests for running with a single test file."""
 
     def test_single_file_creates_one_session(self, runner):
-        """Running a single file should create exactly one tmux session."""
+        """Running a single file with -s should create exactly one tmux session."""
         result = runner.run(
+            "-s",  # Serial mode: one session per file
             runner.fixture_path("test_always_pass.py"),
             wait_for_completion=True,
         )
@@ -34,6 +35,7 @@ class TestSingleFile:
     def test_single_file_session_naming(self, runner):
         """Session name should be derived from the file path."""
         result = runner.run(
+            "-s",  # Serial mode: one session per file
             runner.fixture_path("test_always_pass.py"),
             wait_for_completion=True,
         )
@@ -50,8 +52,9 @@ class TestMultipleFiles:
     """Tests for running with multiple test files."""
 
     def test_multiple_files_create_separate_sessions(self, runner):
-        """Each file should get its own tmux session."""
+        """Each file should get its own tmux session in serial mode."""
         result = runner.run(
+            "-s",  # Serial mode: one session per file
             runner.fixture_path("test_always_pass.py"),
             runner.fixture_path("test_single_test.py"),
             wait_for_completion=True,
@@ -67,6 +70,7 @@ class TestMultipleFiles:
     def test_multiple_files_unique_session_names(self, runner):
         """Each session should have a unique name."""
         result = runner.run(
+            "-s",  # Serial mode: one session per file
             runner.fixture_path("test_always_pass.py"),
             runner.fixture_path("test_single_test.py"),
             runner.fixture_path("test_symbolic_only.py"),
@@ -176,7 +180,7 @@ class TestMixedInputs:
         result = runner.run(file_path, specific_test, wait_for_completion=True)
 
         assert result.exit_code == 0
-        # Should have 2 sessions: one for the file, one for the specific test
+        # Default mode: per-test. test_single_test.py has 1 test, plus the specific test = 2 sessions
         assert len(result.sessions_created) == 2
 
 

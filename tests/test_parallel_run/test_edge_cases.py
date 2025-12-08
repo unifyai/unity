@@ -163,40 +163,49 @@ class TestEmptyResults:
         assert "No tests" in result.stdout or len(result.sessions_created) == 0
 
     def test_eval_only_no_eval_tests(self, runner):
-        """--eval-only in per-file mode creates session even if no tests match.
+        """--eval-only with file that has no eval tests creates no sessions.
 
-        In per-file mode (default), the marker filter is passed to pytest inside
-        the session. The script doesn't pre-filter files by marker - it creates
-        a session for each file and lets pytest handle the filtering.
-
-        Use per-test mode (-t) if you want to skip files with no matching tests.
+        In default per-test mode, the script pre-filters tests by marker.
+        If a file has no matching tests, no sessions are created for it.
         """
         result = runner.run(
             "--eval-only",
             runner.fixture_path("test_symbolic_only.py"),
         )
 
-        # test_symbolic_only.py has no eval marks, but session is still created
-        # in per-file mode (marker filtering happens inside pytest)
+        # test_symbolic_only.py has no eval marks, so no sessions created
         assert result.exit_code == 0
-        assert len(result.sessions_created) == 1
+        assert len(result.sessions_created) == 0
 
     def test_symbolic_only_all_eval_tests(self, runner):
-        """--symbolic-only in per-file mode creates session even if no tests match.
+        """--symbolic-only with all-eval file creates no sessions.
 
-        In per-file mode (default), the marker filter is passed to pytest inside
-        the session. The script doesn't pre-filter files by marker - it creates
-        a session for each file and lets pytest handle the filtering.
-
-        Use per-test mode (-t) if you want to skip files with no matching tests.
+        In default per-test mode, the script pre-filters tests by marker.
+        If a file has no matching tests, no sessions are created for it.
         """
         result = runner.run(
             "--symbolic-only",
             runner.fixture_path("test_eval_marked.py"),
         )
 
-        # test_eval_marked.py is all eval, but session is still created
-        # in per-file mode (marker filtering happens inside pytest)
+        # test_eval_marked.py is all eval, so no symbolic tests to run
+        assert result.exit_code == 0
+        assert len(result.sessions_created) == 0
+
+    def test_eval_only_no_match_serial(self, runner):
+        """--eval-only in serial mode creates session even if no tests match.
+
+        In serial mode (-s), the marker filter is passed to pytest inside
+        the session. The script creates a session for each file and lets
+        pytest handle the filtering internally.
+        """
+        result = runner.run(
+            "-s",
+            "--eval-only",
+            runner.fixture_path("test_symbolic_only.py"),
+        )
+
+        # Session is created in serial mode, pytest handles filtering
         assert result.exit_code == 0
         assert len(result.sessions_created) == 1
 
@@ -354,37 +363,34 @@ class TestMultipleRuns:
         ), f"Session names should be unique: {all_sessions}"
 
 
-class TestPerTestEdgeCases:
-    """Edge cases specific to per-test mode."""
+class TestDefaultModeEdgeCases:
+    """Edge cases for default per-test mode."""
 
-    def test_per_test_with_single_test_file(self, runner):
-        """Per-test with single-test file should create one session."""
+    def test_single_test_file(self, runner):
+        """Single-test file should create one session."""
         result = runner.run(
-            "-t",
             runner.fixture_path("test_single_test.py"),
             wait_for_completion=True,
         )
 
         assert len(result.sessions_created) == 1
 
-    def test_per_test_with_specific_test_node(self, runner):
-        """Per-test with specific test node should create one session."""
+    def test_specific_test_node(self, runner):
+        """Specific test node should create one session."""
         test_path = runner.fixture_path("test_always_pass.py") + "::test_pass_one"
         result = runner.run(
-            "-t",
             test_path,
             wait_for_completion=True,
         )
 
-        # Should still be 1 session (specific test already specified)
+        # Should be 1 session (specific test specified)
         assert len(result.sessions_created) == 1
 
-    def test_per_test_with_multiple_specific_nodes(self, runner):
-        """Per-test with multiple specific test nodes should work."""
+    def test_multiple_specific_nodes(self, runner):
+        """Multiple specific test nodes should work."""
         test1 = runner.fixture_path("test_always_pass.py") + "::test_pass_one"
         test2 = runner.fixture_path("test_always_pass.py") + "::test_pass_two"
         result = runner.run(
-            "-t",
             test1,
             test2,
             wait_for_completion=True,
