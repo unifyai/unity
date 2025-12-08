@@ -25,6 +25,7 @@ class TestSessionNaming:
     def test_session_name_derived_from_path(self, runner):
         """Session names should be derived from the test file path."""
         result = runner.run(
+            "-s",  # Serial mode for predictable session naming test
             runner.fixture_path("test_always_pass.py"),
             wait_for_completion=True,
         )
@@ -40,6 +41,7 @@ class TestSessionNaming:
     def test_subdir_session_includes_path_components(self, runner):
         """Session names for subdirectory tests should include path components."""
         result = runner.run(
+            "-s",  # Serial mode for predictable session naming test
             runner.fixture_path("subdir", "test_in_subdir.py"),
             wait_for_completion=True,
         )
