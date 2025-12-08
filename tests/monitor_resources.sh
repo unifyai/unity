@@ -39,6 +39,13 @@ set -euo pipefail
 SESSION_NAME="unity-monitor"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
+# ---- Increase file descriptor limit ----
+# Match the limit set by parallel_run.sh so the FD monitor displays accurate
+# limits. Without this, running the monitor from a different terminal would
+# show macOS's default 256, which doesn't reflect the actual limits of the
+# pytest processes (which inherit 4096 from parallel_run.sh).
+ulimit -n 4096 2>/dev/null || true
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
