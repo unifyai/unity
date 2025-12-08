@@ -126,6 +126,11 @@ SYMBOLIC_ONLY=0
 # With --repeat N: run each test N times (useful for eval tests)
 REPEAT_COUNT=1
 
+# Maximum concurrent sessions (default 50 for balanced parallelism)
+# With -j/--jobs N: limit to N concurrent running sessions
+# Use -j 0 for unlimited (not recommended for large test suites)
+MAX_JOBS=50
+
 # Environment variable overrides (accumulated via --env KEY=VALUE)
 declare -a ENV_OVERRIDES=()
 
@@ -199,6 +204,15 @@ while (( "$#" )); do
         shift 2
       else
         echo "Error: --tags requires a value (e.g., --tags experiment-1 or --tags \"foo,bar\")." >&2
+        exit 2
+      fi
+      ;;
+    -j|--jobs)
+      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
+        MAX_JOBS="$2"
+        shift 2
+      else
+        echo "Error: -j|--jobs requires a positive integer argument (e.g., --jobs 8)." >&2
         exit 2
       fi
       ;;
@@ -428,6 +442,33 @@ unique_session_name() {
 
   # Return with original prefix (if any)
   printf "%s%s" "$prefix" "$candidate"
+}
+
+# Count currently pending (running) sessions in our socket
+count_pending_sessions() {
+  local count=0
+  while IFS= read -r name; do
+    if [[ "$name" == "r"* ]]; then
+      ((count++))
+    fi
+  done < <(tmux_cmd list-sessions -F "#{session_name}" 2>/dev/null || true)
+  echo "$count"
+}
+
+# Wait until we have fewer than MAX_JOBS pending sessions
+wait_for_job_slot() {
+  if (( MAX_JOBS == 0 )); then
+    return 0  # No limit
+  fi
+
+  while true; do
+    local pending
+    pending=$(count_pending_sessions)
+    if (( pending < MAX_JOBS )); then
+      return 0
+    fi
+    sleep 0.5
+  done
 }
 
 # Turn a file path (or pytest node id) into a session base name
@@ -698,7 +739,15 @@ fi
 
 declare -a made_sessions=()
 declare -a session_ids=()
+
+if (( MAX_JOBS > 0 )); then
+  echo "Concurrency limit: $MAX_JOBS simultaneous sessions"
+fi
+
 for target in "${files[@]}"; do
+  # If job limit is set, wait for a slot before creating new session
+  wait_for_job_slot
+
   base_sess="$(session_basename_for "$target")"
   session="$(unique_session_name "$base_sess")"
 
@@ -744,6 +793,7 @@ echo "  • Specific files:                        ./parallel_run.sh tests/test_
 echo "  • Specific tests:                        ./parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
 echo "  • Per-test (dirs/files):                 ./parallel_run.sh -t tests tests/test_foo.py"
 echo "  • Per-test (everything here):            ./parallel_run.sh -t"
+echo "  • Limit concurrency:                     ./parallel_run.sh -j 8 -t tests"
 echo "  • Set environment variables:             ./parallel_run.sh --env UNIFY_CACHE=false tests"
 echo "  • Multiple env vars:                     ./parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests"
 echo "  • Tag test runs:                         ./parallel_run.sh --tags experiment-1 tests"
