@@ -104,6 +104,9 @@ _graceful_kill_socket() {
 
   # Now kill the tmux server
   $TIMEOUT_CMD tmux -L "$sock" kill-server 2>/dev/null
+
+  # Remove the socket file to prevent orphaned sockets
+  rm -f "/tmp/tmux-$(id -u)/$sock" 2>/dev/null || true
 }
 
 if (( KILL_ALL )); then
