@@ -5,7 +5,8 @@ set -euo pipefail
 #
 # Usage:
 #   kill_server.sh                   # Kill THIS terminal's tmux server
-#   kill_server.sh --all             # Kill ALL unity test tmux servers
+#   kill_server.sh --all             # Kill ALL unity* tmux servers
+#   kill_server.sh --global          # Kill ALL tmux servers for this user
 #   kill_server.sh --socket <name>   # Kill a specific socket's server
 
 # Source common utilities
@@ -15,12 +16,17 @@ source "$SCRIPT_DIR/_shell_common.sh"
 TMUX_SOCKET="$UNITY_TMUX_SOCKET"
 
 KILL_ALL=0
+KILL_GLOBAL=0
 EXPLICIT_SOCKET=""
 
 while (( "$#" )); do
   case "$1" in
     --all)
       KILL_ALL=1
+      shift
+      ;;
+    --global)
+      KILL_GLOBAL=1
       shift
       ;;
     -s|--socket)
@@ -34,7 +40,7 @@ while (( "$#" )); do
       fi
       ;;
     -h|--help)
-      echo "Usage: kill_server.sh [--all] [--socket <name>]"
+      echo "Usage: kill_server.sh [--all] [--global] [--socket <name>]"
       echo ""
       echo "Kill the tmux server for test sessions."
       echo ""
@@ -42,13 +48,16 @@ while (( "$#" )); do
       echo "Sends SIGTERM to processes before killing tmux for graceful shutdown."
       echo ""
       echo "Options:"
-      echo "  --all              Kill ALL unity test tmux servers across all terminals"
+      echo "  --all              Kill ALL unity* tmux servers across all terminals"
+      echo "  --global           Kill ALL tmux servers for this user (any name)"
       echo "  -s, --socket NAME  Kill a specific socket's server"
       echo "  -h, --help         Show this help"
       echo ""
       echo "Examples:"
       echo "  kill_server.sh                              # Current terminal"
       echo "  kill_server.sh --socket unity_dev_ttys042   # Specific socket"
+      echo "  kill_server.sh --all                        # All unity* servers"
+      echo "  kill_server.sh --global                     # All tmux servers (any name)"
       exit 0
       ;;
     *)
@@ -98,7 +107,20 @@ _graceful_kill_socket() {
   rm -f "/tmp/tmux-$(id -u)/$sock" 2>/dev/null || true
 }
 
-if (( KILL_ALL )); then
+if (( KILL_GLOBAL )); then
+  # Kill all tmux servers for this user, regardless of name
+  count=0
+  for sock in /tmp/tmux-"$(id -u)"/*; do
+    [[ -e "$sock" ]] || continue
+    name=$(basename "$sock")
+    _graceful_kill_socket "$name"
+    echo "Killed server: $name"
+    ((count++)) || true
+  done
+  if (( count == 0 )); then
+    echo "No tmux servers found."
+  fi
+elif (( KILL_ALL )); then
   # Kill all unity* servers
   count=0
   while IFS= read -r name; do
