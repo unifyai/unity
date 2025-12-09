@@ -6,14 +6,16 @@ from typing import Any, Dict, List, Optional
 import unify
 
 from ..common.embed_utils import ensure_vector_column
+from ..common.log_utils import create_logs as unity_create_logs
 from .storage import ctx_for_table
 
 
 def add_rows(self, *, table: str, rows: List[Dict[str, Any]]) -> Dict[str, str]:
-    return unify.create_logs(
+    return unity_create_logs(
         context=ctx_for_table(self, table),
         entries=rows,
         batched=True,
+        add_to_all_context=self.include_in_multi_assistant_table,
     )
 
 
