@@ -659,7 +659,8 @@ collect_nodes_batch() {
     cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s' "$env_exports" "$quoted_targets")
   fi
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
-  bash -lc "$cmd" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true
+  # Redirect stdin from /dev/null to prevent hangs when multiple processes compete for stdin
+  bash -lc "$cmd" < /dev/null 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true
 }
 
 # Gather recursive .py files from roots (NUL-delimited, sorted)
