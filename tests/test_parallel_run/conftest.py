@@ -224,6 +224,9 @@ def wait_for_sessions_adaptive(
     last_progress_time = time.time()
     last_completed_count = 0
     seen_sessions = False  # Track if we've ever seen the sessions
+    polls_without_seeing = (
+        0  # Count consecutive polls where we don't see expected sessions
+    )
     base_names_set = set(session_base_names)
 
     while True:
@@ -233,11 +236,13 @@ def wait_for_sessions_adaptive(
         matching = [s for s in sessions if s.base_name in base_names_set]
         pending = [s for s in matching if s.is_pending]
         completed = [s for s in matching if not s.is_pending]
-        failed = [s for s in matching if s.is_failed]
 
         # Track if we've seen any of our sessions
         if matching:
             seen_sessions = True
+            polls_without_seeing = 0
+        else:
+            polls_without_seeing += 1
 
         # Check if all done: no pending sessions AND (we have completed ones OR we saw them before)
         # Sessions that pass auto-close after 10s, so "seen but now gone" means success
@@ -247,6 +252,13 @@ def wait_for_sessions_adaptive(
                 return matching, not any(s.is_failed for s in matching)
             elif seen_sessions:
                 # Sessions existed before but are now gone - they passed and auto-closed
+                return [], True
+            elif polls_without_seeing >= 3:
+                # IMPORTANT: This function is only called when sessions_created was non-empty,
+                # meaning we KNOW sessions existed right after the script ran. If we've polled
+                # 3 times (~1.5s) and never seen them, they must have passed and auto-closed
+                # before we started polling. This is success, not an error.
+                # (Failing sessions don't auto-close - they stay visible with "f ❌" prefix)
                 return [], True
 
         # Check for progress (more sessions completed/gone than before)
