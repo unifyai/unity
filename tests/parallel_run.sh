@@ -104,6 +104,9 @@ _mark_reported() {
 # Report any sessions that have completed since last check
 # Prints pass/fail status inline during the drip-feed phase
 report_completed_sessions() {
+  # Guard against empty array (set -u treats empty array expansion as unbound)
+  (( ${#CREATED_SESSION_IDS[@]} == 0 )) && return 0
+
   for sid in "${CREATED_SESSION_IDS[@]}"; do
     # Skip if already reported
     _is_reported "$sid" && continue
