@@ -288,6 +288,18 @@ In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` whic
 ### Live Status and Auto-Close
 
 - **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `r ⏳` while the test runs, `p ✅` on success (passed), or `f ❌` on failure. The letters are chosen to sort alphabetically as failed→passed→running, so failing tests appear first in listings. This also makes tab-completion easy in shells like zsh.
+- **Inline pass/fail feedback**: When using a job limit (the default), pass/fail results are printed inline as sessions complete—you don't need a separate terminal running `watch_tests`. Results appear interleaved with new session creations:
+  ```
+  Creating tmux sessions (socket: unity_dev_ttys042):
+    - r ⏳ test_foo--test_a
+    - r ⏳ test_foo--test_b
+    - r ⏳ test_bar--test_x
+    ✅ PASS: test_foo--test_a
+    - r ⏳ test_baz--test_y
+    ❌ FAIL: test_bar--test_x
+    ...
+  ```
+  This feedback only occurs while waiting for job slots (i.e., when the concurrency limit is reached). With unlimited jobs (`-j 0`), sessions are queued immediately without waiting, so use `watch_tests` instead.
 - **Auto-close on success**: Sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
 - You can still attach before auto-close; you'll see the final message (e.g., `pytest exited with code: 0`) and a short notice that auto-close is scheduled.
 
@@ -577,6 +589,8 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 ### Tips
 
 - **Watch session statuses live**:
+
+  When using a job limit (the default), pass/fail results are printed inline as tests complete—no separate terminal needed. For unlimited jobs (`-j 0`) or after the queue is depleted, use:
 
   ```bash
   tests/watch_tests.sh        # Watch THIS terminal's tests
