@@ -883,6 +883,10 @@ fi
 echo "Creating tmux sessions (socket: $TMUX_SOCKET):"
 
 for target in "${files[@]}"; do
+  # Report any completions before creating new sessions
+  # (ensures passes/fails appear BEFORE the new pending sessions they freed slots for)
+  report_completed_sessions
+
   # If job limit is set, wait for a slot before creating new session
   wait_for_job_slot
 
