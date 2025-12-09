@@ -124,7 +124,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.conductor: Conductor = None
 
         # llm
-        self.llm = LLM("gpt-5-mini", event_broker)
+        self.llm = LLM("gpt-5-mini@openai", event_broker)
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
