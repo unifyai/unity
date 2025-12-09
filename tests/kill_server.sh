@@ -119,6 +119,8 @@ if (( KILL_GLOBAL )); then
   done
   if (( count == 0 )); then
     echo "No tmux servers found."
+  else
+    echo "Killed $count server(s)."
   fi
 elif (( KILL_ALL )); then
   # Kill all unity* servers
