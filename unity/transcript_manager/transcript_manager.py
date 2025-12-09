@@ -127,6 +127,7 @@ class TranscriptManager(BaseTranscriptManager):
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
         super().__init__()
+        self.include_in_multi_assistant_table = True
 
         if contact_manager is not None:
             self._contact_manager = contact_manager
@@ -488,6 +489,7 @@ class TranscriptManager(BaseTranscriptManager):
                 **entries,
                 new=True,
                 mutable=True,
+                add_to_all_context=self.include_in_multi_assistant_table,
             )
 
             # Build a Message directly from the POST response
@@ -1041,6 +1043,7 @@ class TranscriptManager(BaseTranscriptManager):
                 medium="",
                 new=True,
                 mutable=True,
+                add_to_all_context=self.include_in_multi_assistant_table,
             )
 
         # Read back and return canonical shape
@@ -1161,6 +1164,7 @@ class TranscriptManager(BaseTranscriptManager):
             medium=str(payload.get("medium", "")),
             new=True,
             mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
         )
 
         # Extract the assigned exchange_id
@@ -1184,6 +1188,7 @@ class TranscriptManager(BaseTranscriptManager):
             **entries,
             new=True,
             mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
         )
 
         return exid
