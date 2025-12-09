@@ -281,6 +281,33 @@ while (( "$#" )); do
       fi
       shift 2
       ;;
+    -h|--help)
+      echo "Usage: parallel_run.sh [options] [targets...]"
+      echo ""
+      echo "Run pytest tests in parallel tmux sessions."
+      echo ""
+      echo "Options:"
+      echo "  -w, --wait [N]       Wait for completion (optional timeout in seconds)"
+      echo "  -s, --serial         One session per file (default: one per test)"
+      echo "  -m, --match PATTERN  Filter files by glob pattern"
+      echo "  -e, --env KEY=VALUE  Set environment variable (repeatable)"
+      echo "  -j, --jobs N         Max concurrent sessions (default: 25)"
+      echo "  --eval-only          Run only @pytest.mark.eval tests"
+      echo "  --symbolic-only      Run only non-eval tests"
+      echo "  --repeat N           Run each test N times"
+      echo "  --tags TAG           Tag runs for filtering (repeatable)"
+      echo "  -h, --help           Show this help"
+      echo ""
+      echo "Examples:"
+      echo "  parallel_run.sh tests/                    # Run all tests"
+      echo "  parallel_run.sh tests/test_foo.py        # Run one file"
+      echo "  parallel_run.sh -w tests/                # Wait for completion"
+      echo "  parallel_run.sh -s tests/                # Serial mode (per-file)"
+      echo "  parallel_run.sh -j 8 tests/              # Limit to 8 concurrent"
+      echo "  parallel_run.sh --eval-only tests/       # Only eval tests"
+      echo "  parallel_run.sh -e UNIFY_CACHE=false tests/"
+      exit 0
+      ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
       shift
