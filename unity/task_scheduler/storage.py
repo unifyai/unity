@@ -33,8 +33,9 @@ class TasksStore:
     helpers used by the scheduler and related utilities.
     """
 
-    def __init__(self, context: str) -> None:
+    def __init__(self, context: str, *, add_to_all_context: bool = False) -> None:
         self._ctx = context
+        self._add_to_all_context = add_to_all_context
 
     # ----------------------------- Context ---------------------------------
     def ensure_context(
@@ -308,7 +309,12 @@ class TasksStore:
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
         norm_entries = TasksStore._norm(entries)
         # Create with expanded fields so auto-counting applies when ids are omitted
-        return unity_log(context=self._ctx, new=new, **norm_entries)
+        return unity_log(
+            context=self._ctx,
+            new=new,
+            add_to_all_context=self._add_to_all_context,
+            **norm_entries,
+        )
 
     def create_many(self, *, entries_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -321,12 +327,21 @@ class TasksStore:
 
         normalised = [{**TasksStore._norm(e)} for e in entries_list]
         try:
-            return unity_create_logs(context=self._ctx, entries=normalised)
+            return unity_create_logs(
+                context=self._ctx,
+                entries=normalised,
+                add_to_all_context=self._add_to_all_context,
+            )
         except Exception:
             # Fallback: create sequentially (preserves correctness if batch API is unavailable)
             log_ids: list[int] = []
             for e in normalised:
-                lg = unity_log(context=self._ctx, new=True, **e)
+                lg = unity_log(
+                    context=self._ctx,
+                    new=True,
+                    add_to_all_context=self._add_to_all_context,
+                    **e,
+                )
                 try:
                     log_ids.append(lg.id)
                 except Exception:
