@@ -194,12 +194,17 @@ tests/kill_failed.sh
 # Kill failed sessions from ALL terminals
 tests/kill_failed.sh --all
 
-# Kill the entire tmux server for THIS terminal
+# Kill the entire tmux server for THIS terminal (+ orphaned processes)
 tests/kill_server.sh
 
-# Kill ALL unity test tmux servers
+# Kill ALL unity* tmux servers (+ orphaned processes)
 tests/kill_server.sh --all
+
+# Kill ALL tmux servers for this user (+ orphaned processes)
+tests/kill_server.sh --global
 ```
+
+> **Note:** `kill_server.sh` automatically purges orphaned pytest processes that may have been left behind from crashed test runs. This prevents silent resource exhaustion (file descriptors, memory, network connections). Use `--no-purge` to skip this if needed.
 
 ### Serial Mode (`-s`) for Per-File Grouping
 
@@ -652,6 +657,23 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
     chmod +x parallel_run.sh
     ```
 
+- **High resource usage after tests (FDs, memory, swap)**
+  - Orphaned pytest processes may be lingering from crashed test runs. Run:
+    ```bash
+    tests/kill_server.sh --global  # Kills servers + purges orphaned processes
+    ```
+  - Check for orphaned processes manually:
+    ```bash
+    ps aux | grep -E "unity.*pytest" | grep -v grep
+    ```
+  - Use `monitor_resources` to check file descriptor counts and Python connections.
+
+- **"error connecting to ... (No such file or directory)"**
+  - The tmux socket file was deleted while tests were running. This can happen if:
+    - You ran `kill_server.sh` while tests were still active
+    - A race condition occurred (now fixed in recent versions)
+  - Solution: Wait for tests to complete, or re-run them.
+
 ### Customization
 
 Open `parallel_run.sh` and tweak as needed:
@@ -685,7 +707,9 @@ tests/list_runs.sh          # List all active test runs (all sockets)
 tests/watch_tests.sh        # Watch this terminal's tests
 tests/attach.sh '<name>'    # Attach to a session
 tests/kill_failed.sh        # Kill failed sessions
-tests/kill_server.sh        # Kill all sessions (entire server)
+tests/kill_server.sh        # Kill server + purge orphaned processes
+tests/kill_server.sh --all  # Kill all unity* servers + purge orphans
+tests/kill_server.sh --global  # Kill ALL tmux servers + purge orphans
 ```
 
 **Recovering orphaned runs:**
