@@ -77,7 +77,10 @@ fi
 # Collect all sockets to check
 if (( KILL_ALL )); then
   # Find all unity* sockets
-  mapfile -t SOCKETS < <(_get_unity_sockets)
+  SOCKETS=()
+  while IFS= read -r sock; do
+    [[ -n "$sock" ]] && SOCKETS+=( "$sock" )
+  done < <(_get_unity_sockets)
   if (( ${#SOCKETS[@]} == 0 )); then
     echo "No unity test sockets found."
     exit 0

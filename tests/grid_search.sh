@@ -196,8 +196,11 @@ generate_combinations() {
   done
 }
 
-# Collect all combinations
-mapfile -t COMBINATIONS < <(generate_combinations 0 "")
+# Collect all combinations (bash 3.x compatible - no mapfile)
+COMBINATIONS=()
+while IFS= read -r combo; do
+  COMBINATIONS+=( "$combo" )
+done < <(generate_combinations 0 "")
 
 echo "Grid Search Configuration"
 echo "========================="

@@ -54,7 +54,10 @@ while (( "$#" )); do
 done
 
 # Find all unity sockets
-mapfile -t SOCKETS < <(_get_unity_sockets)
+SOCKETS=()
+while IFS= read -r sock; do
+  [[ -n "$sock" ]] && SOCKETS+=( "$sock" )
+done < <(_get_unity_sockets)
 
 if (( ${#SOCKETS[@]} == 0 )); then
   if (( QUIET )); then
