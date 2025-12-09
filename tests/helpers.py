@@ -143,6 +143,70 @@ def _log_test_combined(
         pass
 
 
+class _TestContext:
+    """Manages test context setup, teardown, and timing for _handle_project."""
+
+    def __init__(
+        self,
+        test_fn: Callable,
+        wrapper: Callable,
+        try_reuse_prev_ctx: bool,
+        delete_ctx_on_exit: bool,
+    ):
+        self.test_fn = test_fn
+        self.wrapper = wrapper
+        self.try_reuse_prev_ctx = try_reuse_prev_ctx
+        self.delete_ctx_on_exit = delete_ctx_on_exit
+        self.ctx: str = ""
+        self.fpath: str = ""
+        self.llm_io_before: set[Path] = set()
+        self.start_time: float = 0.0
+
+    def setup(self) -> None:
+        """Prepare test context before execution."""
+        try:
+            test_fn_name = getattr(self.wrapper, "_unity_pytest_nodeid")
+        except AttributeError:
+            test_fn_name = self.test_fn.__name__
+
+        self.ctx = _ctx_name(self.test_fn, test_fn_name)
+        self.fpath = _test_fpath(self.test_fn, test_fn_name)
+
+        skip_ctx_create = False
+        if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
+            skip_ctx_create = self.ctx in PRECREATED_CONTEXTS
+        else:
+            if not self.try_reuse_prev_ctx and self.ctx in unify.get_contexts(
+                prefix=self.ctx,
+            ):
+                unify.delete_context(self.ctx)
+
+        self.llm_io_before = _list_llm_io_files()
+        self.start_time = time.perf_counter()
+
+        unify.set_context(self.ctx, relative=False, skip_create=skip_ctx_create)
+        ContextRegistry.clear()
+        EVENT_BUS.clear(delete_contexts=False)
+
+        if not EVENT_BUS:
+            import unity as _unity_mod
+
+            _unity_mod.init("UnityTests")
+            EVENT_BUS.clear()
+
+    def teardown(self) -> None:
+        """Clean up test context after execution."""
+        duration = time.perf_counter() - self.start_time
+        llm_io_after = _list_llm_io_files()
+        new_llm_io_files = llm_io_after - self.llm_io_before
+        llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
+        _log_test_combined(self.fpath, duration, llm_io_contents)
+
+        if self.delete_ctx_on_exit:
+            unify.delete_context(self.ctx)
+        unify.unset_context()
+
+
 def _handle_project(
     test_fn: Callable | None = None,
     *,
@@ -151,134 +215,54 @@ def _handle_project(
 ):
     if SETTINGS.UNIFY_DELETE_CONTEXT_ON_EXIT:
         delete_ctx_on_exit = True
-    if test_fn is None:  # called with parameters → return real decorator
+    if test_fn is None:
         return lambda f: _handle_project(
             f,
             try_reuse_prev_ctx=try_reuse_prev_ctx,
             delete_ctx_on_exit=delete_ctx_on_exit,
         )
 
-    async def _call(fn: Callable, *a: Any, **kw: Any):
-        """Call *fn* and await it if it returns an awaitable."""
-        result = fn(*a, **kw)
-        if inspect.isawaitable(result):
-            return await result
-        return result
-
-    # ---------- build the right kind of wrapper ------------------------
     if inspect.iscoroutinefunction(test_fn):
-        # -------- ASYNC TESTS ------------------------------------------
+
         @functools.wraps(test_fn)
         async def wrapper(*args, **kwargs):
+            ctx = _TestContext(
+                test_fn,
+                wrapper,
+                try_reuse_prev_ctx,
+                delete_ctx_on_exit,
+            )
+            ctx.setup()
             try:
-                test_fn_name = getattr(wrapper, "_unity_pytest_nodeid")
-            except AttributeError:
-                test_fn_name = test_fn.__name__
-
-            ctx = _ctx_name(test_fn, test_fn_name)
-            fpath = _test_fpath(test_fn, test_fn_name)
-            skip_ctx_create = False
-            if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
-                skip_ctx_create = ctx in PRECREATED_CONTEXTS
-            else:
-                if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
-                    unify.delete_context(ctx)
-                    skip_ctx_create = False
-
-            # Track LLM I/O files before test starts
-            llm_io_before = _list_llm_io_files()
-
-            start_time = time.perf_counter()
-            try:
-                unify.set_context(
-                    ctx,
-                    relative=False,
-                    skip_create=skip_ctx_create,
-                )
-                # Clear cached contexts so managers pick up the new active context
-                ContextRegistry.clear()
-                EVENT_BUS.clear(delete_contexts=False)
-                # Ensure EVENT_BUS has been initialised – in case the
-                # global pytest_sessionstart hook was bypassed (e.g. when
-                # running an individual test without the full suite).
-                if not EVENT_BUS:
-                    import unity as _unity_mod
-
-                    _unity_mod.init("UnityTests")
-                    EVENT_BUS.clear()
-                await _call(test_fn, *args, **kwargs)
-
+                result = test_fn(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 exc_type, exc_value, exc_tb = sys.exc_info()
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
             finally:
-                duration = time.perf_counter() - start_time
-                # Collect new LLM I/O files created during test
-                llm_io_after = _list_llm_io_files()
-                new_llm_io_files = llm_io_after - llm_io_before
-                llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
-                _log_test_combined(fpath, duration, llm_io_contents)
-                if delete_ctx_on_exit:
-                    unify.delete_context(ctx)
-                unify.unset_context()
+                ctx.teardown()
 
     else:
-        # -------- SYNC TESTS -------------------------------------------
+
         @functools.wraps(test_fn)
         def wrapper(*args, **kwargs):
+            ctx = _TestContext(
+                test_fn,
+                wrapper,
+                try_reuse_prev_ctx,
+                delete_ctx_on_exit,
+            )
+            ctx.setup()
             try:
-                test_fn_name = getattr(wrapper, "_unity_pytest_nodeid")
-            except AttributeError:
-                test_fn_name = test_fn.__name__
-
-            ctx = _ctx_name(test_fn, test_fn_name)
-            fpath = _test_fpath(test_fn, test_fn_name)
-            skip_ctx_create = False
-            if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
-                skip_ctx_create = ctx in PRECREATED_CONTEXTS
-            else:
-                if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
-                    unify.delete_context(ctx)
-                    skip_ctx_create = False
-
-            # Track LLM I/O files before test starts
-            llm_io_before = _list_llm_io_files()
-
-            start_time = time.perf_counter()
-            try:
-                unify.set_context(
-                    ctx,
-                    relative=False,
-                    skip_create=skip_ctx_create,
-                )
-                # Clear cached contexts so managers pick up the new active context
-                ContextRegistry.clear()
-                EVENT_BUS.clear(delete_contexts=False)
-                # Ensure EVENT_BUS has been initialised – in case the
-                # global pytest_sessionstart hook was bypassed (e.g. when
-                # running an individual test without the full suite).
-                if not EVENT_BUS:
-                    import unity as _unity_mod
-
-                    _unity_mod.init("UnityTests")
-                    EVENT_BUS.clear()
                 test_fn(*args, **kwargs)
-
             except Exception:
                 exc_type, exc_value, exc_tb = sys.exc_info()
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
             finally:
-                duration = time.perf_counter() - start_time
-                # Collect new LLM I/O files created during test
-                llm_io_after = _list_llm_io_files()
-                new_llm_io_files = llm_io_after - llm_io_before
-                llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
-                _log_test_combined(fpath, duration, llm_io_contents)
-                if delete_ctx_on_exit:
-                    unify.delete_context(ctx)
-                unify.unset_context()
+                ctx.teardown()
 
     return wrapper
 

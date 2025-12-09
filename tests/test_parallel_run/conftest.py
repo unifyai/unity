@@ -208,18 +208,11 @@ def wait_for_sessions_adaptive(
 ) -> tuple[List[TmuxSession], bool]:
     """Wait for sessions with adaptive timeout based on progress.
 
-    Instead of a fixed total timeout, this waits until no progress is made
-    for `no_progress_timeout` seconds. Progress is defined as any session
-    transitioning from pending to completed (or disappearing after completion).
+    Progress is counted whenever a session transitions away from pending,
+    including disappearing after a successful auto-close. When no progress
+    is observed for ``no_progress_timeout`` seconds, the wait ends.
 
-    Args:
-        session_base_names: Base names (without status prefix) of sessions to wait for
-        socket: The tmux socket to query
-        no_progress_timeout: Seconds to wait without progress before timing out
-        poll_interval: How often to poll for session status
-
-    Returns:
-        Tuple of (final sessions list, whether all completed successfully)
+    Returns: (final matching sessions, all_completed_successfully)
     """
     last_progress_time = time.time()
     last_completed_count = 0
@@ -228,6 +221,24 @@ def wait_for_sessions_adaptive(
         0  # Count consecutive polls where we don't see expected sessions
     )
     base_names_set = set(session_base_names)
+
+    def _completion_state(
+        pending: list[TmuxSession],
+        matching: list[TmuxSession],
+        seen: bool,
+        polls_without: int,
+    ) -> tuple[bool, bool]:
+        """Return (done, success) without mutating outer scope."""
+        if pending:
+            return False, False
+        if matching:
+            return True, not any(s.is_failed for s in matching)
+        if seen:
+            return True, True
+        if polls_without >= 3:
+            # Sessions were created and auto-closed before we observed them
+            return True, True
+        return False, False
 
     while True:
         sessions = list_tmux_sessions(socket=socket)
@@ -244,22 +255,14 @@ def wait_for_sessions_adaptive(
         else:
             polls_without_seeing += 1
 
-        # Check if all done: no pending sessions AND (we have completed ones OR we saw them before)
-        # Sessions that pass auto-close after 10s, so "seen but now gone" means success
-        if not pending:
-            if matching:
-                # Sessions exist and none pending - done
-                return matching, not any(s.is_failed for s in matching)
-            elif seen_sessions:
-                # Sessions existed before but are now gone - they passed and auto-closed
-                return [], True
-            elif polls_without_seeing >= 3:
-                # IMPORTANT: This function is only called when sessions_created was non-empty,
-                # meaning we KNOW sessions existed right after the script ran. If we've polled
-                # 3 times (~1.5s) and never seen them, they must have passed and auto-closed
-                # before we started polling. This is success, not an error.
-                # (Failing sessions don't auto-close - they stay visible with "f ❌" prefix)
-                return [], True
+        done, success = _completion_state(
+            pending,
+            matching,
+            seen_sessions,
+            polls_without_seeing,
+        )
+        if done:
+            return matching, success
 
         # Check for progress (more sessions completed/gone than before)
         current_done_count = len(completed) + (

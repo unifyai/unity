@@ -8,29 +8,11 @@ set -euo pipefail
 #   list_runs.sh --all     # Include empty sockets too
 #   list_runs.sh --quiet   # Just list socket names (for scripting)
 
-# ---- Terminal-based isolation ----
-# Uses the same socket detection as parallel_run.sh
-_derive_socket_name() {
-  local tty_id
-  tty_id=$(tty 2>/dev/null)
-  if [[ "$tty_id" == "not a tty" || -z "$tty_id" || ! "$tty_id" =~ ^/ ]]; then
-    tty_id="pid$$"
-  else
-    tty_id=$(echo "$tty_id" | sed 's|/|_|g')
-  fi
-  echo "unity${tty_id}"
-}
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/_shell_common.sh"
 
-CURRENT_SOCKET="$(_derive_socket_name)"
-
-# Determine timeout command (needed to avoid hanging on dead sockets)
-if command -v timeout >/dev/null 2>&1; then
-  _tmux_ls() { timeout 1 tmux -L "$1" ls 2>/dev/null || true; }
-elif command -v gtimeout >/dev/null 2>&1; then
-  _tmux_ls() { gtimeout 1 tmux -L "$1" ls 2>/dev/null || true; }
-else
-  _tmux_ls() { tmux -L "$1" ls 2>/dev/null || true; }
-fi
+CURRENT_SOCKET="$UNITY_TMUX_SOCKET"
 
 QUIET=0
 SHOW_ALL=0
@@ -72,11 +54,7 @@ while (( "$#" )); do
 done
 
 # Find all unity sockets
-SOCKETS=()
-for sock in /tmp/tmux-"$(id -u)"/unity*; do
-  [ -e "$sock" ] || continue
-  SOCKETS+=( "$(basename "$sock")" )
-done
+mapfile -t SOCKETS < <(_get_unity_sockets)
 
 if (( ${#SOCKETS[@]} == 0 )); then
   if (( QUIET )); then
