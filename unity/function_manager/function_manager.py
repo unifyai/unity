@@ -172,6 +172,7 @@ class FunctionManager(BaseFunctionManager):
         self._daemon = daemon
         # ToDo: expose tools to LLM once needed
         self._tools: Dict[str, callable] = {}
+        self.include_in_multi_assistant_table = True
 
         # Internal monotonically-increasing function-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
@@ -571,6 +572,7 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "primitives_hash": hash_value}],
+                    add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
             logger.warning(f"Failed to store primitives hash: {e}")
@@ -622,6 +624,7 @@ class FunctionManager(BaseFunctionManager):
                 context=self._primitives_ctx,
                 entries=entries,
                 batched=True,
+                add_to_all_context=self.include_in_multi_assistant_table,
             )
             logger.info(f"Inserted {len(entries)} primitives")
         except Exception as e:
@@ -698,6 +701,7 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "custom_functions_hash": hash_value}],
+                    add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
             logger.warning(f"Failed to store custom functions hash: {e}")
@@ -754,6 +758,7 @@ class FunctionManager(BaseFunctionManager):
         result = unity_create_logs(
             context=self._compositional_ctx,
             entries=[insert_data],
+            add_to_all_context=self.include_in_multi_assistant_table,
         )
         # unity_create_logs returns a dict with log_event_ids
         log_ids = result.get("log_event_ids", [])
@@ -804,6 +809,7 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "custom_venvs_hash": hash_value}],
+                    add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
             logger.warning(f"Failed to store custom venvs hash: {e}")
@@ -857,6 +863,7 @@ class FunctionManager(BaseFunctionManager):
         result = unity_create_logs(
             context=self._venvs_ctx,
             entries=[insert_data],
+            add_to_all_context=self.include_in_multi_assistant_table,
         )
         # unity_create_logs returns a dict with log_event_ids
         log_ids = result.get("log_event_ids", [])
@@ -1278,6 +1285,7 @@ class FunctionManager(BaseFunctionManager):
                     context=self._compositional_ctx,
                     entries=entries_to_create,
                     batched=True,
+                    add_to_all_context=self.include_in_multi_assistant_table,
                 )
             except Exception as e:
                 logger.error(
@@ -1836,6 +1844,7 @@ class FunctionManager(BaseFunctionManager):
         result = unity_create_logs(
             context=self._venvs_ctx,
             entries=[{"venv": venv}],
+            add_to_all_context=self.include_in_multi_assistant_table,
         )
         # unity_create_logs returns a dict with log_event_ids
         log_ids = result.get("log_event_ids", [])
