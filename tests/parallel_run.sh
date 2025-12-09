@@ -72,6 +72,38 @@ tmux_cmd() {
 # Track session IDs for cleanup on SIGINT/SIGTERM
 declare -a CREATED_SESSION_IDS=()
 
+# ---- Inline pass/fail reporting ----
+# Track which sessions we've already reported completion for
+declare -A REPORTED_COMPLETIONS=()
+
+# Report any sessions that have completed since last check
+# Prints pass/fail status inline during the drip-feed phase
+report_completed_sessions() {
+  for sid in "${CREATED_SESSION_IDS[@]}"; do
+    # Skip if already reported
+    [[ -n "${REPORTED_COMPLETIONS[$sid]:-}" ]] && continue
+
+    # Get current session name (may fail if session was killed)
+    local current_name
+    current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+    [[ -z "$current_name" ]] && continue
+
+    # Check for completion (passed or failed prefix)
+    case "$current_name" in
+      "p ✅ "*)
+        local base="${current_name#p ✅ }"
+        echo "  ✅ PASS: $base"
+        REPORTED_COMPLETIONS[$sid]=1
+        ;;
+      "f ❌ "*)
+        local base="${current_name#f ❌ }"
+        echo "  ❌ FAIL: $base"
+        REPORTED_COMPLETIONS[$sid]=1
+        ;;
+    esac
+  done
+}
+
 _cleanup_sessions() {
   local sig="${1:-}"
   if (( ${#CREATED_SESSION_IDS[@]} > 0 )); then
@@ -470,6 +502,7 @@ count_pending_sessions() {
 }
 
 # Wait until we have fewer than MAX_JOBS pending sessions
+# While waiting, report any sessions that have completed (inline pass/fail feedback)
 wait_for_job_slot() {
   if (( MAX_JOBS == 0 )); then
     return 0  # No limit
@@ -481,6 +514,8 @@ wait_for_job_slot() {
     if (( pending < MAX_JOBS )); then
       return 0
     fi
+    # Report completions while waiting for a slot
+    report_completed_sessions
     sleep 0.5
   done
 }
