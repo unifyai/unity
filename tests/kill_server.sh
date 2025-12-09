@@ -8,29 +8,11 @@ set -euo pipefail
 #   kill_server.sh --all             # Kill ALL unity test tmux servers
 #   kill_server.sh --socket <name>   # Kill a specific socket's server
 
-# ---- Terminal-based isolation ----
-# Uses the same socket detection as parallel_run.sh
-_derive_socket_name() {
-  local tty_id
-  tty_id=$(tty 2>/dev/null)
-  if [[ "$tty_id" == "not a tty" || -z "$tty_id" || ! "$tty_id" =~ ^/ ]]; then
-    tty_id="pid$$"
-  else
-    tty_id=$(echo "$tty_id" | sed 's|/|_|g')
-  fi
-  echo "unity${tty_id}"
-}
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/_shell_common.sh"
 
-TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
-
-# Determine timeout command (needed to avoid hanging on dead sockets)
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout 1"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout 1"
-else
-  TIMEOUT_CMD=""
-fi
+TMUX_SOCKET="$UNITY_TMUX_SOCKET"
 
 KILL_ALL=0
 EXPLICIT_SOCKET=""
@@ -82,13 +64,16 @@ if [[ -n "$EXPLICIT_SOCKET" ]]; then
 fi
 
 # Helper: gracefully kill processes in a tmux socket before killing the server
-# Uses timeout to avoid hanging on dead sockets
 _graceful_kill_socket() {
   local sock="$1"
 
   # Get all pane PIDs from all sessions in this socket
   local pids
-  pids=$($TIMEOUT_CMD tmux -L "$sock" list-panes -a -F '#{pane_pid}' 2>/dev/null || true)
+  if [[ -n "$UNITY_TIMEOUT_CMD" ]]; then
+    pids=$($UNITY_TIMEOUT_CMD tmux -L "$sock" list-panes -a -F '#{pane_pid}' 2>/dev/null || true)
+  else
+    pids=$(tmux -L "$sock" list-panes -a -F '#{pane_pid}' 2>/dev/null || true)
+  fi
 
   if [[ -n "$pids" ]]; then
     # Send SIGTERM to process groups for graceful shutdown
@@ -103,7 +88,11 @@ _graceful_kill_socket() {
   fi
 
   # Now kill the tmux server
-  $TIMEOUT_CMD tmux -L "$sock" kill-server 2>/dev/null
+  if [[ -n "$UNITY_TIMEOUT_CMD" ]]; then
+    $UNITY_TIMEOUT_CMD tmux -L "$sock" kill-server 2>/dev/null
+  else
+    tmux -L "$sock" kill-server 2>/dev/null
+  fi
 
   # Remove the socket file to prevent orphaned sockets
   rm -f "/tmp/tmux-$(id -u)/$sock" 2>/dev/null || true
@@ -112,14 +101,13 @@ _graceful_kill_socket() {
 if (( KILL_ALL )); then
   # Kill all unity* servers
   count=0
-  for sock in /tmp/tmux-"$(id -u)"/unity*; do
-    [ -e "$sock" ] || continue
-    name=$(basename "$sock")
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
     if _graceful_kill_socket "$name"; then
       echo "Killed server: $name"
       ((count++)) || true
     fi
-  done
+  done < <(_get_unity_sockets)
   if (( count == 0 )); then
     echo "No unity test servers found."
   else

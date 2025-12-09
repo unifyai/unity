@@ -10,12 +10,9 @@ if [ -f "../.env" ]; then
   set +a
 fi
 
-# ---- Ensure UTF-8 locale for Unicode emoji support ----
-# Session names use emojis (⏳ ✅ ❌) to indicate status. Without proper locale,
-# these get corrupted to underscores, breaking prefix detection and failure detection.
-# This must be set before any tmux commands and inherited by all child processes.
-export LC_ALL=en_US.UTF-8
-export LANG=en_US.UTF-8
+# Source common utilities (socket derivation, locale, timeout handling)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/_shell_common.sh"
 
 # ---- Increase file descriptor limit ----
 # Parallel tests open many network connections. Each connection uses a file
@@ -23,30 +20,7 @@ export LANG=en_US.UTF-8
 # This setting is inherited by all child processes (tmux sessions, pytest).
 ulimit -n 4096 2>/dev/null || true
 
-# ---- Terminal-based isolation ----
-# Each terminal session (including Cursor agent terminals) gets its own
-# isolated tmux server via a unique socket. This prevents agents from
-# interfering with each other (e.g., `tmux kill-server` only affects
-# the calling terminal's sessions).
-#
-# The socket is derived from the terminal's TTY device, which is unique
-# and stable for each terminal session.
-_derive_socket_name() {
-  local tty_id
-  # Try to get TTY; if not available (non-interactive shell), use a fallback
-  tty_id=$(tty 2>/dev/null)
-  if [[ "$tty_id" == "not a tty" || -z "$tty_id" || ! "$tty_id" =~ ^/ ]]; then
-    # Non-interactive shell: use parent PID chain as fallback
-    # This provides some isolation but may not be as stable
-    tty_id="pid$$"
-  else
-    # Interactive shell: use TTY path with slashes replaced
-    tty_id=$(echo "$tty_id" | sed 's|/|_|g')
-  fi
-  echo "unity${tty_id}"
-}
-
-TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
+TMUX_SOCKET="$UNITY_TMUX_SOCKET"
 
 # ---- Log directory naming ----
 # Log subdirectories use a datetime-prefixed format for natural time-based
@@ -72,24 +46,21 @@ tmux_cmd() {
 # Socket files persist after tmux server exits. This removes orphaned socket
 # files to prevent accumulation and slow helper script execution.
 _cleanup_dead_sockets() {
-  # Determine timeout command (avoid hanging on dead sockets)
-  local timeout_cmd=""
-  if command -v timeout >/dev/null 2>&1; then
-    timeout_cmd="timeout 1"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    timeout_cmd="gtimeout 1"
-  fi
-
   local cleaned=0
-  for sock in /tmp/tmux-"$(id -u)"/unity*; do
-    [ -e "$sock" ] || continue
-    local name
-    name=$(basename "$sock")
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    local sock="/tmp/tmux-$(id -u)/$name"
     # If tmux can't connect (server dead), remove the stale socket file
-    if ! $timeout_cmd tmux -L "$name" info >/dev/null 2>&1; then
-      rm -f "$sock" 2>/dev/null && ((cleaned++)) || true
+    if [[ -n "$UNITY_TIMEOUT_CMD" ]]; then
+      if ! $UNITY_TIMEOUT_CMD tmux -L "$name" info >/dev/null 2>&1; then
+        rm -f "$sock" 2>/dev/null && ((cleaned++)) || true
+      fi
+    else
+      if ! tmux -L "$name" info >/dev/null 2>&1; then
+        rm -f "$sock" 2>/dev/null && ((cleaned++)) || true
+      fi
     fi
-  done
+  done < <(_get_unity_sockets)
   if (( cleaned > 0 )); then
     echo "Cleaned up $cleaned stale socket file(s) from previous runs."
   fi
@@ -101,15 +72,27 @@ _cleanup_dead_sockets
 declare -a CREATED_SESSION_IDS=()
 
 # ---- Inline pass/fail reporting ----
-# Track which sessions we've already reported completion for
-declare -A REPORTED_COMPLETIONS=()
+# Track which sessions we've already reported completion for (newline-separated list)
+REPORTED_COMPLETIONS=""
+
+# Check if a session ID has been reported
+_is_reported() {
+  local sid="$1"
+  [[ "$REPORTED_COMPLETIONS" == *"${sid}"* ]]
+}
+
+# Mark a session ID as reported
+_mark_reported() {
+  local sid="$1"
+  REPORTED_COMPLETIONS="${REPORTED_COMPLETIONS}${sid}:"
+}
 
 # Report any sessions that have completed since last check
 # Prints pass/fail status inline during the drip-feed phase
 report_completed_sessions() {
   for sid in "${CREATED_SESSION_IDS[@]}"; do
     # Skip if already reported
-    [[ -n "${REPORTED_COMPLETIONS[$sid]:-}" ]] && continue
+    _is_reported "$sid" && continue
 
     # Get current session name (may fail if session was killed)
     local current_name
@@ -121,12 +104,12 @@ report_completed_sessions() {
       "p ✅ "*)
         local base="${current_name#p ✅ }"
         echo "  ✅ PASS: $base"
-        REPORTED_COMPLETIONS[$sid]=1
+        _mark_reported "$sid"
         ;;
       "f ❌ "*)
         local base="${current_name#f ❌ }"
         echo "  ❌ FAIL: $base"
-        REPORTED_COMPLETIONS[$sid]=1
+        _mark_reported "$sid"
         ;;
     esac
   done
@@ -198,7 +181,7 @@ declare -a ENV_OVERRIDES=()
 declare -a TAGS=()
 
 # Resolve repo root (parent of this script's directory)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# SCRIPT_DIR is already set by sourcing _shell_common.sh
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
 # Parse flags; collect positional args

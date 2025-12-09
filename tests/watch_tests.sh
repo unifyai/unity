@@ -8,20 +8,11 @@ set -euo pipefail
 #   watch_tests.sh --all                # Watch tests from ALL terminals
 #   watch_tests.sh --socket <name>      # Watch a specific socket (from any terminal)
 
-# ---- Terminal-based isolation ----
-# Uses the same socket detection as parallel_run.sh
-_derive_socket_name() {
-  local tty_id
-  tty_id=$(tty 2>/dev/null)
-  if [[ "$tty_id" == "not a tty" || -z "$tty_id" || ! "$tty_id" =~ ^/ ]]; then
-    tty_id="pid$$"
-  else
-    tty_id=$(echo "$tty_id" | sed 's|/|_|g')
-  fi
-  echo "unity${tty_id}"
-}
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/_shell_common.sh"
 
-TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
+TMUX_SOCKET="$UNITY_TMUX_SOCKET"
 
 WATCH_ALL=0
 EXPLICIT_SOCKET=""
@@ -73,26 +64,19 @@ fi
 
 if (( WATCH_ALL )); then
   # Watch all unity sockets that have active sessions
-  # Determine timeout command (needed to avoid hanging on dead sockets)
-  if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="timeout 1"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="gtimeout 1"
-  else
-    TIMEOUT_CMD=""
+  if [[ -z "$UNITY_TIMEOUT_CMD" ]]; then
     echo "Warning: 'timeout' command not found. Dead sockets may cause slow refreshes." >&2
     echo "Install coreutils: brew install coreutils (macOS) or apt install coreutils (Linux)" >&2
     sleep 2
   fi
 
   # Build the watch command with timeout baked in
-  # Note: We inline the timeout command to avoid complex quoting
   watch_script="
     found=0
     for sock in /tmp/tmux-\$(id -u)/unity*; do
       [ -e \"\$sock\" ] || continue
       name=\$(basename \"\$sock\")
-      sessions=\$(${TIMEOUT_CMD} tmux -L \"\$name\" ls 2>/dev/null)
+      sessions=\$(${UNITY_TIMEOUT_CMD} tmux -L \"\$name\" ls 2>/dev/null)
       [ -z \"\$sessions\" ] && continue
       found=1
       echo \"=== \$name ===\"
