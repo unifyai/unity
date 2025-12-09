@@ -279,6 +279,23 @@ def wait_for_sessions_adaptive(
         time.sleep(poll_interval)
 
 
+def _kill_tmux_server(socket: str) -> None:
+    """Kill a tmux server and remove its socket file (best-effort)."""
+    try:
+        subprocess.run(
+            ["tmux", "-L", socket, "kill-server"],
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        pass
+    try:
+        sock_path = Path(f"/tmp/tmux-{os.getuid()}") / socket
+        sock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 @pytest.fixture
 def clean_tmux_sessions():
     """Fixture that provides socket-scoped cleanup for parallel test isolation.
@@ -442,6 +459,7 @@ class ParallelRunner:
         so we match by base_name to find sessions regardless of current status.
         """
         if not self._created_sessions:
+            _kill_tmux_server(self._socket_name)
             return
 
         # Build set of base names we need to clean up
@@ -462,6 +480,8 @@ class ParallelRunner:
                 kill_tmux_session(session.name, socket=session.socket)
 
         self._created_sessions.clear()
+        # After sessions are gone, tear down the dedicated tmux server to free ptys
+        _kill_tmux_server(self._socket_name)
 
 
 @pytest.fixture
