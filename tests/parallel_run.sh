@@ -567,6 +567,9 @@ wait_for_job_slot() {
     local pending
     pending=$(count_pending_sessions)
     if (( pending < MAX_JOBS )); then
+      # Report any completions that freed up this slot BEFORE returning
+      # (ensures pass/fail appears before the new pending session that fills this slot)
+      report_completed_sessions
       return 0
     fi
     # Report completions while waiting for a slot
