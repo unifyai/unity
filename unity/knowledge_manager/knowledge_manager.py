@@ -108,6 +108,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             table name ``"Contacts"``.
         """
         super().__init__()
+        self.include_in_multi_assistant_table = False
         # Allow ingestion/deprecation only within update/refactor flows
         refactor_tools = methods_to_tool_dict(
             # Ask
