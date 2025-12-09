@@ -74,6 +74,7 @@ class SecretManager(BaseSecretManager):
             read_ctx == write_ctx
         ), "read and write contexts must match for SecretManager."
 
+        self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Secrets")
 
         # Ensure storage/schema exists deterministically (idempotent)
@@ -837,7 +838,13 @@ class SecretManager(BaseSecretManager):
             "value": value,
             "description": description or "",
         }
-        log = unity_log(context=self._ctx, **entries, new=True, mutable=True)
+        log = unity_log(
+            context=self._ctx,
+            **entries,
+            new=True,
+            mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
+        )
 
         # .env sync (best-effort)
         try:
