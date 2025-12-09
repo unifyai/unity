@@ -141,6 +141,7 @@ def ensure_exchanges_records(
                     medium=(eid_to_medium or {}).get(int(eid), ""),
                     new=True,
                     mutable=True,
+                    add_to_all_context=self.include_in_multi_assistant_table,
                 )
             except Exception:
                 # Ignore duplicates or backend races
