@@ -37,16 +37,20 @@ _unity_attach_complete() {
 compdef _unity_attach_complete attach
 
 # ---- Completion: parallel_run ----
-# Completes test directories/files
+# Completes flags and test directories/files
 _unity_parallel_run_complete() {
     _arguments \
-        '-t[Per-test mode]' \
-        '-n[Number of workers]:workers:(1 2 4 8 16)' \
-        '-x[Stop on first failure]' \
+        '-w[Wait for completion]' \
         '--wait[Wait for completion]' \
-        '--hierarchical[Run in hierarchical mode]' \
-        '--flat[Run in flat mode]' \
-        '--no-cache[Disable LLM cache]' \
+        '-s[Serial mode (one session per file)]' \
+        '--serial[Serial mode (one session per file)]' \
+        '-j[Job limit]:jobs:(8 16 25 40 0)' \
+        '--jobs[Job limit]:jobs:(8 16 25 40 0)' \
+        '-m[Match filename pattern]:pattern:' \
+        '--match[Match filename pattern]:pattern:' \
+        '-e[Set environment variable]:var:' \
+        '--env[Set environment variable]:var:' \
+        '--tags[Add test tags]:tags:' \
         '--eval-only[Run only eval tests]' \
         '--symbolic-only[Run only symbolic tests]' \
         '--repeat[Repeat count]:count:(2 3 5 10)' \
