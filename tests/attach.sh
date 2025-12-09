@@ -9,20 +9,11 @@ set -euo pipefail
 #   attach.sh --socket <name> <session-name>    # Attach to a session in a specific socket
 #   attach.sh --all                             # List sessions from ALL terminals
 
-# ---- Terminal-based isolation ----
-# Uses the same socket detection as parallel_run.sh
-_derive_socket_name() {
-  local tty_id
-  tty_id=$(tty 2>/dev/null)
-  if [[ "$tty_id" == "not a tty" || -z "$tty_id" || ! "$tty_id" =~ ^/ ]]; then
-    tty_id="pid$$"
-  else
-    tty_id=$(echo "$tty_id" | sed 's|/|_|g')
-  fi
-  echo "unity${tty_id}"
-}
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/_shell_common.sh"
 
-TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
+TMUX_SOCKET="$UNITY_TMUX_SOCKET"
 
 show_help() {
   echo "Usage: attach.sh [--socket <name>] <session-name>"
@@ -88,13 +79,12 @@ fi
 if (( LIST_ALL )); then
   echo "Sessions across all terminals:"
   echo ""
-  for sock in /tmp/tmux-"$(id -u)"/unity*; do
-    [ -e "$sock" ] || continue
-    name=$(basename "$sock")
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
     echo "=== $name ==="
-    tmux -L "$name" ls 2>/dev/null || echo "(no sessions)"
+    _tmux_ls "$name" || echo "(no sessions)"
     echo
-  done
+  done < <(_get_unity_sockets)
   exit 0
 fi
 
