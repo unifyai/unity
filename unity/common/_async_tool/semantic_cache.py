@@ -13,6 +13,7 @@ from typing import Any, Mapping, Callable, List
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
+from unity.common.log_utils import log as unity_log
 from unity.common.tool_spec import ToolSpec, normalise_tools
 from unity.common.llm_client import new_llm_client
 
@@ -120,7 +121,7 @@ class _SemanticCacheSaver:
         if not context_exist:
             unify.create_context(store_context)
 
-        log_id = unify.log(
+        log_id = unity_log(
             context=store_context,
             user_message=user_message,
             namespace=namespace,

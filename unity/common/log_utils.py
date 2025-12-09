@@ -3,7 +3,7 @@ Wrappers around unify.log/create_logs with:
 1. _assistant injection (assistant's name from ASSISTANT_CONTEXT)
 2. _assistant_id injection (assistant's ID from ASSISTANT["agent_id"])
 3. _user_id injection (from USER_ID environment variable)
-4. Automatic mirroring to All/<Ctx> by reference (copy=False)
+4. Automatic addition to All/<Ctx> by reference (copy=False)
 
 Usage
 -----
@@ -19,7 +19,7 @@ Replace direct unify.log/create_logs calls with these wrappers:
 
 The wrappers automatically:
 - Inject _assistant, _assistant_id, _user_id as private fields
-- Mirror logs to All/<Ctx> by reference (unless mirror_to_all=False)
+- Add logs to All/<Ctx> by reference (when add_to_all_context=True)
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def _derive_all_context(context: str) -> Optional[str]:
     return f"All/{suffix}"
 
 
-def _mirror_to_all(log_ids: List[int], context: str) -> None:
+def _add_to_all(log_ids: List[int], context: str) -> None:
     """Add logs by reference to the All/<suffix> context (best-effort)."""
     if not log_ids:
         return
@@ -111,20 +111,20 @@ def _mirror_to_all(log_ids: List[int], context: str) -> None:
 def log(
     context: str,
     *,
-    mirror_to_all: bool = True,
+    add_to_all_context: bool = False,
     new: bool = True,
     mutable: bool = False,
     **entries: Any,
 ) -> unify.Log:
     """
-    Wrapper around unify.log with private field injection and All/<Ctx> mirroring.
+    Wrapper around unify.log with private field injection and All/<Ctx> addition.
 
     Parameters
     ----------
     context : str
         The context to log to (e.g., "JohnDoe/Contacts")
-    mirror_to_all : bool, default True
-        If True, mirror the log to All/<Ctx> by reference
+    add_to_all_context : bool, default False
+        If True, add the log to All/<Ctx> by reference
     new : bool, default True
         Whether to create a new log entry
     mutable : bool, default False
@@ -140,9 +140,9 @@ def log(
     entries = _inject_private_fields(entries)
     result = unify.log(context=context, new=new, mutable=mutable, **entries)
 
-    if mirror_to_all:
+    if add_to_all_context:
         try:
-            _mirror_to_all([result.id], context)
+            _add_to_all([result.id], context)
         except Exception:
             pass
 
@@ -153,11 +153,11 @@ def create_logs(
     context: str,
     *,
     entries: List[Dict[str, Any]],
-    mirror_to_all: bool = True,
+    add_to_all_context: bool = False,
     **kwargs: Any,
 ) -> Any:
     """
-    Wrapper around unify.create_logs with private field injection and All/<Ctx> mirroring.
+    Wrapper around unify.create_logs with private field injection and All/<Ctx> addition.
 
     Parameters
     ----------
@@ -165,8 +165,8 @@ def create_logs(
         The context to log to (e.g., "JohnDoe/Tasks")
     entries : List[Dict[str, Any]]
         List of entry dicts to create
-    mirror_to_all : bool, default True
-        If True, mirror logs to All/<Ctx> by reference
+    add_to_all_context : bool, default False
+        If True, add logs to All/<Ctx> by reference
     **kwargs
         Additional arguments passed to unify.create_logs (e.g., batched=True)
 
@@ -179,7 +179,7 @@ def create_logs(
     entries = [_inject_private_fields(e) for e in entries]
     result = unify.create_logs(context=context, entries=entries, **kwargs)
 
-    if mirror_to_all:
+    if add_to_all_context:
         # Handle both dict (normal) and list (batched=True) return types
         if isinstance(result, dict):
             log_ids = result.get("log_event_ids", [])
@@ -190,6 +190,6 @@ def create_logs(
             log_ids = []
 
         if log_ids:
-            _mirror_to_all(log_ids, context)
+            _add_to_all(log_ids, context)
 
     return result
