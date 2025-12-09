@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Kill the tmux server for the current terminal session
+# Kill the tmux server for the current terminal session and clean up orphaned processes
 #
 # Usage:
-#   kill_server.sh                   # Kill THIS terminal's tmux server
-#   kill_server.sh --all             # Kill ALL unity* tmux servers
-#   kill_server.sh --global          # Kill ALL tmux servers for this user
-#   kill_server.sh --socket <name>   # Kill a specific socket's server
-#   kill_server.sh --purge           # Kill ALL orphaned pytest processes from unity tests
+#   kill_server.sh                   # Kill THIS terminal's tmux server + orphans
+#   kill_server.sh --all             # Kill ALL unity* tmux servers + orphans
+#   kill_server.sh --global          # Kill ALL tmux servers for this user + orphans
+#   kill_server.sh --socket <name>   # Kill a specific socket's server + orphans
+#   kill_server.sh --no-purge        # Skip orphan cleanup (not recommended)
 
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -18,7 +18,7 @@ TMUX_SOCKET="$UNITY_TMUX_SOCKET"
 
 KILL_ALL=0
 KILL_GLOBAL=0
-KILL_PURGE=0
+SKIP_PURGE=0
 EXPLICIT_SOCKET=""
 
 while (( "$#" )); do
@@ -31,8 +31,8 @@ while (( "$#" )); do
       KILL_GLOBAL=1
       shift
       ;;
-    --purge)
-      KILL_PURGE=1
+    --no-purge)
+      SKIP_PURGE=1
       shift
       ;;
     -s|--socket)
@@ -46,28 +46,27 @@ while (( "$#" )); do
       fi
       ;;
     -h|--help)
-      echo "Usage: kill_server.sh [--all] [--global] [--purge] [--socket <name>]"
+      echo "Usage: kill_server.sh [--all] [--global] [--no-purge] [--socket <name>]"
       echo ""
-      echo "Kill the tmux server for test sessions."
+      echo "Kill the tmux server for test sessions and clean up orphaned processes."
       echo ""
-      echo "By default, kills only THIS terminal's tmux server (isolated socket)."
+      echo "By default, kills THIS terminal's tmux server (isolated socket) AND"
+      echo "purges any orphaned pytest/bash processes from previous test runs."
       echo "Sends SIGTERM to processes before killing tmux for graceful shutdown."
       echo ""
       echo "Options:"
       echo "  --all              Kill ALL unity* tmux servers across all terminals"
       echo "  --global           Kill ALL tmux servers for this user (any name)"
-      echo "  --purge            Kill ALL orphaned pytest/python processes from unity tests"
-      echo "                     (useful after crashes that leave processes behind)"
+      echo "  --no-purge         Skip killing orphaned pytest processes"
       echo "  -s, --socket NAME  Kill a specific socket's server"
       echo "  -h, --help         Show this help"
       echo ""
       echo "Examples:"
-      echo "  kill_server.sh                              # Current terminal"
-      echo "  kill_server.sh --socket unity_dev_ttys042   # Specific socket"
-      echo "  kill_server.sh --all                        # All unity* servers"
-      echo "  kill_server.sh --global                     # All tmux servers (any name)"
-      echo "  kill_server.sh --purge                      # Kill orphaned test processes"
-      echo "  kill_server.sh --global --purge             # Full cleanup: servers + orphans"
+      echo "  kill_server.sh                              # Current terminal + orphans"
+      echo "  kill_server.sh --socket unity_dev_ttys042   # Specific socket + orphans"
+      echo "  kill_server.sh --all                        # All unity* servers + orphans"
+      echo "  kill_server.sh --global                     # All tmux servers + orphans"
+      echo "  kill_server.sh --no-purge                   # Skip orphan cleanup"
       exit 0
       ;;
     *)
@@ -156,10 +155,12 @@ else
   fi
 fi
 
-# ---- Purge orphaned processes ----
+# ---- Purge orphaned processes (always on by default) ----
 # When tmux sessions are killed abruptly (e.g., socket deleted by race condition),
 # pytest and bash processes can become orphaned. This finds and kills them.
-if (( KILL_PURGE )); then
+# Enabled by default because silent resource pollution is worse than accidentally
+# killing a running test (which you'd notice and can re-run).
+if (( ! SKIP_PURGE )); then
   echo ""
   echo "Purging orphaned test processes..."
 
