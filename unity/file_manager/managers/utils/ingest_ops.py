@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 import unify
 
+from unity.common.log_utils import create_logs as unity_create_logs
 from unity.file_manager.types.file import FileContent
 from unity.file_manager.types.config import (
     FilePipelineConfig,
@@ -178,7 +179,7 @@ def ingest_content_batch(
 
     # Batch insert
     try:
-        result = unify.create_logs(
+        result = unity_create_logs(
             context=context,
             entries=file_content_entries,
             batched=True,
@@ -230,7 +231,7 @@ def ingest_table_batch(
 
     # Batch insert
     try:
-        result = unify.create_logs(context=context, entries=entries, batched=True)
+        result = unity_create_logs(context=context, entries=entries, batched=True)
         return [lg.id for lg in result]
     except Exception as e:
         logger.error(f"Failed to ingest table batch: {e}")

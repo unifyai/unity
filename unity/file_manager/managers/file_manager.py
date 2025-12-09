@@ -90,6 +90,7 @@ class FileManager(BaseFileManager):
             Whether to include the rolling activity summary in prompts.
         """
         super().__init__()
+        self.include_in_multi_assistant_table = False
         self._adapter = adapter
         self.__parser: Optional[BaseParser] = parser
         self._rolling_summary_in_prompts = rolling_summary_in_prompts

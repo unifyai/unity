@@ -5,6 +5,7 @@ import uuid
 
 import unify
 
+from unity.common.log_utils import create_logs as unity_create_logs
 from unity.common.search_utils import table_search_top_k
 from unity.common.filter_utils import normalize_filter_expr
 from unity.common.embed_utils import list_private_fields
@@ -709,7 +710,12 @@ def search_multi_join(
     ensure_tmp_ctx(self, tmp_ctx)
     rows = out.get("rows", [])
     if rows:
-        unify.create_logs(context=tmp_ctx, entries=rows, batched=True)
+        unity_create_logs(
+            context=tmp_ctx,
+            entries=rows,
+            batched=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
+        )
     rows = table_search_top_k(
         context=tmp_ctx,
         references=references,

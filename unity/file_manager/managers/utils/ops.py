@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import unify
 
+from unity.common.log_utils import log as unity_log, create_logs as unity_create_logs
+
 
 def safe(self):
     return getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
@@ -74,7 +76,13 @@ def add_or_replace_file_row(
             }
 
     # Create new row when no existing match
-    log = unify.log(context=self._ctx, **entry, new=True, mutable=True)
+    log = unity_log(
+        context=self._ctx,
+        **entry,
+        new=True,
+        mutable=True,
+        add_to_all_context=self.include_in_multi_assistant_table,
+    )
     return {
         "outcome": "file created successfully",
         "details": {
@@ -378,7 +386,12 @@ def batch_insert_per_file_table_rows(
     if not rows:
         return []
     ctx = per_file_table_ctx(self, file_path=file_path, table=table)
-    res = unify.create_logs(context=ctx, entries=rows, batched=True)
+    res = unity_create_logs(
+        context=ctx,
+        entries=rows,
+        batched=True,
+        add_to_all_context=self.include_in_multi_assistant_table,
+    )
     return [lg.id for lg in res]
 
 
@@ -414,7 +427,12 @@ def batch_insert_per_file_rows(
     if not rows:
         return []
     ctx = per_file_ctx(self, file_path=file_path)
-    res = unify.create_logs(context=ctx, entries=rows, batched=True)
+    res = unity_create_logs(
+        context=ctx,
+        entries=rows,
+        batched=True,
+        add_to_all_context=self.include_in_multi_assistant_table,
+    )
     return [lg.id for lg in res]
 
 
