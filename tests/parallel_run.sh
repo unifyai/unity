@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Optionally source environment from ../.env (relative to tests directory)
+# Resolve script directory first (needed for relative path resolution)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Optionally source environment from the repo root's .env
 # This allows storing secrets/config like UNIFY_KEY in ~/unity/.env
-if [ -f "../.env" ]; then
-  # shellcheck disable=SC1091
+_ENV_FILE="$SCRIPT_DIR/../.env"
+if [ -f "$_ENV_FILE" ]; then
+  # shellcheck disable=SC1090
   set -a
-  . "../.env"
+  . "$_ENV_FILE"
   set +a
 fi
+unset _ENV_FILE
 
 # Source common utilities (socket derivation, locale, timeout handling)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$SCRIPT_DIR/_shell_common.sh"
 
 # ---- Increase file descriptor limit ----
