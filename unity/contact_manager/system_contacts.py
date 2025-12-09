@@ -113,6 +113,7 @@ def sync_assistant_contact(self, assistant_log) -> None:
             **base_fields,
             new=True,
             mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
         )
         try:
             self._data_store.put(log.entries)

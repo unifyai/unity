@@ -114,7 +114,13 @@ def create_contact(
 
     _assert_no_duplicate_unique(self, contact_details)
 
-    log = unity_log(context=self._ctx, **contact_details, new=True, mutable=True)
+    log = unity_log(
+        context=self._ctx,
+        **contact_details,
+        new=True,
+        mutable=True,
+        add_to_all_context=self.include_in_multi_assistant_table,
+    )
     try:
         self._data_store.put(log.entries)
     except Exception:

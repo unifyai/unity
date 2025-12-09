@@ -99,6 +99,7 @@ class ContactManager(BaseContactManager):
             Whether to include the rolling activity summary in prompts by default.
         """
         super().__init__()
+        self.include_in_multi_assistant_table = True
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
