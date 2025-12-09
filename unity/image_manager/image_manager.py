@@ -620,6 +620,7 @@ class ImageManager(BaseImageManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating an ImageManager."
 
+        self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Images")
 
         # Local DataStore mirror for Images (write-through on reads/writes)
@@ -1060,7 +1061,12 @@ class ImageManager(BaseImageManager):
 
         # Fast path: batch create to avoid O(N) round trips and allow parallelism upstream
         try:
-            resp = unity_create_logs(context=self._ctx, entries=prepared, batched=True)
+            resp = unity_create_logs(
+                context=self._ctx,
+                entries=prepared,
+                batched=True,
+                add_to_all_context=self.include_in_multi_assistant_table,
+            )
 
             # Helper: write-through to DataStore with a given row payload
             def _put_row(row: Dict[str, Any]) -> None:
@@ -1167,6 +1173,7 @@ class ImageManager(BaseImageManager):
                         **payload,
                         new=True,
                         mutable=False,
+                        add_to_all_context=self.include_in_multi_assistant_table,
                     )
                     try:
                         self._put_preserve_temp(lg.entries)
