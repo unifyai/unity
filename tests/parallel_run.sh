@@ -68,6 +68,34 @@ tmux_cmd() {
   LC_ALL=en_US.UTF-8 tmux -L "$TMUX_SOCKET" "$@"
 }
 
+# ---- Clean up dead sockets from previous runs ----
+# Socket files persist after tmux server exits. This removes orphaned socket
+# files to prevent accumulation and slow helper script execution.
+_cleanup_dead_sockets() {
+  # Determine timeout command (avoid hanging on dead sockets)
+  local timeout_cmd=""
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd="timeout 1"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd="gtimeout 1"
+  fi
+
+  local cleaned=0
+  for sock in /tmp/tmux-"$(id -u)"/unity*; do
+    [ -e "$sock" ] || continue
+    local name
+    name=$(basename "$sock")
+    # If tmux can't connect (server dead), remove the stale socket file
+    if ! $timeout_cmd tmux -L "$name" info >/dev/null 2>&1; then
+      rm -f "$sock" 2>/dev/null && ((cleaned++)) || true
+    fi
+  done
+  if (( cleaned > 0 )); then
+    echo "Cleaned up $cleaned stale socket file(s) from previous runs."
+  fi
+}
+_cleanup_dead_sockets
+
 # ---- Cleanup on interrupt ----
 # Track session IDs for cleanup on SIGINT/SIGTERM
 declare -a CREATED_SESSION_IDS=()
