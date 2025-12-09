@@ -117,12 +117,12 @@ report_completed_sessions() {
     case "$current_name" in
       "p ✅ "*)
         local base="${current_name#p ✅ }"
-        echo "  ✅ PASS: $base"
+        echo "  - p ✅ $base"
         _mark_reported "$sid"
         ;;
       "f ❌ "*)
         local base="${current_name#f ❌ }"
-        echo "  ❌ FAIL: $base"
+        echo "  - f ❌ $base"
         _mark_reported "$sid"
         ;;
     esac
