@@ -350,7 +350,7 @@ Limit the search by passing directories and/or `.py` files. Examples:
 ./parallel_run.sh -s tests                   # serial across a folder
 ./parallel_run.sh -s tests/foo_test.py       # serial for a single file
 
-# Limit concurrency (default: 40 concurrent sessions)
+# Limit concurrency (default: 25 concurrent sessions)
 ./parallel_run.sh -j 8 tests                 # max 8 concurrent sessions
 ./parallel_run.sh --jobs 20 tests            # max 20 concurrent sessions
 ./parallel_run.sh -j none tests              # unlimited (no throttling)
