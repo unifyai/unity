@@ -2,43 +2,45 @@
 tests/conftest.py
 =================
 
-Global pytest configuration.
+Global pytest configuration for Unity test suite.
 
-• `--unify-stub` *or* `USE_UNIFY_STUB=1` ➜ replace the **persistence** parts
-  of the `unify` SDK with an in-memory implementation, while *optionally*
-  keeping the real `unify.Unify` class for live LLM calls.
-
-  – With flag         → in-memory logs, live LLM
-  – Without flag      → untouched, everything goes to real backend
+Sections:
+  1. Imports and logging guard
+  2. Test stubs (Redis, BrowserWorker, DateTime)
+  3. Singleton isolation
+  4. Command-line options
+  5. Custom logging helpers
+  6. Session lifecycle hooks
+  7. Test run hooks
+  8. HTTP client cleanup
+  9. Pre-run context creation
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from pytest_metadata.plugin import metadata_key
-import httpx
-import asyncio
-import pytest
-import re
-import threading
 import random
+import re
 import string
+import threading
+
+import httpx
+import pytest
 import unify
+from pytest_metadata.plugin import metadata_key
 
 # --------------------------------------------------------------------------- #
-# Early logging guard: ensure a harmless handler exists before any imports    #
-# that might call logging.basicConfig(), so they skip adding stream handlers. #
+# 1. Early logging guard                                                      #
 # --------------------------------------------------------------------------- #
+# Ensure a handler exists before imports that might call logging.basicConfig()
 _root_logger_early = logging.getLogger()
 if not _root_logger_early.handlers:
     _root_logger_early.addHandler(logging.NullHandler())
 
+from tests.helpers import PRECREATED_CONTEXTS, set_session_tags
 from tests.settings import SETTINGS
-from tests.helpers import (
-    PRECREATED_CONTEXTS,
-    set_session_tags,
-)
 
 
 def pytest_report_header(config):
@@ -50,7 +52,7 @@ def pytest_report_header(config):
 
 
 # --------------------------------------------------------------------------- #
-#  Controller Dependency Stubbing Fixture                                     #
+# 2. Test stubs (Redis, BrowserWorker, DateTime)                              #
 # --------------------------------------------------------------------------- #
 
 
@@ -152,11 +154,11 @@ def stub_controller_deps(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-#  Singleton-registry isolation fixture                                        #
+# 3. Singleton isolation                                                      #
 # --------------------------------------------------------------------------- #
 
-from unity.singleton_registry import SingletonRegistry
 from unity.common.context_registry import ContextRegistry
+from unity.singleton_registry import SingletonRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -168,7 +170,7 @@ def _clear_singletons_between_tests():
 
 
 # --------------------------------------------------------------------------- #
-#  Command-line flag                                                          #
+# 4. Command-line options                                                     #
 # --------------------------------------------------------------------------- #
 
 
@@ -214,9 +216,9 @@ def pytest_addoption(parser):
     )
 
 
-# -------------------------
-# Custom Logging Helpers
-# -------------------------
+# --------------------------------------------------------------------------- #
+# 5. Custom logging helpers                                                   #
+# --------------------------------------------------------------------------- #
 
 
 class TestNameLogFilter(logging.Filter):
@@ -268,7 +270,7 @@ def get_test_log_format(config):
 
 
 # --------------------------------------------------------------------------- #
-#  Session-wide hook – install stub *before* any project imports              #
+# 6. Session lifecycle hooks                                                  #
 # --------------------------------------------------------------------------- #
 
 
@@ -365,7 +367,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         )
 
 
-# Define a marker for tests that require the real unify
+# --------------------------------------------------------------------------- #
+# 7. Test run hooks                                                           #
+# --------------------------------------------------------------------------- #
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -473,8 +479,10 @@ def pytest_html_results_summary(prefix, summary, postfix):
 
 
 # --------------------------------------------------------------------------- #
-#  httpx cleanup
+# 8. HTTP client cleanup                                                      #
 # --------------------------------------------------------------------------- #
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _close_httpx_clients_at_session_end():
     """
@@ -508,7 +516,7 @@ def _close_httpx_clients_at_session_end():
 
 
 # --------------------------------------------------------------------------- #
-#  Pre-run context creation (to minimize API calls)
+# 9. Pre-run context creation                                                 #
 # --------------------------------------------------------------------------- #
 
 
