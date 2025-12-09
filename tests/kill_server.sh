@@ -23,6 +23,15 @@ _derive_socket_name() {
 
 TMUX_SOCKET="${UNITY_TEST_SOCKET:-$(_derive_socket_name)}"
 
+# Determine timeout command (needed to avoid hanging on dead sockets)
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="timeout 1"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout 1"
+else
+  TIMEOUT_CMD=""
+fi
+
 KILL_ALL=0
 EXPLICIT_SOCKET=""
 
@@ -73,12 +82,13 @@ if [[ -n "$EXPLICIT_SOCKET" ]]; then
 fi
 
 # Helper: gracefully kill processes in a tmux socket before killing the server
+# Uses timeout to avoid hanging on dead sockets
 _graceful_kill_socket() {
   local sock="$1"
 
   # Get all pane PIDs from all sessions in this socket
   local pids
-  pids=$(tmux -L "$sock" list-panes -a -F '#{pane_pid}' 2>/dev/null || true)
+  pids=$($TIMEOUT_CMD tmux -L "$sock" list-panes -a -F '#{pane_pid}' 2>/dev/null || true)
 
   if [[ -n "$pids" ]]; then
     # Send SIGTERM to process groups for graceful shutdown
@@ -93,7 +103,7 @@ _graceful_kill_socket() {
   fi
 
   # Now kill the tmux server
-  tmux -L "$sock" kill-server 2>/dev/null
+  $TIMEOUT_CMD tmux -L "$sock" kill-server 2>/dev/null
 }
 
 if (( KILL_ALL )); then

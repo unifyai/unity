@@ -314,6 +314,7 @@ chmod +x parallel_run.sh
 ### Requirements
 
 - **tmux** and **pytest** must be installed (e.g., `brew install tmux`).
+- **coreutils** (recommended on macOS): Provides the `timeout` command used by helper scripts (`watch_tests --all`, `list_runs`, `kill_failed --all`, `kill_server --all`) to avoid hanging on dead sockets. Install with `brew install coreutils`. Without it, these commands may be slow if orphaned socket files exist from previous test runs.
 - **Virtualenv** is assumed to live at `~/unity/.venv/`. If yours differs, update the `source ~/unity/.venv/bin/activate` line inside the script.
 - Optional: create an `.env` file at the repository root (i.e., `~/unity/.env`). Both helper scripts will auto-load it if present via `tests/../.env`.
 
