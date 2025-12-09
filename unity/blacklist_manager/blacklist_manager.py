@@ -54,6 +54,7 @@ class BlackListManager(BaseBlackListManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a BlackListManager."
 
+        self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "BlackList")
 
         # Local DataStore mirror (write-through only; never read from it)
@@ -133,7 +134,13 @@ class BlackListManager(BaseBlackListManager):
             contact_detail=contact_detail,
             reason=reason,
         ).to_post_json()
-        log = unity_log(context=self._ctx, new=True, mutable=True, **payload)
+        log = unity_log(
+            context=self._ctx,
+            new=True,
+            mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
+            **payload,
+        )
         self._data_store.put(log.entries)
         return {
             "outcome": "blacklist entry created",
