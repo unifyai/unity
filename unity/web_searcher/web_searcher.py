@@ -70,6 +70,7 @@ class WebSearcher(BaseWebSearcher):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must match for WebSearcher."
+        self.include_in_multi_assistant_table = True
         self._websites_ctx = ContextRegistry.get_context(self, "Websites")
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
@@ -459,7 +460,13 @@ class WebSearcher(BaseWebSearcher):
             "actor_entrypoint": actor_entrypoint,
             "notes": notes or "",
         }
-        unity_log(context=self._websites_ctx, **entries, new=True, mutable=True)
+        unity_log(
+            context=self._websites_ctx,
+            **entries,
+            new=True,
+            mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
+        )
         return {"outcome": "website created", "details": {"host": host}}
 
     def _filter_websites(
