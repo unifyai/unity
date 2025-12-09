@@ -73,23 +73,37 @@ fi
 
 if (( WATCH_ALL )); then
   # Watch all unity sockets that have active sessions
-  exec watch -n 0.5 '
+  # Determine timeout command (needed to avoid hanging on dead sockets)
+  if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="timeout 1"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout 1"
+  else
+    TIMEOUT_CMD=""
+    echo "Warning: 'timeout' command not found. Dead sockets may cause slow refreshes." >&2
+    echo "Install coreutils: brew install coreutils (macOS) or apt install coreutils (Linux)" >&2
+    sleep 2
+  fi
+
+  # Build the watch command with timeout baked in
+  # Note: We inline the timeout command to avoid complex quoting
+  watch_script="
     found=0
-    for sock in /tmp/tmux-$(id -u)/unity*; do
-      [ -e "$sock" ] || continue
-      name=$(basename "$sock")
-      sessions=$(tmux -L "$name" ls 2>/dev/null)
-      # Skip sockets with no sessions
-      [ -z "$sessions" ] && continue
+    for sock in /tmp/tmux-\$(id -u)/unity*; do
+      [ -e \"\$sock\" ] || continue
+      name=\$(basename \"\$sock\")
+      sessions=\$(${TIMEOUT_CMD} tmux -L \"\$name\" ls 2>/dev/null)
+      [ -z \"\$sessions\" ] && continue
       found=1
-      echo "=== $name ==="
-      echo "$sessions"
+      echo \"=== \$name ===\"
+      echo \"\$sessions\"
       echo
     done
-    if [ "$found" -eq 0 ]; then
-      echo "(no active test sessions)"
+    if [ \"\$found\" -eq 0 ]; then
+      echo \"(no active test sessions)\"
     fi
-  '
+  "
+  exec watch -n 0.5 "$watch_script"
 else
   # Watch just the specified (or current terminal's) socket
   exec watch -n 0.5 "tmux -L $TMUX_SOCKET ls 2>/dev/null || echo '(no sessions)'"

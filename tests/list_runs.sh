@@ -23,6 +23,15 @@ _derive_socket_name() {
 
 CURRENT_SOCKET="$(_derive_socket_name)"
 
+# Determine timeout command (needed to avoid hanging on dead sockets)
+if command -v timeout >/dev/null 2>&1; then
+  _tmux_ls() { timeout 1 tmux -L "$1" ls 2>/dev/null || true; }
+elif command -v gtimeout >/dev/null 2>&1; then
+  _tmux_ls() { gtimeout 1 tmux -L "$1" ls 2>/dev/null || true; }
+else
+  _tmux_ls() { tmux -L "$1" ls 2>/dev/null || true; }
+fi
+
 QUIET=0
 SHOW_ALL=0
 
@@ -79,10 +88,11 @@ if (( ${#SOCKETS[@]} == 0 )); then
 fi
 
 # Count sockets with sessions (first pass)
+# Uses timeout to avoid hanging on dead sockets
 sockets_with_sessions=0
 empty_sockets=0
 for socket in "${SOCKETS[@]}"; do
-  sessions_output=$(LC_ALL=en_US.UTF-8 tmux -L "$socket" ls 2>/dev/null || true)
+  sessions_output=$(LC_ALL=en_US.UTF-8 _tmux_ls "$socket")
   if [[ -n "$sessions_output" ]]; then
     ((sockets_with_sessions++)) || true
   else
@@ -107,7 +117,7 @@ fi
 
 # Detailed output (or quiet mode)
 for socket in "${SOCKETS[@]}"; do
-  sessions_output=$(LC_ALL=en_US.UTF-8 tmux -L "$socket" ls 2>/dev/null || true)
+  sessions_output=$(LC_ALL=en_US.UTF-8 _tmux_ls "$socket")
   has_sessions=0
   [[ -n "$sessions_output" ]] && has_sessions=1
 

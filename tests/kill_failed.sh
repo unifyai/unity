@@ -29,6 +29,15 @@ tmux_cmd() {
   tmux -L "$TMUX_SOCKET" "$@"
 }
 
+# Determine timeout command (needed to avoid hanging on dead sockets)
+if command -v timeout >/dev/null 2>&1; then
+  _tmux_ls() { timeout 1 tmux -L "$1" ls 2>/dev/null || true; }
+elif command -v gtimeout >/dev/null 2>&1; then
+  _tmux_ls() { gtimeout 1 tmux -L "$1" ls 2>/dev/null || true; }
+else
+  _tmux_ls() { tmux -L "$1" ls 2>/dev/null || true; }
+fi
+
 DRY_RUN=0
 KILL_ALL=0
 EXPLICIT_SOCKET=""
@@ -100,6 +109,7 @@ else
 fi
 
 # Get all session names starting with "f" (failed sessions)
+# Uses timeout to avoid hanging on dead sockets
 failed_sessions=()
 for socket in "${SOCKETS[@]}"; do
   while IFS= read -r line; do
@@ -107,7 +117,7 @@ for socket in "${SOCKETS[@]}"; do
     if [[ "$session_name" == "f"* ]]; then
       failed_sessions+=( "$socket:$session_name" )
     fi
-  done < <(LC_ALL=en_US.UTF-8 tmux -L "$socket" ls 2>/dev/null || true)
+  done < <(LC_ALL=en_US.UTF-8 _tmux_ls "$socket")
 done
 
 if (( ${#failed_sessions[@]} == 0 )); then
