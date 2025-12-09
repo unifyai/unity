@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Optionally source environment from ../.env (relative to tests directory)
+# Resolve script directory for relative path resolution
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Optionally source environment from the repo root's .env
 # Useful to provide UNIFY_KEY, UNIFY_BASE_URL, etc. from ~/unity/.env
-if [ -f "../.env" ]; then
-  # shellcheck disable=SC1091
+_ENV_FILE="$_SCRIPT_DIR/../.env"
+if [ -f "$_ENV_FILE" ]; then
+  # shellcheck disable=SC1090
   set -a
-  . "../.env"
+  . "$_ENV_FILE"
   set +a
 fi
+unset _ENV_FILE _SCRIPT_DIR
 
 # Delete Unify test projects. By default, deletes both:
 #   - The shared "UnityTests" project
