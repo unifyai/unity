@@ -86,6 +86,7 @@ class GuidanceManager(BaseGuidanceManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a GuidanceManager."
 
+        self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Guidance")
 
         # Built-in fields derived from Guidance model
@@ -756,6 +757,7 @@ class GuidanceManager(BaseGuidanceManager):
             **payload,
             new=True,
             mutable=True,
+            add_to_all_context=self.include_in_multi_assistant_table,
         )
         return {
             "outcome": "guidance created successfully",
