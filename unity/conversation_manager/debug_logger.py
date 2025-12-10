@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 import os
+import time
 import traceback
 import requests
 import unify
@@ -64,31 +65,60 @@ def log_job_startup(
     try:
         # Resolve liveview URL via comms infra service
         liveview_url = None
-        retries = 10  # Add retries in case sometimes service startup takes more time
+        max_retries = 5  # Cap retries to avoid infinite loops
         comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
         admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
         if comms_url and admin_key and job_name:
-            for _ in range(retries):
-                if liveview_url:
-                    break
-                print(f"\n\nAttempt {_ + 1} to get liveview URL for job {job_name}")
-                svc = f"unity-svc-{job_name}"
+            svc = f"unity-svc-{job_name}"
+            for attempt in range(max_retries):
+                print(
+                    f"\n\n[Liveview] Attempt {attempt + 1} to get liveview URL for job {job_name}",
+                )
                 resp = requests.get(
                     f"{comms_url}/infra/job/service/ip",
                     params={"service_name": svc},
                     headers={"Authorization": f"Bearer {admin_key}"},
-                    timeout=20,
+                    timeout=30,
                 )
-                print("\n\nDesktop view liveview URL:", resp.json())
                 if resp.ok:
                     data = resp.json() or {}
-                    addr = ((data or {}).get("external") or {}).get("address")
-                    if isinstance(addr, str) and addr:
-                        liveview_url = f"http://{addr}:6080/vnc.html"
+                    external = data.get("external", {})
+                    ready = external.get("ready", False)
+                    checks = external.get("checks", {})
+                    seconds_left = checks.get("seconds_until_ready", 0)
+
+                    print(f"[Liveview] Ready: {ready}")
+                    print(
+                        f"[Liveview]  - service_exists: {checks.get('service_exists')}",
+                    )
+                    print(
+                        f"[Liveview]  - gce_lb_wait_passed: {checks.get('gce_lb_wait_passed')}",
+                    )
+                    if seconds_left > 0:
+                        mins, secs = divmod(seconds_left, 60)
+                        print(f"[Liveview]  - time_until_ready: {mins}m {secs}s")
+
+                    if ready:
+                        liveview_url = external.get("url")
+                        liveview_url = f"http://{liveview_url}/vnc.html"
+                        print(f"[Liveview] ✅ Service is ready!")
+                        print(f"[Liveview] URL: {liveview_url}")
+                        break
+
+                    # Wait for seconds_left, minimum 5 seconds
+                    wait_time = max(seconds_left - 10, 5) if seconds_left > 0 else 5
+                    print(f"[Liveview] Waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    print(
+                        f"[Liveview] Request failed with status {resp.status_code}: {resp.text}",
+                    )
+                    # Wait a bit before retrying on failure
+                    time.sleep(5)
         log.update_entries(liveview_url=liveview_url)
-        print("Updated log with liveview URL:", job_name)
+        print("[Liveview] Updated log with liveview URL:", job_name)
     except Exception as e:
-        print(f"Error resolving liveview URL: {e}")
+        print(f"[Liveview] Error resolving liveview URL: {e}")
         traceback.print_exc()
 
 
