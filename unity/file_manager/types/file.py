@@ -309,19 +309,39 @@ class FileRecord(BaseModel):
         }
 
 
-class FileIdentity(BaseModel):
+class FileInfo(BaseModel):
     """
-    Consolidated identity for a file managed by FileManager.
+    Comprehensive file information combining filesystem status and ingest identity.
 
-    This model captures source identity and ingest layout so callers can
-    derive correct contexts for Content and Tables for both per_file and
-    unified ingestion modes.
+    This model provides a complete picture of a file's state across both the
+    raw filesystem and the parsed/indexed state. Use this to understand:
+    - Whether the file exists on disk (filesystem_exists)
+    - Whether it has been indexed (indexed_exists)
+    - Its parse status (parsed_status)
+    - Its ingest layout (ingest_mode, unified_label, table_ingest)
     """
 
+    # Filesystem status
     file_path: str = Field(
         ...,
-        description="Filesystem path or logical display name of the file.",
+        description="Filesystem path as queried.",
     )
+    filesystem_exists: bool = Field(
+        default=False,
+        description="True if the file currently exists on disk.",
+    )
+
+    # Index status
+    indexed_exists: bool = Field(
+        default=False,
+        description="True if the file has a row in FileRecords index.",
+    )
+    parsed_status: Optional[Literal["success", "error"]] = Field(
+        default=None,
+        description="Parse status: 'success', 'error', or None if not indexed.",
+    )
+
+    # Identity fields
     source_provider: Optional[str] = Field(
         default=None,
         description="Provider/adapter name (e.g., Local, GoogleDrive, CodeSandbox).",
@@ -330,9 +350,11 @@ class FileIdentity(BaseModel):
         default=None,
         description="Canonical provider URI (e.g., local:///abs/path, gdrive://fileId).",
     )
+
+    # Ingest layout
     ingest_mode: Literal["per_file", "unified"] = Field(
         default="per_file",
-        description="Ingestion layout mode for this file.",
+        description="Ingestion layout: 'per_file' or 'unified'.",
     )
     unified_label: Optional[str] = Field(
         default=None,
@@ -340,11 +362,13 @@ class FileIdentity(BaseModel):
     )
     table_ingest: bool = Field(
         default=True,
-        description="True when tables are persisted in per‑file table contexts.",
+        description="True when tables are in per-file /Tables/ contexts.",
     )
+
+    # File metadata (when indexed)
     file_format: Optional[FileFormat] = Field(
         default=None,
-        description="Canonical file format (e.g., pdf, docx, xlsx, csv)",
+        description="Canonical file format (e.g., pdf, docx, xlsx, csv).",
     )
 
 

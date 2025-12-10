@@ -1,4 +1,4 @@
-from .file import FileRecord
+from .file import FileRecord, ParsedFile
 from .filesystem import (
     FileSystemCapabilities,
     FileReference,
@@ -22,20 +22,26 @@ from .config import (
     OutputConfig,
     DiagnosticsConfig,
 )
-from .parsed import (
-    BaseParsedFile,
-    ParsedPDF,
-    ParsedDocx,
-    ParsedDoc,
-    ParsedXlsx,
-    ParsedCsv,
+from .ingest import (
+    BaseIngestedFile,
+    IngestedPDF,
+    IngestedDocx,
+    IngestedDoc,
+    IngestedXlsx,
+    IngestedCsv,
+    IngestedMinimal,
+    IngestedFileUnion,
+    FileResultType,
     ContentRef,
     TableRef,
     FileMetrics,
+    PipelineStatistics,
+    IngestPipelineResult,
 )
 
 __all__ = [
     "FileRecord",
+    "ParsedFile",
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",
@@ -53,13 +59,19 @@ __all__ = [
     "PluginsConfig",
     "OutputConfig",
     "DiagnosticsConfig",
-    "BaseParsedFile",
-    "ParsedPDF",
-    "ParsedDocx",
-    "ParsedDoc",
-    "ParsedXlsx",
-    "ParsedCsv",
+    # Ingested models
+    "BaseIngestedFile",
+    "IngestedPDF",
+    "IngestedDocx",
+    "IngestedDoc",
+    "IngestedXlsx",
+    "IngestedCsv",
+    "IngestedMinimal",
+    "IngestedFileUnion",
+    "FileResultType",
     "ContentRef",
     "TableRef",
     "FileMetrics",
+    "PipelineStatistics",
+    "IngestPipelineResult",
 ]
