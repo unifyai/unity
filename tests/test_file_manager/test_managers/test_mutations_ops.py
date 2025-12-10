@@ -18,8 +18,8 @@ def test_rename_updates_index_and_contexts(file_manager, tmp_path: Path):
 
     res = fm.ingest_files(src, config=FilePipelineConfig())
     item = res[src]
-    item = item if isinstance(item, dict) else item.model_dump()
-    assert item.get("status") == "success"
+    # All returns are now Pydantic models - use attribute access
+    assert item.status == "success"
 
     # Perform rename via manager
     fm._rename_file(file_id_or_path=src, new_name="rename_dst.txt")

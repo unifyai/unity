@@ -17,6 +17,7 @@ from unity.file_manager.types import (
     TableBusinessContextSpec,
     FileBusinessContextSpec,
     BusinessContextsConfig,
+    ParsedFile,
 )
 
 
@@ -61,13 +62,14 @@ class _DocStub:
         self.processing_status = "completed"
         self._records = records or []
 
-    def to_parse_result(self, *a, **kw) -> Dict[str, Any]:
-        return {
-            "status": "success",
-            "total_records": len(self._records),
-            "file_format": "txt",
-            "records": self._records,
-        }
+    def to_parse_result(self, *a, **kw) -> ParsedFile:
+        return ParsedFile(
+            file_path=a[0] if a else "stub.txt",
+            status="success",
+            total_records=len(self._records),
+            file_format="txt",
+            records=self._records,
+        )
 
 
 @_handle_project

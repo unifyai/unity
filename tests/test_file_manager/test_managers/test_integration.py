@@ -76,7 +76,7 @@ async def test_parse_all_formats(file_manager, supported_file_examples: dict):
         # Check result structure (flattened fields)
         assert display_name in result
         file_result = result[display_name]
-        assert file_result["status"] == "success"
+        assert file_result.status == "success"
         assert "records" in file_result
         # flattened top-level file metadata
         assert "file_format" in file_result
@@ -85,7 +85,7 @@ async def test_parse_all_formats(file_manager, supported_file_examples: dict):
 
         # Check content was parsed - combine all record content
         all_content = " ".join(
-            str(record.get("content_text", "")) for record in file_result["records"]
+            str(record.get("content_text", "")) for record in file_result.records
         )
 
         # Check that content was extracted
@@ -131,12 +131,12 @@ async def test_parse_errors(file_manager, tmp_path: Path):
     file_result = result[str(bad_file)]
 
     # Should parse successfully as text
-    assert file_result["status"] == "success"
-    assert len(file_result["records"]) > 0
+    assert file_result.status == "success"
+    assert len(file_result.records) > 0
 
     # Content should be preserved
     all_content = " ".join(
-        str(record.get("content_text", "")) for record in file_result["records"]
+        str(record.get("content_text", "")) for record in file_result.records
     )
     assert "unsupported content" in all_content
 
@@ -190,11 +190,11 @@ async def test_content_preservation(file_manager, supported_file_examples: dict)
         )
         assert display_name in result
         file_result = result[display_name]
-        assert file_result["status"] == "success"
+        assert file_result.status == "success"
 
         # Combine all content from records
         all_content = " ".join(
-            str(record.get("content_text", "")) for record in file_result["records"]
+            str(record.get("content_text", "")) for record in file_result.records
         )
 
         # Ensure content was preserved and extracted
@@ -208,7 +208,7 @@ async def test_content_preservation(file_manager, supported_file_examples: dict)
                 ), f"Expected '{phrase}' in {filename}"
 
         # Ensure we have proper document structure
-        assert len(file_result["records"]) > 0
+        assert len(file_result.records) > 0
 
 
 @pytest.mark.asyncio
@@ -231,9 +231,9 @@ async def test_structure_integrity(
 
         assert display_name in result
         file_result = result[display_name]
-        assert file_result["status"] == "success"
+        assert file_result.status == "success"
 
-        records = file_result["records"]
+        records = file_result.records
         assert len(records) > 0, f"Expected records for {filename}"
 
         # Check document structure integrity

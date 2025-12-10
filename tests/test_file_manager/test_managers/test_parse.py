@@ -16,7 +16,7 @@ async def test_parse_single(file_manager, supported_file_examples: dict):
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = str(example_data["path"])  # absolute path
 
-    from unity.file_manager.types import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig, ParsedFile
 
     # Request full mode to assert heavy fields like 'records'
     result = file_manager.ingest_files(
@@ -25,13 +25,15 @@ async def test_parse_single(file_manager, supported_file_examples: dict):
     )
 
     assert display_name in result
-    assert result[display_name]["status"] == "success"
-    assert "records" in result[display_name]
-    assert isinstance(result[display_name]["records"], list)
+    # Full mode returns ParsedFile Pydantic model
+    item = result[display_name]
+    assert isinstance(item, ParsedFile)
+    assert item.status == "success"
+    assert isinstance(item.records, list)
 
     # Check flattened metadata
-    assert "file_format" in result[display_name]
-    assert "file_size" in result[display_name]
+    assert hasattr(item, "file_format")
+    assert hasattr(item, "file_size")
 
 
 @pytest.mark.asyncio
@@ -43,16 +45,15 @@ async def test_parse_multiple(file_manager, supported_file_examples: dict):
         display_name = str(example_data["path"])  # absolute path
         display_names.append(display_name)
 
-    # Parse all files
-    # Compact is default; coerce to dict for assertions
+    # Parse all files - compact is default, returns Pydantic models
     results = file_manager.ingest_files(display_names)
 
     assert len(results) == len(display_names)
     for display_name in display_names:
         assert display_name in results
         item = results[display_name]
-        item = item if isinstance(item, dict) else item.model_dump()
-        assert item["status"] == "success"
+        # All returns are now Pydantic models - use attribute access
+        assert item.status == "success"
 
 
 @pytest.mark.asyncio
@@ -72,8 +73,8 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
 
     assert display_name in result
     item = result[display_name]
-    item = item if isinstance(item, dict) else item.model_dump()
-    assert item["status"] == "success"
+    # All returns are now Pydantic models - use attribute access
+    assert item.status == "success"
 
 
 @pytest.mark.asyncio
@@ -83,7 +84,7 @@ async def test_parse_empty(file_manager, sample_files: Path):
     empty_file = sample_files / "empty.txt"
     display_name = str(empty_file)
 
-    from unity.file_manager.types import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig, ParsedFile
 
     # Request full mode to test 'records' semantics on empty file
     result = file_manager.ingest_files(
@@ -92,10 +93,13 @@ async def test_parse_empty(file_manager, sample_files: Path):
     )
 
     assert display_name in result
+    # Full mode returns ParsedFile Pydantic model
+    item = result[display_name]
+    assert isinstance(item, ParsedFile)
     # Empty file should still parse successfully
-    assert result[display_name]["status"] == "success"
+    assert item.status == "success"
     # May have a document structure but content should be empty
-    records = result[display_name]["records"]
+    records = item.records
     if records:
         # All content should be empty
         all_content = " ".join(
@@ -116,7 +120,7 @@ async def test_parse_supported(file_manager, supported_file_examples: dict):
         display_names.append(display_name)
 
     # Test parsing each file individually
-    from unity.file_manager.types import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig, ParsedFile
 
     for display_name in display_names:
         result = file_manager.ingest_files(
@@ -125,11 +129,13 @@ async def test_parse_supported(file_manager, supported_file_examples: dict):
         )
 
         assert display_name in result
-        assert result[display_name]["status"] == "success"
-        assert len(result[display_name]["records"]) > 0
+        item = result[display_name]
+        assert isinstance(item, ParsedFile)
+        assert item.status == "success"
+        assert len(item.records) > 0
 
         # If this is a spreadsheet (csv or xlsx), ensure per-table context is present
-        file_format = result[display_name].get("file_format")
+        file_format = item.file_format
         if file_format in ("csv", "xlsx"):
             try:
                 import unify
@@ -158,7 +164,7 @@ async def test_parse_multiple_supported(
         display_names.append(display_name)
 
     # Parse all files at once
-    from unity.file_manager.types import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig, ParsedFile
 
     result = file_manager.ingest_files(
         display_names,
@@ -168,8 +174,9 @@ async def test_parse_multiple_supported(
     for display_name in display_names:
         assert display_name in result
         file_result = result[display_name]
-        assert file_result["status"] == "success"
-        assert len(file_result["records"]) > 0
+        assert isinstance(file_result, ParsedFile)
+        assert file_result.status == "success"
+        assert len(file_result.records) > 0
 
     # Sanity check that at least one table context exists
     try:

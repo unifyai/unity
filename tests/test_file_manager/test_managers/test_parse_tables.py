@@ -53,9 +53,9 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
     )
 
     result = file_manager.ingest_files(display_name, config=cfg)
-    _item = result[display_name]
-    _item = _item if isinstance(_item, dict) else _item.model_dump()
-    assert _item["status"] == "success"
+    item = result[display_name]
+    # All returns are now Pydantic models - use attribute access
+    assert item.status == "success"
 
     # Verify a per-table context exists
     import unify
@@ -145,9 +145,9 @@ async def test_xlsx_multi_tab_per_table_context(file_manager, tmp_path: Path):
             display_name = str(path)
             # Use config with business context
             res = file_manager.ingest_files(display_name, config=cfg)
-            _item = res[display_name]
-            _item = _item if isinstance(_item, dict) else _item.model_dump()
-            assert _item["status"] == "success"
+            item = res[display_name]
+            # All returns are now Pydantic models - use attribute access
+            assert item.status == "success"
         else:
             print(f"Path {path} does not exist")
             assert False
@@ -212,9 +212,9 @@ async def test_csv_with_business_context_from_file(file_manager, tmp_path: Path)
 
     # Parse with config
     result = file_manager.ingest_files(display_name, config=cfg)
-    _item = result[display_name]
-    _item = _item if isinstance(_item, dict) else _item.model_dump()
-    assert _item["status"] == "success"
+    item = result[display_name]
+    # All returns are now Pydantic models - use attribute access
+    assert item.status == "success"
 
     # Verify business context was loaded
     assert cfg.ingest.business_contexts is not None
