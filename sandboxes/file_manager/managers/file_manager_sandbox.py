@@ -232,12 +232,13 @@ async def _dispatch_with_context(
 
         return "noop", _Noop(), None, None
 
-    if cmd == "stat":
+    if cmd in ("stat", "info", "file_info"):
         try:
-            payload = fm.stat(rest)
-            print(json.dumps(payload, indent=2))
+            info = fm._file_info(identifier=rest)
+            # FileInfo is a Pydantic model; convert to dict for display
+            print(json.dumps(info.model_dump(), indent=2))
         except Exception as exc:
-            print(f"⚠️  stat failed: {exc}")
+            print(f"⚠️  file_info failed: {exc}")
 
         class _Noop(SteerableToolHandle):
             async def result(self):
@@ -495,7 +496,7 @@ async def _main_async() -> None:
         "│ usv                         – update_scenario_vocally                 │\n"
         "│ seed-sample                 – import and parse sample files           │\n"
         "│ list                        – list files (adapter scope)              │\n"
-        "│ stat <path>                 – show unified file status                │\n"
+        "│ info <path|id>              – show file info (status, ingest layout)  │\n"
         "│ askf <filename> <question>  – file-scoped Q&A (uses --schema/--model) │\n"
         "│ r / free text               – freeform ask/ask_about_file/organize    │\n"
         "│ save_project | sp           – save project snapshot                    │\n"

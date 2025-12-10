@@ -3,12 +3,17 @@ from __future__ import annotations
 """
 RepairsAgent: Minimal facade over LocalFileManager.ask with BusinessContextPayload.
 
-This facade prepares a structured BusinessContextPayload that is injected into the
-FileManager.ask system prompt via slot-filling. It encapsulates:
+This facade prepares a lightweight BusinessContextPayload that is injected into the
+FileManager.ask system prompt via slot-filling. The payload contains ONLY business-level
+context (no raw schemas, no sample rows, no tool names or syntax). It encapsulates:
   - role_description: Primary identity (data analyst for Midland Heart)
-  - domain_rules: Data sources, schemas, join logic, business rules
+  - domain_rules: Business relationships and cross-referencing logic (from config)
   - response_guidelines: Citation format, confidence scores, output style
-  - retrieval_hints: Domain-specific query patterns
+  - retrieval_hints: High-level query patterns (from config file_rules)
+  - data_overview: Natural-language description of available datasets
+
+The pipeline config JSON is the single source of truth for all domain knowledge.
+Tool-specific details (how to inspect schemas, etc.) live in tool docstrings.
 
 Sandbox mode:
   - If sandbox_mode=True, ask(...) returns the SteerableToolHandle directly.
@@ -81,33 +86,33 @@ class RepairsAgent:
 
     def _build_business_payload(self) -> Dict[str, Any]:
         """
-        Collect schema, searchable columns, samples, and rules for all repairs files.
+        Collect business rules, table names, and searchable columns for all repairs files.
         Best-effort: any failures return partial data.
 
+        This method provides a LIGHTWEIGHT payload for build_repairs_ask_instructions.
+        It does NOT include raw schemas or sample rows - those are accessed on-demand
+        by the FileManager's tools (not referenced here).
+
         Returns a payload structured with:
-        - global_rules: List[str] - cross-file rules
+        - global_rules: List[str] - cross-file business rules
         - files: Dict[file_path, file_payload] where file_payload contains:
             - file_rules: List[str] - rules for this file
             - tables: Dict[table_label, table_payload] where table_payload contains:
                 - table_rules: List[str] - rules for this table
-                - schema: List[Dict] - column info
-                - searchable_columns: List[str]
-                - samples: List[Dict]
+            - searchable_columns: List[str] - columns with embeddings
         """
         config_data = self._load_config_data()
-        fallback_descriptions = config_data["fallback_descriptions"]
         fallback_table_rules = config_data["fallback_table_rules"]
         file_paths = config_data["file_paths"]
         file_rules_map = config_data["file_rules"]
         global_rules = config_data["global_rules"]
 
-        # Build per-file payloads
+        # Build per-file payloads (lightweight - just rules and searchable cols)
         files_payload: Dict[str, Any] = {}
 
         for file_path in file_paths:
-            file_payload = self._build_file_payload(
+            file_payload = self._build_file_payload_lightweight(
                 file_path,
-                fallback_descriptions,
                 fallback_table_rules,
                 file_rules_map.get(file_path, []),
             )
@@ -173,15 +178,17 @@ class RepairsAgent:
             "global_rules": global_rules,
         }
 
-    def _build_file_payload(
+    def _build_file_payload_lightweight(
         self,
         file_path: str,
-        fallback_descriptions: Dict[str, Dict[str, Dict[str, str]]],
         fallback_table_rules: Dict[str, Dict[str, List[str]]],
         file_rules: List[str],
     ) -> Dict[str, Any]:
         """
-        Build schema, searchable columns, samples, and rules for a single file.
+        Build a lightweight payload with table names, rules, and searchable columns.
+
+        Does NOT include raw schemas or sample rows - those are accessed on-demand
+        by the FileManager's tools (not referenced here).
         """
         # Get tables overview for this file
         try:
@@ -205,24 +212,23 @@ class RepairsAgent:
         if not table_contexts:
             return {}
 
-        # Get fallback descriptions and rules for this file
-        file_fallback = fallback_descriptions.get(file_path, {})
+        # Get rules for this file
         file_table_rules = fallback_table_rules.get(file_path, {})
 
-        # Build per-table payloads
+        # Build per-table payloads (lightweight - just rules and searchable cols)
         tables_payload: Dict[str, Any] = {}
         all_searchable_cols: List[str] = []
 
         for table_label, ctx in table_contexts.items():
-            table_payload = self._build_table_payload(
-                ctx=ctx,
-                table_label=table_label,
-                fallback_col_descriptions=file_fallback.get(table_label, {}),
-                table_rules=file_table_rules.get(table_label, []),
-            )
-            if table_payload:
-                tables_payload[table_label] = table_payload
-                all_searchable_cols.extend(table_payload.get("searchable_columns", []))
+            # Get searchable columns from Unify fields
+            searchable_cols = self._get_searchable_columns(ctx)
+            all_searchable_cols.extend(searchable_cols)
+
+            # Only include table_rules if present
+            table_rules = file_table_rules.get(table_label, [])
+            tables_payload[table_label] = {
+                "table_rules": table_rules,
+            }
 
         return {
             "file_rules": file_rules,
@@ -230,31 +236,15 @@ class RepairsAgent:
             "searchable_columns": list(set(all_searchable_cols)),
         }
 
-    def _build_table_payload(
-        self,
-        ctx: str,
-        table_label: str,
-        fallback_col_descriptions: Dict[str, str],
-        table_rules: List[str],
-    ) -> Dict[str, Any]:
+    def _get_searchable_columns(self, ctx: str) -> List[str]:
         """
-        Build schema, searchable columns, samples, and rules for a single table context.
+        Get list of searchable (embedded) columns from a Unify context.
         """
-        # Get fields from Unify
-        fields: Dict[str, Any] = {}
         try:
             fields = unify.get_fields(context=ctx) or {}
         except Exception:
-            fields = {}
+            return []
 
-        # Track private fields to exclude from samples
-        exclude_fields = [
-            fname
-            for fname in list(fields.keys())
-            if isinstance(fname, str) and fname.startswith("_")
-        ]
-
-        # Derive searchable columns from _X_emb fields
         searchable_cols: List[str] = []
         for fname in list(fields.keys()):
             if (
@@ -266,50 +256,4 @@ class RepairsAgent:
                 if col and col not in searchable_cols:
                     searchable_cols.append(col)
 
-        # Build schema with descriptions
-        # Priority: 1) description from unify.get_fields, 2) fallback from config JSON
-        schema_rows: List[Dict[str, Any]] = []
-        for fname, field_info in fields.items():
-            if not isinstance(fname, str):
-                continue
-            if fname.startswith("_") and fname.endswith("_emb"):
-                continue  # skip vector columns from schema list
-
-            # Try to get description from field_info first
-            description = None
-            if isinstance(field_info, dict):
-                description = field_info.get("description")
-
-            # TODO: Remove this fallback once RepairsAgent project has finished ingestion
-            # and all column descriptions are stored in Unify fields directly.
-            if not description:
-                description = fallback_col_descriptions.get(fname)
-
-            schema_rows.append(
-                {
-                    "name": fname,
-                    "description": description,
-                },
-            )
-
-        # Fetch sample rows
-        samples: List[Dict[str, Any]] = []
-        try:
-            logs = unify.get_logs(
-                context=ctx,
-                limit=3,
-                exclude_fields=exclude_fields,
-            )
-            for lg in logs or []:
-                entry = getattr(lg, "entries", None)
-                if isinstance(entry, dict):
-                    samples.append(entry)
-        except Exception:
-            pass
-
-        return {
-            "table_rules": table_rules,
-            "schema": schema_rows,
-            "searchable_columns": searchable_cols,
-            "samples": samples,
-        }
+        return searchable_cols

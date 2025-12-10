@@ -8,8 +8,12 @@ are assembled into the final prompt in a consistent order.
 Design principles:
 - Business identity (role_description) appears FIRST in the final prompt
 - Generic capabilities come SECOND (tool descriptions, retrieval patterns)
-- Domain knowledge (domain_rules, retrieval_hints) comes THIRD
+- Domain knowledge (domain_rules, data_overview, retrieval_hints) comes THIRD
 - Response guidelines come LAST (recency effect)
+
+IMPORTANT: Domain harnesses should NOT contain tool names, tool syntax, or
+low-level usage examples. Those details belong in tool docstrings. The
+BusinessContextPayload is purely business-level context.
 """
 
 from __future__ import annotations
@@ -27,6 +31,12 @@ class BusinessContextPayload:
     clients/domains only need to construct a BusinessContextPayload; the
     generic prompt builders remain unchanged.
 
+    IMPORTANT: All fields should be purely business-level. Do NOT include:
+    - Tool names or tool syntax
+    - Low-level column names or JSON schemas
+    - Sample rows or raw data examples
+    Instead, use natural-language descriptions of business concepts and relationships.
+
     Attributes
     ----------
     role_description : str
@@ -35,11 +45,11 @@ class BusinessContextPayload:
         Example: "You are an expert data analyst for Midland Heart..."
 
     domain_rules : str
-        Domain-specific knowledge including:
-        - Data sources and file paths
-        - Schema descriptions and column meanings
-        - Join logic and cross-referencing rules
-        - Which columns are embedded for semantic search
+        Domain-specific knowledge in natural language:
+        - What datasets exist and their business purpose
+        - How entities relate to each other conceptually
+        - Cross-referencing logic between datasets
+        Do NOT include raw schemas, column lists, or sample data.
 
     response_guidelines : str
         Output format and style requirements:
@@ -50,12 +60,20 @@ class BusinessContextPayload:
 
     retrieval_hints : str | None
         Optional domain-specific query patterns:
-        - Which tables to query for specific question types
-        - Path-first references for this domain
-        - Temporal data split strategies (e.g., by month)
+        - Which logical datasets to query for specific question types
+        - Temporal data organization (e.g., split by month)
+        Keep this high-level; tool-specific syntax belongs in docstrings.
+
+    data_overview : str | None
+        Optional natural-language description of available datasets:
+        - Table names and their business purpose
+        - Key fields conceptually (not exhaustive column lists)
+        - Which columns support semantic search
+        This replaces raw JSON schema dumps in prompts.
     """
 
     role_description: str
     domain_rules: str
     response_guidelines: str
     retrieval_hints: Optional[str] = None
+    data_overview: Optional[str] = None

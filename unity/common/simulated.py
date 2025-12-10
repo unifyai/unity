@@ -885,28 +885,29 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     # Fallback – EXACTLY mirror FileManager.__init__ tool exposure
     if kind == "ask":
         return methods_to_tool_dict(
-            # Retrieval helpers
+            # Schema discovery
             FileManager._list_columns,
             FileManager._tables_overview,
+            FileManager._schema_explain,
+            FileManager._file_info,
+            # Retrieval helpers
             FileManager._filter_files,
             FileManager._search_files,
             FileManager._reduce,
             # Inventory listing
             FileManager.list,
-            # Ingest files when missing (policy enforced in prompts)
-            FileManager.ingest_files,
             # Delegate to file-scoped Q&A when needed
             FileManager.ask_about_file,
-            # Existence probe
-            FileManager.exists,
             include_class_name=False,
         )
     elif kind == "ask_about_file":
         return methods_to_tool_dict(
-            # Read-only helpers
-            FileManager.ingest_files,
+            # Schema discovery
+            FileManager._file_info,
             FileManager._list_columns,
             FileManager._tables_overview,
+            FileManager._schema_explain,
+            # Retrieval helpers
             FileManager._filter_files,
             FileManager._search_files,
             FileManager._reduce,
@@ -915,13 +916,13 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._search_join,
             FileManager._filter_multi_join,
             FileManager._search_multi_join,
-            FileManager.exists,
             include_class_name=False,
         )
     elif kind == "organize":
         return methods_to_tool_dict(
-            # Organize may call ask for discovery; mutations only here
+            # Discovery via ask
             FileManager.ask,
+            # Mutation tools
             FileManager._rename_file,
             FileManager._move_file,
             FileManager._delete_file,
@@ -930,12 +931,15 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     else:
         # Default to ask tools
         return methods_to_tool_dict(
-            FileManager.list,
-            FileManager.exists,
-            FileManager.ingest_files,
+            FileManager._list_columns,
+            FileManager._tables_overview,
+            FileManager._schema_explain,
+            FileManager._file_info,
             FileManager._filter_files,
             FileManager._search_files,
-            FileManager._list_columns,
+            FileManager._reduce,
+            FileManager.list,
+            FileManager.ask_about_file,
             include_class_name=False,
         )
 
