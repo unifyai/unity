@@ -555,3 +555,8 @@ def pytest_collection_finish(session):
         # a fresh project anyway
         unify.create_contexts(list(contexts))
         PRECREATED_CONTEXTS.update(contexts)
+
+
+@pytest.fixture(autouse=True)
+def _set_random_seed():
+    random.seed(42)
