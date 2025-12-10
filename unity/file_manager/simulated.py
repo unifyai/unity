@@ -5,10 +5,13 @@ import asyncio
 import json
 import functools
 import threading
-from typing import List, Dict, Any, Optional, Type, Union
+from typing import List, Dict, Any, Optional, Type, Union, TYPE_CHECKING
 
 import unify
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from unity.file_manager.types.ingest import IngestPipelineResult
 
 from .base import BaseFileManager, BaseGlobalFileManager
 from ..common.async_tool_loop import SteerableToolHandle
@@ -298,38 +301,56 @@ class SimulatedFileManager(BaseFileManager):
         except (ImportError, AttributeError):
             # Fallback if mirror function doesn't exist yet
             ask_tools = {
-                "list": {"description": "List all available files"},
-                "exists": {"description": "Check if a file exists"},
-                "parse": {"description": "Parse file content into structured records"},
-                "import_file": {"description": "Import a single file from filesystem"},
-                "import_directory": {
-                    "description": "Import all files from a directory",
+                "_list_columns": {"description": "List available table columns"},
+                "_tables_overview": {"description": "Get overview of available tables"},
+                "_schema_explain": {
+                    "description": "Get natural-language schema explanation",
                 },
-                "_search_files": {"description": "Semantic search over file contents"},
+                "_file_info": {
+                    "description": "Get comprehensive file status and identity",
+                },
                 "_filter_files": {
                     "description": "Filter files using boolean expressions",
                 },
-                "_list_columns": {"description": "List available table columns"},
+                "_search_files": {"description": "Semantic search over file contents"},
+                "_reduce": {"description": "Compute aggregates over rows"},
+                "list": {"description": "List all available files"},
+                "ask_about_file": {
+                    "description": "Ask questions about a specific file",
+                },
             }
 
         try:
             ask_about_file_tools = mirror_file_manager_tools("ask_about_file")
         except (ImportError, AttributeError):
             ask_about_file_tools = {
-                "parse": {"description": "Parse file content into structured records"},
+                "_file_info": {
+                    "description": "Get comprehensive file status and identity",
+                },
+                "_list_columns": {"description": "List available table columns"},
+                "_tables_overview": {"description": "Get overview of available tables"},
+                "_schema_explain": {
+                    "description": "Get natural-language schema explanation",
+                },
+                "_filter_files": {
+                    "description": "Filter files using boolean expressions",
+                },
+                "_search_files": {"description": "Semantic search over file contents"},
+                "_reduce": {"description": "Compute aggregates over rows"},
+                "_filter_join": {"description": "Filter-based join across tables"},
+                "_search_join": {"description": "Search-based join across tables"},
+                "_filter_multi_join": {"description": "Multi-table filter-based join"},
+                "_search_multi_join": {"description": "Multi-table search-based join"},
             }
 
         try:
             organize_tools = mirror_file_manager_tools("organize")
         except (ImportError, AttributeError):
             organize_tools = {
-                "list": {"description": "List all available files"},
-                "exists": {"description": "Check if a file exists"},
-                "_search_files": {"description": "Semantic search over file contents"},
-                "_filter_files": {
-                    "description": "Filter files using boolean expressions",
-                },
-                "_list_columns": {"description": "List available table columns"},
+                "ask": {"description": "Ask questions to discover files"},
+                "_rename_file": {"description": "Rename a file"},
+                "_move_file": {"description": "Move a file to a new location"},
+                "_delete_file": {"description": "Delete a file"},
             }
 
         # Build prompt using the new prompt builders
@@ -442,16 +463,24 @@ class SimulatedFileManager(BaseFileManager):
         """Check if a file exists in simulated storage."""
         return filename in self._files
 
-    def ingest_files(self, filenames, **options) -> Dict[str, Dict[str, Any]]:
+    def ingest_files(self, filenames, **options) -> "IngestPipelineResult":
         """
         Run the complete file processing pipeline: parse, ingest, and embed (simulated).
 
         This method simulates the full file processing workflow for testing.
+        Returns IngestPipelineResult consistent with the real FileManager.
         """
+        from unity.file_manager.types.ingest import (
+            IngestPipelineResult,
+            BaseIngestedFile,
+            ContentRef,
+            FileMetrics,
+        )
+
         if isinstance(filenames, str):
             filenames = [filenames]
 
-        results = {}
+        results: Dict[str, BaseIngestedFile] = {}
         for filename in filenames:
             if filename in self._files:
                 file_data = self._files[filename]
@@ -473,24 +502,31 @@ class SimulatedFileManager(BaseFileManager):
                         "application/vnd.ms-excel": "xlsx",
                     }
                     file_format = fmt_map.get(mime, "unknown")
-                results[filename] = {
-                    "status": "success",
-                    "records": file_data.get("records", []),
-                    "file_path": filename,
-                    "summary": file_data.get("description", ""),
-                    "file_format": file_format,
-                    "error": None,
-                }
-            else:
-                results[filename] = {
-                    "status": "error",
-                    "error": f"File '{filename}' not found",
-                    "records": [],
-                    "file_path": filename,
-                    "summary": "",
-                }
 
-        return results
+                records = file_data.get("records", [])
+                full_text = file_data.get("full_text", "")
+                results[filename] = BaseIngestedFile(
+                    file_path=filename,
+                    status="success",
+                    error=None,
+                    content_ref=ContentRef(
+                        context=f"simulated/{filename}/Content",
+                        record_count=len(records),
+                        text_chars=len(full_text),
+                    ),
+                    metrics=FileMetrics(processing_time=0.001),
+                    file_format=file_format,
+                )
+            else:
+                results[filename] = BaseIngestedFile(
+                    file_path=filename,
+                    status="error",
+                    error=f"File '{filename}' not found",
+                    content_ref=ContentRef(context="", record_count=0, text_chars=0),
+                    metrics=FileMetrics(processing_time=0.0),
+                )
+
+        return IngestPipelineResult.from_results(results)
 
     # --------------------------------------------------------------------- #
     # ask_about_file                                                        #
