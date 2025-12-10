@@ -39,6 +39,16 @@ from typing import (
     TypeVar,
 )
 
+from unity.file_manager.types.file import ParsedFile
+from unity.file_manager.types.ingest import (
+    BaseIngestedFile,
+    IngestedMinimal,
+    IngestPipelineResult,
+    ContentRef,
+    FileMetrics,
+    FileResultType,
+)
+
 if TYPE_CHECKING:
     from .progress import ProgressReporter
 
@@ -951,7 +961,7 @@ def build_file_result(
     graph: TaskGraph,
     task_results: Dict[str, TaskResult[Any]],
     file_start_time: float,
-    parse_result: Dict[str, Any],
+    parse_result: ParsedFile,
 ) -> Dict[str, Any]:
     """
     Aggregate all task results into a comprehensive file-level summary.
@@ -969,8 +979,8 @@ def build_file_result(
         Results for each task by ID.
     file_start_time : float
         Timestamp when file processing started.
-    parse_result : dict
-        Original parse result from the document.
+    parse_result : ParsedFile
+        Original parse result from the document (Pydantic model).
 
     Returns
     -------
@@ -999,7 +1009,7 @@ def build_file_result(
                 "failed_task_ids": list[str],
             },
             "retries_used": int,
-            "parse_result": dict,
+            "parse_result": ParsedFile,
         }
     """
     total_duration_ms = (time.perf_counter() - file_start_time) * 1000
@@ -1161,7 +1171,7 @@ def process_single_file(
     reporter: Optional["ProgressReporter"] = None,
     enable_progress: bool = False,
     verbosity: str = "low",
-) -> Dict[str, Any]:
+) -> FileResultType:
     """
     Process a single parsed document through the ingest+embed pipeline using task graphs.
 
@@ -1195,24 +1205,20 @@ def process_single_file(
 
     Returns
     -------
-    dict[str, Any]
-        Comprehensive result dict with:
-        - file_path: str
-        - status: "success" | "partial" | "error"
-        - total_duration_ms: float
-        - timing_breakdown: dict with per-phase timing
-        - chunks: dict with success counts
-        - failures: dict with failure counts and task IDs
-        - retries_used: int
-        - parse_result: original parse output
-        - error: str | None (if failed)
-        - traceback: str | None (if failed)
+    FileResultType
+        Result depends on config.output.return_mode:
+        - "compact" (default): IngestedFileUnion Pydantic model
+        - "full": ParsedFile Pydantic model (complete with records, full_text)
+        - "none": IngestedMinimal Pydantic model (just status stub)
     """
     file_start_time = time.perf_counter()
 
+    # Get return mode from config
+    return_mode = getattr(getattr(config, "output", None), "return_mode", "compact")
+
     try:
-        # 1. Get parse result from document
-        parse_result_model = document.to_parse_result(
+        # 1. Get parse result from document - returns ParsedFile Pydantic model
+        parse_result: ParsedFile = document.to_parse_result(
             file_path,
             auto_counting=(
                 config.ingest.auto_counting_per_file
@@ -1222,13 +1228,6 @@ def process_single_file(
             document_index=0,
             id_layout=getattr(config.ingest, "id_layout", "map"),
             id_string_format=getattr(config.ingest, "id_string_format", None),
-        )
-
-        # Convert ParsedFile Pydantic model to dict for task functions
-        parse_result = (
-            parse_result_model.model_dump()
-            if hasattr(parse_result_model, "model_dump")
-            else parse_result_model
         )
 
         # 2. Build task graph using the factory
@@ -1260,8 +1259,8 @@ def process_single_file(
         # 4. Execute the task graph
         task_results = executor.execute_graph(graph)
 
-        # 5. Aggregate results into file-level summary
-        result = build_file_result(
+        # 5. Aggregate results into file-level summary (dict for internal use)
+        result_dict = build_file_result(
             file_path,
             graph,
             task_results,
@@ -1275,11 +1274,36 @@ def process_single_file(
                 reporter,
                 file_path,
                 file_start_time,
-                result,
+                result_dict,
                 verbosity,
             )
 
-        return result
+        # 7. Build result based on return mode - ALL returns are Pydantic models
+        if return_mode == "full":
+            # Return ParsedFile Pydantic model directly (complete with records, full_text)
+            return parse_result
+        elif return_mode == "none":
+            # Return IngestedMinimal Pydantic model (just status stub)
+            return IngestedMinimal(
+                file_path=file_path,
+                status=parse_result.status,
+                error=parse_result.error,
+                total_records=parse_result.total_records,
+                file_format=(
+                    str(parse_result.file_format) if parse_result.file_format else None
+                ),
+            )
+        else:
+            # "compact" (default) - Build typed IngestedFileUnion Pydantic model
+            from .file_ops import build_compact_ingest_model
+
+            return build_compact_ingest_model(
+                file_manager,
+                file_path=file_path,
+                document=document,
+                parse_result=parse_result,
+                config=config,
+            )
 
     except Exception as e:
         tb_str = traceback.format_exc()
@@ -1303,22 +1327,30 @@ def process_single_file(
             )
             reporter.report(event)
 
-        return {
-            "file_path": file_path,
-            "status": "error",
-            "error": str(e),
-            "traceback": tb_str,
-            "total_duration_ms": elapsed_ms,
-            "timing_breakdown": {},
-            "chunks": {},
-            "failures": {
-                "ingest_failures": 0,
-                "embed_failures": 0,
-                "failed_task_ids": [],
-            },
-            "retries_used": 0,
-            "parse_result": {},
-        }
+        # Return error based on return mode - ALL returns are Pydantic models
+        if return_mode == "full":
+            return ParsedFile(
+                file_path=file_path,
+                status="error",
+                error=str(e),
+            )
+        elif return_mode == "none":
+            return IngestedMinimal(
+                file_path=file_path,
+                status="error",
+                error=str(e),
+                total_records=0,
+                file_format=None,
+            )
+        else:
+            # Return error model with minimal content_ref
+            return BaseIngestedFile(
+                file_path=file_path,
+                status="error",
+                error=str(e),
+                content_ref=ContentRef(context="", record_count=0, text_chars=0),
+                metrics=FileMetrics(processing_time=elapsed_ms / 1000.0),
+            )
 
 
 def run_pipeline(
@@ -1330,7 +1362,7 @@ def run_pipeline(
     reporter: Optional["ProgressReporter"] = None,
     enable_progress: bool = False,
     verbosity: str = "low",
-) -> Dict[str, Dict[str, Any]]:
+) -> IngestPipelineResult:
     """
     Run the complete file processing pipeline for multiple files.
 
@@ -1357,14 +1389,19 @@ def run_pipeline(
 
     Returns
     -------
-    dict[str, dict[str, Any]]
-        Results by file path, each containing timing breakdown, chunk counts,
-        and failure information.
+    IngestPipelineResult
+        Structured result containing per-file ingest results (all Pydantic models)
+        and global statistics. Individual file results depend on config.output.return_mode.
     """
-    if not documents or not file_paths:
-        return {}
+    pipeline_start_time = time.perf_counter()
 
-    results: Dict[str, Dict[str, Any]] = {}
+    if not documents or not file_paths:
+        return IngestPipelineResult()
+
+    # Get return mode for error handling
+    return_mode = getattr(getattr(config, "output", None), "return_mode", "compact")
+
+    results: Dict[str, FileResultType] = {}
 
     # Get execution config
     parallel = getattr(getattr(config, "execution", None), "parallel_files", False)
@@ -1416,23 +1453,41 @@ def run_pipeline(
                 except Exception as e:
                     tb_str = traceback.format_exc()
                     logger.error(f"Error processing {path}: {e}\n{tb_str}")
-                    results[path] = {
-                        "file_path": path,
-                        "status": "error",
-                        "error": str(e),
-                        "traceback": tb_str,
-                        "total_duration_ms": 0.0,
-                        "timing_breakdown": {},
-                        "chunks": {},
-                        "failures": {
-                            "ingest_failures": 0,
-                            "embed_failures": 0,
-                            "failed_task_ids": [],
-                        },
-                        "retries_used": 0,
-                    }
+                    # Return error based on return mode - ALL are Pydantic models
+                    if return_mode == "full":
+                        results[path] = ParsedFile(
+                            file_path=path,
+                            status="error",
+                            error=str(e),
+                        )
+                    elif return_mode == "none":
+                        results[path] = IngestedMinimal(
+                            file_path=path,
+                            status="error",
+                            error=str(e),
+                            total_records=0,
+                            file_format=None,
+                        )
+                    else:
+                        results[path] = BaseIngestedFile(
+                            file_path=path,
+                            status="error",
+                            error=str(e),
+                            content_ref=ContentRef(
+                                context="",
+                                record_count=0,
+                                text_chars=0,
+                            ),
+                            metrics=FileMetrics(),
+                        )
 
     if enable_progress and reporter:
         reporter.flush()
 
-    return results
+    # Calculate total duration
+    total_duration_ms = (time.perf_counter() - pipeline_start_time) * 1000
+
+    return IngestPipelineResult.from_results(
+        results,
+        total_duration_ms=total_duration_ms,
+    )

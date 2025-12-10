@@ -46,8 +46,9 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, List, Optional, Tuple, TYPE_CHECKING
 
+from unity.file_manager.types.file import ParsedFile
 from .ingest_ops import chunk_records, extract_table_metadata
 from .embed_ops import has_embedding_work
 
@@ -151,7 +152,7 @@ def build_file_task_graph(
     *,
     file_path: str,
     document: Any,
-    parse_result: Dict[str, Any],
+    parse_result: ParsedFile,
     config: "FilePipelineConfig",
     file_start_time: float,
 ) -> "TaskGraph":
@@ -171,8 +172,8 @@ def build_file_task_graph(
         The logical file path/identifier.
     document : Any
         The parsed document object.
-    parse_result : dict
-        The parse result dictionary.
+    parse_result : ParsedFile
+        The ParsedFile Pydantic model from Document.to_parse_result().
     config : FilePipelineConfig
         Pipeline configuration.
     file_start_time : float
@@ -275,7 +276,7 @@ def _build_content_chunk_tasks(
     *,
     file_manager: Any,
     file_path: str,
-    parse_result: Dict[str, Any],
+    parse_result: ParsedFile,
     config: "FilePipelineConfig",
     file_record_task_id: str,
     file_start_time: float,
@@ -293,7 +294,7 @@ def _build_content_chunk_tasks(
         execute_embed_content_chunk,
     )
 
-    records = list(parse_result.get("records", []) or [])
+    records = list(parse_result.records or [])
     if not records:
         logger.debug(f"[TaskFactory] No content records for {file_path}")
         return [], []
