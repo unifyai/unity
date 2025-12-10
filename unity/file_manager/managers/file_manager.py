@@ -13,11 +13,18 @@ from unity.common.tool_spec import manager_tool, read_only
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.parser.base import BaseParser
 from unity.file_manager.parser.docling_parser import DoclingParser
-from unity.file_manager.types.file import FileRecord
+from unity.file_manager.types.file import FileRecord, ParsedFile
 from unity.file_manager.types.config import (
     FilePipelineConfig as _FilePipelineConfig,
 )
-from unity.file_manager.parser.types.document import Document as _Doc
+from unity.file_manager.types.ingest import (
+    IngestPipelineResult,
+    BaseIngestedFile,
+    IngestedMinimal,
+    ContentRef,
+    FileMetrics,
+    FileResultType,
+)
 from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.prompt_builders import (
     build_file_manager_ask_prompt,
@@ -55,6 +62,7 @@ from .utils.storage import (
     provision_storage as _storage_provision,
     get_columns as _storage_get_columns,
     tables_overview as _storage_tables_overview,
+    schema_explain as _storage_schema_explain,
     ctx_for_file as _storage_ctx_for_file,
     ctx_for_file_table as _storage_ctx_for_file_table,
 )
@@ -162,20 +170,20 @@ class FileManager(BaseFileManager):
         # Public tool dictionaries, mirroring other managers
         # Ask/AskAboutFile tool surfaces (read-only). No ingest_files - this is read-only.
         ask_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # Retrieval helpers
+            # Schema discovery helpers
             self._list_columns,
             self._tables_overview,
+            self._schema_explain,
+            # File info (combines filesystem + index + ingest identity)
+            self._file_info,
+            # Retrieval helpers
             self._filter_files,
             self._search_files,
             self._reduce,
             # Inventory listing
             self.list,
-            # Unified stat helper (filesystem vs index)
-            self.stat,
             # Delegate to file-scoped Q&A when needed
             self.ask_about_file,
-            # Simple existence probe
-            self.exists,
             include_class_name=False,
         )
         # Multi-table tools (joins across per-file tables)
@@ -190,13 +198,13 @@ class FileManager(BaseFileManager):
         self.add_tools("ask.multi_table", ask_multi_table_tools)
         ask_about_file_tools: Dict[str, Callable] = methods_to_tool_dict(
             # Read-only helpers (no ingest_files - this is read-only)
-            self.stat,
+            self._file_info,
             self._list_columns,
             self._tables_overview,
+            self._schema_explain,
             self._filter_files,
             self._search_files,
             self._reduce,
-            self.exists,
             include_class_name=False,
         )
         self.add_tools("ask_about_file", ask_about_file_tools)
@@ -239,77 +247,82 @@ class FileManager(BaseFileManager):
         """
         _storage_provision(self)
 
-    # ------------------------- Identity helpers ----------------------------- #
-    def _build_file_identity(self, file_path: str):
+    # ------------------------- File info helper ----------------------------- #
+    @read_only
+    def _file_info(self, *, identifier: Union[str, int]):
         """
-        Build a FileIdentity for the given file_path.
+        Return comprehensive information about a file's status and ingest identity.
 
-        - Uses adapter metadata when available to enrich source_provider and display_path.
-        - Resolves source_uri via `_resolve_to_uri` as the canonical identity.
-        - Resolves ingest settings (ingest_mode, unified_label, table_ingest) from FileRecords.
+        Use this to get a complete picture of a file including filesystem presence,
+        index status, parse status, and ingest layout (per_file vs unified mode).
+
+        Parameters
+        ----------
+        identifier : str | int
+            File identifier. Accepted forms:
+            - Absolute file path: "/path/to/file.pdf"
+            - Provider URI: "local:///path/to/file.pdf", "gdrive://fileId"
+            - File ID (int): The numeric file_id from FileRecords
+
+        Returns
+        -------
+        FileInfo (Pydantic model)
+            - file_path: str - The resolved/queried path
+            - filesystem_exists: bool - True if file exists on disk
+            - indexed_exists: bool - True if file is in FileRecords index
+            - parsed_status: "success" | "error" | None - Parse result
+            - source_provider: str | None - Adapter/provider name
+            - source_uri: str | None - Canonical provider URI
+            - ingest_mode: "per_file" | "unified" - Storage layout
+            - unified_label: str | None - Bucket label (when unified)
+            - table_ingest: bool - Whether tables are in per-file /Tables/
+            - file_format: str | None - File format (pdf, xlsx, etc.)
+
+        Ingest modes
+        ------------
+        per_file mode:
+          - Content: <base>/Files/<alias>/<file>/Content
+          - Tables: <base>/Files/<alias>/<file>/Tables/<label>
+
+        unified mode:
+          - Content: <base>/Files/<alias>/<unified_label>/Content
+          - Tables: <base>/Files/<alias>/<file>/Tables/<label>
+          (Tables always remain per-file regardless of mode)
+
+        Usage Examples
+        --------------
+        # Check by file path:
+        info = file_info(identifier="/path/to/document.pdf")
+        if info.indexed_exists and info.parsed_status == "success":
+            filter_files(tables=["/path/to/document.pdf"], ...)
+
+        # Check by file_id:
+        info = file_info(identifier=42)
+
+        # Check by provider URI:
+        info = file_info(identifier="gdrive://abc123")
+
+        # File exists on disk but not indexed yet:
+        info = file_info(identifier="/path/to/new_file.xlsx")
+        if info.filesystem_exists and not info.indexed_exists:
+            # Needs to be ingested first
+
+        # Check ingest layout:
+        info = file_info(identifier="/path/to/data.xlsx")
+        if info.ingest_mode == "unified":
+            # Content is under unified_label context
+
+        Anti-patterns
+        -------------
+        - WRONG: Assuming a file is queryable without checking parsed_status
+          CORRECT: Verify parsed_status == "success" before querying content
+
+        - WRONG: Querying per-file Content for a unified-mode file
+          CORRECT: Check ingest_mode and use unified_label context if unified
         """
-        from unity.file_manager.types.file import FileIdentity as _FileIdentity
-        from os import path as _os_path
+        from .utils.storage import file_info as _storage_file_info
 
-        # Base provider/type and display path
-        try:
-            source_provider = (
-                getattr(self._adapter, "name", None)
-                or getattr(self, "_fs_type", None)
-                or "Unknown"
-            )
-        except Exception:
-            source_provider = getattr(self, "_fs_type", None) or "Unknown"
-
-        # Canonical URI
-        source_uri = self._resolve_to_uri(file_path)
-
-        # Prefer adapter's provider when available
-        try:
-            # Use path as-is (adapters handle both relative and absolute paths)
-            ref = self._adapter_get(file_id_or_path=file_path)
-            source_provider = str(ref.get("provider") or source_provider)
-        except Exception:
-            pass
-
-        # Ingest layout via storage resolver
-        ingest_mode = "per_file"
-        unified_label = None
-        table_ingest = True
-        try:
-            from .utils.storage import _resolve_file_target as _res_file_target  # type: ignore
-
-            # Use path as-is for querying
-            res = _res_file_target(self, file_path)
-            ingest_mode = res.get("ingest_mode", "per_file")
-            unified_label = res.get("unified_label")
-            # Prefer table_ingest from index row when present
-            try:
-                rows = unify.get_logs(
-                    context=self._ctx,
-                    filter=f"file_path == {file_path!r}",
-                    limit=1,
-                    from_fields=["table_ingest"],
-                )
-                if rows:
-                    table_ingest = bool(rows[0].entries.get("table_ingest", True))
-            except Exception:
-                table_ingest = True
-        except Exception:
-            pass
-
-        # Compute file_name from path
-        base = _os_path.basename(str(file_path))
-        name, _ext = _os_path.splitext(base)
-
-        return _FileIdentity(
-            file_path=str(file_path),
-            source_provider=source_provider,
-            source_uri=source_uri,
-            ingest_mode=ingest_mode,  # type: ignore[arg-type]
-            unified_label=unified_label,
-            table_ingest=bool(table_ingest),
-        )
+        return _storage_file_info(self, identifier=identifier)
 
     # ------------------------- Sync helper ---------------------------------- #
     def _sync(self, *, file_path: str) -> Dict[str, Any]:
@@ -330,8 +343,12 @@ class FileManager(BaseFileManager):
         dict
             Outcome with details about purge counts and the new ingest status.
         """
-        # Resolve identity and layout
-        ident = self._build_file_identity(file_path)
+        # Resolve identity and layout via file_info
+        info = self._file_info(identifier=file_path)
+        ingest_mode = info.get("ingest_mode", "per_file")
+        unified_label = info.get("unified_label")
+        table_ingest = info.get("table_ingest", True)
+
         overview = self._tables_overview(file=file_path)
         purged = {"content_rows": 0, "table_rows": 0}
 
@@ -339,26 +356,27 @@ class FileManager(BaseFileManager):
         try:
             from .utils.ops import delete_per_file_rows_by_filter as _ops_del_content
 
+            dest_path = (
+                file_path if ingest_mode == "per_file" else (unified_label or "Unified")
+            )
             purged["content_rows"] = int(
-                _ops_del_content(self, file_path=(file_path if ident.ingest_mode == "per_file" else (ident.unified_label or "Unified")), filter_expr=None),  # type: ignore[arg-type]
+                _ops_del_content(self, file_path=dest_path, filter_expr=None),
             )
         except Exception:
             pass
 
         # Purge per-file tables (when present)
         try:
-            if bool(getattr(ident, "table_ingest", True)):
+            if table_ingest:
                 from .utils.ops import (
                     delete_per_file_table_rows_by_filter as _ops_del_tbl,
                 )
 
-                # tables located under either the per-file root (per_file) or safe(file_path) branch (unified)
                 for key, val in overview.items():
-                    if key in ("FileRecords", str(getattr(ident, "unified_label", ""))):
+                    if key in ("FileRecords", str(unified_label or "")):
                         continue
                     tables = val.get("Tables") if isinstance(val, dict) else None
                     if not tables:
-                        # Flat variant: individual table entries at top-level (older shape)
                         continue
                     for tlabel in list(tables.keys()):
                         try:
@@ -390,18 +408,57 @@ class FileManager(BaseFileManager):
         """
         Synchronize a previously ingested file with the underlying filesystem.
 
-        This public tool purges existing rows (respecting ingest layout) and
-        re-parses/re-ingests the file, keeping contexts consistent.
+        Use this when a file's contents have changed on disk and you need to
+        update the index. This tool purges existing Content/Table rows and
+        re-parses the file from scratch, ensuring the index reflects current
+        file contents.
 
         Parameters
         ----------
         file_path : str
             The file identifier/path as used in FileRecords.file_path.
+            Use absolute paths for reliability.
 
         Returns
         -------
         dict
-            Outcome with purge counts and status.
+            Outcome with details:
+            - "outcome": "sync complete" or "sync failed"
+            - "purged": {"content_rows": int, "table_rows": int}
+            - "error": str (only on failure)
+
+        Usage Examples
+        --------------
+        # Sync a single file after it was updated:
+        sync(file_path="/path/to/updated_document.pdf")
+        # Returns: {"outcome": "sync complete", "purged": {"content_rows": 45, "table_rows": 3}}
+
+        # Re-index after external modifications:
+        modified_files = ["/path/to/a.pdf", "/path/to/b.xlsx"]
+        for f in modified_files:
+            result = sync(file_path=f)
+            if result["outcome"] == "sync failed":
+                print(f"Failed to sync {f}: {result.get('error')}")
+
+        # Verify sync worked:
+        result = sync(file_path="/path/to/file.pdf")
+        if result["outcome"] == "sync complete":
+            # Query the updated content
+            search_files(table="/path/to/file.pdf", ...)
+
+        Anti-patterns
+        -------------
+        - WRONG: Using sync on a file that doesn't exist in the filesystem
+          CORRECT: Verify exists() returns True before syncing
+
+        - WRONG: Syncing a file that hasn't changed (unnecessary work)
+          CORRECT: Only sync when you know the source file was modified
+
+        - WRONG: Expecting sync to preserve manual index modifications
+          CORRECT: Sync purges ALL existing rows and re-ingests from source
+
+        - WRONG: Using sync for initial ingestion
+          CORRECT: Use ingest_files for new files; sync is for updates only
         """
         return self._sync(file_path=file_path)
 
@@ -777,34 +834,62 @@ class FileManager(BaseFileManager):
         """
         Rename a file in the underlying filesystem and update index/context metadata.
 
+        This tool renames the file on disk AND updates all associated metadata
+        in the index. The file stays in its current directory; only the filename
+        changes. For moving to a different directory, use move_file instead.
+
         Parameters
         ----------
         file_id_or_path : str | int
-            Either the file_id (int) as preserved in the FileRecords index, or the
-            fully-qualified file_path (str) as stored in the FileRecords index/context.
-            When a file_id is provided, it is resolved to the corresponding file_path.
+            Either the file_id (int) from FileRecords, or the fully-qualified
+            file_path (str) as stored in the index. Use absolute paths for reliability.
         new_name : str
-            New file name; adapter determines path semantics.
+            New filename (not full path). Must include the file extension.
+            Example: "report_2024.pdf", not "/new/path/report.pdf"
 
         Returns
         -------
         dict
-            Adapter reference or a minimal dict with the new path/name.
-
-        Behaviour
-        ---------
-        - Propagates the rename across per-file contexts (and per-file tables) for
-          per_file ingest-mode. Unified mode keeps the unified Content context
-          unchanged and only renames per-file Tables contexts keyed by the safe
-          file path.
-        - Updates the FileRecords row (file_path, file_name).
+            Result containing the new path and any adapter-specific metadata.
+            {"file_path": str, "file_name": str, ...}
 
         Raises
         ------
         PermissionError
-            If rename is not permitted by the adapter.
+            If the file is protected or rename is not permitted.
         ValueError
-            If no or multiple FileRecords match the target.
+            If the file does not exist in the index.
+
+        Usage Examples
+        --------------
+        # Rename by file path:
+        rename_file(
+            file_id_or_path="/path/to/old_name.pdf",
+            new_name="new_name.pdf"
+        )
+
+        # Rename by file_id:
+        rename_file(file_id_or_path=42, new_name="renamed_file.xlsx")
+
+        # Rename with extension change (if adapter permits):
+        rename_file(
+            file_id_or_path="/path/to/document.doc",
+            new_name="document.docx"
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: new_name="/full/path/to/file.pdf" (including directory)
+          CORRECT: new_name="file.pdf" (filename only)
+
+        - WRONG: Renaming without verifying the file exists first
+          CORRECT: Use stat() or ask() to verify file exists before renaming
+
+        - WRONG: new_name="file" (missing extension)
+          CORRECT: new_name="file.pdf" (include extension)
+
+        - WRONG: Renaming protected files
+          CORRECT: Check is_protected() first or handle PermissionError
         """
         from .utils.ops import rename_file as _ops_rename
 
@@ -823,32 +908,62 @@ class FileManager(BaseFileManager):
         """
         Move a file to a different directory and update index/context metadata.
 
+        This tool moves the file on disk AND updates all associated metadata
+        in the index. The filename stays the same; only the directory changes.
+        For renaming the file, use rename_file instead.
+
         Parameters
         ----------
         file_id_or_path : str | int
-            Either the file_id (int) as preserved in the FileRecords index, or the
-            fully-qualified file_path (str) as stored in the FileRecords index/context.
-            When a file_id is provided, it is resolved to the corresponding file_path.
+            Either the file_id (int) from FileRecords, or the fully-qualified
+            file_path (str) as stored in the index. Use absolute paths for reliability.
         new_parent_path : str
-            Destination directory in adapter-native form.
+            Destination directory path. Must be an absolute path to an existing
+            directory. Example: "/new/destination/folder"
 
         Returns
         -------
         dict
-            Adapter reference or a minimal dict describing the updated path/parent.
-
-        Behaviour
-        ---------
-        - Propagates the new path across per-file contexts (and tables) for per_file
-          ingest-mode. Unified Content remains under the unified label.
-        - Updates the FileRecords row (file_path, file_path) to the new location.
+            Result containing the new path and any adapter-specific metadata.
+            {"file_path": str, ...}
 
         Raises
         ------
         PermissionError
-            If move is not permitted by the adapter.
+            If the file is protected or move is not permitted.
         ValueError
-            If no or multiple FileRecords match the target.
+            If the file does not exist in the index.
+
+        Usage Examples
+        --------------
+        # Move file to a different directory:
+        move_file(
+            file_id_or_path="/path/to/file.pdf",
+            new_parent_path="/archive/2024"
+        )
+
+        # Move by file_id:
+        move_file(file_id_or_path=42, new_parent_path="/processed")
+
+        # Organize files into folders:
+        # First query files to move:
+        files = filter_files(filter="status == 'success' and file_format == 'pdf'")
+        for f in files:
+            move_file(file_id_or_path=f["file_path"], new_parent_path="/documents/pdfs")
+
+        Anti-patterns
+        -------------
+        - WRONG: new_parent_path="/destination/newname.pdf" (including filename)
+          CORRECT: new_parent_path="/destination" (directory only)
+
+        - WRONG: Moving to a non-existent directory
+          CORRECT: Ensure destination directory exists first
+
+        - WRONG: Moving without verifying the file exists
+          CORRECT: Use stat() or ask() to verify file before moving
+
+        - WRONG: Cross-filesystem moves (moving between different adapters)
+          CORRECT: Move only within the same filesystem adapter
         """
         from .utils.ops import move_file as _ops_move
 
@@ -865,37 +980,64 @@ class FileManager(BaseFileManager):
         _log_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Delete a file record and purge related contexts according to ingest layout.
+        Delete a file from the filesystem and purge all related index data.
+
+        This tool removes the file from disk (when adapter supports it) AND
+        purges all associated index entries, Content rows, and per-file tables.
+        This is a DESTRUCTIVE operation that cannot be undone.
 
         Parameters
         ----------
         file_id_or_path : str | int
-            Either the file_id (int) as preserved in the FileRecords index, or the
-            fully-qualified file_path (str) as stored in the FileRecords index/context.
-            When a file_id is provided, it is resolved to the corresponding file_path.
+            Either the file_id (int) from FileRecords, or the fully-qualified
+            file_path (str) as stored in the index. Use absolute paths for reliability.
         _log_id : int | None
-            Optional existing log ID to delete (speeds up deletion).
+            Internal parameter; do not use directly.
 
         Returns
         -------
         dict
             {"outcome": "file deleted", "details": {"file_id": int, "file_path": str}}
 
-        Behaviour
-        ---------
-        - Per-file mode: drops the per-file Content context and all per-file Tables contexts.
-        - Unified mode: deletes only rows whose source_uri matches from the unified Content
-          context. Per-file Tables contexts for the file are removed when present.
-        - Adapter deletion is attempted when supported (capability-gated).
-
         Raises
         ------
         ValueError
-            If the file_id_or_path does not exist.
+            If the file does not exist in the index.
         PermissionError
             If the file is protected.
-        RuntimeError
-            If multiple rows exist for the same file_id_or_path (integrity issue).
+
+        Usage Examples
+        --------------
+        # Delete by file path:
+        delete_file(file_id_or_path="/path/to/obsolete_file.pdf")
+        # Returns: {"outcome": "file deleted", "details": {...}}
+
+        # Delete by file_id:
+        delete_file(file_id_or_path=42)
+
+        # Clean up failed ingests:
+        failed = filter_files(filter="status == 'error'")
+        for f in failed:
+            delete_file(file_id_or_path=f["file_path"])
+
+        # Delete outdated files:
+        old_files = filter_files(filter="created_at < '2023-01-01'")
+        for f in old_files:
+            delete_file(file_id_or_path=f["file_path"])
+
+        Anti-patterns
+        -------------
+        - WRONG: Deleting without verifying the file first
+          CORRECT: Use ask() or stat() to confirm file identity before deleting
+
+        - WRONG: Attempting to delete protected files without handling errors
+          CORRECT: Check is_protected() first or catch PermissionError
+
+        - WRONG: Deleting files that other processes depend on
+          CORRECT: Verify file is not referenced elsewhere before deletion
+
+        - WRONG: Bulk deletion without confirmation
+          CORRECT: For bulk operations, verify the filter returns expected files first
         """
         from .utils.ops import delete_file as _ops_delete
 
@@ -905,21 +1047,49 @@ class FileManager(BaseFileManager):
         """
         Check if a file exists in the adapter-backed filesystem.
 
-        This delegates to the adapter's ``exists`` method and does **not** look
-        at Unify logs or parsed/indexed state. Use it to answer "does this
-        path currently exist in the underlying filesystem?", regardless of
-        whether it has ever been parsed.
+        This checks ONLY the raw filesystem, NOT the index. Use this to answer
+        "does this path currently exist on disk?" regardless of whether it has
+        been parsed or indexed.
+
+        For complete status (filesystem + index + parse status), use stat() instead.
 
         Parameters
         ----------
         file_path : str
-            Adapter-native file path/identifier to check.
+            Adapter-native file path/identifier to check. Use absolute paths
+            for reliable results.
 
         Returns
         -------
         bool
             True if the adapter reports the file exists, False otherwise or
             when no adapter is configured.
+
+        Usage Examples
+        --------------
+        # Check if a file exists on disk:
+        if exists("/path/to/document.pdf"):
+            # File is present in filesystem
+            pass
+
+        # Verify before attempting to ingest:
+        if exists("/path/to/new_file.xlsx"):
+            ingest_files("/path/to/new_file.xlsx")
+
+        # Check multiple files:
+        files = ["/path/to/a.pdf", "/path/to/b.pdf"]
+        existing = [f for f in files if exists(f)]
+
+        Anti-patterns
+        -------------
+        - WRONG: Using exists() to check if a file has been indexed
+          CORRECT: Use stat() to check indexed_exists
+
+        - WRONG: Assuming exists() == True means content is queryable
+          CORRECT: File must also be indexed; use stat() for complete status
+
+        - WRONG: Using relative paths without knowing the adapter's working directory
+          CORRECT: Use absolute paths for reliable results
         """
         if self._adapter is None:
             return False
@@ -934,16 +1104,44 @@ class FileManager(BaseFileManager):
         """
         List all files visible to the underlying adapter.
 
-        This delegates to the adapter's ``list`` method and returns the set of
-        file paths/identifiers that the adapter can currently see. It does
-        **not** query Unify logs, so results are about raw filesystem presence,
-        not parsed/indexed state.
+        Returns file paths from the RAW FILESYSTEM, not the index. Use this to
+        discover what files are available for ingestion or to compare with
+        indexed files.
+
+        For querying indexed files, use filter_files() on the FileRecords table.
 
         Returns
         -------
         list[str]
             Adapter-native file paths/identifiers discoverable in the underlying
             filesystem, or an empty list if no adapter is configured or listing fails.
+
+        Usage Examples
+        --------------
+        # List all files in the filesystem:
+        files = list()
+        # Returns: ["/path/to/file1.pdf", "/path/to/file2.xlsx", ...]
+
+        # Find files not yet indexed:
+        filesystem_files = set(list())
+        indexed = filter_files()
+        indexed_paths = {r["file_path"] for r in indexed}
+        not_indexed = filesystem_files - indexed_paths
+
+        # Count available files:
+        file_count = len(list())
+
+        Anti-patterns
+        -------------
+        - WRONG: Using list() to query file metadata (status, parse info)
+          CORRECT: Use filter_files() on FileRecords for indexed file queries
+
+        - WRONG: Expecting list() to show only successfully parsed files
+          CORRECT: list() shows raw filesystem; filter_files(filter="status == 'success'")
+                   shows successfully indexed files
+
+        - WRONG: Using list() for large filesystems then filtering in Python
+          CORRECT: Use filter_files() with appropriate filters for efficient queries
         """
         if self._adapter is None:
             return []
@@ -953,7 +1151,7 @@ class FileManager(BaseFileManager):
             return []
         return list(items or [])
 
-    def ingest_files(self, file_paths: Union[str, List[str]], *, config: Optional[_FilePipelineConfig] = None) -> Dict[str, Any]:  # type: ignore[override]
+    def ingest_files(self, file_paths: Union[str, List[str]], *, config: Optional[_FilePipelineConfig] = None) -> "IngestPipelineResult":  # type: ignore[override]
         """
         Run the complete file processing pipeline: parse, ingest, and embed.
 
@@ -961,11 +1159,6 @@ class FileManager(BaseFileManager):
         1. Parse files using the configured parser to extract structured content
         2. Ingest parsed content into storage contexts (per-file or unified)
         3. Create embeddings based on the configured strategy (along, after, or off)
-
-        Return payload depends on cfg.output.return_mode:
-        - "compact" (default): format-specific Pydantic model (e.g., ParsedPDF, ParsedXlsx)
-        - "full": raw ParsedFile from Document.to_parse_result (includes heavy fields)
-        - "none": minimal stub with status/format/record counts
 
         Parameters
         ----------
@@ -978,15 +1171,20 @@ class FileManager(BaseFileManager):
 
         Returns
         -------
-        dict[str, Any]
-            Mapping of file path → compact Pydantic model, raw ParsedFile, or minimal stub per output mode.
+        IngestPipelineResult
+            Structured container with per-file ingest results (IngestedPDF, IngestedXlsx, etc.)
+            and global pipeline statistics. Supports dict-like access: result[file_path].
         """
         cfg = config or _FilePipelineConfig()
 
         if isinstance(file_paths, str):
             file_paths = [file_paths]
 
-        results: Dict[str, Any] = {}
+        # Get return mode for error handling
+        return_mode = getattr(getattr(cfg, "output", None), "return_mode", "compact")
+
+        # Track error results for files that fail early (before pipeline)
+        error_results: Dict[str, FileResultType] = {}
         exported_paths: List[str] = []
         exported_paths_to_original_paths: Dict[str, str] = {}
 
@@ -1020,11 +1218,37 @@ class FileManager(BaseFileManager):
                     exported_paths_to_original_paths[exported_path] = path
                 except Exception as e:
                     # Per-file export failure → do not fail the entire tool call
-                    results[path] = _Doc.error_result(path, f"export failed: {e}")
+                    # ALL returns are Pydantic models
+                    if return_mode == "full":
+                        error_results[path] = ParsedFile(
+                            file_path=path,
+                            status="error",
+                            error=f"export failed: {e}",
+                        )
+                    elif return_mode == "none":
+                        error_results[path] = IngestedMinimal(
+                            file_path=path,
+                            status="error",
+                            error=f"export failed: {e}",
+                            total_records=0,
+                            file_format=None,
+                        )
+                    else:
+                        error_results[path] = BaseIngestedFile(
+                            file_path=path,
+                            status="error",
+                            error=f"export failed: {e}",
+                            content_ref=ContentRef(
+                                context="",
+                                record_count=0,
+                                text_chars=0,
+                            ),
+                            metrics=FileMetrics(),
+                        )
 
             # Nothing exported successfully
             if not exported_paths:
-                return results
+                return IngestPipelineResult.from_results(error_results)
 
             enable_progress = bool(
                 getattr(getattr(cfg, "diagnostics", None), "enable_progress", False),
@@ -1105,13 +1329,38 @@ class FileManager(BaseFileManager):
                         else 0.0
                     )
                     # Batch failure → mark all remaining as errors
+                    # ALL returns are Pydantic models
                     for fp in exported_paths:
                         original_path = exported_paths_to_original_paths.get(fp)
-                        if original_path and original_path not in results:
-                            results[original_path] = _Doc.error_result(
-                                original_path,
-                                f"parse_batch failed: {e}",
-                            )
+                        if original_path and original_path not in error_results:
+                            if return_mode == "full":
+                                error_results[original_path] = ParsedFile(
+                                    file_path=original_path,
+                                    status="error",
+                                    error=f"parse_batch failed: {e}",
+                                )
+                            elif return_mode == "none":
+                                error_results[original_path] = IngestedMinimal(
+                                    file_path=original_path,
+                                    status="error",
+                                    error=f"parse_batch failed: {e}",
+                                    total_records=0,
+                                    file_format=None,
+                                )
+                            else:
+                                error_results[original_path] = BaseIngestedFile(
+                                    file_path=original_path,
+                                    status="error",
+                                    error=f"parse_batch failed: {e}",
+                                    content_ref=ContentRef(
+                                        context="",
+                                        record_count=0,
+                                        text_chars=0,
+                                    ),
+                                    metrics=FileMetrics(
+                                        processing_time=parse_duration_ms / 1000.0,
+                                    ),
+                                )
                             if enable_progress and _reporter is not None:
                                 from .utils.progress import create_progress_event
 
@@ -1125,7 +1374,7 @@ class FileManager(BaseFileManager):
                                         error=str(e),
                                     ),
                                 )
-                    return results
+                    return IngestPipelineResult.from_results(error_results)
             else:
                 try:
                     # Track parse start time for timing
@@ -1188,7 +1437,35 @@ class FileManager(BaseFileManager):
                         exported_paths[0],
                         exported_paths[0],
                     )
-                    results[original_path] = _Doc.error_result(original_path, str(e))
+                    # ALL returns are Pydantic models
+                    if return_mode == "full":
+                        error_results[original_path] = ParsedFile(
+                            file_path=original_path,
+                            status="error",
+                            error=str(e),
+                        )
+                    elif return_mode == "none":
+                        error_results[original_path] = IngestedMinimal(
+                            file_path=original_path,
+                            status="error",
+                            error=str(e),
+                            total_records=0,
+                            file_format=None,
+                        )
+                    else:
+                        error_results[original_path] = BaseIngestedFile(
+                            file_path=original_path,
+                            status="error",
+                            error=str(e),
+                            content_ref=ContentRef(
+                                context="",
+                                record_count=0,
+                                text_chars=0,
+                            ),
+                            metrics=FileMetrics(
+                                processing_time=parse_duration_ms / 1000.0,
+                            ),
+                        )
                     if enable_progress and _reporter is not None:
                         from .utils.progress import create_progress_event
 
@@ -1202,7 +1479,7 @@ class FileManager(BaseFileManager):
                                 error=str(e),
                             ),
                         )
-                    return results
+                    return IngestPipelineResult.from_results(error_results)
 
             # Build results and ingest per-file artifacts using the PipelineExecutor
             from .utils.executor import run_pipeline
@@ -1215,19 +1492,25 @@ class FileManager(BaseFileManager):
             # run_pipeline handles parallel vs sequential execution based on
             # cfg.execution.parallel_files internally
             verbosity = getattr(cfg.diagnostics, "verbosity", "low")
-            results.update(
-                run_pipeline(
-                    self,
-                    documents=documents,
-                    file_paths=original_paths,
-                    config=cfg,
-                    reporter=_reporter,
-                    enable_progress=enable_progress,
-                    verbosity=verbosity,
-                ),
+            pipeline_result = run_pipeline(
+                self,
+                documents=documents,
+                file_paths=original_paths,
+                config=cfg,
+                reporter=_reporter,
+                enable_progress=enable_progress,
+                verbosity=verbosity,
             )
 
-            return results
+            # Merge error results (from export/parse failures) with pipeline results
+            if error_results:
+                all_files = {**error_results, **pipeline_result.files}
+                return IngestPipelineResult.from_results(
+                    all_files,
+                    total_duration_ms=pipeline_result.statistics.total_duration_ms,
+                )
+
+            return pipeline_result
         finally:
             # Clean up temporary directory
             if temp_dir:
@@ -1267,27 +1550,92 @@ class FileManager(BaseFileManager):
         file: Optional[str] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Return an overview of contexts managed by this FileManager.
+        Return an overview of available tables/contexts managed by this FileManager.
+
+        Use this for discovery when you need to understand what data is available.
+        Returns logical table names that can be passed to other tools.
 
         Parameters
         ----------
         include_column_info : bool, default True
             When True and ``file`` is None, include the index schema (columns→types).
         file : str | None, default None
-            When provided, return a file-scoped overview listing the per-file
-            context and any extracted per‑table contexts for that file (schemas
-            are omitted for file‑scoped entries).
+            When None: returns ONLY the global FileRecords index overview.
+            When provided: returns file-scoped overview with Content and Tables
+            for that specific file (respecting its ingest mode).
 
         Returns
         -------
         dict[str, dict]
-            Overview mapping of logical names to metadata (e.g., description,
-            and optionally columns for the index context).
+            - file=None: {"FileRecords": {context, description, columns?}}
+            - file=<path> (per_file mode):
+              {"FileRecords": {...}, "<safe(file)>": {"Content": {...}, "Tables": {...}}}
+            - file=<path> (unified mode):
+              {"FileRecords": {...}, "<unified_label>": {"Content": {...}},
+               "<safe(file)>": {"Tables": {...}}}
+
+        Usage Examples
+        --------------
+        # Get global FileRecords index info:
+        tables_overview()
+        # Returns: {"FileRecords": {"context": "...", "columns": {...}}}
+
+        # Get file-specific overview (per_file mode):
+        tables_overview(file="/path/to/data.xlsx")
+        # Returns: {"FileRecords": {...}, "data_xlsx": {"Content": {...}, "Tables": {"Sheet1": {...}}}}
+
+        # Get file-specific overview (unified mode):
+        tables_overview(file="/path/to/data.xlsx")
+        # Returns: {"FileRecords": {...}, "Unified": {"Content": {...}}, "data_xlsx": {"Tables": {...}}}
+
+        # Use returned table references in other tools:
+        overview = tables_overview(file="/path/to/data.xlsx")
+        # Then: filter_files(tables=["/path/to/data.xlsx.Tables.Sheet1"])
         """
         return _storage_tables_overview(
             self,
             include_column_info=include_column_info,
             file=file,
+        )
+
+    @read_only
+    def _schema_explain(self, *, table: str) -> str:
+        """
+        Return a natural-language explanation of a table's structure and purpose.
+
+        Use this when you need deeper semantic understanding of a table beyond
+        what list_columns provides.
+
+        Parameters
+        ----------
+        table : str
+            Table reference (path-first preferred):
+            - "<file_path>" for per-file Content
+            - "<file_path>.Tables.<label>" for per-file tables
+            - "FileRecords" for the global file index
+
+        Returns
+        -------
+        str
+            Compact natural-language explanation including:
+            - What the table represents
+            - Key fields and their meanings
+            - Approximate row count
+
+        Usage Examples
+        --------------
+        # Get explanation of the FileRecords index:
+        schema_explain(table="FileRecords")
+
+        # Get explanation of a per-file Table:
+        schema_explain(table="/path/to/data.xlsx.Tables.Orders")
+
+        # Get explanation of per-file Content:
+        schema_explain(table="/path/to/document.pdf")
+        """
+        return _storage_schema_explain(
+            self,
+            table=table,
         )
 
     @read_only
@@ -1323,45 +1671,100 @@ class FileManager(BaseFileManager):
         """
         Compute reduction metrics over the FileRecords index or a resolved table.
 
+        This is the PRIMARY tool for any quantitative question (counts, sums,
+        averages, statistics). Always use reduce instead of fetching rows and
+        computing aggregates in-memory.
+
         Parameters
         ----------
         table : str | None, default None
-            Table reference to aggregate. Accepted forms mirror
-            :py:meth:`_filter_files` and :py:meth:`_search_files`:
-            logical names from :py:meth:`_tables_overview` such as
-            ``\"FileRecords\"``, path-first forms like ``\"<file_path>\"`` or
-            ``\"<file_path>.Tables.<label>\"``, or legacy refs such as
-            ``\"<file_path>:<table>\"``. When ``None``, aggregates over the
-            main FileRecords index.
+            Table reference to aggregate. Accepted forms:
+            - Path-first (preferred): "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names: "FileRecords" for index
+            When None, aggregates over the main FileRecords index.
         metric : str
-            Reduction metric to compute. Supported values (case-insensitive) are
-            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
-            ``\"max\"``, ``\"median\"``, ``\"mode\"``, and ``\"count\"``.
+            Reduction metric to compute. Supported values (case-insensitive):
+            "count", "sum", "mean", "min", "max", "median", "mode", "var", "std".
         keys : str | list[str]
-            One or more numeric columns in the resolved context to aggregate. A
-            single column name returns a scalar; a list of column names
-            computes the metric independently per key and returns a
-            ``{key -> value}`` mapping.
+            Column(s) to aggregate. A single column returns a scalar; multiple
+            columns return a dict mapping each key to its computed value.
         filter : str | dict[str, str] | None, default None
-            Optional row-level filter expression(s) using the same Python
-            syntax as :py:meth:`_filter_files`. When a string, the expression
-            is applied uniformly; when a dict, each key maps to its own filter
-            expression.
+            Optional row-level filter expression(s). Supports arbitrary Python
+            expressions evaluated per row. Apply filters here to narrow the
+            dataset BEFORE aggregation for efficiency.
         group_by : str | list[str] | None, default None
-            Optional column(s) to group by. Use a single column name for one
-            grouping level, or a list such as ``[\"status\", \"file_id\"]`` to
-            group hierarchically in that order. When provided, the result
-            becomes a nested mapping keyed by group values, mirroring
-            :func:`unify.get_logs_metric` behaviour.
+            Optional column(s) to group by. Single column for one grouping level,
+            or a list for hierarchical grouping. Result becomes a nested dict
+            keyed by group values.
 
         Returns
         -------
         Any
             Metric value(s) computed over the resolved context:
+            - Single key, no grouping  → scalar (float/int/str/bool)
+            - Multiple keys, no grouping → dict[key -> scalar]
+            - With grouping → nested dict keyed by group values
 
-            * Single key, no grouping  → scalar (float/int/str/bool).
-            * Multiple keys, no grouping → ``dict[key -> scalar]``.
-            * With grouping             → nested ``dict`` keyed by group values.
+        Usage Examples
+        --------------
+        # Count all files in the index:
+        reduce(metric='count', keys='file_id')
+        # Returns: 42
+
+        # Count with filter:
+        reduce(
+            metric='count',
+            keys='file_id',
+            filter="status == 'success'"
+        )
+        # Returns: 38
+
+        # Sum a numeric column in a per-file table:
+        reduce(
+            table='/path/to/data.xlsx.Tables.Orders',
+            metric='sum',
+            keys='amount',
+            filter="status == 'complete'"
+        )
+        # Returns: 15420.50
+
+        # Average with grouping (breakdown by category):
+        reduce(
+            table='/path/to/data.xlsx.Tables.Orders',
+            metric='mean',
+            keys='amount',
+            group_by='category'
+        )
+        # Returns: {'Electronics': 245.00, 'Furniture': 890.50, ...}
+
+        # Multiple metrics on same table (call reduce multiple times):
+        count = reduce(table='...', metric='count', keys='id')
+        total = reduce(table='...', metric='sum', keys='amount')
+        avg = reduce(table='...', metric='mean', keys='amount')
+
+        # Hierarchical grouping:
+        reduce(
+            table='/path/to/data.xlsx.Tables.Sales',
+            metric='sum',
+            keys='revenue',
+            group_by=['region', 'quarter']
+        )
+        # Returns: {'North': {'Q1': 1000, 'Q2': 1200}, 'South': {'Q1': 800, ...}}
+
+        Anti-patterns
+        -------------
+        - WRONG: filter_files(...) then count rows in Python
+          CORRECT: reduce(metric='count', keys='id', filter=...)
+
+        - WRONG: filter_files(...) then sum values in Python
+          CORRECT: reduce(metric='sum', keys='amount', filter=...)
+
+        - WRONG: Calling reduce without specifying the table when you need a per-file table
+          CORRECT: Always specify table='/path/to/file.xlsx.Tables.TableName'
+
+        - WRONG: Using reduce for text/categorical analysis
+          CORRECT: Use search_files for semantic queries, filter_files for exact matches
         """
         if table is None:
             ctx = self._ctx
@@ -1389,26 +1792,43 @@ class FileManager(BaseFileManager):
         """
         List columns for the FileRecords index or a resolved logical table.
 
+        Use this to inspect a table's schema before writing filter expressions
+        or selecting columns for retrieval.
+
         Parameters
         ----------
         include_types : bool, default True
-            When True, return a mapping of column → type; otherwise return the
-            list of column names only.
+            When True, return a mapping of column → type (e.g., {"name": "str"}).
+            When False, return just the list of column names.
         table : str | None, default None
-            When provided, resolve the logical name (e.g., "<file_path>",
-            "<file_path>.Tables.<label>") or legacy ref and return that context's
-            columns. When None, return the FileRecords index columns.
+            Table reference to inspect. Accepted forms:
+            - Path-first: "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names: "FileRecords" for global index
+            When None, returns the FileRecords index columns.
 
         Returns
         -------
         dict[str, str] | list[str]
-            Column→type mapping or a list of column names.
+            Column→type mapping (when include_types=True) or list of column names.
 
-        Examples
-        --------
-        - _list_columns() → FileRecords schema
-        - _list_columns(table="Q1_Report") → per-file Content schema
-        - _list_columns(table="Q1_Report.Tables.Products") → table schema
+        Usage Examples
+        --------------
+        # Get FileRecords index schema:
+        list_columns()
+        # Returns: {"file_id": "int", "file_path": "str", "status": "str", ...}
+
+        # Get per-file Content columns:
+        list_columns(table="/path/to/document.pdf")
+        # Returns: {"content_id": "dict", "content_type": "str", "content_text": "str", ...}
+
+        # Get per-file table columns:
+        list_columns(table="/path/to/data.xlsx.Tables.Orders")
+        # Returns: {"order_id": "str", "amount": "float", "customer": "str", ...}
+
+        # Get just column names (no types):
+        list_columns(table="/path/to/data.xlsx.Tables.Orders", include_types=False)
+        # Returns: ["order_id", "amount", "customer", ...]
         """
         if table is None:
             cols = self._get_columns()
@@ -1433,28 +1853,85 @@ class FileManager(BaseFileManager):
         """
         Filter files (index) or resolve-and-filter per-file Content/Tables.
 
+        Use this tool for exact matches on structured fields (ids, statuses, dates).
+
         Parameters
         ----------
         filter : str | None
-            Python boolean expression evaluated with column names in scope.
+            Arbitrary Python expression evaluated with column names in scope.
+            The expression is evaluated per row; any valid Python syntax that
+            returns a boolean is supported. String values must be quoted.
+            Use .get() for safe dict access on fields like content_id.
         offset : int
             Zero-based pagination offset per context.
         limit : int
-            Maximum rows per context (<= 1000).
+            Maximum rows per context.
         tables : list[str] | str | None
             Table references to filter. Accepted forms:
-            - Path-first (preferred): "<file_path>" for per-file Content,
+            - Path-first: "<file_path>" for per-file Content,
               "<file_path>.Tables.<label>" for per-file tables
-            - Logical names from `tables_overview()`: "FileRecords" for index,
-              or legacy refs like "<root>" (deprecated)
-            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+            - "FileRecords" for the global index
             When None, only the FileRecords index is scanned.
 
         Returns
         -------
         list[dict]
-            Flat list of rows collected from the index (when tables=None) or
-            concatenated rows from all resolved contexts.
+            Flat list of rows from the resolved contexts.
+
+        Per-file Content: content_id structure
+        --------------------------------------
+        The `content_id` column in per-file Content encodes document hierarchy:
+        - document row: {"document": 0}
+        - section row: {"document": 0, "section": 2}
+        - paragraph row: {"document": 0, "section": 2, "paragraph": 1}
+        - sentence row: {"document": 0, "section": 2, "paragraph": 1, "sentence": 3}
+        - table row: {"document": 0, "section": 2, "table": 0}
+        - image row: {"document": 0, "section": 2, "image": 0}
+
+        Use .get() accessor for safe filtering:
+        - filter="content_id.get('section') == 2"
+        - filter="content_id.get('document') == 0 and content_type == 'paragraph'"
+
+        Usage Examples
+        --------------
+        # Filter FileRecords index by status:
+        filter_files(filter="status == 'success'")
+
+        # Filter per-file table with date range:
+        filter_files(
+            filter="created_at >= '2024-01-01' and created_at < '2024-02-01'",
+            tables=['/path/to/file.xlsx.Tables.Orders']
+        )
+
+        # Paginate through results:
+        filter_files(filter="...", offset=0, limit=30)
+        filter_files(filter="...", offset=30, limit=30)
+
+        # Filter per-file Content by hierarchy:
+        filter_files(
+            filter="content_type == 'table' and content_id.get('section') == 2",
+            tables=['/path/to/file.pdf']
+        )
+
+        # Get all images from a document:
+        filter_files(
+            filter="content_type == 'image'",
+            tables=['/path/to/doc.pdf']
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: filter="visit_date == '2024-01'" (partial date equality fails)
+          CORRECT: filter="visit_date >= '2024-01-01' and visit_date < '2024-02-01'"
+
+        - WRONG: filter="description.contains('budget')" (substring for meaning)
+          CORRECT: Use search_files(references={'description': 'budget'}) instead
+
+        - WRONG: filter="content_id['section'] == 2" (direct dict indexing fails)
+          CORRECT: filter="content_id.get('section') == 2"
+
+        - WRONG: Fetching rows just to count them
+          CORRECT: Use reduce(metric='count', keys='id') instead
         """
         normalized = normalize_filter_expr(filter)
         from .utils.search import filter_files as _srch_filter_files
@@ -1480,29 +1957,84 @@ class FileManager(BaseFileManager):
         """
         Semantic search over a resolved context using one or more reference texts.
 
+        Use this tool when searching by meaning, topics, or concepts in text fields.
+        For exact matches on structured fields (ids, statuses), use filter_files instead.
+
         Parameters
         ----------
         references : dict[str, str] | None
-            Mapping of source_expr → reference_text. Source expressions can be
-            column names or derived expressions. When omitted, returns recent files.
+            Mapping of column_name → reference_text for semantic matching.
+            When omitted, returns recent files without semantic ranking.
         k : int
-            Number of results to return (1..1000).
-
+            Number of results to return. Start with 10, increase if needed.
+            Maximum 100, but prefer smaller values to avoid context overflow.
         table : str | None
             Table reference to search. Accepted forms:
             - Path-first (preferred): "<file_path>" for per-file Content,
               "<file_path>.Tables.<label>" for per-file tables
-            - Logical names: "FileRecords" for index, or legacy refs like "<root>" (deprecated)
-            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+            - Logical names: "FileRecords" for index
             When None, defaults to the global FileRecords index.
-
         filter : str | None
-            Row-level predicate (evaluated with column names as variables).
+            Optional row-level predicate to narrow results before semantic ranking.
+            Supports arbitrary Python expressions evaluated per row.
 
         Returns
         -------
         list[dict]
             Up to k rows ranked by similarity from the resolved context.
+
+        Usage Examples
+        --------------
+        # Semantic search over FileRecords index by summary:
+        search_files(references={'summary': 'fire safety regulations'}, k=10)
+
+        # Search per-file Content for paragraphs about a topic:
+        search_files(
+            references={'content_text': 'payment terms and conditions'},
+            table='/path/to/contract.pdf',
+            k=5
+        )
+
+        # Combine semantic search with exact filter:
+        search_files(
+            references={'description': 'heating system repair'},
+            filter="status == 'success'",
+            k=10
+        )
+
+        # Search a specific per-file table:
+        search_files(
+            references={'Vehicle': 'Stuart Birks'},
+            table='/path/to/telematics.xlsx.Tables.July_2025',
+            k=20
+        )
+
+        # Tiered search strategy for documents:
+        # 1. Paragraphs first (highest precision):
+        search_files(
+            references={'summary': '<query>'},
+            filter="content_type == 'paragraph'",
+            table='/path/to/doc.pdf',
+            k=10
+        )
+        # 2. Sections if paragraphs insufficient:
+        search_files(
+            references={'summary': '<query>'},
+            filter="content_type == 'section'",
+            table='/path/to/doc.pdf',
+            k=5
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: references={'id': 'search term'} (id is not a text column)
+          CORRECT: Only use text columns in references
+
+        - WRONG: Using search_files for exact id/status lookup
+          CORRECT: Use filter_files(filter="id == 123") for exact matches
+
+        - WRONG: k=500 (too many results flood context)
+          CORRECT: Start with k=10, increase only if needed
         """
         from .utils.search import search_files as _srch_search_files
 
@@ -1532,31 +2064,97 @@ class FileManager(BaseFileManager):
         """
         Join two sources and return rows from the joined result with optional filtering.
 
+        Use this tool to correlate data across two tables (e.g., repairs data
+        with telematics data). Push filters into left_where/right_where to
+        reduce data before joining for efficiency.
+
         Parameters
         ----------
         tables : list[str] | str
             Exactly two table references. Accepted forms:
             - Path-first (preferred): "<file_path>" for per-file Content,
               "<file_path>.Tables.<label>" for per-file tables
-            - Logical names from `tables_overview()` or legacy refs
-            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+            - Logical names from `tables_overview()`
         join_expr : str
-            Join predicate using the same identifiers as in ``tables`` (auto-rewritten).
+            Join predicate using table references as prefixes.
+            Example: "Repairs.operative == Telematics.driver"
+            The identifiers in join_expr should match the table references in tables.
         select : dict[str, str]
-            Mapping of source expressions → output names.
+            Mapping of source expressions → output column names.
+            Keys use "TableRef.column" format; values are the output names.
         mode : str
-            One of {"inner", "left", "right", "outer"}.
+            Join mode: "inner" (default), "left", "right", or "outer".
         left_where, right_where : str | None
-            Optional input predicates before joining.
+            Optional filters applied to left/right tables BEFORE joining.
+            Supports arbitrary Python expressions. Use to narrow inputs.
         result_where : str | None
-            Predicate applied to the joined result over the projected columns.
+            Filter applied to the joined result. Supports arbitrary Python
+            expressions but can only reference column names from `select` output.
         result_limit, result_offset : int
-            Pagination parameters; limit <= 1000.
+            Pagination parameters for the result. Start with limit=30.
 
         Returns
         -------
         dict[str, list[dict[str, Any]]]
             Rows from the materialized join context.
+
+        Usage Examples
+        --------------
+        # Join repairs with telematics by operative name:
+        filter_join(
+            tables=[
+                '/path/repairs.xlsx.Tables.Jobs',
+                '/path/telematics.xlsx.Tables.July_2025'
+            ],
+            join_expr="Jobs.OperativeWhoCompletedJob == July_2025.Driver",
+            select={
+                'Jobs.JobTicketReference': 'job_ref',
+                'Jobs.FullAddress': 'address',
+                'July_2025.Departure': 'trip_start',
+                'July_2025.Arrival': 'trip_end'
+            },
+            mode='inner',
+            result_limit=30
+        )
+
+        # With input filters to narrow before joining:
+        filter_join(
+            tables=['TableA', 'TableB'],
+            join_expr="TableA.id == TableB.a_id",
+            select={'TableA.id': 'id', 'TableB.score': 'score'},
+            left_where="TableA.status == 'active'",
+            right_where="TableB.score > 0",
+            result_limit=50
+        )
+
+        # Left join to keep all left rows:
+        filter_join(
+            tables=['Orders', 'Shipments'],
+            join_expr="Orders.order_id == Shipments.order_id",
+            select={'Orders.order_id': 'oid', 'Shipments.shipped_date': 'shipped'},
+            mode='left',
+            result_limit=30
+        )
+
+        # Filter the joined result (use output column names from select):
+        filter_join(
+            tables=['A', 'B'],
+            join_expr="A.id == B.id",
+            select={'A.name': 'name', 'B.value': 'val'},
+            result_where="val > 100",  # Uses 'val' from select, not 'B.value'
+            result_limit=30
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: result_where="B.value > 100" (references original table column)
+          CORRECT: result_where="val > 100" (uses output name from select)
+
+        - WRONG: Joining without input filters when tables are large
+          CORRECT: Use left_where/right_where to narrow before joining
+
+        - WRONG: result_limit=500 (too many rows)
+          CORRECT: Start with result_limit=30, paginate with result_offset
         """
         return _srch_filter_join(
             self,
@@ -1588,33 +2186,79 @@ class FileManager(BaseFileManager):
         """
         Perform a semantic search over the result of joining two sources.
 
+        Use this when you need to join tables AND rank results by semantic
+        similarity to a query. Combines the power of joins with semantic search.
+
         Parameters
         ----------
         tables : list[str] | str
-            Exactly two table references. Accepted forms:
+            Exactly two table references. Use path-first format:
             - Path-first (preferred): "<file_path>" for per-file Content,
               "<file_path>.Tables.<label>" for per-file tables
-            - Logical names from `tables_overview()` or legacy refs
-            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+            - Logical names from `tables_overview()`
         join_expr : str
-            Join predicate using the same identifiers as in ``tables`` (auto-rewritten).
+            Join predicate using table references as prefixes.
         select : dict[str, str]
-            Mapping of source expressions → output names.
+            Mapping of source expressions → output column names.
+            Include text columns you want to search semantically.
         mode : str
-            One of {"inner", "left", "right", "outer"}.
+            Join mode: "inner" (default), "left", "right", or "outer".
         left_where, right_where : str | None
-            Optional input predicates before joining.
+            Optional filters applied to tables BEFORE joining.
+            Supports arbitrary Python expressions.
         references : dict[str, str] | None
-            Mapping of expressions in the join result → reference text for semantic ranking.
+            Mapping of OUTPUT column names → reference text for semantic ranking.
+            Use column names from the `select` values, not original table columns.
         k : int
-            Maximum rows to return (<= 1000).
+            Maximum rows to return. Start with 10.
         filter : str | None
             Optional predicate over the joined result before ranking.
+            Supports arbitrary Python expressions; uses output column names.
 
         Returns
         -------
         list[dict[str, Any]]
             Top-k rows ranked by semantic similarity.
+
+        Usage Examples
+        --------------
+        # Join repairs and telematics, then search by address:
+        search_join(
+            tables=[
+                '/path/repairs.xlsx.Tables.Jobs',
+                '/path/telematics.xlsx.Tables.July_2025'
+            ],
+            join_expr="Jobs.OperativeWhoCompletedJob == July_2025.Driver",
+            select={
+                'Jobs.JobTicketReference': 'job_ref',
+                'Jobs.FullAddress': 'address',
+                'July_2025.End location': 'destination'
+            },
+            references={'address': 'Birmingham city centre'},
+            k=10
+        )
+
+        # Combine semantic search with exact filter on joined result:
+        search_join(
+            tables=['Products', 'Reviews'],
+            join_expr="Products.id == Reviews.product_id",
+            select={
+                'Products.name': 'product_name',
+                'Reviews.text': 'review_text',
+                'Reviews.rating': 'rating'
+            },
+            references={'review_text': 'excellent quality'},
+            filter="rating >= 4",
+            k=20
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: references={'Jobs.FullAddress': 'query'} (uses original column)
+          CORRECT: references={'address': 'query'} (uses select output name)
+
+        - WRONG: filter="Jobs.status == 'complete'" (uses original column)
+          CORRECT: Include status in select, then filter="status == 'complete'"
         """
         return _srch_search_join(
             self,
@@ -1641,26 +2285,91 @@ class FileManager(BaseFileManager):
         """
         Chain multiple joins, then return rows from the final joined result.
 
+        Use this for complex queries requiring more than two tables. Each step
+        can reference the previous step's result using "$prev".
+
         Parameters
         ----------
         joins : list[dict]
-            Ordered steps; each step provides ``tables`` (two refs or "$prev"),
-            ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
-            Table references in ``tables`` accept:
-            - Path-first (preferred): "<file_path>" for per-file Content,
-              "<file_path>.Tables.<label>" for per-file tables
-            - Logical names from `tables_overview()` or legacy refs
-            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
-            - "$prev" to reference the previous join step's result
+            Ordered steps. Each step is a dict with:
+            - tables: list of 2 refs. Use "$prev" to reference previous step's result.
+            - join_expr: join predicate using table refs or "prev" as prefix.
+            - select: dict mapping source expressions → output names.
+            - mode (optional): "inner", "left", "right", "outer".
+            - left_where, right_where (optional): input filters (arbitrary Python).
         result_where : str | None
-            Predicate applied to the final joined result over projected columns.
+            Filter applied to the FINAL result. Supports arbitrary Python
+            expressions; uses column names from the last step's select output.
         result_limit, result_offset : int
-            Pagination parameters; limit <= 1000.
+            Pagination parameters. Start with limit=30.
 
         Returns
         -------
         dict[str, list[dict[str, Any]]]
             Rows from the final materialized context.
+
+        Usage Examples
+        --------------
+        # Chain three tables: A → B → C
+        filter_multi_join(
+            joins=[
+                # Step 1: Join A and B
+                {
+                    'tables': ['TableA', 'TableB'],
+                    'join_expr': 'TableA.id == TableB.a_id',
+                    'select': {'TableA.id': 'id', 'TableB.value': 'b_value'}
+                },
+                # Step 2: Join previous result with C
+                {
+                    'tables': ['$prev', 'TableC'],
+                    'join_expr': 'prev.id == TableC.ref_id',
+                    'select': {'prev.id': 'id', 'prev.b_value': 'b_val', 'TableC.name': 'c_name'}
+                }
+            ],
+            result_where="b_val > 100",
+            result_limit=30
+        )
+
+        # Real example: Repairs → Telematics July → Telematics August
+        filter_multi_join(
+            joins=[
+                {
+                    'tables': [
+                        '/path/repairs.xlsx.Tables.Jobs',
+                        '/path/telematics.xlsx.Tables.July_2025'
+                    ],
+                    'join_expr': 'Jobs.OperativeWhoCompletedJob == July_2025.Driver',
+                    'select': {
+                        'Jobs.JobTicketReference': 'job_ref',
+                        'Jobs.OperativeWhoCompletedJob': 'operative',
+                        'July_2025.Trip': 'july_trip'
+                    },
+                    'left_where': "Jobs.status == 'complete'"
+                },
+                {
+                    'tables': ['$prev', '/path/telematics.xlsx.Tables.August_2025'],
+                    'join_expr': 'prev.operative == August_2025.Driver',
+                    'select': {
+                        'prev.job_ref': 'job_ref',
+                        'prev.operative': 'operative',
+                        'prev.july_trip': 'july_trip',
+                        'August_2025.Trip': 'august_trip'
+                    }
+                }
+            ],
+            result_limit=30
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Using original table column in result_where
+          CORRECT: result_where uses column names from the LAST step's select
+
+        - WRONG: Referencing "$prev" in the first step (there's no previous result)
+          CORRECT: First step must use two actual table references
+
+        - WRONG: Not propagating needed columns through each step's select
+          CORRECT: Each step's select must include columns needed by later steps
         """
         return _srch_filter_multi_join(
             self,
@@ -1682,28 +2391,75 @@ class FileManager(BaseFileManager):
         """
         Perform a semantic search over a chain of joined results.
 
+        Combines multi-step joins with semantic ranking. Use when you need to
+        correlate 3+ tables and rank results by meaning.
+
         Parameters
         ----------
         joins : list[dict]
-            Ordered steps; each step provides ``tables`` (two refs or "$prev"),
-            ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
-            Table references in ``tables`` accept:
-            - Path-first (preferred): "<file_path>" for per-file Content,
-              "<file_path>.Tables.<label>" for per-file tables
-            - Logical names from `tables_overview()` or legacy refs
-            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
-            - "$prev" to reference the previous join step's result
+            Ordered steps. Each step is a dict with:
+            - tables: list of 2 refs. Use "$prev" to reference previous step.
+            - join_expr: join predicate.
+            - select: dict mapping source expressions → output names.
+            - mode, left_where, right_where (optional; arbitrary Python for filters).
         references : dict[str, str] | None
-            Mapping of expressions in the final result → reference text for ranking.
+            Mapping of FINAL output column names → reference text for ranking.
+            Column names must be from the LAST step's select output.
         k : int
-            Maximum rows to return (<= 1000).
+            Maximum rows to return. Start with 10.
         filter : str | None
-            Optional predicate before ranking.
+            Optional predicate applied before semantic ranking.
+            Supports arbitrary Python expressions; uses column names from the
+            LAST step's select output.
 
         Returns
         -------
         list[dict[str, Any]]
             Top-k rows ranked by semantic similarity.
+
+        Usage Examples
+        --------------
+        # Join three tables and search semantically:
+        search_multi_join(
+            joins=[
+                {
+                    'tables': ['Jobs', 'Visits'],
+                    'join_expr': 'Jobs.id == Visits.job_id',
+                    'select': {
+                        'Jobs.id': 'job_id',
+                        'Jobs.description': 'job_desc',
+                        'Visits.notes': 'visit_notes'
+                    }
+                },
+                {
+                    'tables': ['$prev', 'Operatives'],
+                    'join_expr': 'prev.job_id == Operatives.job_id',
+                    'select': {
+                        'prev.job_id': 'job_id',
+                        'prev.job_desc': 'description',
+                        'Operatives.name': 'operative_name'
+                    }
+                }
+            ],
+            references={'description': 'heating system repair'},
+            k=15
+        )
+
+        # With filter before semantic ranking:
+        search_multi_join(
+            joins=[...],
+            references={'summary': 'budget updates'},
+            filter="status == 'approved'",
+            k=10
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: references={'Jobs.description': 'query'} (uses original column)
+          CORRECT: references={'description': 'query'} (uses final select output)
+
+        - WRONG: Not including semantic target column in final step's select
+          CORRECT: Ensure the column you want to search is in the last select
         """
         return _srch_search_multi_join(
             self,
@@ -1730,18 +2486,11 @@ class FileManager(BaseFileManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_files on the first step (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if (
-            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
-            and step_index < 1
-            and "search_files" in current_tools
-        ):
-            return (
-                "required",
-                {"search_files": current_tools["search_files"]},
-            )
+        """
+        Prefer path-first targeting; avoid forcing broad discovery.
+        - If the user supplied an explicit path, allow immediate use of read-only tools.
+        - Do not require a first-step semantic search; keep the toolset on auto.
+        """
         return ("auto", current_tools)
 
     @staticmethod
@@ -2000,12 +2749,9 @@ class FileManager(BaseFileManager):
             if rolling_summary_in_prompts is None
             else rolling_summary_in_prompts
         )
-        overview_json = json.dumps(self._tables_overview(), indent=4)
         system_msg = build_file_manager_ask_prompt(
             tools=tools,
             num_files=self._num_files(),
-            columns=self._list_columns(),
-            table_schemas_json=overview_json,
             include_activity=include_activity,
             business_payload=business_payload,
         )
@@ -2041,79 +2787,6 @@ class FileManager(BaseFileManager):
 
             handle.result = _wrapped_result  # type: ignore[attr-defined]
         return handle
-
-    # ---------- Unified stat helper (read-only) ------------------------------ #
-    @read_only
-    def stat(self, path_or_uri: str | int) -> Dict[str, Any]:
-        """Return unified status for filesystem vs index existence.
-
-        Returns
-        -------
-        dict
-            {
-              "canonical_uri": str | None,
-              "filesystem_exists": bool,
-              "indexed_exists": bool,
-              "parsed_status": str | None,
-            }
-        """
-        canonical_uri = self._resolve_to_uri(path_or_uri)
-
-        fs_exists = False
-        try:
-            fs_exists = bool(self.exists(path_or_uri))
-        except Exception:
-            fs_exists = False
-
-        indexed_exists = False
-        parsed_status = None
-        try:
-            # Try by source_uri first when available
-            logs = []
-            if canonical_uri:
-                try:
-                    logs = unify.get_logs(
-                        context=self._ctx,
-                        filter=f"source_uri == {canonical_uri!r}",
-                        limit=5,
-                        from_fields=["status", "file_path", "source_uri"],
-                    )
-                except Exception:
-                    logs = []
-            # Fallback to file_path match
-            if not logs:
-                try:
-                    # Use path as-is for querying
-                    logs = unify.get_logs(
-                        context=self._ctx,
-                        filter=f"file_path == {str(path_or_uri)!r}",
-                        limit=5,
-                        from_fields=["status", "file_path", "source_uri"],
-                    )
-                except Exception:
-                    logs = []
-            indexed_exists = bool(logs)
-            if logs:
-                # If any 'success' exists, report success
-                st = next(
-                    (
-                        lg.entries.get("status")
-                        for lg in logs
-                        if lg.entries.get("status")
-                    ),
-                    None,
-                )
-                parsed_status = st
-        except Exception:
-            indexed_exists = False
-            parsed_status = None
-
-        return {
-            "canonical_uri": canonical_uri,
-            "filesystem_exists": fs_exists,
-            "indexed_exists": indexed_exists,
-            "parsed_status": parsed_status,
-        }
 
     # File-specific Q&A
     @functools.wraps(BaseFileManager.ask_about_file, updated=())
@@ -2180,10 +2853,8 @@ class FileManager(BaseFileManager):
             if rolling_summary_in_prompts is None
             else rolling_summary_in_prompts
         )
-        file_overview_json = json.dumps(self._tables_overview(file=file_path), indent=4)
         system_msg = build_file_manager_ask_about_file_prompt(
             tools=tools,
-            table_schemas_json=file_overview_json,
             include_activity=include_activity,
         )
         client.set_system_message(system_msg)
@@ -2269,12 +2940,9 @@ class FileManager(BaseFileManager):
             if rolling_summary_in_prompts is None
             else rolling_summary_in_prompts
         )
-        overview_json = json.dumps(self._tables_overview(), indent=4)
         system_msg = build_file_manager_organize_prompt(
             tools=tools,
             num_files=len(self.list()),
-            columns=self._list_columns(),
-            table_schemas_json=overview_json,
             include_activity=include_activity,
         )
         client.set_system_message(system_msg)

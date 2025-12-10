@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from unity.common.state_managers import BaseStateManager
+
+if TYPE_CHECKING:
+    from unity.file_manager.types.ingest import IngestPipelineResult
 
 
 class BaseFileManager(BaseStateManager):
@@ -64,7 +67,7 @@ class BaseFileManager(BaseStateManager):
         self,
         file_paths: Union[str, List[str]],
         **options: Any,
-    ) -> Dict[str, Any]:
+    ) -> "IngestPipelineResult":
         """
         Run the complete file processing pipeline: parse, ingest, and embed.
 
@@ -82,16 +85,16 @@ class BaseFileManager(BaseStateManager):
 
         Returns
         -------
-        dict[str, Any]
-            Mapping from file path → result. The concrete return depends on the
-            configured output mode:
+        IngestPipelineResult
+            Structured container with per-file ingest results and global statistics.
+            Supports dict-like access: result[file_path].
 
-            - compact (default): a typed Pydantic model (per file type) containing
-              reference-first pointers (content_ref, tables_ref) and light metadata.
-            - full: the raw ParsedFile returned by Document.to_parse_result.
-            - none: a minimal stub (file_path, status, error, total_records, file_format).
+            - result.files: Dict[str, IngestedFileUnion] - per-file results
+            - result.statistics: PipelineStatistics - global counts and timing
+            - result[file_path]: direct access to individual file result
 
-            The concrete model type is format-specific (e.g., ParsedPDF, ParsedXlsx).
+            Each file result is a typed Pydantic model (IngestedPDF, IngestedXlsx, etc.)
+            containing reference-first pointers (content_ref, tables_ref) and metadata.
 
         Options
         -------
@@ -109,7 +112,6 @@ class BaseFileManager(BaseStateManager):
             - embed.strategy: "along" | "after" | "off" (when to embed)
             - embed.file_specs: list[FileEmbeddingSpec] (which columns to embed)
             - plugins.pre/post_*: hook lists (dotted names or callables)
-            - output.return_mode: "compact" | "full" | "none"
 
         Notes
         -----
@@ -171,6 +173,72 @@ class BaseFileManager(BaseStateManager):
     # ------------------------------------------------------------------ #
     # Unify-backed retrieval (private tools)                             #
     # ------------------------------------------------------------------ #
+    @abstractmethod
+    def _file_info(self, *, identifier: Union[str, int]) -> Any:
+        """
+        Return comprehensive information about a file's status and ingest identity.
+
+        Parameters
+        ----------
+        identifier : str | int
+            File identifier. Accepted forms:
+            - Absolute file path: "/path/to/file.pdf"
+            - Provider URI: "local:///path/to/file.pdf", "gdrive://fileId"
+            - File ID (int): The numeric file_id from FileRecords
+
+        Returns
+        -------
+        FileInfo
+            Pydantic model with filesystem_exists, indexed_exists, parsed_status,
+            source_provider, source_uri, ingest_mode, unified_label, table_ingest,
+            file_format fields.
+        """
+
+    @abstractmethod
+    def _tables_overview(
+        self,
+        *,
+        include_column_info: bool = True,
+        file: Optional[str] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Return an overview of available tables/contexts managed by this FileManager.
+
+        Parameters
+        ----------
+        include_column_info : bool, default True
+            When True and file is None, include the index schema (columns→types).
+        file : str | None, default None
+            When None: returns ONLY the global FileRecords index overview.
+            When provided: returns file-scoped overview with Content and Tables
+            for that specific file (respecting its ingest mode).
+
+        Returns
+        -------
+        dict[str, dict]
+            Logical table names → metadata (context path, description, columns).
+        """
+
+    @abstractmethod
+    def _schema_explain(self, *, table: str) -> str:
+        """
+        Return a natural-language explanation of a table's structure and purpose.
+
+        Parameters
+        ----------
+        table : str
+            Table reference (path-first preferred):
+            - "<file_path>" for per-file Content
+            - "<file_path>.Tables.<label>" for per-file tables
+            - "FileRecords" for the global file index
+
+        Returns
+        -------
+        str
+            Compact natural-language explanation including what the table
+            represents, key fields and their meanings, and approximate row count.
+        """
+
     @abstractmethod
     def _list_columns(
         self,
@@ -255,6 +323,40 @@ class BaseFileManager(BaseStateManager):
           join tools and `_list_columns(table=...)`.
         - The `filter` parameter is a row-level predicate (evaluated with column
           names as variables) applied before ranking/backfill.
+        """
+
+    @abstractmethod
+    def _reduce(
+        self,
+        *,
+        table: Optional[str] = None,
+        metric: str,
+        keys: Union[str, List[str]],
+        filter: Optional[Union[str, Dict[str, str]]] = None,
+        group_by: Optional[Union[str, List[str]]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over the FileRecords index or a resolved table.
+
+        Parameters
+        ----------
+        table : str | None, default None
+            Table reference to aggregate. When None, aggregates over the main
+            FileRecords index.
+        metric : str
+            Reduction metric: "count", "sum", "mean", "min", "max", "median",
+            "mode", "var", "std".
+        keys : str | list[str]
+            Column(s) to aggregate.
+        filter : str | dict[str, str] | None
+            Optional row-level filter expression(s).
+        group_by : str | list[str] | None
+            Optional column(s) to group by.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the resolved context.
         """
 
     @abstractmethod

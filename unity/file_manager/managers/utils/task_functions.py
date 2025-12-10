@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from unity.file_manager.types.file import ParsedFile
 from unity.file_manager.types.config import (
     FilePipelineConfig,
     TableBusinessContextSpec,
@@ -99,7 +100,7 @@ def execute_create_file_record(
     *,
     file_manager: Any,
     file_path: str,
-    parse_result: Dict[str, Any],
+    parse_result: ParsedFile,
     config: FilePipelineConfig,
 ) -> Dict[str, Any]:
     """
@@ -114,8 +115,8 @@ def execute_create_file_record(
         The file manager instance providing storage context and identity helpers.
     file_path : str
         The logical file path/identifier.
-    parse_result : dict
-        The parsed document result containing metadata and records.
+    parse_result : ParsedFile
+        The ParsedFile Pydantic model from Document.to_parse_result().
     config : FilePipelineConfig
         Pipeline configuration for ingest settings.
 
@@ -136,8 +137,8 @@ def execute_create_file_record(
 
     logger.debug(f"[TaskFn] Creating file record for: {file_path}")
 
-    # Build file identity (resolves source_uri, provider, etc.)
-    ident = file_manager._build_file_identity(file_path)
+    # Get file identity info (returns FileInfo Pydantic model)
+    info = file_manager._file_info(identifier=file_path)
 
     # Determine ingest settings from config
     ingest_mode = config.ingest.mode
@@ -147,8 +148,8 @@ def execute_create_file_record(
     # Create the file record entry
     entry = FileRecord.to_file_record_entry(
         file_path=file_path,
-        source_uri=getattr(ident, "source_uri", None),
-        source_provider=getattr(ident, "source_provider", None),
+        source_uri=info.source_uri,
+        source_provider=info.source_provider,
         result=parse_result,
         ingest_mode=ingest_mode,
         unified_label=unified_label,
@@ -186,7 +187,7 @@ def execute_ingest_content_chunk(
     chunk_index: int,
     total_chunks: int,
     config: FilePipelineConfig,
-    parse_result: Dict[str, Any],
+    parse_result: ParsedFile,
 ) -> Dict[str, Any]:
     """
     Ingest a single chunk of content rows.
@@ -205,8 +206,8 @@ def execute_ingest_content_chunk(
         Total number of content chunks for this file.
     config : FilePipelineConfig
         Pipeline configuration.
-    parse_result : dict
-        Original parse result (for file_format lookup).
+    parse_result : ParsedFile
+        The ParsedFile Pydantic model (for file_format lookup).
 
     Returns
     -------
@@ -244,7 +245,7 @@ def execute_ingest_content_chunk(
         raise ValueError(f"File ID not found for {file_path}")
 
     # Determine file format for content policy
-    _fmt = parse_result.get("file_format")
+    _fmt = parse_result.file_format
     file_format = getattr(_fmt, "value", _fmt) if _fmt else None
     file_format_str = str(file_format).lower().strip() if file_format else None
 

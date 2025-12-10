@@ -431,3 +431,258 @@ def tables_overview(
         else:
             out[leaf] = {"Tables": _tables_map(tables_prefix, info.get("target_name"))}
     return out
+
+
+def file_info(
+    self,
+    *,
+    identifier: Union[str, int],
+):
+    """
+    Core implementation for retrieving comprehensive file information.
+
+    Parameters
+    ----------
+    self : FileManager
+        The FileManager instance (for context resolution, adapter access, etc.).
+    identifier : str | int
+        File identifier. Accepted forms:
+        - Absolute file path: "/path/to/file.pdf"
+        - Provider URI: "local:///path/to/file.pdf", "gdrive://fileId"
+        - File ID (int): The numeric file_id from FileRecords
+
+    Returns
+    -------
+    FileInfo (Pydantic model)
+        Structured output with filesystem/index status and ingest layout.
+    """
+    from unity.file_manager.types.file import FileInfo as _FileInfo
+
+    # Start with defaults
+    file_path = str(identifier)
+    filesystem_exists = False
+    indexed_exists = False
+    parsed_status = None
+    source_provider = None
+    source_uri = None
+    ingest_mode = "per_file"
+    unified_label = None
+    table_ingest = True
+    file_format = None
+
+    # Resolve file_id to file_path first
+    try:
+        fid = int(identifier)
+        logs = unify.get_logs(
+            context=self._ctx,
+            filter=f"file_id == {fid}",
+            limit=1,
+            from_fields=[
+                "file_path",
+                "source_uri",
+                "status",
+                "ingest_mode",
+                "unified_label",
+                "table_ingest",
+                "file_format",
+            ],
+        )
+        if logs:
+            indexed_exists = True
+            entry = logs[0].entries
+            file_path = entry.get("file_path", str(identifier))
+            source_uri = entry.get("source_uri")
+            parsed_status = entry.get("status")
+            ingest_mode = entry.get("ingest_mode", "per_file")
+            unified_label = entry.get("unified_label")
+            table_ingest = bool(entry.get("table_ingest", True))
+            file_format = entry.get("file_format")
+    except (ValueError, TypeError):
+        # Not an int, continue with string resolution
+        pass
+
+    # For string identifiers, resolve canonical URI
+    if not indexed_exists:
+        resolve_to_uri = getattr(self, "_resolve_to_uri", None)
+        if resolve_to_uri:
+            source_uri = resolve_to_uri(identifier)
+
+    # Filesystem existence (only for path-like identifiers)
+    try:
+        exists_fn = getattr(self, "exists", None)
+        if exists_fn:
+            filesystem_exists = bool(exists_fn(file_path))
+    except Exception:
+        pass
+
+    # Get adapter provider
+    try:
+        adapter = getattr(self, "_adapter", None)
+        source_provider = getattr(adapter, "name", None) or getattr(
+            self,
+            "_fs_type",
+            None,
+        )
+        try:
+            adapter_get = getattr(self, "_adapter_get", None)
+            if adapter_get:
+                ref = adapter_get(file_id_or_path=file_path)
+                source_provider = str(ref.get("provider") or source_provider)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Index lookup if not already found via file_id
+    if not indexed_exists:
+        try:
+            logs = []
+            # Try by source_uri first
+            if source_uri:
+                try:
+                    logs = unify.get_logs(
+                        context=self._ctx,
+                        filter=f"source_uri == {source_uri!r}",
+                        limit=1,
+                        from_fields=[
+                            "status",
+                            "file_path",
+                            "ingest_mode",
+                            "unified_label",
+                            "table_ingest",
+                            "file_format",
+                        ],
+                    )
+                except Exception:
+                    pass
+            # Fallback to file_path match
+            if not logs:
+                try:
+                    logs = unify.get_logs(
+                        context=self._ctx,
+                        filter=f"file_path == {file_path!r}",
+                        limit=1,
+                        from_fields=[
+                            "status",
+                            "file_path",
+                            "ingest_mode",
+                            "unified_label",
+                            "table_ingest",
+                            "file_format",
+                        ],
+                    )
+                except Exception:
+                    pass
+
+            if logs:
+                indexed_exists = True
+                entry = logs[0].entries
+                # Update file_path if found in index
+                file_path = entry.get("file_path", file_path)
+                parsed_status = entry.get("status")
+                ingest_mode = entry.get("ingest_mode", "per_file")
+                unified_label = entry.get("unified_label")
+                table_ingest = bool(entry.get("table_ingest", True))
+                file_format = entry.get("file_format")
+        except Exception:
+            pass
+
+    return _FileInfo(
+        file_path=file_path,
+        filesystem_exists=filesystem_exists,
+        indexed_exists=indexed_exists,
+        parsed_status=parsed_status,
+        source_provider=source_provider,
+        source_uri=source_uri,
+        ingest_mode=ingest_mode,
+        unified_label=unified_label,
+        table_ingest=table_ingest,
+        file_format=file_format,
+    )
+
+
+def schema_explain(
+    self,
+    *,
+    table: str,
+) -> str:
+    """
+    Return a natural-language explanation of a table's structure and purpose.
+
+    Parameters
+    ----------
+    self : FileManager
+        The FileManager instance (for context resolution).
+    table : str
+        Table reference (path-first preferred):
+        - "<file_path>" for per-file Content
+        - "<file_path>.Tables.<label>" for per-file tables
+        - "FileRecords" for the global file index
+
+    Returns
+    -------
+    str
+        Compact natural-language explanation including:
+        - What the table represents
+        - Key fields and their meanings
+        - Row count
+    """
+    # Resolve table reference to context
+    ctx = table
+    resolve_table_ref = getattr(self, "_resolve_table_ref", None)
+    if resolve_table_ref is not None:
+        try:
+            ctx = resolve_table_ref(table)
+        except Exception:
+            ctx = table
+
+    # Get fields with descriptions from Unify
+    try:
+        fields = unify.get_fields(context=ctx) or {}
+    except Exception:
+        fields = {}
+
+    if not fields:
+        return f"No schema information available for table '{table}'."
+
+    # Build structured explanation
+    parts: List[str] = []
+
+    # Table identity
+    parts.append(f"Table: {table}")
+    parts.append("")
+
+    # Categorize columns (skip internal/private columns)
+    regular_cols: List[str] = []
+
+    for fname in fields.keys():
+        if not isinstance(fname, str):
+            continue
+        if not fname.startswith("_"):
+            regular_cols.append(fname)
+
+    # Key fields with descriptions
+    parts.append("Columns:")
+    for col in regular_cols:
+        field_info = fields.get(col, {})
+        desc = None
+        if isinstance(field_info, dict):
+            desc = field_info.get("description")
+        if desc:
+            parts.append(f"  - {col}: {desc}")
+        else:
+            parts.append(f"  - {col}")
+    parts.append("")
+
+    # Row count hint
+    try:
+        count = unify.get_logs_metric(
+            metric="count",
+            key=regular_cols[0] if regular_cols else "row_id",
+            context=ctx,
+        )
+        parts.append(f"Row count: {count}")
+    except Exception:
+        pass
+
+    return "\n".join(parts)
