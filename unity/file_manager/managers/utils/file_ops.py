@@ -1,48 +1,61 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, List
 
 from unity.file_manager.types.config import FilePipelineConfig as _FilePipelineConfig
-from unity.file_manager.types.parsed import (
-    BaseParsedFile as _ParsedBase,
-    ParsedPDF as _ParsedPDF,
-    ParsedDocx as _ParsedDocx,
-    ParsedDoc as _ParsedDoc,
-    ParsedXlsx as _ParsedXlsx,
-    ParsedCsv as _ParsedCsv,
+from unity.file_manager.types.file import ParsedFile
+from unity.file_manager.types.ingest import (
+    BaseIngestedFile as _IngestedBase,
+    IngestedPDF as _IngestedPDF,
+    IngestedDocx as _IngestedDocx,
+    IngestedDoc as _IngestedDoc,
+    IngestedXlsx as _IngestedXlsx,
+    IngestedCsv as _IngestedCsv,
     ContentRef as _ContentRef,
     TableRef as _TableRef,
     FileMetrics as _FileMetrics,
+    IngestedFileUnion,
 )
 from unity.file_manager.parser.types.enums import FileFormat as _FileFormat
 
 
-def build_compact_parse_model(
+def build_compact_ingest_model(
     manager: Any,
     *,
     file_path: str,
     document: Any,
-    result: Dict[str, Any],
+    parse_result: ParsedFile,
     config: _FilePipelineConfig,
-) -> _ParsedBase:
-    """Build a typed, reference-first parse model without heavy fields.
+) -> IngestedFileUnion:
+    """Build a typed, reference-first ingest model without heavy fields.
 
-    Notes
-    -----
-    - Uses manager helpers (_build_identity, _safe, _ctx_for_file/_ctx_for_file_table)
-    - Selects a format-specific Pydantic model (PDF/DOCX/DOC/XLSX/CSV) where possible
-    - Populates common identity/status and light metrics only
+    This function builds the appropriate Ingested* Pydantic model based on
+    the file format, populating it with compact metadata and context references.
+
+    Parameters
+    ----------
+    manager : FileManager
+        The FileManager instance for context/helper methods.
+    file_path : str
+        The file path.
+    document : Document
+        The parsed document object.
+    parse_result : ParsedFile
+        The ParsedFile Pydantic model from Document.to_parse_result().
+    config : FilePipelineConfig
+        Pipeline configuration.
+
+    Returns
+    -------
+    IngestedFileUnion
+        A typed Pydantic model (IngestedPDF, IngestedXlsx, etc.) with compact
+        reference-first data. Heavy artifacts (full_text, records) are NOT included.
     """
 
-    # Identity
-    ident = manager._build_file_identity(file_path)
-    # FileIdentity is a Pydantic model; access via attributes
-    try:
-        source_uri = getattr(ident, "source_uri", None)
-        display_path = getattr(ident, "display_path", None)
-    except Exception:
-        source_uri = None
-        display_path = None
+    # Identity via file_info (returns FileInfo Pydantic model)
+    info = manager._file_info(identifier=file_path)
+    source_uri = info.source_uri
+    display_path = file_path  # Use file_path as display_path
 
     # Destination naming depends on ingest mode
     dest_path = (
@@ -53,9 +66,9 @@ def build_compact_parse_model(
 
     # Content reference
     content_ctx = manager._ctx_for_file(dest_path)
-    record_count = int(result.get("total_records") or 0)
+    record_count = parse_result.total_records
     try:
-        text_chars = len(result.get("full_text") or "")
+        text_chars = len(parse_result.full_text)
     except Exception:
         text_chars = 0
     content_ref = _ContentRef(
@@ -88,21 +101,21 @@ def build_compact_parse_model(
 
     # Metrics
     metrics = _FileMetrics(
-        file_size=result.get("file_size"),
-        processing_time=result.get("processing_time"),
-        confidence_score=result.get("confidence_score"),
+        file_size=parse_result.file_size,
+        processing_time=parse_result.processing_time,
+        confidence_score=parse_result.confidence_score,
     )
 
     # Summary excerpt (trim)
-    summary_excerpt = (result.get("summary") or "")[:512]
+    summary_excerpt = (parse_result.summary or "")[:512]
 
     # Determine canonical file format/mime (handle enum or string)
-    ffmt = result.get("file_format") or getattr(
+    ffmt = parse_result.file_format or getattr(
         getattr(document, "metadata", None),
         "file_format",
         None,
     )
-    mime = result.get("mime_type") or getattr(
+    mime = getattr(
         getattr(document, "metadata", None),
         "mime_type",
         None,
@@ -116,12 +129,12 @@ def build_compact_parse_model(
         fmt_key = str(ffmt or "").lower()
 
     Model = {
-        _FileFormat.PDF.value: _ParsedPDF,
-        _FileFormat.DOCX.value: _ParsedDocx,
-        _FileFormat.DOC.value: _ParsedDoc,
-        _FileFormat.XLSX.value: _ParsedXlsx,
-        _FileFormat.CSV.value: _ParsedCsv,
-    }.get(fmt_key, _ParsedBase)
+        _FileFormat.PDF.value: _IngestedPDF,
+        _FileFormat.DOCX.value: _IngestedDocx,
+        _FileFormat.DOC.value: _IngestedDoc,
+        _FileFormat.XLSX.value: _IngestedXlsx,
+        _FileFormat.CSV.value: _IngestedCsv,
+    }.get(fmt_key, _IngestedBase)
 
     base_kwargs = dict(
         file_path=file_path,
@@ -129,17 +142,17 @@ def build_compact_parse_model(
         display_path=display_path,
         file_format=ffmt,
         mime_type=mime,
-        status=result.get("status", "success"),
-        error=result.get("error"),
-        created_at=result.get("created_at"),
-        modified_at=result.get("modified_at"),
+        status=parse_result.status,
+        error=parse_result.error,
+        created_at=parse_result.created_at,
+        modified_at=parse_result.modified_at,
         summary_excerpt=summary_excerpt,
         content_ref=content_ref,
         tables_ref=tables_meta,
         metrics=metrics,
     )
 
-    if Model is _ParsedPDF:
+    if Model is _IngestedPDF:
         return Model(
             **base_kwargs,
             page_count=getattr(
@@ -156,7 +169,7 @@ def build_compact_parse_model(
             ),
             total_records=record_count,
         )
-    if Model in (_ParsedDocx, _ParsedDoc):
+    if Model in (_IngestedDocx, _IngestedDoc):
         return Model(
             **base_kwargs,
             total_sections=len(getattr(document, "sections", []) or []),
@@ -168,7 +181,7 @@ def build_compact_parse_model(
             ),
             total_records=record_count,
         )
-    if Model is _ParsedXlsx:
+    if Model is _IngestedXlsx:
         tables = list(getattr(getattr(document, "metadata", None), "tables", []) or [])
         sheet_names = []
         try:
@@ -184,7 +197,7 @@ def build_compact_parse_model(
             sheet_names=sheet_names,
             table_count=len(tables) or None,
         )
-    if Model is _ParsedCsv:
+    if Model is _IngestedCsv:
         tables = list(getattr(getattr(document, "metadata", None), "tables", []) or [])
         return Model(
             **base_kwargs,
