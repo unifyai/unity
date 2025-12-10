@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import contextlib
 
-from unity.session_details import SESSION_DETAILS
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager import debug_logger
@@ -442,7 +442,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """Clean up any running call processes"""
         await self.store_chat_history()
         self.call_manager.cleanup_call_proc()
-        if self.job_name and self.assistant_id:
+        if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
             print(f"Marking job {self.job_name} done")
             debug_logger.mark_job_done(self.job_name)
         self.stop.set()
