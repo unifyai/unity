@@ -193,17 +193,17 @@ async def test_synchronous_operations(simulated_file_manager):
 
     # Parse single file
     result = fm.ingest_files("doc1.txt")
-    assert result["doc1.txt"]["status"] == "success"
-    assert len(result["doc1.txt"]["records"]) == 1
+    assert result["doc1.txt"].status == "success"
+    assert result["doc1.txt"].content_ref.record_count == 1
 
     # Parse multiple files
     results = fm.ingest_files(["doc1.txt", "doc2.txt"])
-    assert len(results) == 2
-    assert all(r["status"] == "success" for r in results.values())
+    assert len(results.files) == 2
+    assert all(r.status == "success" for r in results.files.values())
 
     # Parse non-existent file
     result = fm.ingest_files("missing.txt")
-    assert result["missing.txt"]["status"] == "error"
+    assert result["missing.txt"].status == "error"
 
 
 # Remaining tests intentionally create isolated instances or operate on handles.

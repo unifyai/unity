@@ -22,9 +22,9 @@ def test_create_basic(file_manager, tmp_path: Path):
     name = str(p)
     res = fm.ingest_files(name)
     assert name in res
-    _item = res[name]
-    _item = _item if isinstance(_item, dict) else _item.model_dump()
-    assert _item["status"] == "success"
+    item = res[name]
+    # All returns are now Pydantic models - use attribute access
+    assert item.status == "success"
     rows = fm._filter_files(filter=f"file_path == '{name}'")
     assert rows and any(r.get("file_path", name) == name for r in rows)
 
@@ -39,9 +39,9 @@ def test_create_with_error(file_manager, tmp_path: Path):
     name = str(p)
     res = fm.ingest_files(name)
     assert name in res
-    _item = res[name]
-    _item = _item if isinstance(_item, dict) else _item.model_dump()
-    assert _item["status"] in ("success", "error")
+    item = res[name]
+    # All returns are now Pydantic models - use attribute access
+    assert item.status in ("success", "error")
 
 
 @pytest.mark.requires_real_unify
