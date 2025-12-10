@@ -100,7 +100,7 @@ def log_job_startup(
 
                     if ready:
                         liveview_url = external.get("url")
-                        liveview_url = f"http://{liveview_url}/vnc.html"
+                        liveview_url = f"{liveview_url}/vnc.html"
                         print(f"[Liveview] ✅ Service is ready!")
                         print(f"[Liveview] URL: {liveview_url}")
                         break
