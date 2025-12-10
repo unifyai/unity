@@ -136,6 +136,8 @@ def mark_job_done(job_name: str):
     except Exception as e:
         print(f"Error finding job: {e}")
         traceback.print_exc()
+        # job not found, return and don't delete service
+        return
 
     # delete the job service
     try:
