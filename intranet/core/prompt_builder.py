@@ -123,155 +123,150 @@ def build_repairs_ask_instructions(
     """
     Build BusinessContextPayload for the Midland Heart Repairs data analyst agent.
 
+    This function produces BUSINESS-ONLY context with NO tool names, NO JSON schemas,
+    and NO sample rows. Tool-specific details live in tool docstrings.
+
+    DESIGN PRINCIPLE: Minimize hardcoding, maximize config-driven content.
+    - Hardcoded: Role identity, response guidelines (agent-level behavior)
+    - From config: All domain rules (global, file, table levels)
+    - The pipeline config JSON is the single source of truth for domain knowledge
+
     Returns a structured BusinessContextPayload with:
     - role_description: Primary identity (data analyst for Midland Heart)
-    - domain_rules: Data sources, schemas, join logic, business rules
+    - domain_rules: All rules from config (global → file → table hierarchy)
     - response_guidelines: Citation format, confidence scores, output style
-    - retrieval_hints: Domain-specific query patterns
+    - retrieval_hints: Derived from file_rules in config
+    - data_overview: Natural-language description of available datasets
     """
-
-    def _dump(obj: Any) -> str:
-        try:
-            return json.dumps(obj, indent=4, ensure_ascii=False)
-        except Exception:
-            return str(obj)
-
     files = business_data.get("files", {})
     global_rules = business_data.get("global_rules", [])
 
-    # Build per-file sections
-    file_sections: List[str] = []
+    # Collect all searchable columns, dataset descriptions, and rules from config
     all_searchable: List[str] = []
+    dataset_descriptions: List[str] = []
+    all_file_rules: List[str] = []
+    all_table_rules: List[str] = []
 
     for file_path, file_data in files.items():
-        # Extract file name for display
         file_name = file_path.split("/")[-1] if "/" in file_path else file_path
-
         tables = file_data.get("tables", {})
         file_searchable = file_data.get("searchable_columns", [])
         file_rules = file_data.get("file_rules", [])
         all_searchable.extend(file_searchable)
 
-        file_lines = [
-            f"### {file_name}",
-            f"File path: `{file_path}`",
-            f"Searchable columns (embedded): {file_searchable}",
-        ]
+        # Collect file-level rules (these become retrieval hints)
+        all_file_rules.extend(file_rules)
 
-        # Add file-level rules if present
-        if file_rules:
-            file_lines.append("")
-            file_lines.append("**File-level rules:**")
-            file_lines.extend([f"  • {r}" for r in file_rules])
+        # Build natural-language description for this dataset
+        table_names = list(tables.keys())
+        if table_names:
+            tables_str = ", ".join(table_names)
+            dataset_descriptions.append(
+                f"• **{file_name}**: Contains tables [{tables_str}].",
+            )
 
-        file_lines.append("")
-
+        # Collect table-level rules with context
         for table_label, table_data in tables.items():
-            schema = table_data.get("schema", [])
-            samples = table_data.get("samples", [])
             table_rules = table_data.get("table_rules", [])
+            for rule in table_rules:
+                all_table_rules.append(f"[{table_label}] {rule}")
 
-            file_lines.extend(
-                [
-                    f"#### Table: {table_label}",
-                    "",
-                ],
-            )
-
-            # Add table-level rules if present
-            if table_rules:
-                file_lines.append("**Table rules:**")
-                file_lines.extend([f"  • {r}" for r in table_rules])
-                file_lines.append("")
-
-            file_lines.extend(
-                [
-                    "Schema:",
-                    _dump(schema),
-                    "",
-                    "Sample rows:",
-                    _dump(samples[:2] if samples else []),
-                    "",
-                ],
-            )
-
-        file_sections.append("\n".join(file_lines))
-
-    # Build the global rules section
-    global_rules_section = []
-    if global_rules:
-        global_rules_section = [
-            "Global business rules (cross-file)",
-            "-----------------------------------",
-            *[f"• {r}" for r in global_rules],
-            "",
-        ]
-
-    # LAYER 1: Role description (appears FIRST in final prompt)
+    # =========================================================================
+    # LAYER 1: Role description (HARDCODED - agent identity)
+    # This is the only place where we define WHO the agent is.
+    # =========================================================================
     role_description = (
         "You are an expert data analyst for Midland Heart (Housing Association).\n"
-        "You work with historical housing repairs jobs and vehicle telematics data\n"
-        "covering July–September 2025. Your goal is to answer questions about\n"
-        "repairs, operative activity, journey efficiency, and visit verification\n"
-        "using the available datasets."
+        "You work with historical housing repairs jobs and vehicle telematics data.\n"
+        "Your goal is to answer questions about repairs, operative activity,\n"
+        "journey efficiency, and visit verification using the available datasets."
     )
 
-    # LAYER 3: Domain rules (schemas, join logic, data sources)
-    domain_rules = "\n".join(
-        [
-            "Data sources",
-            "------------",
-            "You have access to two primary data sources:",
-            "  1. **Repairs Data**: Works orders, job tickets, operative assignments, completion statuses, and visit tracking.",
-            "  2. **Telematics Data**: Vehicle trip logs showing operative movements, travel times, distances, and locations.",
-            "",
-            "Cross-referencing rules",
-            "-----------------------",
-            "• To match repairs jobs with telematics trips:",
-            "  - Use `OperativeWhoCompletedJob` (repairs) ↔ `Vehicle` (telematics) — Vehicle contains registration + operative full name.",
-            "  - Use `FullAddress` (repairs) ↔ `Start location` / `End location` (telematics) for location matching.",
-            "  - Use date/time fields to correlate visits: `ArrivedOnSite`/`CompletedVisit` (repairs) ↔ `Departure`/`Arrival` (telematics).",
-            "",
-            "Pre‑embedded semantic search targets",
-            "-------------------------------------",
-            "Only use the following columns as semantic search targets (already embedded):",
-            _dump(list(set(all_searchable))),
-            "",
-            *global_rules_section,
-            *file_sections,
-        ],
-    )
+    # =========================================================================
+    # LAYER 2: Domain rules (FROM CONFIG - single source of truth)
+    # All cross-referencing logic, matching rules come from the pipeline config.
+    # We do NOT duplicate what's already in global_rules/file_rules/table_rules.
+    # =========================================================================
+    domain_rules_parts: List[str] = []
 
-    # LAYER 4: Response guidelines (output format, citations, tone)
+    # Global business rules define cross-referencing and matching logic
+    if global_rules:
+        domain_rules_parts.extend(
+            [
+                "Cross-referencing and matching rules",
+                "------------------------------------",
+                *[f"• {r}" for r in global_rules],
+            ],
+        )
+
+    # Table-level rules provide specific guidance for each table
+    if all_table_rules:
+        if domain_rules_parts:
+            domain_rules_parts.append("")
+        domain_rules_parts.extend(
+            [
+                "Table-specific rules",
+                "--------------------",
+                *[f"• {r}" for r in all_table_rules],
+            ],
+        )
+
+    domain_rules = "\n".join(domain_rules_parts) if domain_rules_parts else ""
+
+    # =========================================================================
+    # LAYER 3: Response guidelines (HARDCODED - agent behavior)
+    # This defines HOW the agent should format and present answers.
+    # =========================================================================
     response_guidelines = "\n".join(
         [
-            "• Provide a concise, evidence‑grounded answer first.",
-            "• When cross-referencing repairs and telematics, explain the matching criteria used.",
+            "• Provide a concise, evidence-grounded answer first.",
+            "• When cross-referencing datasets, explain the matching criteria used.",
             "• List the reproducible steps in human-friendly language (no tool names or jargon).",
-            "• Include citations to the data used: [file, table, columns/values].",
+            "• Include citations to the data used: [file, table, key values].",
             "• If insufficient evidence exists, say so clearly; do not invent values.",
             "• Include a confidence score in [0,1] reflecting the reliability of the evidence.",
         ],
     )
 
-    # Optional: Retrieval hints
-    retrieval_hints = "\n".join(
-        [
+    # =========================================================================
+    # LAYER 4: Retrieval hints (FROM CONFIG - derived from file_rules)
+    # File-level rules often contain retrieval-relevant hints (e.g., data splits).
+    # NO TOOL NAMES - just business-level guidance.
+    # =========================================================================
+    if all_file_rules:
+        retrieval_hints_parts = [
             "Domain-specific retrieval hints",
             "-------------------------------",
-            "• Telematics tables are split by month (July_2025, August_2025, September_2025).",
-            "  Choose the month based on the relevant date.",
-            "• When verifying a specific visit:",
-            "  - Filter repairs by JobTicketReference or FullAddress and date.",
-            "  - Filter or search telematics by Vehicle and matching date range.",
-        ],
-    )
+            *[f"• {r}" for r in all_file_rules],
+        ]
+        retrieval_hints = "\n".join(retrieval_hints_parts)
+    else:
+        retrieval_hints = ""
+
+    # =========================================================================
+    # LAYER 5: Data overview (FROM CONFIG - dataset inventory)
+    # Provides a compact inventory of what's available.
+    # NO TOOL NAMES - just business-level information.
+    # =========================================================================
+    unique_searchable = sorted(set(all_searchable))
+    data_overview_parts = [
+        "Available datasets",
+        "------------------",
+        *dataset_descriptions,
+    ]
+    if unique_searchable:
+        data_overview_parts.append("")
+        data_overview_parts.append(
+            f"Searchable columns (semantic search): {', '.join(unique_searchable)}",
+        )
+    data_overview = "\n".join(data_overview_parts) if dataset_descriptions else ""
 
     return BusinessContextPayload(
         role_description=role_description,
         domain_rules=domain_rules.strip(),
         response_guidelines=response_guidelines.strip(),
         retrieval_hints=retrieval_hints.strip(),
+        data_overview=data_overview.strip(),
     )
 
 
