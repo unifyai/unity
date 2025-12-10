@@ -8,6 +8,7 @@ from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
 from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.types.config import FilePipelineConfig
+from unity.file_manager.types.file import ParsedFile
 
 
 class _MetaStub:
@@ -31,23 +32,24 @@ class _DocStub:
         self._records = records or []
         self._file_size = file_size
 
-    def to_parse_result(self, *a, **kw) -> Dict[str, Any]:
-        return {
-            "status": "success",
-            "error": None,
-            "summary": "dummy summary",
-            "file_format": None,
-            "file_size": self._file_size,
-            "total_records": len(self._records),
-            "processing_time": 0.0,
-            "created_at": "2025-01-01T00:00:00Z",
-            "modified_at": "2025-01-01T00:00:00Z",
-            "confidence_score": 1.0,
-            "key_topics": [],
-            "named_entities": {},
-            "content_tags": [],
-            "records": self._records,
-        }
+    def to_parse_result(self, *a, **kw) -> ParsedFile:
+        return ParsedFile(
+            file_path=a[0] if a else "stub.txt",
+            status="success",
+            error=None,
+            summary="dummy summary",
+            file_format=None,
+            file_size=self._file_size,
+            total_records=len(self._records),
+            processing_time=0.0,
+            created_at="2025-01-01T00:00:00Z",
+            modified_at="2025-01-01T00:00:00Z",
+            confidence_score=1.0,
+            key_topics=[],
+            named_entities={},
+            content_tags=[],
+            records=self._records,
+        )
 
 
 @pytest.mark.unit

@@ -58,9 +58,9 @@ async def test_import_directory(file_manager, sample_files: Path):
     for f in files:
         assert fm.exists(f)
         assert f in res
-        _item = res[f]
-        _item = _item if isinstance(_item, dict) else _item.model_dump()
-        assert _item["status"] in ("success", "error")
+        item = res[f]
+        # All returns are now Pydantic models - use attribute access
+        assert item.status in ("success", "error")
 
 
 @pytest.mark.asyncio
@@ -136,9 +136,9 @@ async def test_import_nonexistent_directory(file_manager):
     # Parsing from a nonexistent directory should surface as not found errors
     res = fm.ingest_files(["/nonexistent/directory/x.txt"])
     assert "/nonexistent/directory/x.txt" in res
-    _item = res["/nonexistent/directory/x.txt"]
-    _item = _item if isinstance(_item, dict) else _item.model_dump()
-    assert _item["status"] == "error"
+    item = res["/nonexistent/directory/x.txt"]
+    # All returns are now Pydantic models - use attribute access
+    assert item.status == "error"
 
 
 @pytest.mark.asyncio
@@ -147,10 +147,10 @@ async def test_parse_nonexistent(file_manager):
     fm = file_manager
     result = fm.ingest_files("nonexistent.txt")
     assert "nonexistent.txt" in result
-    _item = result["nonexistent.txt"]
-    _item = _item if isinstance(_item, dict) else _item.model_dump()
-    assert _item["status"] == "error"
-    assert "not found" in str(_item.get("error", "")).lower()
+    item = result["nonexistent.txt"]
+    # All returns are now Pydantic models - use attribute access
+    assert item.status == "error"
+    assert "not found" in str(item.error or "").lower()
 
 
 @pytest.mark.asyncio
@@ -185,11 +185,6 @@ async def test_parse_multiple_mixed(file_manager, supported_file_examples: dict)
     existing = str(example_data["path"])  # absolute path
     results = fm.ingest_files([existing, "nonexistent.txt"])
     assert len(results) == 2
-    _ex_item = results[existing]
-    _ex_item = _ex_item if isinstance(_ex_item, dict) else _ex_item.model_dump()
-    _missing_item = results["nonexistent.txt"]
-    _missing_item = (
-        _missing_item if isinstance(_missing_item, dict) else _missing_item.model_dump()
-    )
-    assert _ex_item["status"] == "success"
-    assert _missing_item["status"] == "error"
+    # All returns are now Pydantic models - use attribute access
+    assert results[existing].status == "success"
+    assert results["nonexistent.txt"].status == "error"
