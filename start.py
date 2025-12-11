@@ -4,14 +4,26 @@ import time
 
 import unity.conversation_manager as cm
 
+# Flag to prevent double-handling of signals
+shutting_down = False
+
 
 # Graceful shutdown handler
 def signal_handler(signum, frame):
+    global shutting_down
+    if shutting_down:
+        return  # Already handling shutdown
+    shutting_down = True
+
+    # Shut down the process and get the exit code
     print("Shutting down convo manager...")
-    cm.stop("signal_shutdown")
-    while cm.is_running():
-        time.sleep(1)
-    exit(0)
+    exit_code = cm.stop("signal_shutdown")
+    print(f"Convo manager exited with code {exit_code}")
+
+    # Check if the convo manager exited with a non-zero exit code
+    # This happens when: external signal + idle container or process crashed
+    if exit_code != 0:
+        exit(0)
 
 
 signal.signal(signal.SIGTERM, signal_handler)

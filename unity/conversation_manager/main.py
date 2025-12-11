@@ -1,5 +1,6 @@
 from datetime import datetime
 import signal
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,11 +21,12 @@ from unity.helpers import cleanup_dangling_call_processes
 
 stop = None
 conversation_manager = None
+signal_shutdown = False  # Track if shutdown was triggered by external signal
 
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
-    global conversation_manager, managers_worker, stop
+    global conversation_manager, managers_worker, stop, signal_shutdown
 
     print(
         datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -32,6 +34,8 @@ def signal_handler(signum, frame):
         + str(signum)
         + ", shutting down gracefully...",
     )
+    # Mark that this shutdown was triggered by an external signal
+    signal_shutdown = True
     # Set the stop event to trigger graceful shutdown in main()
     # This ensures cleanup happens only once, in the main async function
     if stop:
@@ -140,6 +144,14 @@ async def main(project_name: str = "Assistants"):
     print("Cleanup finished")
 
     print("Shutdown finished")
+
+    # Exit with special code 42 if:
+    # - Shutdown was triggered by external signal (i.e. not inactivity timeout)
+    # - AND assistant_id is the default (i.e. it's an idle container)
+    # This signals to start.py to exit immediately to trigger restart 
+    # within the backoff limit
+    if signal_shutdown and conversation_manager.assistant_id == DEFAULT_ASSISTANT_ID:
+        sys.exit(42)
 
 
 if __name__ == "__main__":
