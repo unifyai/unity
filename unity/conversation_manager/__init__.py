@@ -18,13 +18,17 @@ _monitor_thread: Optional[threading.Thread] = None
 _monitoring: bool = False
 
 
-def terminate_process(proc: subprocess.Popen) -> None:
+def terminate_process(proc: subprocess.Popen) -> Optional[int]:
     """
     Terminate a subprocess gracefully, falling back to force kill if needed.
     Handles both Windows and Unix-like systems.
 
     Args:
         proc: The subprocess.Popen object to terminate
+
+    Returns:
+        The exit code of the process (0 for normal exit, 42 for immediate exit signal),
+        or None if no process was provided
     """
     if proc is None:
         return
@@ -38,8 +42,9 @@ def terminate_process(proc: subprocess.Popen) -> None:
 
         # Wait for process to terminate
         try:
-            proc.wait(timeout=60)
-            print("Process terminated gracefully")
+            exit_code = proc.wait(timeout=60)
+            print(f"Process terminated gracefully with exit code {exit_code}")
+            return exit_code
         except subprocess.TimeoutExpired:
             # If process doesn't terminate gracefully, force kill
             print("Process did not terminate gracefully, force killing...")
@@ -47,9 +52,11 @@ def terminate_process(proc: subprocess.Popen) -> None:
                 proc.kill()
             else:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            proc.wait()
+            exit_code = proc.wait()
+            return exit_code
     except Exception as e:
         print(f"Error during process termination: {e}")
+        return None
 
 
 def _start_monitoring() -> None:
@@ -177,7 +184,7 @@ def start(
         return False
 
 
-def stop(reason: str = "manual_stop") -> bool:
+def stop(reason: str = "manual_stop") -> Optional[int]:
     """
     Stop the Unity service and all its child processes.
 
@@ -185,17 +192,18 @@ def stop(reason: str = "manual_stop") -> bool:
         reason: Reason for stopping the service
 
     Returns:
-        bool: True if service was stopped successfully
+        The exit code of the terminated process, or None if no process was running
     """
     global _process, _shutdown_reason
 
     _stop_monitoring()  # Stop monitoring first
 
+    exit_code: Optional[int] = None
     if _process:
         try:
             print("Stopping Unity service and all child processes...")
             # Use the terminate_process function which handles process groups properly
-            terminate_process(_process)
+            exit_code = terminate_process(_process)
             print("Unity service and child processes stopped")
             _shutdown_reason = reason
         except Exception as e:
@@ -203,8 +211,8 @@ def stop(reason: str = "manual_stop") -> bool:
             _shutdown_reason = f"stop_error: {e}"
 
         _process = None
-        return True
-    return True
+        return exit_code
+    return None
 
 
 def is_running() -> bool:
