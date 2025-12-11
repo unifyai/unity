@@ -312,7 +312,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "app:managers:output",
             )
 
-            if self.assistant_id:
+            if self.assistant_id != DEFAULT_ASSISTANT_ID:
                 self.build_response_model()
                 # asyncio.create_task(self.publish_startup())
 
