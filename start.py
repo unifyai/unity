@@ -19,10 +19,11 @@ def signal_handler(signum, frame):
     print("Shutting down convo manager...")
     exit_code = cm.stop("signal_shutdown")
     print(f"Convo manager exited with code {exit_code}")
+    print(f"Checks: {type(exit_code)} {not exit_code} {exit_code != 0}")
 
     # Check if the convo manager exited with a non-zero exit code
     # This happens when: external signal + idle container or process crashed
-    if exit_code != 0:
+    if not exit_code and exit_code != 0:
         exit(0)
 
 
