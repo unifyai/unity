@@ -148,7 +148,7 @@ async def main(project_name: str = "Assistants"):
     # Exit with special code 42 if:
     # - Shutdown was triggered by external signal (i.e. not inactivity timeout)
     # - AND assistant_id is the default (i.e. it's an idle container)
-    # This signals to start.py to exit immediately to trigger restart 
+    # This signals to start.py to exit immediately to trigger restart
     # within the backoff limit
     if signal_shutdown and conversation_manager.assistant_id == DEFAULT_ASSISTANT_ID:
         sys.exit(42)
