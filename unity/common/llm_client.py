@@ -28,7 +28,7 @@ def new_llm_client(
     """
     Create a configured Unify client.
 
-    If model is not specified, uses UNIFY_MODEL from settings (default: gpt-5.1@openai).
+    If model is not specified, uses UNIFY_MODEL from settings (default: gpt-5.2@openai).
     Defaults to high reasoning_effort and priority service_tier where applicable.
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
