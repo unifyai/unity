@@ -1,4 +1,4 @@
-"""Tests for All/<Ctx> context mirroring and private field injection for FunctionManager."""
+"""Tests for aggregation context mirroring and private field injection for FunctionManager."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import unify
 from tests.helpers import _handle_project
-from unity.common.log_utils import _derive_all_context
+from unity.common.log_utils import _derive_all_contexts
 from unity.function_manager.function_manager import FunctionManager
 
 
@@ -22,8 +22,8 @@ def _get_raw_log_by_function_id(ctx: str, function_id: int):
 
 
 @_handle_project
-def test_log_creates_all_compositional_entry():
-    """Creating a function should mirror to All/Functions/Compositional."""
+def test_log_creates_all_compositional_entries():
+    """Creating a function should mirror to both aggregation contexts."""
     fm = FunctionManager()
 
     # Add a simple function
@@ -36,16 +36,44 @@ def test_log_creates_all_compositional_entry():
     assert "test_dual_ctx" in listing
     function_id = listing["test_dual_ctx"]["function_id"]
 
-    # Derive the All/<Ctx> context from the compositional context
-    all_ctx = _derive_all_context(fm._compositional_ctx)
-    assert all_ctx is not None, "All context should be derivable"
+    # Derive both aggregation contexts from the compositional context
+    all_ctxs = _derive_all_contexts(fm._compositional_ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
 
-    # Verify it was mirrored to All/<Ctx>
-    all_logs = unify.get_logs(
-        context=all_ctx,
-        filter=f"function_id == {function_id}",
-    )
-    assert len(all_logs) >= 1, f"Function should be mirrored to {all_ctx}"
+    # Verify it was mirrored to both aggregation contexts
+    for all_ctx in all_ctxs:
+        all_logs = unify.get_logs(
+            context=all_ctx,
+            filter=f"function_id == {function_id}",
+        )
+        assert len(all_logs) >= 1, f"Function should be mirrored to {all_ctx}"
+
+
+@_handle_project
+def test_user_field_injected():
+    """Logs should have _user field set to user name."""
+    test_user_name = "TestUserName"
+
+    with patch(
+        "unity.common.log_utils._get_user_name",
+        return_value=test_user_name,
+    ):
+        fm = FunctionManager()
+
+        src = "def test_user_field(x):\n    return x + 1\n"
+        result = fm.add_functions(implementations=src)
+        assert result == {"test_user_field": "added"}
+
+        listing = fm.list_functions()
+        function_id = listing["test_user_field"]["function_id"]
+
+        log = _get_raw_log_by_function_id(fm._compositional_ctx, function_id)
+        assert log is not None, "Log should exist"
+
+        entries = log.entries
+        assert (
+            entries.get("_user") == test_user_name
+        ), f"_user should be '{test_user_name}', got {entries.get('_user')}"
 
 
 @_handle_project
@@ -129,22 +157,22 @@ def test_user_id_field_injected():
 
 
 @_handle_project
-def test_all_context_created_on_provision():
-    """All/Functions/Compositional context should exist after manager instantiation."""
+def test_all_contexts_created_on_provision():
+    """Aggregation contexts should exist after manager instantiation."""
     fm = FunctionManager()
 
-    # Derive the All/<Ctx> context
-    all_ctx = _derive_all_context(fm._compositional_ctx)
-    assert all_ctx is not None, "All context should be derivable"
+    # Derive the aggregation contexts
+    all_ctxs = _derive_all_contexts(fm._compositional_ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
 
-    # Verify the context exists by trying to query it
-    try:
-        unify.get_logs(context=all_ctx, limit=1)
-        context_exists = True
-    except Exception:
-        context_exists = False
-
-    assert context_exists, f"Context {all_ctx} should exist after manager init"
+    # Verify both contexts exist by trying to query them
+    for all_ctx in all_ctxs:
+        try:
+            unify.get_logs(context=all_ctx, limit=1)
+            context_exists = True
+        except Exception:
+            context_exists = False
+        assert context_exists, f"Context {all_ctx} should exist after manager init"
 
 
 @_handle_project
@@ -165,16 +193,17 @@ def test_private_fields_excluded_from_list_functions():
         func_data = listing.get("test_private_hidden", {})
 
         # Private fields should not be in the listing
+        assert "_user" not in func_data, "_user should not be in listing"
+        assert "_user_id" not in func_data, "_user_id should not be in listing"
         assert "_assistant" not in func_data, "_assistant should not be in listing"
         assert (
             "_assistant_id" not in func_data
         ), "_assistant_id should not be in listing"
-        assert "_user_id" not in func_data, "_user_id should not be in listing"
 
 
 @_handle_project
-def test_batch_create_mirrors_to_all_ctx():
-    """Batch-created functions should all be mirrored to All/<Ctx>."""
+def test_batch_create_mirrors_to_all_ctxs():
+    """Batch-created functions should all be mirrored to both aggregation contexts."""
     fm = FunctionManager()
 
     # Add multiple functions at once (triggers batch creation)
@@ -192,25 +221,26 @@ def test_batch_create_mirrors_to_all_ctx():
 
     listing = fm.list_functions()
 
-    # Derive the All/<Ctx> context
-    all_ctx = _derive_all_context(fm._compositional_ctx)
-    assert all_ctx is not None
+    # Derive both aggregation contexts
+    all_ctxs = _derive_all_contexts(fm._compositional_ctx)
+    assert len(all_ctxs) == 2
 
-    # Verify all functions were mirrored
+    # Verify all functions were mirrored to both contexts
     for func_name in ["batch_func_a", "batch_func_b", "batch_func_c"]:
         function_id = listing[func_name]["function_id"]
-        all_logs = unify.get_logs(
-            context=all_ctx,
-            filter=f"function_id == {function_id}",
-        )
-        assert (
-            len(all_logs) >= 1
-        ), f"Function {func_name} should be mirrored to {all_ctx}"
+        for all_ctx in all_ctxs:
+            all_logs = unify.get_logs(
+                context=all_ctx,
+                filter=f"function_id == {function_id}",
+            )
+            assert (
+                len(all_logs) >= 1
+            ), f"Function {func_name} should be mirrored to {all_ctx}"
 
 
 @_handle_project
-def test_deleting_function_removes_from_all_ctx():
-    """Deleting a function should also remove it from All/<Ctx>."""
+def test_deleting_function_removes_from_all_ctxs():
+    """Deleting a function should also remove it from all aggregation contexts."""
     fm = FunctionManager()
 
     # Create a function
@@ -221,27 +251,29 @@ def test_deleting_function_removes_from_all_ctx():
     listing = fm.list_functions()
     function_id = listing["delete_test_func"]["function_id"]
 
-    # Derive the All/<Ctx> context
-    all_ctx = _derive_all_context(fm._compositional_ctx)
-    assert all_ctx is not None, "All context should be derivable"
+    # Derive the aggregation contexts
+    all_ctxs = _derive_all_contexts(fm._compositional_ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
 
-    # Verify it exists in All/<Ctx> before deletion
-    all_logs_before = unify.get_logs(
-        context=all_ctx,
-        filter=f"function_id == {function_id}",
-    )
-    assert (
-        len(all_logs_before) >= 1
-    ), "Function should exist in All/<Ctx> before deletion"
+    # Verify it exists in all aggregation contexts before deletion
+    for all_ctx in all_ctxs:
+        all_logs_before = unify.get_logs(
+            context=all_ctx,
+            filter=f"function_id == {function_id}",
+        )
+        assert (
+            len(all_logs_before) >= 1
+        ), f"Function should exist in {all_ctx} before deletion"
 
     # Delete the function
     fm.delete_function(function_id=function_id)
 
-    # Verify it's removed from All/<Ctx> after deletion
-    all_logs_after = unify.get_logs(
-        context=all_ctx,
-        filter=f"function_id == {function_id}",
-    )
-    assert (
-        len(all_logs_after) == 0
-    ), "Function should be removed from All/<Ctx> after deletion"
+    # Verify it's removed from all aggregation contexts after deletion
+    for all_ctx in all_ctxs:
+        all_logs_after = unify.get_logs(
+            context=all_ctx,
+            filter=f"function_id == {function_id}",
+        )
+        assert (
+            len(all_logs_after) == 0
+        ), f"Function should be removed from {all_ctx} after deletion"

@@ -91,54 +91,77 @@ class TasksStore:
             normalised = {k: str(v) for k, v in updated.items()}
         self.__dict__["fields"] = normalised
 
-        # Ensure the All/<Ctx> context exists for cross-assistant aggregation
-        all_ctx = self._all_context()
-        if all_ctx is not None:
-            self._ensure_all_context(all_ctx=all_ctx, fields=fields)
+        # Ensure aggregation contexts exist for cross-assistant and cross-user queries
+        all_ctxs = self._all_contexts()
+        if all_ctxs:
+            self._ensure_all_contexts(all_ctxs=all_ctxs, fields=fields)
 
-    def _all_context(self) -> Optional[str]:
-        """Derive the All/<Ctx> aggregation context from this context."""
-        if "/" not in self._ctx:
-            return None
-        _, suffix = self._ctx.split("/", 1)
-        return f"All/{suffix}"
+    def _all_contexts(self) -> List[str]:
+        """
+        Derive aggregation contexts for this user/assistant-scoped context.
 
-    def _ensure_all_context(
+        Returns two contexts for cross-assistant and cross-user aggregation:
+          - {UserName}/All/{suffix} - all assistants for this user
+          - All/{suffix}            - all users, all assistants
+
+        Example: "JohnDoe/MyAssistant/Tasks" returns:
+          - "JohnDoe/All/Tasks"
+          - "All/Tasks"
+
+        Returns empty list if context doesn't have UserName/AssistantName prefix.
+        """
+        parts = self._ctx.split("/")
+        if len(parts) < 3:
+            return []
+        user_ctx = parts[0]
+        suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
+        return [
+            f"{user_ctx}/All/{suffix}",  # User-level aggregation
+            f"All/{suffix}",  # Global aggregation
+        ]
+
+    def _ensure_all_contexts(
         self,
         *,
-        all_ctx: str,
+        all_ctxs: List[str],
         fields: Dict[str, str],
     ) -> None:
         """
-        Ensure the All/<Ctx> aggregation context exists with required fields.
+        Ensure aggregation contexts exist for cross-assistant and cross-user queries.
 
-        Unlike the main context, this does not use unique_keys or auto_counting
+        Unlike the main context, these do not use unique_keys or auto_counting
         since logs are added by reference from multiple assistant contexts.
         """
-        # Idempotent creation: try to create, tolerate if already exists
-        try:
-            unify.create_context(
-                all_ctx,
-                description=f"Aggregation of {self._ctx.split('/')[-1]} across all assistants",
-            )
-        except Exception:
-            pass  # Already exists or transient failure
+        for all_ctx in all_ctxs:
+            # Determine description based on aggregation level
+            if all_ctx.startswith("All/"):
+                description = f"Global aggregation of {self._ctx.split('/')[-1]} across all users and assistants"
+            else:
+                description = f"Aggregation of {self._ctx.split('/')[-1]} across all assistants for this user"
 
-        # Merge manager fields with private fields for All context
-        fields_with_private = dict(fields)
-        fields_with_private.update(_PRIVATE_FIELDS)
-
-        # Ensure all required fields exist (idempotent per-field)
-        try:
-            existing = unify.get_fields(context=all_ctx) or {}
-        except Exception:
-            existing = {}
-        missing = {k: v for k, v in fields_with_private.items() if k not in existing}
-        if missing:
+            # Idempotent creation: try to create, tolerate if already exists
             try:
-                unify.create_fields(missing, context=all_ctx)
+                unify.create_context(all_ctx, description=description)
             except Exception:
-                pass  # Fields already exist or transient failure
+                pass  # Already exists or transient failure
+
+            # Merge manager fields with private fields for All context
+            fields_with_private = dict(fields)
+            fields_with_private.update(_PRIVATE_FIELDS)
+
+            # Ensure all required fields exist (idempotent per-field)
+            try:
+                existing = unify.get_fields(context=all_ctx) or {}
+            except Exception:
+                existing = {}
+            missing = {
+                k: v for k, v in fields_with_private.items() if k not in existing
+            }
+            if missing:
+                try:
+                    unify.create_fields(missing, context=all_ctx)
+                except Exception:
+                    pass  # Fields already exist or transient failure
 
     # ------------------------------- Reads ---------------------------------
     @cached_property

@@ -1,9 +1,10 @@
 """
 Wrappers around unify.log/create_logs with:
-1. _assistant injection (assistant's name from ASSISTANT_CONTEXT)
-2. _assistant_id injection (assistant's ID from ASSISTANT["agent_id"])
-3. _user_id injection (from USER_ID environment variable)
-4. Automatic addition to All/<Ctx> by reference (copy=False)
+1. _user injection (user's name from USER_CONTEXT)
+2. _user_id injection (from USER_ID environment variable)
+3. _assistant injection (assistant's name from ASSISTANT_CONTEXT)
+4. _assistant_id injection (assistant's ID from ASSISTANT["agent_id"])
+5. Automatic addition to aggregation contexts by reference (copy=False)
 
 Usage
 -----
@@ -18,8 +19,10 @@ Replace direct unify.log/create_logs calls with these wrappers:
     create_logs(context=ctx, entries=entries_list)
 
 The wrappers automatically:
-- Inject _assistant, _assistant_id, _user_id as private fields
-- Add logs to All/<Ctx> by reference (when add_to_all_context=True)
+- Inject _user, _user_id, _assistant, _assistant_id as private fields
+- Add logs to aggregation contexts by reference (when add_to_all_context=True):
+  - {UserName}/All/{Ctx} - user-level aggregation (all assistants for this user)
+  - All/{Ctx} - global aggregation (all users, all assistants)
 """
 
 from __future__ import annotations
@@ -28,6 +31,21 @@ import os
 from typing import Any, Dict, List, Optional
 
 import unify
+
+
+def _get_user_name() -> Optional[str]:
+    """Retrieve user's name from USER_CONTEXT."""
+    try:
+        from unity import USER_CONTEXT
+
+        return USER_CONTEXT
+    except Exception:
+        return None
+
+
+def _get_user_id() -> Optional[str]:
+    """Retrieve user_id from environment."""
+    return os.environ.get("USER_ID")
 
 
 def _get_assistant_name() -> Optional[str]:
@@ -52,14 +70,17 @@ def _get_assistant_id() -> Optional[str]:
     return None
 
 
-def _get_user_id() -> Optional[str]:
-    """Retrieve user_id from environment."""
-    return os.environ.get("USER_ID")
-
-
 def _inject_private_fields(entries: Dict[str, Any]) -> Dict[str, Any]:
-    """Inject _assistant, _assistant_id, and _user_id into entries."""
+    """Inject _user, _user_id, _assistant, and _assistant_id into entries."""
     result = dict(entries)
+
+    user_name = _get_user_name()
+    if user_name is not None:
+        result["_user"] = user_name
+
+    user_id = _get_user_id()
+    if user_id is not None:
+        result["_user_id"] = user_id
 
     assistant_name = _get_assistant_name()
     if assistant_name is not None:
@@ -69,43 +90,47 @@ def _inject_private_fields(entries: Dict[str, Any]) -> Dict[str, Any]:
     if assistant_id is not None:
         result["_assistant_id"] = assistant_id
 
-    user_id = _get_user_id()
-    if user_id is not None:
-        result["_user_id"] = user_id
-
     return result
 
 
-def _derive_all_context(context: str) -> Optional[str]:
+def _derive_all_contexts(context: str) -> List[str]:
     """
-    Derive the All/<suffix> context from an assistant-scoped context.
+    Derive aggregation contexts from a user/assistant-scoped context.
+
+    Returns two contexts for cross-assistant and cross-user aggregation:
+      - {UserName}/All/{suffix} - all assistants for this user
+      - All/{suffix}            - all users, all assistants
 
     Examples:
-        "JohnDoe/Contacts" -> "All/Contacts"
-        "JohnDoe/Tasks" -> "All/Tasks"
-        "Contacts" -> None (no assistant prefix)
+        "JohnDoe/MyAssistant/Contacts" -> ["JohnDoe/All/Contacts", "All/Contacts"]
+        "JohnDoe/Contacts" -> []  (old format, missing user prefix)
+        "Contacts" -> []          (no prefix)
     """
-    if "/" not in context:
-        return None
-    _, suffix = context.split("/", 1)
-    return f"All/{suffix}"
+    parts = context.split("/")
+    if len(parts) < 3:
+        return []
+    user_ctx = parts[0]
+    suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
+    return [
+        f"{user_ctx}/All/{suffix}",  # User-level aggregation
+        f"All/{suffix}",  # Global aggregation
+    ]
 
 
 def _add_to_all(log_ids: List[int], context: str) -> None:
-    """Add logs by reference to the All/<suffix> context (best-effort)."""
+    """Add logs by reference to all aggregation contexts (best-effort)."""
     if not log_ids:
         return
-    all_ctx = _derive_all_context(context)
-    if all_ctx is None:
-        return
-    try:
-        unify.add_logs_to_context(
-            log_ids,
-            context=all_ctx,
-            project=unify.active_project(),
-        )
-    except Exception:
-        pass  # Best-effort: don't fail the main operation
+    all_ctxs = _derive_all_contexts(context)
+    for all_ctx in all_ctxs:
+        try:
+            unify.add_logs_to_context(
+                log_ids,
+                context=all_ctx,
+                project=unify.active_project(),
+            )
+        except Exception:
+            pass  # Best-effort: don't fail the main operation
 
 
 def log(
@@ -117,14 +142,16 @@ def log(
     **entries: Any,
 ) -> unify.Log:
     """
-    Wrapper around unify.log with private field injection and All/<Ctx> addition.
+    Wrapper around unify.log with private field injection and aggregation context addition.
 
     Parameters
     ----------
     context : str
-        The context to log to (e.g., "JohnDoe/Contacts")
+        The context to log to (e.g., "JohnDoe/MyAssistant/Contacts")
     add_to_all_context : bool, default False
-        If True, add the log to All/<Ctx> by reference
+        If True, add the log to aggregation contexts by reference:
+        - {UserName}/All/{Ctx} (user-level)
+        - All/{Ctx} (global)
     new : bool, default True
         Whether to create a new log entry
     mutable : bool, default False
@@ -157,16 +184,18 @@ def create_logs(
     **kwargs: Any,
 ) -> Any:
     """
-    Wrapper around unify.create_logs with private field injection and All/<Ctx> addition.
+    Wrapper around unify.create_logs with private field injection and aggregation context addition.
 
     Parameters
     ----------
     context : str
-        The context to log to (e.g., "JohnDoe/Tasks")
+        The context to log to (e.g., "JohnDoe/MyAssistant/Tasks")
     entries : List[Dict[str, Any]]
         List of entry dicts to create
     add_to_all_context : bool, default False
-        If True, add logs to All/<Ctx> by reference
+        If True, add logs to aggregation contexts by reference:
+        - {UserName}/All/{Ctx} (user-level)
+        - All/{Ctx} (global)
     **kwargs
         Additional arguments passed to unify.create_logs (e.g., batched=True)
 
