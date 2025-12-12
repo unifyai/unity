@@ -157,7 +157,7 @@ def configure_from_cli(
     if len(sys.argv) > required_len:
         assistant_number = sys.argv[2]
         if " " in assistant_number:
-            agent_name, room_name = assistant_number.split(" ")
+            agent_name, room_name = assistant_number.split(":")
         else:
             agent_name = f"unity_{assistant_number}"
             room_name = agent_name
