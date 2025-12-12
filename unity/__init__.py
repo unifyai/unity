@@ -128,6 +128,8 @@ _install_llm_io_hooks()
 _INITIALISED = False
 ASSISTANT = None  # Will hold the selected assistant record once init() runs
 ASSISTANT_CONTEXT = None  # String used for Unify context (e.g., "JohnSmith")
+USER_CONTEXT = None  # String used for user namespace (e.g., "JohnDoe")
+DEFAULT_USER_CONTEXT = "DefaultUser"  # Fallback when USER_NAME not provided
 
 
 def _list_all_assistants() -> list[dict]:
@@ -163,7 +165,7 @@ def init(
        ``EVENT_BUS`` raise a :class:`RuntimeError`.
     """
 
-    global _INITIALISED, ASSISTANT, ASSISTANT_CONTEXT
+    global _INITIALISED, ASSISTANT, ASSISTANT_CONTEXT, USER_CONTEXT
     if _INITIALISED:
         return
 
@@ -173,6 +175,16 @@ def init(
     # 1. Ensure Unify project is active
     if not unify.active_project():
         unify.activate(project_name, overwrite)
+
+    # ── user context derivation ──────────────────────────────────────────
+    # Derive USER_CONTEXT from USER_NAME env var using same capitalization pattern
+    user_name_raw = os.environ.get("USER_NAME", "")
+    if user_name_raw:
+        USER_CONTEXT = "".join(
+            [chunk.capitalize() for chunk in user_name_raw.split(" ")],
+        )
+    else:
+        USER_CONTEXT = DEFAULT_USER_CONTEXT
 
     # ── assistant validation & context selection ─────────────────────────
     assistants = _list_all_assistants()
@@ -196,22 +208,24 @@ def init(
         surname = "".join(
             [chnk.capitalize() for chnk in ASSISTANT["surname"].split(" ")],
         )
-        ctx = first_name + surname
+        assistant_ctx = first_name + surname
     else:
         # No assistants returned or explicitly passed (offline)
         ASSISTANT = default_assistant
-        ctx = "Assistant"
+        assistant_ctx = "Assistant"
 
     # 2. Set the Unify context name *after* validation
-    ASSISTANT_CONTEXT = ctx
+    # Context is now UserName/AssistantName (e.g., "JohnDoe/MyAssistant")
+    ASSISTANT_CONTEXT = assistant_ctx
+    full_ctx = f"{USER_CONTEXT}/{ASSISTANT_CONTEXT}"
 
     # Idempotent context setup: tolerate concurrent creation from parallel processes
     # (e.g., pytest-xdist workers, CI parallelism, multi-instance deployments)
     try:
-        unify.set_context(ctx)
+        unify.set_context(full_ctx)
     except Exception as e:
         if "already exists" in str(e).lower():
-            unify.set_context(ctx, skip_create=True)
+            unify.set_context(full_ctx, skip_create=True)
         else:
             raise
 
@@ -235,8 +249,8 @@ def ensure_initialised(
 
     If both read and write contexts are already configured, this is a no-op.
     Otherwise, it calls :pyfunc:`init` to select an assistant and set a
-    consistent context (e.g. "{AssistantName}") before any manager constructs
-    its own sub-context (like "{AssistantName}/Contacts").
+    consistent context (e.g. "{UserName}/{AssistantName}") before any manager
+    constructs its own sub-context (like "{UserName}/{AssistantName}/Contacts").
     """
     try:
         ctxs = unify.get_active_context()
@@ -258,4 +272,4 @@ def ensure_initialised(
 
 
 # What the package exports at top-level
-__all__ = ["init", "ASSISTANT"]
+__all__ = ["init", "ASSISTANT", "ASSISTANT_CONTEXT", "USER_CONTEXT"]

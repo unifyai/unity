@@ -145,45 +145,60 @@ class ContextRegistry:
             except Exception:
                 pass  # Fields already exist or transient failure
 
-        # Also create the All/<Ctx> aggregation context for cross-assistant queries
-        cls._ensure_all_context(target_name, table)
+        # Also create aggregation contexts for cross-assistant and cross-user queries
+        cls._ensure_all_contexts(target_name, table)
 
         cls._registry[(manager_name, table.name)] = target_name
 
         return target_name
 
     @classmethod
-    def _ensure_all_context(cls, target_name: str, table: TableContext) -> None:
+    def _ensure_all_contexts(cls, target_name: str, table: TableContext) -> None:
         """
-        Ensure the All/<suffix> context exists for cross-assistant aggregation.
+        Ensure aggregation contexts exist for cross-assistant and cross-user queries.
 
-        This context:
-        - Has the same fields as the source context (for consistent querying)
-        - Includes private fields (_assistant, _assistant_id, _user_id)
-        - Has NO unique_keys or auto_counting (logs are added by reference)
+        Creates two contexts:
+          - {UserName}/All/{suffix} - all assistants for this user
+          - All/{suffix}            - all users, all assistants
+
+        These contexts:
+        - Have the same fields as the source context (for consistent querying)
+        - Include private fields (_user, _user_id, _assistant, _assistant_id)
+        - Have NO unique_keys or auto_counting (logs are added by reference)
         """
-        if "/" not in target_name:
+        parts = target_name.split("/")
+        if len(parts) < 3:
             return
-        _, suffix = target_name.split("/", 1)
-        all_ctx = f"All/{suffix}"
+        user_ctx = parts[0]
+        suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
 
-        # Idempotent creation: try to create, tolerate if already exists
-        try:
-            create_context(
-                all_ctx,
-                description=f"Aggregation of {table.name} across all assistants",
-            )
-        except Exception:
-            pass  # Already exists or transient failure
+        # Two aggregation contexts: user-level and global
+        all_ctxs = [
+            (
+                f"{user_ctx}/All/{suffix}",
+                f"Aggregation of {table.name} across all assistants for this user",
+            ),
+            (
+                f"All/{suffix}",
+                f"Global aggregation of {table.name} across all users and assistants",
+            ),
+        ]
 
-        # Mirror fields from source context + add private fields
-        if table.fields:
-            fields_with_private = dict(table.fields)
-            fields_with_private.update(_PRIVATE_FIELDS)
+        for all_ctx, description in all_ctxs:
+            # Idempotent creation: try to create, tolerate if already exists
             try:
-                create_fields(fields_with_private, context=all_ctx)
+                create_context(all_ctx, description=description)
             except Exception:
-                pass  # Fields already exist or transient failure
+                pass  # Already exists or transient failure
+
+            # Mirror fields from source context + add private fields
+            if table.fields:
+                fields_with_private = dict(table.fields)
+                fields_with_private.update(_PRIVATE_FIELDS)
+                try:
+                    create_fields(fields_with_private, context=all_ctx)
+                except Exception:
+                    pass  # Fields already exist or transient failure
 
     @classmethod
     def refresh(

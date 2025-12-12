@@ -1,22 +1,29 @@
 """
-Utility for backfilling _assistant field on existing logs.
+Utility for backfilling private fields on existing logs.
 
 When the private field injection was added, existing logs won't have
-_assistant, _assistant_id, or _user_id fields. This module provides
+_user, _user_id, _assistant, or _assistant_id fields. This module provides
 utilities to backfill these fields in bulk.
 
 Usage
 -----
     from unity.common.backfill import (
-        backfill_assistant_field,
-        backfill_all_contexts_for_assistant,
+        backfill_private_fields,
+        backfill_all_contexts_for_user_assistant,
     )
 
     # Backfill a single context
-    result = backfill_assistant_field("JohnDoe/Contacts", "JohnDoe")
+    result = backfill_private_fields(
+        "JohnDoe/MyAssistant/Contacts",
+        user_name="JohnDoe",
+        assistant_name="MyAssistant",
+    )
 
-    # Backfill all contexts for an assistant
-    results = backfill_all_contexts_for_assistant("JohnDoe")
+    # Backfill all contexts for a user/assistant combination
+    results = backfill_all_contexts_for_user_assistant(
+        user_name="JohnDoe",
+        assistant_name="MyAssistant",
+    )
 """
 
 from __future__ import annotations
@@ -26,28 +33,31 @@ from typing import Any, Dict, List, Optional
 import unify
 
 
-def backfill_assistant_field(
+def backfill_private_fields(
     context: str,
-    assistant_name: str,
     *,
+    user_name: Optional[str] = None,
+    assistant_name: Optional[str] = None,
     batch_size: int = 100,
     filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Backfill _assistant field for existing logs in a context.
+    Backfill _user and/or _assistant fields for existing logs in a context.
 
-    Finds all logs where _assistant is missing or None and updates them with
-    the provided assistant_name. Processes in batches to handle large contexts.
+    Finds all logs where _user/_assistant is missing or None and updates them
+    with the provided values. Processes in batches to handle large contexts.
 
-    Note: Uses client-side filtering because `_assistant is None` only matches
+    Note: Uses client-side filtering because `_field is None` only matches
     logs where the field exists but is NULL, not logs where the field was
     never set.
 
     Parameters
     ----------
     context : str
-        The context to backfill (e.g., "JohnDoe/Contacts")
-    assistant_name : str
+        The context to backfill (e.g., "JohnDoe/MyAssistant/Contacts")
+    user_name : str, optional
+        The user name to set for _user field
+    assistant_name : str, optional
         The assistant name to set for _assistant field
     batch_size : int, default 100
         Number of logs to fetch per batch
@@ -59,31 +69,53 @@ def backfill_assistant_field(
     Dict[str, Any]
         Summary with total_updated count and context
     """
+    if user_name is None and assistant_name is None:
+        return {
+            "total_updated": 0,
+            "context": context,
+            "error": "No fields to backfill",
+        }
+
     total_updated = 0
     offset = 0
 
     while True:
-        # Fetch logs with entries to check _assistant client-side
+        # Fetch logs with entries to check fields client-side
         logs = unify.get_logs(
             context=context,
             filter=filter,  # Only apply user's additional filter
             offset=offset,
             limit=batch_size,
-            return_ids_only=False,  # Need entries to check _assistant
+            return_ids_only=False,  # Need entries to check fields
         )
 
         if not logs:
             break
 
-        # Filter client-side for logs missing _assistant or with None value
-        logs_to_update = [lg.id for lg in logs if lg.entries.get("_assistant") is None]
+        # Filter client-side for logs needing updates
+        logs_to_update = []
+        for lg in logs:
+            needs_update = False
+            if user_name is not None and lg.entries.get("_user") is None:
+                needs_update = True
+            if assistant_name is not None and lg.entries.get("_assistant") is None:
+                needs_update = True
+            if needs_update:
+                logs_to_update.append(lg.id)
 
         if logs_to_update:
+            # Build update entries
+            entries: Dict[str, str] = {}
+            if user_name is not None:
+                entries["_user"] = user_name
+            if assistant_name is not None:
+                entries["_assistant"] = assistant_name
+
             # Batch update
             unify.update_logs(
                 logs=logs_to_update,
                 context=context,
-                entries={"_assistant": assistant_name},
+                entries=entries,
                 overwrite=False,  # Don't overwrite other fields
             )
             total_updated += len(logs_to_update)
@@ -98,21 +130,24 @@ def backfill_assistant_field(
     return {"total_updated": total_updated, "context": context}
 
 
-def backfill_all_contexts_for_assistant(
-    assistant_name: str,
+def backfill_all_contexts_for_user_assistant(
     *,
+    user_name: str,
+    assistant_name: str,
     contexts: Optional[List[str]] = None,
     batch_size: int = 100,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Backfill _assistant for all contexts belonging to an assistant.
+    Backfill _user and _assistant for all contexts belonging to a user/assistant.
 
-    If contexts is None, discovers them by prefix "{assistant_name}/".
+    If contexts is None, discovers them by prefix "{user_name}/{assistant_name}/".
 
     Parameters
     ----------
+    user_name : str
+        The user name (used as context prefix and _user field value)
     assistant_name : str
-        The assistant name (used as context prefix and field value)
+        The assistant name (used as context prefix and _assistant field value)
     contexts : List[str], optional
         Explicit list of contexts to backfill. If None, discovers via prefix.
     batch_size : int, default 100
@@ -124,15 +159,60 @@ def backfill_all_contexts_for_assistant(
         Mapping of context -> result dict (total_updated or error)
     """
     if contexts is None:
+        prefix = f"{user_name}/{assistant_name}/"
+        all_contexts = unify.get_contexts(prefix=prefix)
+        contexts = list(all_contexts.keys())
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for ctx in contexts:
+        try:
+            result = backfill_private_fields(
+                ctx,
+                user_name=user_name,
+                assistant_name=assistant_name,
+                batch_size=batch_size,
+            )
+            results[ctx] = result
+        except Exception as e:
+            results[ctx] = {"error": str(e), "context": ctx}
+
+    return results
+
+
+# Backward compatibility aliases
+def backfill_assistant_field(
+    context: str,
+    assistant_name: str,
+    *,
+    batch_size: int = 100,
+    filter: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Backward-compatible wrapper for backfill_private_fields."""
+    return backfill_private_fields(
+        context,
+        assistant_name=assistant_name,
+        batch_size=batch_size,
+        filter=filter,
+    )
+
+
+def backfill_all_contexts_for_assistant(
+    assistant_name: str,
+    *,
+    contexts: Optional[List[str]] = None,
+    batch_size: int = 100,
+) -> Dict[str, Dict[str, Any]]:
+    """Backward-compatible wrapper - discovers contexts by old single-prefix pattern."""
+    if contexts is None:
         all_contexts = unify.get_contexts(prefix=f"{assistant_name}/")
         contexts = list(all_contexts.keys())
 
     results: Dict[str, Dict[str, Any]] = {}
     for ctx in contexts:
         try:
-            result = backfill_assistant_field(
+            result = backfill_private_fields(
                 ctx,
-                assistant_name,
+                assistant_name=assistant_name,
                 batch_size=batch_size,
             )
             results[ctx] = result

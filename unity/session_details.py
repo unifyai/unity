@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 DEFAULT_ASSISTANT_ID = "default-assistant"
 DEFAULT_ASSISTANT_NAME = "assistant"
 DEFAULT_USER_ID = "default"
+DEFAULT_USER_CONTEXT = "DefaultUser"  # Used when USER_NAME not provided
 DEFAULT_VOICE_PROVIDER = "cartesia"
 DEFAULT_VOICE_MODE = "tts"
 

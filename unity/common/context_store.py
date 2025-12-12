@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import unify
 
 
 # Private fields injected by log_utils wrappers
 _PRIVATE_FIELDS: Dict[str, str] = {
+    "_user": "str",
+    "_user_id": "str",
     "_assistant": "str",
     "_assistant_id": "str",
-    "_user_id": "str",
 }
 
 
@@ -46,54 +47,71 @@ class TableStore:
     # ──────────────────────────────────────────────────────────────────────
     # Provisioning
     # ──────────────────────────────────────────────────────────────────────
-    def _all_context(self) -> Optional[str]:
+    def _all_contexts(self) -> List[str]:
         """
-        Derive the All/<suffix> context for cross-assistant aggregation.
+        Derive aggregation contexts for this user/assistant-scoped context.
 
-        Returns None if the context has no assistant prefix (no "/" in path).
+        Returns two contexts for cross-assistant and cross-user aggregation:
+          - {UserName}/All/{suffix} - all assistants for this user
+          - All/{suffix}            - all users, all assistants
+
+        Example: "JohnDoe/MyAssistant/Contacts" returns:
+          - "JohnDoe/All/Contacts"
+          - "All/Contacts"
+
+        Returns empty list if context doesn't have UserName/AssistantName prefix.
         """
-        if "/" not in self._ctx:
-            return None
-        _, suffix = self._ctx.split("/", 1)
-        return f"All/{suffix}"
+        parts = self._ctx.split("/")
+        if len(parts) < 3:
+            return []
+        user_ctx = parts[0]
+        suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
+        return [
+            f"{user_ctx}/All/{suffix}",  # User-level aggregation
+            f"All/{suffix}",  # Global aggregation
+        ]
 
-    def _ensure_all_context(self, all_ctx: str) -> None:
+    def _ensure_all_contexts(self, all_ctxs: List[str]) -> None:
         """
-        Ensure the All/<suffix> context exists for cross-assistant aggregation.
+        Ensure aggregation contexts exist for cross-assistant and cross-user queries.
 
-        This context:
-        - Has the same fields as the source context (for consistent querying)
-        - Includes private fields (_assistant, _assistant_id, _user_id)
-        - Has NO unique_keys or auto_counting (logs are added by reference)
+        These contexts:
+        - Have the same fields as the source context (for consistent querying)
+        - Include private fields (_user, _user_id, _assistant, _assistant_id)
+        - Have NO unique_keys or auto_counting (logs are added by reference)
         """
-        key = (self._project, all_ctx)
-        if key in self._ENSURED:
-            return
+        for all_ctx in all_ctxs:
+            key = (self._project, all_ctx)
+            if key in self._ENSURED:
+                continue
 
-        # Always attempt creation; tolerate pre-existence
-        try:
-            unify.get_context(all_ctx, project=self._project)
-        except Exception:
-            pass
-
-        # Create aggregation context (no unique_keys/auto_counting)
-        unify.create_context(
-            all_ctx,
-            description=f"Aggregation of {self._ctx.split('/')[-1]} across all assistants",
-        )
-
-        # Mirror fields from source context + add private fields
-        fields_with_private = dict(self._fields)
-        fields_with_private.update(_PRIVATE_FIELDS)
-
-        if fields_with_private:
+            # Always attempt creation; tolerate pre-existence
             try:
-                unify.create_fields(fields_with_private, context=all_ctx)
+                unify.get_context(all_ctx, project=self._project)
             except Exception:
-                # Tolerate duplicates / partial creation
                 pass
 
-        self._ENSURED.add(key)
+            # Determine description based on aggregation level
+            if all_ctx.startswith("All/"):
+                description = f"Global aggregation of {self._ctx.split('/')[-1]} across all users and assistants"
+            else:
+                description = f"Aggregation of {self._ctx.split('/')[-1]} across all assistants for this user"
+
+            # Create aggregation context (no unique_keys/auto_counting)
+            unify.create_context(all_ctx, description=description)
+
+            # Mirror fields from source context + add private fields
+            fields_with_private = dict(self._fields)
+            fields_with_private.update(_PRIVATE_FIELDS)
+
+            if fields_with_private:
+                try:
+                    unify.create_fields(fields_with_private, context=all_ctx)
+                except Exception:
+                    # Tolerate duplicates / partial creation
+                    pass
+
+            self._ENSURED.add(key)
 
     def ensure_context(self) -> None:
         key = (self._project, self._ctx)
@@ -124,10 +142,10 @@ class TableStore:
 
         self._ENSURED.add(key)
 
-        # Also ensure All/<Ctx> exists for cross-assistant aggregation
-        all_ctx = self._all_context()
-        if all_ctx is not None:
-            self._ensure_all_context(all_ctx)
+        # Also ensure aggregation contexts exist for cross-assistant/cross-user queries
+        all_ctxs = self._all_contexts()
+        if all_ctxs:
+            self._ensure_all_contexts(all_ctxs)
 
     # ──────────────────────────────────────────────────────────────────────
     # Accessors with 404→ensure→retry
