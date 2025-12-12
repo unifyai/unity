@@ -188,7 +188,7 @@ Settings are organized in two classes with inheritance:
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `UNIFY_MODEL` | str | `gpt-5.1@openai` | LLM model to use |
+| `UNIFY_MODEL` | str | `gpt-5.2@openai` | LLM model to use |
 | `UNIFY_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
 | `LLM_IO_DEBUG` | bool | `true` | Log full LLM request/response payloads |
 | `ASYNCIO_DEBUG` | bool | `false` | Enable asyncio debug mode |
