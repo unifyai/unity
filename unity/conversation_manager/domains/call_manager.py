@@ -82,7 +82,7 @@ class LivekitCallManager:
             )
         )
         args = [
-            f"{agent_name} {room_name}",
+            f"{agent_name}:{room_name}",
             self.voice_provider,
             self.voice_id,
             False,
