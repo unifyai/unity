@@ -126,17 +126,17 @@ async def test_email_to_email(test_redis_client, event_capture):
 
     # Send incoming email
     contact = contacts[1]
-    message_id = "test_message_id"
+    email_id = "test_email_id"
     await send_incoming_email(
         test_redis_client,
         contact,
         "Test Subject",
         "Tell me a joke",
-        message_id,
+        email_id,
     )
 
     # Capture outgoing email and verify response
-    await capture_outgoing_email(event_capture, contact, message_id)
+    await capture_outgoing_email(event_capture, contact, email_id)
 
 
 @pytest.mark.asyncio
@@ -150,13 +150,13 @@ async def test_email_to_sms(test_redis_client, event_capture):
 
     # Send incoming email
     contact = contacts[1]
-    message_id = "test_message_id"
+    email_id = "test_email_id"
     await send_incoming_email(
         test_redis_client,
         contact,
         "Test Subject",
         "Tell me a joke via SMS",
-        message_id,
+        email_id,
     )
 
     # Capture outgoing SMS and verify response
@@ -174,13 +174,13 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
 
     # Send incoming email
     contact = contacts[1]
-    message_id = "test_message_id"
+    email_id = "test_email_id"
     await send_incoming_email(
         test_redis_client,
         contact,
         "Test Subject",
         "Tell me a joke via unify message",
-        message_id,
+        email_id,
     )
 
     # Capture outgoing unify message and verify response
@@ -198,13 +198,13 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
 
     # Send incoming email
     contact = contacts[1]
-    message_id = "test_message_id"
+    email_id = "test_email_id"
     await send_incoming_email(
         test_redis_client,
         contact,
         "Test Subject",
         "Tell me a joke via phone call",
-        message_id,
+        email_id,
     )
 
     # Capture outgoing phone call and verify response

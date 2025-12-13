@@ -53,13 +53,13 @@ async def send_incoming_email(
     contact: dict,
     subject: str,
     body: str,
-    message_id: str,
+    email_id: str,
 ):
     incoming_email = EmailReceived(
         contact=contact,
         subject=subject,
         body=body,
-        message_id=message_id,
+        email_id=email_id,
     )
     print(f"\n📧 Sending email from {contact['email_address']}")
     await test_redis_client.publish(
@@ -165,7 +165,7 @@ async def capture_outgoing_sms(event_capture, contact: dict):
     print(f"   Full response length: {len(response.content)} characters")
 
 
-async def capture_outgoing_email(event_capture, contact: dict, message_id: str = None):
+async def capture_outgoing_email(event_capture, contact: dict, email_id: str = None):
     # Wait for the assistant's response
     print("⏳ Waiting for email response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
@@ -176,8 +176,8 @@ async def capture_outgoing_email(event_capture, contact: dict, message_id: str =
     # Verify response
     assert isinstance(response, EmailSent)
     assert response.contact["email_address"] == contact["email_address"]
-    if message_id:
-        assert response.message_id == message_id
+    if email_id:
+        assert response.email_id == email_id
     assert len(response.body) > 0
 
     print(f"✅ Got email response: {response.body[:100]}...")

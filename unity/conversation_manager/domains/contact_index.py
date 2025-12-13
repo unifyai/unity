@@ -39,7 +39,7 @@ class EmailMessage:
     name: str
     subject: str
     body: str
-    message_id: str | None
+    email_id: str | None
     timestamp: datetime
 
 
@@ -72,7 +72,7 @@ class ContactIndex:
         message_content=None,
         subject=None,
         body=None,
-        message_id=None,
+        email_id=None,
         timestamp=None,
         role: Literal["user", "assistant"] = "user",
     ):
@@ -91,7 +91,7 @@ class ContactIndex:
                 ),
                 subject,
                 body,
-                message_id,
+                email_id,
                 timestamp,
             )
         else:
