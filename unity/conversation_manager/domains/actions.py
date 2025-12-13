@@ -188,7 +188,7 @@ def build_dynamic_response_models(realtime=False):
         DynamicResponsePhone = create_model(
             "DynamicResponsePhone",
             thoughts=(str, ...),
-            phone_guidance=(str, ...),
+            realtime_guidance=(str, ...),
             actions=(Optional[list[ActionsUnion]], ...),
             __base__=BaseModel,
         )

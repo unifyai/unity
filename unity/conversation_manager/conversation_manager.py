@@ -255,12 +255,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await self.event_broker.publish(topic, event.to_json())
 
             else:
-                if parsed_out.get("phone_guidance"):
+                if parsed_out.get("realtime_guidance"):
                     event = AssistantRealtimeGuidance(
                         self.contact_index.get_contact(
                             contact_id=self.call_manager.call_contact["contact_id"],
                         ),
-                        parsed_out["phone_guidance"],
+                        parsed_out["realtime_guidance"],
                     )
                     await self.event_broker.publish(
                         "app:call:call_notifs",
