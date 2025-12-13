@@ -1,0 +1,246 @@
+"""
+tests/test_conversation_manager/test_events.py
+==============================================
+
+Tests for conversation manager event publishing across all communication mediums.
+
+Verifies that the correct inbound and outbound events are published for:
+- Browser voice (UNIFY_CALL): InboundUnifyCallUtterance / OutboundUnifyCallUtterance
+- Phone calls (PHONE_CALL): InboundPhoneUtterance / OutboundPhoneUtterance
+- Text chat (UNIFY_MESSAGE): UnifyMessageReceived / UnifyMessageSent
+- SMS (SMS_MESSAGE): SMSReceived / SMSSent
+- Email (EMAIL): EmailReceived / EmailSent
+"""
+
+import pytest
+
+from tests.helpers import _handle_project
+from tests.test_conversation_manager.helpers import (
+    contacts,
+    send_incoming_call,
+    send_incoming_sms,
+    send_incoming_email,
+    send_incoming_unify_message,
+    capture_stream_response,
+)
+from unity.conversation_manager.events import (
+    EmailReceived,
+    EmailSent,
+    InboundPhoneUtterance,
+    InboundUnifyCallUtterance,
+    OutboundPhoneUtterance,
+    OutboundUnifyCallUtterance,
+    PhoneCallEnded,
+    SMSReceived,
+    SMSSent,
+    UnifyCallEnded,
+    UnifyMessageReceived,
+    UnifyMessageSent,
+)
+
+
+# =============================================================================
+# Voice Medium Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_unify_call_publishes_utterance_events(
+    test_redis_client,
+    event_capture,
+):
+    """
+    Verify that browser voice calls publish inbound and outbound utterance events.
+    """
+    event_capture.clear()
+
+    contact = contacts[1]
+
+    pubsub = await send_incoming_call(
+        test_redis_client,
+        contact,
+        "test_conference",
+        "Tell me a joke",
+        mode="unify_call",
+    )
+
+    start, chunks, end = await capture_stream_response(pubsub, "unify_call")
+    assert start, "Should receive start_gen"
+    assert len(chunks) > 0, "Should receive chunks"
+
+    # Wait for outbound event (published after stream ends when LLM response is parsed)
+    outbound = await event_capture.wait_for_event(
+        OutboundUnifyCallUtterance,
+        timeout=30.0,
+    )
+
+    # Verify inbound event
+    inbound_events = event_capture.get_events(InboundUnifyCallUtterance)
+    assert len(inbound_events) >= 1
+    inbound = inbound_events[0]
+    assert inbound.content == "Tell me a joke"
+
+    # Verify outbound event
+    assert hasattr(outbound, "contact")
+    assert hasattr(outbound, "content")
+    assert len(outbound.content) > 0
+
+    await pubsub.unsubscribe("app:unify_call:response_gen")
+    await pubsub.aclose()
+
+    await test_redis_client.publish(
+        "app:comms:unify_call_ended",
+        UnifyCallEnded(contact=contact).to_json(),
+    )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_phone_call_publishes_utterance_events(
+    test_redis_client,
+    event_capture,
+):
+    """
+    Verify that phone calls publish inbound and outbound utterance events.
+    """
+    event_capture.clear()
+
+    contact = contacts[1]
+
+    pubsub = await send_incoming_call(
+        test_redis_client,
+        contact,
+        "test_conference",
+        "Tell me a joke",
+        mode="call",
+    )
+
+    start, chunks, end = await capture_stream_response(pubsub, "call")
+    assert start, "Should receive start_gen"
+    assert len(chunks) > 0, "Should receive chunks"
+
+    # Wait for outbound event (published after stream ends when LLM response is parsed)
+    outbound = await event_capture.wait_for_event(OutboundPhoneUtterance, timeout=30.0)
+
+    # Verify inbound event
+    inbound_events = event_capture.get_events(InboundPhoneUtterance)
+    assert len(inbound_events) >= 1
+    inbound = inbound_events[0]
+    assert inbound.content == "Tell me a joke"
+
+    # Verify outbound event
+    assert hasattr(outbound, "contact")
+    assert hasattr(outbound, "content")
+    assert len(outbound.content) > 0
+
+    await pubsub.unsubscribe("app:call:response_gen")
+    await pubsub.aclose()
+
+    await test_redis_client.publish(
+        "app:comms:phone_call_ended",
+        PhoneCallEnded(contact=contact).to_json(),
+    )
+
+
+# =============================================================================
+# Text Medium Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_unify_message_publishes_events(
+    test_redis_client,
+    event_capture,
+):
+    """
+    Verify that text chat messages publish inbound and outbound events.
+    """
+    event_capture.clear()
+
+    contact = contacts[1]
+
+    await send_incoming_unify_message(test_redis_client, contact, "Tell me a joke")
+
+    # Wait for outbound event
+    outbound = await event_capture.wait_for_event(UnifyMessageSent, timeout=60.0)
+
+    # Verify inbound event
+    inbound_events = event_capture.get_events(UnifyMessageReceived)
+    assert len(inbound_events) >= 1
+    inbound = inbound_events[0]
+    assert inbound.content == "Tell me a joke"
+
+    # Verify outbound event
+    assert hasattr(outbound, "contact")
+    assert hasattr(outbound, "content")
+    assert len(outbound.content) > 0
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_sms_publishes_events(
+    test_redis_client,
+    event_capture,
+):
+    """
+    Verify that SMS messages publish inbound and outbound events.
+    """
+    event_capture.clear()
+
+    contact = contacts[1]
+
+    await send_incoming_sms(test_redis_client, contact, "Tell me a joke")
+
+    # Wait for outbound event
+    outbound = await event_capture.wait_for_event(SMSSent, timeout=60.0)
+
+    # Verify inbound event
+    inbound_events = event_capture.get_events(SMSReceived)
+    assert len(inbound_events) >= 1
+    inbound = inbound_events[0]
+    assert inbound.content == "Tell me a joke"
+
+    # Verify outbound event
+    assert hasattr(outbound, "contact")
+    assert hasattr(outbound, "content")
+    assert len(outbound.content) > 0
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_email_publishes_events(
+    test_redis_client,
+    event_capture,
+):
+    """
+    Verify that email messages publish inbound and outbound events.
+    """
+    event_capture.clear()
+
+    contact = contacts[1]
+
+    await send_incoming_email(
+        test_redis_client,
+        contact,
+        subject="Test Subject",
+        body="Tell me a joke",
+        email_id="test_email_123",
+    )
+
+    # Wait for outbound event
+    outbound = await event_capture.wait_for_event(EmailSent, timeout=60.0)
+
+    # Verify inbound event
+    inbound_events = event_capture.get_events(EmailReceived)
+    assert len(inbound_events) >= 1
+    inbound = inbound_events[0]
+    assert inbound.subject == "Test Subject"
+    assert inbound.body == "Tell me a joke"
+
+    # Verify outbound event
+    assert hasattr(outbound, "contact")
+    assert hasattr(outbound, "subject")
+    assert hasattr(outbound, "body")
+    assert len(outbound.body) > 0
