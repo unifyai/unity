@@ -175,18 +175,18 @@ def build_dynamic_response_models(realtime=False):
         __base__=BaseModel,
     )
 
-    # Dynamically create ResponsePhone model for call/unify_meet modes
+    # Dynamically create ResponseVoice model for call/unify_meet modes
     if not realtime:
-        DynamicResponsePhone = create_model(
-            "DynamicResponsePhone",
+        DynamicResponseVoice = create_model(
+            "DynamicResponseVoice",
             thoughts=(str, ...),
             voice_utterance=(str, ...),
             actions=(Optional[list[ActionsUnion]], ...),
             __base__=BaseModel,
         )
     else:
-        DynamicResponsePhone = create_model(
-            "DynamicResponsePhone",
+        DynamicResponseVoice = create_model(
+            "DynamicResponseVoice",
             thoughts=(str, ...),
             realtime_guidance=(str, ...),
             actions=(Optional[list[ActionsUnion]], ...),
@@ -194,8 +194,8 @@ def build_dynamic_response_models(realtime=False):
         )
 
     return {
-        "call": DynamicResponsePhone,
-        "unify_meet": DynamicResponsePhone,
+        "call": DynamicResponseVoice,
+        "unify_meet": DynamicResponseVoice,
         "text": DynamicResponse,
     }
 
