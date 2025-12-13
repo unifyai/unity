@@ -195,8 +195,8 @@ Key insight: While `active_ask_handle` is set, user input is routed to the neste
 |-------|-------------|
 | `DirectMessageEvent` | Bypass Main CM Brain, send message directly to user |
 | `NotificationInjectedEvent` | Inject notification into Main CM Brain's context |
-| `InboundPhoneUtterance` / `InboundUnifyCallUtterance` / `InboundGmeetUtterance` | User spoke during a call |
-| `OutboundPhoneUtterance` / `OutboundUnifyCallUtterance` / `OutboundGmeetUtterance` | Assistant response during a call |
+| `InboundPhoneUtterance` / `InboundUnifyCallUtterance` | User spoke during a call |
+| `OutboundPhoneUtterance` / `OutboundUnifyCallUtterance` | Assistant response during a call |
 | `ConductorRequest` | Request the Conductor to perform an action |
 
 ---
@@ -233,7 +233,6 @@ conversation_manager/
 │
 ├── medium_scripts/          # Medium-specific voice handling
 │   ├── call.py              # Twilio phone calls
-│   ├── gmeet.py             # Google Meet integration
 │   ├── realtime_call.py     # GPT Realtime API calls
 │   └── common.py            # Shared voice utilities
 │
