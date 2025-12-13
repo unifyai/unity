@@ -116,6 +116,6 @@ class LLM:
             "json_schema": {
                 "name": response_model.__name__,
                 "schema": schema,
-                "strict": True,
+                "strict": False,
             },
         }
