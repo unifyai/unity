@@ -131,7 +131,7 @@ async def simulate_turn(agent, message, start=False, user=False):
     # single-turn generate
     resp = await client.generate(user_message=ua_prompt)
     # record assistant response via appropriate event class
-    reply = getattr(resp, "phone_utterance", None) or str(resp)
+    reply = getattr(resp, "voice_utterance", None) or str(resp)
     send_cls = SENT_MAP.get(MEDIUM, PhoneUtteranceEvent)
     ae = send_cls(timestamp=None, content=reply, role="Assistant")
     agent["history"].append(ae.to_dict())
