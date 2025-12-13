@@ -106,11 +106,17 @@ class LLM:
         return out
 
     def _to_streaming_format(self, response_model) -> dict:
-        """Convert Pydantic model to json_schema format for streaming."""
+        """Convert Pydantic model to json_schema format for streaming.
+
+        OpenAI's strict mode requires:
+        1. All properties must be in the `required` array
+        2. `additionalProperties` must be false
+
+        Pydantic excludes fields with default values from `required`, so we
+        post-process the schema to ensure strict mode compliance.
+        """
         schema = response_model.model_json_schema()
-        schema.setdefault("additionalProperties", False)
-        for def_schema in schema.get("$defs", {}).values():
-            def_schema.setdefault("additionalProperties", False)
+        self._make_strict_mode_compatible(schema)
         return {
             "type": "json_schema",
             "json_schema": {
@@ -119,3 +125,17 @@ class LLM:
                 "strict": False,
             },
         }
+
+    def _make_strict_mode_compatible(self, schema: dict) -> None:
+        """Recursively make a JSON schema compatible with OpenAI's strict mode.
+
+        For strict mode, all properties must be in `required` and
+        `additionalProperties` must be false.
+        """
+        if schema.get("type") == "object" and "properties" in schema:
+            schema["additionalProperties"] = False
+            schema["required"] = list(schema["properties"].keys())
+
+        # Process nested definitions
+        for def_schema in schema.get("$defs", {}).values():
+            self._make_strict_mode_compatible(def_schema)
