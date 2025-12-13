@@ -155,7 +155,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.is_summarizing = None
         self.max_messages = 30
 
-        # filler callback when user finishes speaking (phone/unify_call only)
+        # filler callback when user finishes speaking (phone/unify_meet only)
         self.user_turn_end_callback: Optional[Callable[[list[dict]], str]] = (
             user_turn_end_callback
         )
@@ -222,25 +222,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
             # realtime model will handle the call so no need to stream anything to the call
-            stream_to_call=self.mode in ["call", "unify_call"]
+            stream_to_call=self.mode in ["call", "unify_meet"]
             and not self.call_manager.realtime,
             response_model=response_model,
             call_type=self.mode,
             before_stream_start=(
                 self.before_stream_start
                 if (
-                    self.mode in ["call", "unify_call"]
+                    self.mode in ["call", "unify_meet"]
                     and not self.call_manager.realtime
                 )
                 else None
             ),
         )
         parsed_out = json.loads(out)
-        if self.mode in ["call", "unify_call"]:
+        if self.mode in ["call", "unify_meet"]:
             if not self.call_manager.realtime:
-                if self.mode == "unify_call":
-                    topic = "app:comms:unify_call_utterance"
-                    event = OutboundUnifyCallUtterance(
+                if self.mode == "unify_meet":
+                    topic = "app:comms:unify_meet_utterance"
+                    event = OutboundUnifyMeetUtterance(
                         self.contact_index.get_contact(contact_id=1),
                         parsed_out["voice_utterance"],
                     )
@@ -449,7 +449,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def run_filler_once(self):
         if self.call_manager.realtime or self.mode not in [
             "call",
-            "unify_call",
+            "unify_meet",
         ]:
             return
 
@@ -508,7 +508,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         await self.cancel_proactive_speech()
 
         # Only schedule if we are in a call/voice mode where silence matters
-        if self.mode not in ["call", "unify_call"]:
+        if self.mode not in ["call", "unify_meet"]:
             print(
                 f"[Proactive Speech] Skipping: mode {self.mode} not in supported modes",
             )
@@ -629,7 +629,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if contact:
                 self.contact_index.push_message(
                     contact,
-                    "phone" if self.mode == "call" else "unify_call",
+                    "phone" if self.mode == "call" else "unify_meet",
                     message_content=decision.content,
                     role="assistant",
                 )

@@ -93,7 +93,7 @@ class PhoneCallAnswered(Event):
 
 
 @dataclass
-class UnifyCallReceived(Event):
+class UnifyMeetReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
     contact: dict
@@ -107,8 +107,8 @@ class PhoneCallStarted(Event):
 
 
 @dataclass
-class UnifyCallStarted(Event):
-    """A browser-based voice call session has started (no phone number).
+class UnifyMeetStarted(Event):
+    """A browser-based voice/video meeting session has started (no phone number).
 
     "contact" should reference the boss/user contact id (typically 1).
     """
@@ -125,8 +125,8 @@ class InboundPhoneUtterance(Event):
 
 
 @dataclass
-class InboundUnifyCallUtterance(Event):
-    """Utterance received from the other party during a browser-based voice call."""
+class InboundUnifyMeetUtterance(Event):
+    """Utterance received from the other party during a browser-based voice/video meeting."""
 
     contact: dict
     content: str
@@ -143,8 +143,8 @@ class PhoneCallEnded(Event):
 
 
 @dataclass
-class UnifyCallEnded(Event):
-    """The browser-based voice call session has ended."""
+class UnifyMeetEnded(Event):
+    """The browser-based voice/video meeting session has ended."""
 
     contact: dict
 
@@ -175,8 +175,8 @@ class OutboundPhoneUtterance(Event):
 
 
 @dataclass
-class OutboundUnifyCallUtterance(Event):
-    """Utterance sent by the assistant during a browser-based voice call."""
+class OutboundUnifyMeetUtterance(Event):
+    """Utterance sent by the assistant during a browser-based voice/video meeting."""
 
     contact: dict
     content: str

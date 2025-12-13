@@ -13,9 +13,9 @@ from unity.conversation_manager.events import (
     InboundPhoneUtterance,
     SMSReceived,
     SMSSent,
-    UnifyCallReceived,
-    UnifyCallStarted,
-    InboundUnifyCallUtterance,
+    UnifyMeetReceived,
+    UnifyMeetStarted,
+    InboundUnifyMeetUtterance,
     UnifyMessageReceived,
     UnifyMessageSent,
 )
@@ -99,7 +99,7 @@ async def send_incoming_call(
         )
         contact_str = contact["phone_number"]
     else:
-        incoming_call = UnifyCallReceived(contact=contact)
+        incoming_call = UnifyMeetReceived(contact=contact)
         contact_str = contact["contact_id"]
     print(f"\n📞 Sending {incoming_call.to_dict()['event_name']} from {contact_str}")
     await test_redis_client.publish(
@@ -123,8 +123,8 @@ async def send_incoming_call(
         )
     else:
         await test_redis_client.publish(
-            "app:comms:unify_call_started",
-            UnifyCallStarted(contact=contact).to_json(),
+            "app:comms:unify_meet_started",
+            UnifyMeetStarted(contact=contact).to_json(),
         )
     await asyncio.sleep(0.5)
 
@@ -144,8 +144,8 @@ async def send_incoming_call(
         )
     else:
         await test_redis_client.publish(
-            "app:comms:unify_call_utterance",
-            InboundUnifyCallUtterance(
+            "app:comms:unify_meet_utterance",
+            InboundUnifyMeetUtterance(
                 contact=contact,
                 content=user_utterance,
             ).to_json(),

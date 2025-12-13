@@ -20,9 +20,9 @@ class LivekitCallManager:
     def __init__(self, config: CallConfig):
         self.set_config(config=config)
         self.call_exchange_id = UNASSIGNED
-        self.unify_call_exchange_id = UNASSIGNED
+        self.unify_meet_exchange_id = UNASSIGNED
         self.call_start_timestamp = None
-        self.unify_call_start_timestamp = None
+        self.unify_meet_start_timestamp = None
         self.call_contact = None
         self.call_proc = None
         self.conference_name = ""
@@ -55,7 +55,7 @@ class LivekitCallManager:
         print(f"target_path: {target_path}, args: {args}")
         self.call_proc = run_script(str(target_path), "dev", *args)
 
-    def start_unify_call(
+    def start_unify_meet(
         self,
         contact: dict,
         boss: dict,
@@ -69,7 +69,7 @@ class LivekitCallManager:
             else (
                 f"unity_{self.assistant_id}_web"
                 if self.assistant_id
-                else "unity_unify_call_1"
+                else "unity_unify_meet_1"
             )
         )
         room_name = (
@@ -78,7 +78,7 @@ class LivekitCallManager:
             else (
                 f"unity_{self.assistant_id}_web"
                 if self.assistant_id
-                else "unity_unify_call_1"
+                else "unity_unify_meet_1"
             )
         )
         args = [

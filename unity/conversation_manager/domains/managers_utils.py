@@ -129,7 +129,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     print("publishing transcript", event_name)
     event_name = event_name.lower()
     if "unify" in event_name or "prehire" in event_name:
-        medium = "unify_call" if "call" in event_name else "unify_message"
+        medium = "unify_meet" if "call" in event_name else "unify_message"
     elif "phone" in event_name:
         medium = "phone_call"
     elif "sms" in event_name:
@@ -150,8 +150,8 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         (
             UnifyMessageSent,
             UnifyMessageReceived,
-            InboundUnifyCallUtterance,
-            OutboundUnifyCallUtterance,
+            InboundUnifyMeetUtterance,
+            OutboundUnifyMeetUtterance,
             PreHireMessage,
         ),
     ):
@@ -166,8 +166,8 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     exchange_id = getattr(event, "exchange_id", UNASSIGNED)
     if medium == "phone_call":
         exchange_id = cm.call_manager.call_exchange_id
-    if medium == "unify_call":
-        exchange_id = cm.call_manager.unify_call_exchange_id
+    if medium == "unify_meet":
+        exchange_id = cm.call_manager.unify_meet_exchange_id
 
     call_utterance_timestamp = ""
     call_url = ""
@@ -176,8 +176,8 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         cm.call_manager.call_start_timestamp
         if medium == "phone_call"
         else (
-            cm.call_manager.unify_call_start_timestamp
-            if medium == "unify_call"
+            cm.call_manager.unify_meet_start_timestamp
+            if medium == "unify_meet"
             else None
         )
     )

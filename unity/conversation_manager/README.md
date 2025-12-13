@@ -195,8 +195,8 @@ Key insight: While `active_ask_handle` is set, user input is routed to the neste
 |-------|-------------|
 | `DirectMessageEvent` | Bypass Main CM Brain, send message directly to user |
 | `NotificationInjectedEvent` | Inject notification into Main CM Brain's context |
-| `InboundPhoneUtterance` / `InboundUnifyCallUtterance` | User spoke during a call |
-| `OutboundPhoneUtterance` / `OutboundUnifyCallUtterance` | Assistant response during a call |
+| `InboundPhoneUtterance` / `InboundUnifyMeetUtterance` | User spoke during a call |
+| `OutboundPhoneUtterance` / `OutboundUnifyMeetUtterance` | Assistant response during a call |
 | `ConductorRequest` | Request the Conductor to perform an action |
 
 ---

@@ -53,16 +53,16 @@ async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
 CallEvents = Union[
     PhoneCallReceived,
     PhoneCallSent,
-    UnifyCallReceived,
+    UnifyMeetReceived,
     PhoneCallAnswered,
 ]
 
 
 @EventHandler.register(
-    (PhoneCallReceived, PhoneCallSent, UnifyCallReceived, PhoneCallAnswered),
+    (PhoneCallReceived, PhoneCallSent, UnifyMeetReceived, PhoneCallAnswered),
 )
 async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
-    if cm.mode in ["call", "unify_call"]:
+    if cm.mode in ["call", "unify_meet"]:
         # can't make call
         # TODO: we should handle this somehow tbh
         # for now do nothing, but we can think of adding a notification of an attempted call
@@ -78,7 +78,7 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         message_content = None
         notif_content = None
         boss = cm.contact_index.get_contact(contact_id=1)
-        if isinstance(event, UnifyCallReceived):
+        if isinstance(event, UnifyMeetReceived):
             contact = boss
         else:
             contact = cm.contact_index.get_contact(
@@ -94,8 +94,8 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
                 cm.call_manager.start_call(contact, boss, outbound=True)
                 message_content = "<Sending Call...>"
                 notif_content = f"Call sent to {contact['first_name']}"
-            case UnifyCallReceived() as e:
-                cm.call_manager.start_unify_call(
+            case UnifyMeetReceived() as e:
+                cm.call_manager.start_unify_meet(
                     contact,
                     boss,
                     e.agent_name,
@@ -118,9 +118,9 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         )
 
 
-@EventHandler.register((PhoneCallStarted, UnifyCallStarted))
+@EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
 async def _(
-    event: PhoneCallStarted | UnifyCallStarted,
+    event: PhoneCallStarted | UnifyMeetStarted,
     cm: "ConversationManager",
     *args,
     **kwargs,
@@ -130,7 +130,7 @@ async def _(
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
     else:
-        cm.mode = "unify_call"
+        cm.mode = "unify_meet"
         contact = cm.contact_index.get_contact(contact_id=1)
 
     cm.call_manager.call_contact = contact
@@ -152,9 +152,9 @@ async def _(
 @EventHandler.register(
     (
         InboundPhoneUtterance,
-        InboundUnifyCallUtterance,
+        InboundUnifyMeetUtterance,
         OutboundPhoneUtterance,
-        OutboundUnifyCallUtterance,
+        OutboundUnifyMeetUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
@@ -200,9 +200,9 @@ async def _(
     cm.contact_index.push_message(contact, "phone", event.content, role="Guidance")
 
 
-@EventHandler.register((PhoneCallEnded, UnifyCallEnded))
+@EventHandler.register((PhoneCallEnded, UnifyMeetEnded))
 async def _(
-    event: PhoneCallEnded | UnifyCallEnded,
+    event: PhoneCallEnded | UnifyMeetEnded,
     cm: "ConversationManager",
     *args,
     **kwargs,
@@ -211,7 +211,7 @@ async def _(
     cm.call_manager.call_contact = None
     if isinstance(event, PhoneCallEnded):
         cm.call_manager.conference_name = None
-    if isinstance(event, UnifyCallEnded):
+    if isinstance(event, UnifyMeetEnded):
         contact = cm.contact_index.get_contact(contact_id=1)
     else:
         contact = cm.contact_index.get_contact(
@@ -480,10 +480,10 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
     if event.medium == "phone_call" and cm.call_manager.call_exchange_id == UNASSIGNED:
         cm.call_manager.call_exchange_id = event.exchange_id
     if (
-        event.medium == "unify_call"
-        and cm.call_manager.unify_call_exchange_id == UNASSIGNED
+        event.medium == "unify_meet"
+        and cm.call_manager.unify_meet_exchange_id == UNASSIGNED
     ):
-        cm.call_manager.unify_call_exchange_id = event.exchange_id
+        cm.call_manager.unify_meet_exchange_id = event.exchange_id
 
 
 @EventHandler.register(PreHireMessage)
@@ -539,7 +539,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     print(f"Received DirectMessageEvent: {event.content}")
 
     # Speak to voice layer using appropriate channel
-    if cm.mode in ["call", "unify_call"]:
+    if cm.mode in ["call", "unify_meet"]:
         if cm.call_manager.realtime:
             # Realtime API: Send as notification
             await cm.event_broker.publish(
@@ -560,7 +560,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     contact = cm.call_manager.call_contact or cm.contact_index.get_contact(contact_id=1)
     cm.contact_index.push_message(
         contact,
-        "phone" if cm.mode == "call" else "unify_call",
+        "phone" if cm.mode == "call" else "unify_meet",
         message_content=event.content,
         role="assistant",
         timestamp=event.timestamp,

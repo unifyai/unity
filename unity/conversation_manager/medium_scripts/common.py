@@ -12,8 +12,8 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
     PhoneCallStarted,
     PhoneCallEnded,
-    UnifyCallEnded,
-    UnifyCallStarted,
+    UnifyMeetEnded,
+    UnifyMeetStarted,
 )
 
 # Shared event broker instance
@@ -30,7 +30,7 @@ async def publish_call_started(contact: dict, channel: str) -> None:
     event = (
         PhoneCallStarted(contact=contact)
         if channel == "phone"
-        else UnifyCallStarted(contact=contact)
+        else UnifyMeetStarted(contact=contact)
     )
     await event_broker.publish(f"app:comms:{channel}_call_started", event.to_json())
 
@@ -39,7 +39,7 @@ async def publish_call_ended(contact: dict, channel: str) -> None:
     event = (
         PhoneCallEnded(contact=contact)
         if channel == "phone"
-        else UnifyCallEnded(contact=contact)
+        else UnifyMeetEnded(contact=contact)
     )
     await event_broker.publish(f"app:comms:{channel}_call_ended", event.to_json())
 

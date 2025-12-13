@@ -5,7 +5,7 @@ tests/test_conversation_manager/test_events.py
 Tests for conversation manager event publishing across all communication mediums.
 
 Verifies that the correct inbound and outbound events are published for:
-- Browser voice (UNIFY_CALL): InboundUnifyCallUtterance / OutboundUnifyCallUtterance
+- Browser voice (UNIFY_MEET): InboundUnifyMeetUtterance / OutboundUnifyMeetUtterance
 - Phone calls (PHONE_CALL): InboundPhoneUtterance / OutboundPhoneUtterance
 - Text chat (UNIFY_MESSAGE): UnifyMessageReceived / UnifyMessageSent
 - SMS (SMS_MESSAGE): SMSReceived / SMSSent
@@ -27,13 +27,13 @@ from unity.conversation_manager.events import (
     EmailReceived,
     EmailSent,
     InboundPhoneUtterance,
-    InboundUnifyCallUtterance,
+    InboundUnifyMeetUtterance,
     OutboundPhoneUtterance,
-    OutboundUnifyCallUtterance,
+    OutboundUnifyMeetUtterance,
     PhoneCallEnded,
     SMSReceived,
     SMSSent,
-    UnifyCallEnded,
+    UnifyMeetEnded,
     UnifyMessageReceived,
     UnifyMessageSent,
 )
@@ -46,7 +46,7 @@ from unity.conversation_manager.events import (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_call_publishes_utterance_events(
+async def test_unify_meet_publishes_utterance_events(
     test_redis_client,
     event_capture,
 ):
@@ -62,21 +62,21 @@ async def test_unify_call_publishes_utterance_events(
         contact,
         "test_conference",
         "Tell me a joke",
-        mode="unify_call",
+        mode="unify_meet",
     )
 
-    start, chunks, end = await capture_stream_response(pubsub, "unify_call")
+    start, chunks, end = await capture_stream_response(pubsub, "unify_meet")
     assert start, "Should receive start_gen"
     assert len(chunks) > 0, "Should receive chunks"
 
     # Wait for outbound event (published after stream ends when LLM response is parsed)
     outbound = await event_capture.wait_for_event(
-        OutboundUnifyCallUtterance,
+        OutboundUnifyMeetUtterance,
         timeout=30.0,
     )
 
     # Verify inbound event
-    inbound_events = event_capture.get_events(InboundUnifyCallUtterance)
+    inbound_events = event_capture.get_events(InboundUnifyMeetUtterance)
     assert len(inbound_events) >= 1
     inbound = inbound_events[0]
     assert inbound.content == "Tell me a joke"
@@ -86,12 +86,12 @@ async def test_unify_call_publishes_utterance_events(
     assert hasattr(outbound, "content")
     assert len(outbound.content) > 0
 
-    await pubsub.unsubscribe("app:unify_call:response_gen")
+    await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
     await test_redis_client.publish(
-        "app:comms:unify_call_ended",
-        UnifyCallEnded(contact=contact).to_json(),
+        "app:comms:unify_meet_ended",
+        UnifyMeetEnded(contact=contact).to_json(),
     )
 
 

@@ -296,13 +296,13 @@ class CommsManager:
                     )
 
                     # Create the event based on the thread
-                    if thread == "unify_call":
-                        event = UnifyCallReceived(
+                    if thread == "unify_meet":
+                        event = UnifyMeetReceived(
                             contact=next(c for c in contacts if c["contact_id"] == 1),
                             agent_name=event.get("agent_name"),
                             room_name=event.get("livekit_room"),
                         )
-                        topic = "app:comms:unify_call_received"
+                        topic = "app:comms:unify_meet_received"
                     elif thread == "call":
                         number = event.get("caller_number", event.get("user_number"))
                         contact = next(
