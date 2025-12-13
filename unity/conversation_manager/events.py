@@ -133,6 +133,14 @@ class InboundUnifyCallUtterance(Event):
 
 
 @dataclass
+class InboundGmeetUtterance(Event):
+    """Utterance received from the other party during a Google Meet call."""
+
+    contact: dict
+    content: str
+
+
+@dataclass
 class Interrupt(Event):
     contact: dict
 
@@ -177,6 +185,14 @@ class OutboundPhoneUtterance(Event):
 @dataclass
 class OutboundUnifyCallUtterance(Event):
     """Utterance sent by the assistant during a browser-based voice call."""
+
+    contact: dict
+    content: str
+
+
+@dataclass
+class OutboundGmeetUtterance(Event):
+    """Utterance sent by the assistant during a Google Meet call."""
 
     contact: dict
     content: str
