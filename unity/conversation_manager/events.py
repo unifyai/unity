@@ -133,7 +133,9 @@ class InboundUnifyMeetUtterance(Event):
 
 
 @dataclass
-class Interrupt(Event):
+class VoiceInterrupt(Event):
+    """User interrupted the assistant during a voice call."""
+
     contact: dict
 
 
