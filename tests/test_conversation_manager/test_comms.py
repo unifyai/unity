@@ -503,6 +503,11 @@ async def test_unify_meet(test_redis_client, event_capture):
     )
 
 
+# Note: There is no test_unify_meet_to_phone_call test because the system does not
+# support maintaining multiple simultaneous voice-based conversations. While on a
+# unify meet, the assistant cannot initiate an outbound phone call.
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_meet_to_sms(test_redis_client, event_capture):
