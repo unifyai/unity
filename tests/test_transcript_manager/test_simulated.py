@@ -415,7 +415,7 @@ def test_clear_sync():
     # Post-clear, synchronous helper still works
     exid2 = tm.log_first_message_in_new_exchange(
         {
-            "medium": Medium.WHATSAPP_MSG,
+            "medium": Medium.SMS_MESSAGE,
             "sender_id": 3,
             "receiver_ids": [4],
             "timestamp": datetime.now(timezone.utc),

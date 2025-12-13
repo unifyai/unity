@@ -30,7 +30,7 @@ COMBINED_REQUESTS: list[str] = [
     ),
     (
         "Answer this question using the contacts manager – what is Alice Smith's current email? "
-        "Also update Alice Smith's WhatsApp number to +1-555-101-2020. "
+        "Also update Alice Smith's phone number to +1-555-101-2020. "
         "Use only ContactManager.ask and ContactManager.update; no other tools."
     ),
 ]

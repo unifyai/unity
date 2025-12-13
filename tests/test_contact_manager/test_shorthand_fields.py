@@ -48,7 +48,7 @@ def test_json_shorthand_prune():
         assert k in dumped, f"expected shorthand key {k} in dump"
 
     # Empty/None fields should be pruned when prune_empty=True → aliases absent
-    for k in ("sn", "email", "phone", "whatsapp", "bio", "rs", "policy"):
+    for k in ("sn", "email", "phone", "bio", "rs", "policy"):
         assert k not in dumped, f"did not expect empty shorthand key {k} in dump"
 
 

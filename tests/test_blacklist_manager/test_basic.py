@@ -124,9 +124,9 @@ def test_clear_resets_context():
     bl = BlackListManager()
     bl.clear()
     bl.create_blacklist_entry(
-        medium=Medium.WHATSAPP_MSG,
+        medium=Medium.SMS_MESSAGE,
         contact_detail="+22222222222",
-        reason="whatsapp spam",
+        reason="SMS spam",
     )
     assert len(bl.filter_blacklist()["entries"]) == 1
     bl.clear()

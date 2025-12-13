@@ -60,7 +60,6 @@ def sync_assistant_contact(self, assistant_log) -> None:
                 "surname": a.get("surname"),
                 "email_address": a.get("email"),
                 "phone_number": a.get("phone"),
-                "whatsapp_number": a.get("phone"),
                 "bio": a.get("about"),
                 "rolling_summary": None,
             },
@@ -75,7 +74,6 @@ def sync_assistant_contact(self, assistant_log) -> None:
                 "surname": "Assistant",
                 "email_address": "unify.assistant@unify.ai",
                 "phone_number": "+10000000000",
-                "whatsapp_number": "+10000000000",
                 "bio": "Your helpful Unify AI assistant.",
                 "rolling_summary": None,
             },
@@ -136,10 +134,8 @@ def fetch_user_info(self) -> Dict[str, Any]:
 
     if ASSISTANT is not None:
         phone = ASSISTANT.get("user_phone")
-        whatsapp = ASSISTANT.get("user_whatsapp_number")
         mapped_extra: Dict[str, Any] = {
             "phone_number": phone,
-            "whatsapp_number": whatsapp,
         }
         user_info.update({k: v for k, v in mapped_extra.items() if v is not None})
 
@@ -169,7 +165,6 @@ def sync_user_contact(self, user_log) -> None:
             "surname": user_info.get("last_name"),
             "email_address": user_info.get("email"),
             "phone_number": user_info.get("phone_number"),
-            "whatsapp_number": user_info.get("whatsapp_number"),
             "response_policy": self.USER_MANAGER_RESPONSE_POLICY,
         },
     )
@@ -187,7 +182,6 @@ def sync_user_contact(self, user_log) -> None:
             "last_name",
             "email",
             "phone_number",
-            "whatsapp_number",
         }
     }
     if extra_fields:

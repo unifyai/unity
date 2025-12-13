@@ -68,7 +68,7 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Examples
         --------
-        • Good: "Show me the latest WhatsApp message from Alice" → identify by
+        • Good: "Show me the latest SMS from Alice" → identify by
           contact and medium, then fetch the most recent message (mention the
           relevant ``message_id``/``exchange_id`` when possible).
         • Bad:  "Should I email them again?" → this is a human decision/clarification;
@@ -78,7 +78,7 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         text : str
             Plain‑English question about existing transcripts, e.g. "Show me the
-            latest WhatsApp message from Alice".
+            latest SMS from Alice".
         response_format : Type[BaseModel] | None, default ``None``
             Optional Pydantic model to request a structured answer. When provided,
             the final result should conform to this schema; otherwise a plain

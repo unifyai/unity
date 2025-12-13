@@ -11,10 +11,10 @@ This folder contains an **interactive playground** for the `ContactManager` comp
 
 What is the `ContactManager`?
 -----------------------------
-`ContactManager` is an abstraction that stores contact records (first name, surname, phone, WhatsApp, bio, rolling summary, plus any number of **custom columns**) and exposes two high-level natural-language methods:
+`ContactManager` is an abstraction that stores contact records (first name, surname, phone, bio, rolling summary, plus any number of **custom columns**) and exposes two high-level natural-language methods:
 
 * **`ask(text)`**   – read-only questions such as *"What is Alice's phone number?"*
-* **`update(text)`** – mutations such as *"Add Bob's WhatsApp number +123…"*
+* **`update(text)`** – mutations such as *"Update Bob's phone number to +123…"*
 
 Under the hood both methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_search_contacts`, `_create_contact`, `update_contact`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_contact/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
 
@@ -84,7 +84,7 @@ Notes:
 
 Example:
 ```text
-command> Update Alice’s contact with a new WhatsApp number +15551234
+command> Update Alice's contact with a new phone number +15551234
 Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text> (or plain text), /r, /stop, /help
 /i also add a short bio mentioning she’s based in NYC
 /ask what fields have been updated so far?
@@ -105,8 +105,8 @@ us Create 5 contacts: Alice Smith (NYC), Bob Johnson (London)…
 What is Alice Smith's phone number?
 [ask] → Alice Smith can be reached on 111 222 3333.
 
-Add WhatsApp number +15551234 for Bob Johnson.
-[update] → Updated contact 4 – whatsapp_number set to +15551234.
+Update Bob Johnson's phone number to +15551234.
+[update] → Updated contact 4 – phone_number set to +15551234.
 ```
 
 ### Example: clarification flow (text + voice)

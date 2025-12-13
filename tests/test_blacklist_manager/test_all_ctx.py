@@ -117,7 +117,7 @@ def test_assistant_id_field_injected():
     ):
         bm = BlackListManager()
         result = bm.create_blacklist_entry(
-            medium="whatsapp_message",
+            medium="sms_message",
             contact_detail="+9876543210",
             reason="Testing assistant ID field",
         )

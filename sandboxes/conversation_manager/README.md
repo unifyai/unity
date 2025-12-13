@@ -1,7 +1,7 @@
 Conversation Manager Sandbox
 ===========================
 
-This folder contains an **interactive playground** for the `ConversationManager` component that lives in `unity/conversation_manager/`. The goal of the sandbox is to let you experiment with the manager in isolation – simulate user interactions (phone calls, sms, whatsapp, email), observe how events flow through the EventBus, prompt construction, STT/LLM/TTS chains, and tool loops before integrating into a larger system.
+This folder contains an **interactive playground** for the `ConversationManager` component that lives in `unity/conversation_manager/`. The goal of the sandbox is to let you experiment with the manager in isolation – simulate user interactions (phone calls, SMS, email), observe how events flow through the EventBus, prompt construction, STT/LLM/TTS chains, and tool loops before integrating into a larger system.
 
 Prefer a quick demo? Watch this [video walkthrough](https://www.loom.com/share/f8a87d725e074eaa960c5021164dc3cd?sid=98fc555f-5ca4-47f0-838c-50eadba08d48)
 
@@ -9,7 +9,7 @@ For understanding how natural conversations are, users can also be simulated. Wa
 
 What is the `ConversationManager`?
 -------------------------------
-`ConversationManager` orchestrates real-time conversational flows, handling speech-to-text, LLM interactions, text-to-speech, and event dispatch (e.g. phone calls, SMS, email, WhatsApp). It wires up the shared `EventBus`, manages prompt builders, and auto-pins relevant events while streaming audio.
+`ConversationManager` orchestrates real-time conversational flows, handling speech-to-text, LLM interactions, text-to-speech, and event dispatch (e.g. phone calls, SMS, email). It wires up the shared `EventBus`, manages prompt builders, and auto-pins relevant events while streaming audio.
 
 Running the sandbox
 -------------------
@@ -47,14 +47,13 @@ When you run the sandbox with no flags (or with `--local`), a local Textual-base
 * Arrow keys or Tab to navigate the menu.
 * Press Enter on a menu item to choose:
   - **Send SMS**: Enter a text message and press Enter to simulate an incoming SMS.
-  - **Send WhatsApp**: Enter a text message and press Enter to simulate a WhatsApp message.
   - **Send Email**: Enter a text message and press Enter to simulate an email.
   - **Send Call**: Fill in task name, description, and purpose, then press **Call** to initiate a phone call; use **End Call** to stop.
   - **Quit**: Exit the sandbox.
 
 Full comms mode (`--full`)
 ---------------------------
-In this mode the ConversationManager service runs without the GUI, handling real incoming SMS, WhatsApp, Email, and phone calls. It starts up a LiveKit server locally, thus no scenario seeding in this mode.
+In this mode the ConversationManager service runs without the GUI, handling real incoming SMS, Email, and phone calls. It starts up a LiveKit server locally, thus no scenario seeding in this mode.
 
 To start:
 ```bash

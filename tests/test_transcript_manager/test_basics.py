@@ -17,7 +17,6 @@ CONTACTS = [
         "surname": "Smith",
         "email_address": "johnsmith11@gmail.com",
         "phone_number": "+1234567890",
-        "whatsapp_number": "+1234567890",
     },
     {
         "contact_id": 1,
@@ -25,7 +24,6 @@ CONTACTS = [
         "surname": "Gray",
         "email_address": "nancy_gray@outlook.com",
         "phone_number": "+1987654320",
-        "whatsapp_number": "+1987654320",
     },
 ]
 
@@ -84,7 +82,7 @@ async def test_get_messages():
             exchange_id=1,
         ),
         Message(
-            medium="whatsapp_message",
+            medium="sms_message",
             sender_id=0,
             receiver_ids=[1],
             timestamp=datetime.now(UTC),
@@ -108,7 +106,7 @@ async def test_get_messages():
             exchange_id=4,
         ),
         Message(
-            medium="whatsapp_message",
+            medium="sms_message",
             sender_id=1,
             receiver_ids=[0],
             timestamp=datetime.now(UTC),
@@ -132,7 +130,7 @@ async def test_get_messages():
             exchange_id=7,
         ),
         Message(
-            medium="whatsapp_message",
+            medium="sms_message",
             sender_id=0,
             receiver_ids=[1],
             timestamp=datetime.now(UTC),
@@ -179,7 +177,7 @@ async def test_get_messages():
 
     # medium
     messages = tm._filter_messages(
-        filter="medium in ('email', 'whatsapp_message')",
+        filter="medium in ('email', 'sms_message')",
     )["messages"]
     assert len(messages) == 7
     assert all(isinstance(msg, Message) for msg in messages)

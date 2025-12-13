@@ -62,12 +62,12 @@ async def test_ask_joins_contact_and_company():
 async def test_update_updates_contact():
     """
     A natural-language *store* instruction routed through KM should trigger
-    ContactManager.update to add WhatsApp info.
+    ContactManager.update to add phone info.
     """
     cm = ContactManager()
     km = KnowledgeManager()
 
-    # ‣ Pre-existing contact *without* WhatsApp
+    # ‣ Pre-existing contact *without* phone
     cm._create_contact(
         first_name="Jane",
         surname="Doe",
@@ -75,7 +75,7 @@ async def test_update_updates_contact():
     )
 
     # ‣ Instruction to store extra info
-    cmd = "Add Jane Doe's WhatsApp number +15559998877."
+    cmd = "Add Jane Doe's phone number +15559998877."
     h = await km.update(cmd, _return_reasoning_steps=True)
     _, steps = await h.result()  # we don't need the textual confirmation here
 
@@ -84,4 +84,4 @@ async def test_update_updates_contact():
         "contacts"
     ]
     assert updated, "Jane Doe should exist after KM.store call"
-    assert updated[0].whatsapp_number == "+15559998877"
+    assert updated[0].phone_number == "+15559998877"

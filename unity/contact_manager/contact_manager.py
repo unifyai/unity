@@ -599,7 +599,6 @@ class ContactManager(BaseContactManager):
                 unique_eq_patterns = (
                     r"\s*email_address\s*==\s*(['\"])\S.*?\1\s*",
                     r"\s*phone_number\s*==\s*(['\"])\S.*?\1\s*",
-                    r"\s*whatsapp_number\s*==\s*(['\"])\S.*?\1\s*",
                 )
                 if any(re.fullmatch(p, filter) for p in unique_eq_patterns):
                     eff_limit = min(eff_limit, 1)
@@ -665,7 +664,6 @@ class ContactManager(BaseContactManager):
         surname: Optional[str] = None,
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
-        whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
@@ -690,8 +688,6 @@ class ContactManager(BaseContactManager):
         phone_number : str | None
             Phone number. May start with ``+`` (only if explicitly provided by the user),
             otherwise digits only. Must be unique.
-        whatsapp_number : str | None
-            WhatsApp number. Same formatting guidance as ``phone_number``. Must be unique.
         bio : str | None
             Free‑form notes or description about the contact. Optional.
         timezone : str | None
@@ -725,8 +721,8 @@ class ContactManager(BaseContactManager):
         ------
         AssertionError
             - If all provided fields are ``None`` (at least one field is required).
-            - If any uniqueness constraint is violated (duplicate ``email_address``,
-              ``phone_number``, or ``whatsapp_number``).
+            - If any uniqueness constraint is violated (duplicate ``email_address``
+              or ``phone_number``).
 
         Behaviour and Edge Cases
         ------------------------
@@ -745,7 +741,6 @@ class ContactManager(BaseContactManager):
             surname=surname,
             email_address=email_address,
             phone_number=phone_number,
-            whatsapp_number=whatsapp_number,
             bio=bio,
             timezone=timezone,
             rolling_summary=rolling_summary,
@@ -762,7 +757,6 @@ class ContactManager(BaseContactManager):
         surname: Optional[str] = None,
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
-        whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
@@ -790,8 +784,6 @@ class ContactManager(BaseContactManager):
         phone_number : str | None
             New phone number. Digits only unless explicitly provided with leading ``+``.
             Must be unique.
-        whatsapp_number : str | None
-            New WhatsApp number. Same formatting and uniqueness rules as ``phone_number``.
         bio : str | None
             Free‑form notes/description.
         timezone : str | None
@@ -821,7 +813,7 @@ class ContactManager(BaseContactManager):
         ValueError
             - If no updatable field is provided (all parameters ``None`` except ``contact_id``).
             - If ``contact_id`` does not exist or resolves to multiple records (data integrity issue).
-            - If updating to a value that violates uniqueness constraints (duplicate email/phone/WhatsApp).
+            - If updating to a value that violates uniqueness constraints (duplicate email/phone).
 
         Notes
         -----
@@ -837,7 +829,6 @@ class ContactManager(BaseContactManager):
             surname=surname,
             email_address=email_address,
             phone_number=phone_number,
-            whatsapp_number=whatsapp_number,
             bio=bio,
             timezone=timezone,
             rolling_summary=rolling_summary,
@@ -953,7 +944,6 @@ class ContactManager(BaseContactManager):
         For each available detail:
         - email_address → one blacklist entry with ``medium == email``.
         - phone_number → two entries with ``medium == sms_message`` and ``phone_call``.
-        - whatsapp_number → two entries with ``medium == whatsapp_message`` and ``whatsapp_call``.
 
         The blacklist reason is standardised as a concise summary of the contact followed by the cause:
         - ``"{first_name}, {surname}, {bio}, moved to blacklist due to {reason}"`` with missing parts omitted and no stray commas.
@@ -1002,10 +992,6 @@ class ContactManager(BaseContactManager):
         if phone:
             detail_media.append((phone, Medium.SMS_MESSAGE))
             detail_media.append((phone, Medium.PHONE_CALL))
-        whatsapp = (ent.get("whatsapp_number") or "").strip()
-        if whatsapp:
-            detail_media.append((whatsapp, Medium.WHATSAPP_MSG))
-            detail_media.append((whatsapp, Medium.WHATSAPP_CALL))
 
         if not detail_media:
             # Even when no details exist, delete the contact as part of the move

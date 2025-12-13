@@ -64,7 +64,6 @@ async def test_selects_move_to_blacklist(identify_by: str):
         bio="Temporary test contact",
         email_address="zed.quill@example.org",
         phone_number="+15550100200",
-        whatsapp_number="+15550100201",
     )
     # Get the created contact (exclude system contacts 0 and 1)
     created = [
@@ -84,18 +83,15 @@ async def test_selects_move_to_blacklist(identify_by: str):
 
     # Validate that blacklist entries exist for all present details and correct mediums
     entries = blm.filter_blacklist()["entries"]
-    # Expect: EMAIL + (SMS_MESSAGE, PHONE_CALL) + (WHATSAPP_MSG, WHATSAPP_CALL) = 5 entries
-    assert len(entries) == 5
+    # Expect: EMAIL + (SMS_MESSAGE, PHONE_CALL) = 3 entries
+    assert len(entries) == 3
     mediums = {e.medium for e in entries}
     details = {e.contact_detail for e in entries}
     assert Medium.EMAIL in mediums
     assert Medium.SMS_MESSAGE in mediums
     assert Medium.PHONE_CALL in mediums
-    assert Medium.WHATSAPP_MSG in mediums
-    assert Medium.WHATSAPP_CALL in mediums
     assert "zed.quill@example.org" in details
     assert "+15550100200" in details
-    assert "+15550100201" in details
     # Contact should no longer exist in Contacts
     remaining = cm.filter_contacts(filter=f"contact_id == {created.contact_id}")[
         "contacts"
@@ -150,7 +146,7 @@ async def test_existing_details(
         assert results, "Alice Smith not found for test setup"
         alice_smith_id = results[0].contact_id
 
-    command = f"Update contact ID {alice_smith_id}: change her phone to 1231231234 and add WhatsApp +11231231234."
+    command = f"Update contact ID {alice_smith_id}: change her phone to 1231231234."
 
     handle = await cm.update(command)
     await handle.result()
@@ -161,7 +157,6 @@ async def test_existing_details(
         alice_smith_id,
         {
             "phone_number": "1231231234",
-            "whatsapp_number": "+11231231234",
             "email_address": "alice.smith@example.com",
         },
     )

@@ -85,7 +85,7 @@ def test_all_columns_default():
     )
 
     # Build a composite expression spanning multiple fields including the custom column
-    expr = "str({first_name}) + ' ' + str({bio}) + ' ' + str({email_address}) + ' ' + str({phone_number}) + ' ' + str({whatsapp_number}) + ' ' + str({occupation})"
+    expr = "str({first_name}) + ' ' + str({bio}) + ' ' + str({email_address}) + ' ' + str({phone_number}) + ' ' + str({occupation})"
     query = "best to emails"
     results = cm._search_contacts(references={expr: query}, k=2)
     contacts = results["contacts"]

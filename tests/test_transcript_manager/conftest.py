@@ -27,35 +27,30 @@ _CONTACTS: List[dict] = [
         surname="Diaz",
         email_address="carlos.diaz@example.com",
         phone_number="+14155550000",
-        whatsapp_number="+14155550000",
     ),
     dict(  # id = 1
         first_name="Dan",
         surname="Turner",
         email_address="dan.turner@example.com",
         phone_number="+447700900001",
-        whatsapp_number="+447700900001",
     ),
     dict(  # id = 2
         first_name="Julia",
         surname="Nguyen",
         email_address="julia.nguyen@example.com",
         phone_number="+447700900002",
-        whatsapp_number="+447700900002",
     ),
     dict(  # id = 3
         first_name="Jimmy",
         surname="O'Brien",
         email_address="jimmy.obrien@example.com",
         phone_number="+61240011000",
-        whatsapp_number="+61240011000",
     ),
     dict(  # id = 4
         first_name="Anne",
         surname="Fischer",
         email_address="anne.fischer@example.com",
         phone_number="+49891234567",
-        whatsapp_number="+49891234567",
     ),
 ]
 
@@ -165,12 +160,12 @@ class ScenarioBuilder:
             ],
         )
 
-        # E3: Jimmy holiday WhatsApp
+        # E3: Jimmy holiday SMS
         jimmy_id = _ID_BY_NAME["jimmy"]
         t_holiday = datetime(2025, 4, 22, 18, 10, tzinfo=timezone.utc)
         self._log(
             3,
-            "whatsapp_message",
+            "sms_message",
             [
                 (
                     jimmy_id,
@@ -182,12 +177,12 @@ class ScenarioBuilder:
             ],
         )
 
-        # E4: Anne passport excuse (WhatsApp)
+        # E4: Anne passport excuse (SMS)
         anne_id = _ID_BY_NAME["anne"]
         t_excuse = datetime(2025, 4, 23, 9, 0, tzinfo=timezone.utc)
         self._log(
             4,
-            "whatsapp_message",
+            "sms_message",
             [
                 (
                     anne_id,
@@ -203,7 +198,7 @@ class ScenarioBuilder:
     def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
         """Adds irrelevant chatter so filtering matters."""
         random.seed(12345)
-        media = ["email", "phone_call", "sms_message", "whatsapp_message"]
+        media = ["email", "phone_call", "sms_message"]
         start = datetime(
             2024,
             random.randint(1, 12),

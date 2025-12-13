@@ -37,7 +37,7 @@ TRANSCRIPT_QUESTIONS: list[str] = [
     "What did David say last week?",
     "Show me the most recent message that mentions the Q3 budget.",
     "List messages from Alice in the last 24 hours.",
-    "Find our last WhatsApp message with Sarah.",
+    "Find our last SMS with Sarah.",
 ]
 
 

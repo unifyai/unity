@@ -19,28 +19,24 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
         "surname": "Smith",
         "email_address": "alice.smith@example.com",
         "phone_number": "1112223333",
-        "whatsapp_number": None,
     },
     {
         "first_name": "Bob",
         "surname": "Johnson",
         "email_address": "bobbyj@example.net",
         "phone_number": "4445556666",
-        "whatsapp_number": "+14445556666",
     },
     {
         "first_name": "Charlie",
         "surname": "Brown",
         "email_address": "goodgrief@example.org",
         "phone_number": None,
-        "whatsapp_number": None,
     },
     {
         "first_name": "Diana",
         "surname": "Prince",
         "email_address": "diana@themyscira.com",
         "phone_number": "7778889999",
-        "whatsapp_number": "+17778889999",
     },
     {
         "first_name": "Alice",  # Another Alice for disambiguation tests

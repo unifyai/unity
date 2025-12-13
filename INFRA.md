@@ -46,7 +46,6 @@ Each assistant gets the following dedicated infrastructure:
 |-----------|----------|---------|
 | **Email Address** | `/email/create` | Dedicated email for the assistant |
 | **Phone Number** | `/phone/create` | Voice and SMS communication |
-| **WhatsApp Sender** | `/whatsapp/create` | WhatsApp messaging capability |
 
 ### Cloud Infrastructure
 
@@ -95,7 +94,6 @@ Located in the `adapters` folder, these functions serve as webhooks for external
 | `email-notification-processor` | ⏸️ Disabled | Process incoming email notifications |
 | `twilio-call-webhook` | ✅ Active | Handle incoming voice calls |
 | `twilio-msg-webhook` | ✅ Active | Process incoming SMS messages |
-| `twilio-whatsapp-webhook` | ✅ Active | Handle incoming WhatsApp messages |
 | `idle-job-renewer` | ✅ Active | Renew idle GKE job daily |
 
 ### Notification Flow
@@ -144,7 +142,6 @@ communications/
 │   ├── email-notification-processor
 │   ├── twilio-call-webhook
 │   ├── twilio-msg-webhook
-│   ├── twilio-whatsapp-webhook
 │   └── idle-job-renewer           # Daily GKE job renewal
 ├── cloudbuild/                   # Cloud function build configs
 └── .github/deploy.yaml           # CI/CD for communications service

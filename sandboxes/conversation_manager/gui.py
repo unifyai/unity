@@ -10,7 +10,6 @@ from unity.conversation_manager.events import (
     EmailRecievedEvent,
     PhoneCallStopEvent,
     PhoneCallInitiatedEvent,
-    WhatsappMessageRecievedEvent,
 )
 from dotenv import load_dotenv
 import sys, pathlib
@@ -46,18 +45,6 @@ def send_email(message: str) -> None:
     asyncio.create_task(publish_event(ev))
 
 
-def send_whatsapp(message: str) -> None:
-    # Publish a WhatsApp received event for the user
-    ev = {
-        "topic": os.getenv("USER_PHONE_NUMBER"),
-        "event": WhatsappMessageRecievedEvent(
-            content=message,
-            role="User",
-        ).to_dict(),
-    }
-    asyncio.create_task(publish_event(ev))
-
-
 class MenuScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
@@ -65,7 +52,6 @@ class MenuScreen(Screen):
         # Actions menu, split into two rows to avoid overflow
         yield Horizontal(
             Button("Send SMS", id="sms", classes="small"),
-            Button("Send WhatsApp", id="whatsapp", classes="small"),
             Button("Send Email", id="email", classes="small"),
             id="menu_row1",
         )
@@ -79,8 +65,6 @@ class MenuScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "sms":
             self.app.push_screen(SMSScreen())
-        elif event.button.id == "whatsapp":
-            self.app.push_screen(WhatsAppScreen())
         elif event.button.id == "email":
             self.app.push_screen(EmailScreen())
         elif event.button.id == "call":
@@ -165,25 +149,6 @@ class CallScreen(Screen):
                 "event": PhoneCallStopEvent().to_dict(),
             }
             asyncio.create_task(publish_event(ev))
-        elif event.button.id == "back":
-            self.app.pop_screen()
-
-
-class WhatsAppScreen(Screen):
-    def compose(self) -> ComposeResult:
-        yield Header()
-        yield Label("Message:")
-        yield Input(placeholder="Enter message", id="message")
-        yield Horizontal(
-            Button("Send", id="send_whatsapp"),
-            Button("Back", id="back"),
-        )
-        yield Footer()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "send_whatsapp":
-            message = self.query_one("#message", Input).value
-            send_whatsapp(message)
         elif event.button.id == "back":
             self.app.pop_screen()
 
