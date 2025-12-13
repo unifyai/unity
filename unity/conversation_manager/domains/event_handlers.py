@@ -284,7 +284,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             thread = "email"
             subject = event.subject
             body = event.body
-            email_id = event.email_id
+            email_id = event.email_id_replied_to
             notif_content = f"Email sent to {contact['first_name']}"
             role = "assistant"
         case EmailReceived():

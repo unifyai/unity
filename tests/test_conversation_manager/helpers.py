@@ -177,7 +177,7 @@ async def capture_outgoing_email(event_capture, contact: dict, email_id: str = N
     assert isinstance(response, EmailSent)
     assert response.contact["email_address"] == contact["email_address"]
     if email_id:
-        assert response.email_id == email_id
+        assert response.email_id_replied_to == email_id
     assert len(response.body) > 0
 
     print(f"✅ Got email response: {response.body[:100]}...")

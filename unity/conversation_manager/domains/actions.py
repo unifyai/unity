@@ -101,10 +101,11 @@ class SendEmail(BaseModel):
         description="the subject of the email, should be the same as the subject of the received email without any prefix.",
     )
     body: str
-    email_id: Optional[str] = Field(
+    email_id_to_reply_to: Optional[str] = Field(
         ...,
         description=(
-            "the email identifier of the received email (shown as `Email ID` in active conversations). "
+            "the email identifier of the received email that you are replying to "
+            "(shown as `Email ID` in active conversations). "
             "This is used for threading (In-Reply-To / References)."
         ),
     )
@@ -389,7 +390,7 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     to_email = contact.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
-    email_id = kwargs.get("email_id")
+    email_id_to_reply_to = kwargs.get("email_id_to_reply_to")
 
     # ------------------------------------------------------------------
     # Reduce flakiness: prefer the most recent inbound email's Message-ID
@@ -429,13 +430,13 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     except Exception:
         inferred_reply_id = None
 
-    if inferred_reply_id and inferred_reply_id != email_id:
-        email_id = inferred_reply_id
+    if inferred_reply_id and inferred_reply_id != email_id_to_reply_to:
+        email_id_to_reply_to = inferred_reply_id
     response = await comms_utils.send_email_via_address(
         to_email=to_email,
         subject=subject,
         body=body,
-        email_id=email_id,
+        email_id=email_id_to_reply_to,
     )
     if response["success"]:
         contact = cm.contact_index.get_contact(email=to_email)
@@ -443,7 +444,7 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
             contact=contact,
             body=body,
             subject=subject,
-            email_id=email_id,
+            email_id_replied_to=email_id_to_reply_to,
         )
     else:
         if not cm.assistant_email:

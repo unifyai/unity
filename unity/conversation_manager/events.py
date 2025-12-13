@@ -218,7 +218,7 @@ class EmailSent(Event):
     body: str
     # Email provider identifier used for threading (e.g., RFC Message-ID header value).
     # This is *not* the TranscriptManager's auto-incremented message_id.
-    email_id: str | None = None
+    email_id_replied_to: str | None = None
 
 
 @dataclass
