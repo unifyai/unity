@@ -118,9 +118,9 @@ class SendSMS(BaseModel):
     )
     contact_details: Optional[ContactDetailsPhone] = Field(
         ...,
-        description="contact details if you can not infer the contac_id (because it is not in the active conversations), contact details will be used to retrieve the contact if it exists or create a new one",
+        description="contact details if you can not infer the contact_id (because it is not in the active conversations), contact details will be used to retrieve the contact if it exists or create a new one",
     )
-    message: str
+    content: str
 
 
 class MakeCall(BaseModel):
@@ -138,7 +138,7 @@ class SendUnifyMessage(BaseModel):
     """Send a message to the boss chat on the unify platform (no-phone medium)"""
 
     action_name: Literal["send_unify_message"]
-    message: str
+    content: str
     # could remove this if the contact_id is always 1
     contact_id: Literal[1] = 1
 
@@ -330,7 +330,7 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     # contact_id = kwargs.get("contact_id")
     contact_id = kwargs.get("contact_id")
     contact_details = kwargs.get("contact_details")
-    message = kwargs.get("message")
+    content = kwargs.get("content")
     contact = await get_update_or_create_contact(
         cm,
         contact_id,
@@ -339,12 +339,12 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     to_number = contact.get("phone_number")
     response = await comms_utils.send_sms_message_via_number(
         to_number=to_number,
-        message=message,
+        content=content,
     )
 
     if response["success"]:
         contact = cm.contact_index.get_contact(phone_number=to_number)
-        event = SMSSent(contact=contact, content=message)
+        event = SMSSent(contact=contact, content=content)
     else:
         if not cm.assistant_number:
             error_msg = "You don't have a number, please provision one."
@@ -361,12 +361,12 @@ async def send_unify_message(
     *args,
     **kwargs,
 ):
-    message = kwargs.get("message")
+    content = kwargs.get("content")
     contact_id = kwargs.get("contact_id")
-    response = await comms_utils.send_unify_message(message=message)
+    response = await comms_utils.send_unify_message(content=content)
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
-        event = UnifyMessageSent(contact=contact, content=message)
+        event = UnifyMessageSent(contact=contact, content=content)
     else:
         event = Error(f"Failed to send unify message")
     await event_broker.publish("app:comms:unify_message_sent", event.to_json())
