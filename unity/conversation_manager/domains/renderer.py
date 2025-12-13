@@ -82,7 +82,7 @@ class Renderer:
             return (
                 f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:\n"""
                 f"Subject: {message.subject}\n"
-                f"Message ID: {message.message_id}\n"
+                f"Email ID: {message.email_id}\n"
                 f"Body:\n"
                 f"{message.body}"
             )

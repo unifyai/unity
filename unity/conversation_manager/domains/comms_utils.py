@@ -98,7 +98,7 @@ async def send_email_via_address(
     to_email: str,
     subject: str,
     body: str,
-    message_id: str = None,
+    email_id: str = None,
 ) -> str:
     """
     Send an SMS message using the SMS provider API.
@@ -107,7 +107,7 @@ async def send_email_via_address(
         to_email: The email address to send the email to
         subject: The subject of the email
         body: The message body to send
-        message_id: The message ID of the email to reply to
+        email_id: The email identifier of the message to reply to (threading id)
 
     Returns:
         str: The response from the email API
@@ -117,7 +117,7 @@ async def send_email_via_address(
         return {"success": False}
 
     print(
-        f"Sending email from {from_email} to {to_email}: {body}, {subject} {message_id}",
+        f"Sending email from {from_email} to {to_email}: {body}, {subject} {email_id}",
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -128,7 +128,7 @@ async def send_email_via_address(
                 "to": to_email,
                 "subject": subject,
                 "body": body,
-                "in_reply_to": message_id,
+                "in_reply_to": email_id,
             },
         ) as response:
             try:

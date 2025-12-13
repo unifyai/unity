@@ -193,7 +193,9 @@ class EmailReceived(Event):
     contact: dict
     subject: str
     body: str
-    message_id: Optional[str] = None
+    # Email provider identifier used for threading (e.g., RFC Message-ID header value).
+    # This is *not* the TranscriptManager's auto-incremented message_id.
+    email_id: Optional[str] = None
 
 
 # assistant events
@@ -214,7 +216,9 @@ class EmailSent(Event):
     contact: dict
     subject: str
     body: str
-    message_id: str | None = None
+    # Email provider identifier used for threading (e.g., RFC Message-ID header value).
+    # This is *not* the TranscriptManager's auto-incremented message_id.
+    email_id: str | None = None
 
 
 @dataclass

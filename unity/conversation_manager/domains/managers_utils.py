@@ -42,7 +42,7 @@ async def publish_bus_events(event):
         event_name = event.__class__.__name__
         bus_event = event.to_bus_event()
         bus_event.payload.pop("api_key", None)
-        bus_event.payload.pop("message_id", None)
+        bus_event.payload.pop("email_id", None)
         print("Publishing bus event", event_name)
         await EVENT_BUS.publish(bus_event)
     except Exception as e:

@@ -264,7 +264,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     message_content = None
     subject = None
     body = None
-    message_id = None
+    email_id = None
     notif_content = None
 
     contact = cm.contact_index.get_contact(event.contact["contact_id"])
@@ -284,14 +284,14 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             thread = "email"
             subject = event.subject
             body = event.body
-            message_id = event.message_id
+            email_id = event.email_id
             notif_content = f"Email sent to {contact['first_name']}"
             role = "assistant"
         case EmailReceived():
             thread = "email"
             subject = event.subject
             body = event.body
-            message_id = event.message_id
+            email_id = event.email_id
             notif_content = f"Email Received from {contact['first_name']}"
             role = "user"
         case UnifyMessageSent():
@@ -311,7 +311,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         message_content=message_content,
         subject=subject,
         body=body,
-        message_id=message_id,
+        email_id=email_id,
         timestamp=event.timestamp,
         role=role,
     )

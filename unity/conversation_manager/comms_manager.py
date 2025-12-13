@@ -186,7 +186,7 @@ class CommsManager:
                                 subject=event["subject"],
                                 body=event["body"],
                                 contact=contact,
-                                message_id=event["message_id"],
+                                email_id=event["email_id"],
                             ).to_json(),
                         ),
                         self.loop,

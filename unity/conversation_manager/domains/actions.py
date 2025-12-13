@@ -101,9 +101,12 @@ class SendEmail(BaseModel):
         description="the subject of the email, should be the same as the subject of the received email without any prefix.",
     )
     body: str
-    message_id: Optional[str] = Field(
+    email_id: Optional[str] = Field(
         ...,
-        description="the message id of the email, should be the same as the message id of the received email.",
+        description=(
+            "the email identifier of the received email (shown as `Email ID` in active conversations). "
+            "This is used for threading (In-Reply-To / References)."
+        ),
     )
 
 
@@ -386,12 +389,53 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     to_email = contact.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
-    message_id = kwargs.get("message_id")
+    email_id = kwargs.get("email_id")
+
+    # ------------------------------------------------------------------
+    # Reduce flakiness: prefer the most recent inbound email's Message-ID
+    # for this contact+subject, rather than trusting the LLM to copy it.
+    #
+    # In practice the model may output `null` (or an incorrect value) because
+    # the schema allows Optional[str]. For replies, we can infer the correct
+    # Message-ID from the active conversation email thread.
+    # ------------------------------------------------------------------
+    inferred_reply_id: str | None = None
+    try:
+        convo = None
+        if contact_id is not None:
+            convo = cm.contact_index.active_conversations.get(contact_id)
+        if convo is None and to_email:
+            convo = next(
+                (
+                    c
+                    for c in cm.contact_index.active_conversations.values()
+                    if getattr(c, "email_address", None) == to_email
+                ),
+                None,
+            )
+        if convo is not None:
+            thread = getattr(convo, "threads", {}).get("email")
+            if thread:
+                for m in reversed(thread):
+                    # Prefer the most recent *user* email (name != "You") with the
+                    # same subject and a non-empty email_id.
+                    if (
+                        getattr(m, "name", None) != "You"
+                        and getattr(m, "subject", None) == subject
+                        and getattr(m, "email_id", None)
+                    ):
+                        inferred_reply_id = m.email_id
+                        break
+    except Exception:
+        inferred_reply_id = None
+
+    if inferred_reply_id and inferred_reply_id != email_id:
+        email_id = inferred_reply_id
     response = await comms_utils.send_email_via_address(
         to_email=to_email,
         subject=subject,
         body=body,
-        message_id=message_id,
+        email_id=email_id,
     )
     if response["success"]:
         contact = cm.contact_index.get_contact(email=to_email)
@@ -399,7 +443,7 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
             contact=contact,
             body=body,
             subject=subject,
-            message_id=message_id,
+            email_id=email_id,
         )
     else:
         if not cm.assistant_email:
