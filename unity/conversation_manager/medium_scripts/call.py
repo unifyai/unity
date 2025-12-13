@@ -201,7 +201,7 @@ async def entrypoint(ctx: agents.JobContext):
                     asyncio.create_task(
                         event_broker.publish(
                             "app:comms:interrupt",
-                            Interrupt(contact=contact).to_json(),
+                            VoiceInterrupt(contact=contact).to_json(),
                         ),
                     )
         except asyncio.CancelledError:
