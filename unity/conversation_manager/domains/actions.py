@@ -69,9 +69,6 @@ class WaitForNextEvent(BaseModel):
 
 
 # comms actions (main user)
-# whatsapp has some issues, will deal with it later
-# class SendWhatsapp(BaseModel):
-#     ...
 
 
 class ContactDetails(BaseModel):

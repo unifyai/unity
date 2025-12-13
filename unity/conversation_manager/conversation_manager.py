@@ -72,7 +72,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         assistant_number: str,
         assistant_email: str,
         user_number: str,
-        user_whatsapp_number: str,
         user_email: str = None,
         voice_provider: str = "cartesia",
         voice_id: str = None,
@@ -101,7 +100,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_name = user_name
         self.user_number = user_number
         self.user_email = user_email
-        self.user_whatsapp_number = user_whatsapp_number
 
         # initialization state
         self.initialized: bool = False
@@ -372,7 +370,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.assistant_email = payload["assistant_email"]
         self.user_name = payload["user_name"]
         self.user_number = payload["user_number"]
-        self.user_whatsapp_number = payload["user_whatsapp_number"]
         self.user_email = payload["user_email"]
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
@@ -392,7 +389,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             user_id=self.user_id,
             user_name=self.user_name,
             user_number=self.user_number,
-            user_whatsapp_number=self.user_whatsapp_number,
             user_email=self.user_email,
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
@@ -409,7 +405,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             "user_name": self.user_name,
             "assistant_name": self.assistant_name,
             "user_number": self.user_number,
-            "user_whatsapp_number": self.user_whatsapp_number,
             "assistant_number": self.assistant_number,
             "user_email": self.user_email,
             "assistant_email": self.assistant_email,

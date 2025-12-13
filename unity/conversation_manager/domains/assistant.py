@@ -14,7 +14,6 @@ class Assistant:
     assistant_number: str
     assistant_email: str
     user_number: str
-    user_whatsapp_number: str
     user_email: str = None
     voice_provider: str = "cartesia"
     voice_id: str = None

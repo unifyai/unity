@@ -23,7 +23,6 @@ class Contact(BaseModel):
         "surname": "sn",
         "email_address": "email",
         "phone_number": "phone",
-        "whatsapp_number": "whatsapp",
         "bio": "bio",
         "rolling_summary": "rs",
         "respond_to": "resp",
@@ -57,11 +56,6 @@ class Contact(BaseModel):
         pattern=r"^[^@]+@[^@]+$",
     )
     phone_number: Optional[str] = Field(
-        default=None,
-        description="Optional leading +, then digits only",
-        pattern=r"^\+?[0-9]+$",
-    )
-    whatsapp_number: Optional[str] = Field(
         default=None,
         description="Optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
@@ -122,7 +116,6 @@ class Contact(BaseModel):
         "surname",
         "email_address",
         "phone_number",
-        "whatsapp_number",
         "bio",
         "rolling_summary",
         "timezone",

@@ -25,8 +25,6 @@ class Medium(StrEnum):
     EMAIL = "email"
     SMS_MESSAGE = "sms_message"
     PHONE_CALL = "phone_call"
-    WHATSAPP_MSG = "whatsapp_message"
-    WHATSAPP_CALL = "whatsapp_call"
 
     @property
     def info(self) -> MediumInfo:
@@ -64,14 +62,6 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.PHONE_CALL: MediumInfo(
         value=Medium.PHONE_CALL,
         description="A standard telephonic voice call.",
-    ),
-    Medium.WHATSAPP_MSG: MediumInfo(
-        value=Medium.WHATSAPP_MSG,
-        description="A text message sent via WhatsApp.",
-    ),
-    Medium.WHATSAPP_CALL: MediumInfo(
-        value=Medium.WHATSAPP_CALL,
-        description="A voice or video call made via WhatsApp.",
     ),
 }
 

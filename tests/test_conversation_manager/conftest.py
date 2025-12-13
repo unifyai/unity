@@ -302,7 +302,6 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
         assistant_email="assistant@test.com",
         user_name="Test User",
         user_number="+15555555678",
-        user_whatsapp_number="+15555555678",
         user_email="user@test.com",
         voice_provider="cartesia",
         voice_id="test_voice",

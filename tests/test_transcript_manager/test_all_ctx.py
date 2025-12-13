@@ -137,7 +137,7 @@ def test_assistant_id_field_injected():
     ):
         tm = TranscriptManager()
         msg = Message(
-            medium="whatsapp_message",
+            medium="sms_message",
             sender_id=0,
             receiver_ids=[1],
             timestamp=datetime.now(UTC),

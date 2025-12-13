@@ -85,7 +85,7 @@ def test_update_trigger_on_scheduled_task_raises():
     with pytest.raises(ValueError):
         ts._update_task(
             task_id=tid,
-            trigger=Trigger(medium=Medium.WHATSAPP_MSG),
+            trigger=Trigger(medium=Medium.SMS_MESSAGE),
         )
 
 
@@ -120,11 +120,11 @@ def test_clear_trigger_transitions_status():
 @_handle_project
 def test_start_at_on_trigger_task_raises():
     ts = TaskScheduler()
-    trig = Trigger(medium=Medium.WHATSAPP_CALL)
+    trig = Trigger(medium=Medium.PHONE_CALL)
 
     tid = ts._create_task(
-        name="Respond to WhatsApp call",
-        description="Jump on the WhatsApp call when it comes in.",
+        name="Respond to phone call",
+        description="Jump on the phone call when it comes in.",
         trigger=trig,
     )["details"]["task_id"]
 

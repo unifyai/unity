@@ -10,7 +10,7 @@ This folder contains an **interactive playground** for the `TranscriptManager` c
 
 What is the `TranscriptManager`?
 --------------------------------
-`TranscriptManager` is an abstraction that stores **time-stamped messages** across a variety of media (email, SMS, WhatsApp, phone-call logs, …) and exposes one high-level natural-language method:
+`TranscriptManager` is an abstraction that stores **time-stamped messages** across a variety of media (email, SMS, phone-call logs, …) and exposes one high-level natural-language method:
 
 * **`ask(text)`** – read-only questions such as *"When did Dan last speak with Julia on the phone?"*
 
@@ -117,7 +117,7 @@ Example session (text mode)
 $ python -m sandboxes.transcript_manager.sandbox -d
 TranscriptManager sandbox – type commands below …
 
-us Generate 15 realistic message exchanges across email, Slack and WhatsApp between 5 colleagues over the last two weeks.
+us Generate 15 realistic message exchanges across email and SMS between 5 colleagues over the last two weeks.
 [generate] Building synthetic transcripts – this can take a moment…
 ✓ Created 60 messages across 15 exchanges.
 

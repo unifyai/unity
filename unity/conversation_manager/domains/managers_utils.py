@@ -134,10 +134,8 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         medium = "phone_call"
     elif "sms" in event_name:
         medium = "sms_message"
-    elif "email" in event_name:
-        medium = "email"
     else:
-        medium = "whatsapp_message"
+        medium = "email"
     role = "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
     if "prehire" in event_name:
         role = event.role.capitalize()
@@ -339,8 +337,6 @@ def _init_managers(
                 "email": SESSION_DETAILS.assistant.email or None,
                 "user_id": SESSION_DETAILS.user.id,
                 "user_phone": SESSION_DETAILS.user.number or None,
-                "user_whatsapp_number": SESSION_DETAILS.user.whatsapp_number or None,
-                "assistant_whatsapp_number": SESSION_DETAILS.assistant.number or None,
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
                 "surname": "",

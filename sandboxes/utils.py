@@ -2134,7 +2134,6 @@ class TranscriptGenerator:
                 "surname",
                 "email_address",
                 "phone_number",
-                "whatsapp_number",
                 "description",
                 "bio",
                 "rolling_summary",
@@ -2189,15 +2188,11 @@ class TranscriptGenerator:
                     "phone_call",
                     "sms_message",
                     "email",
-                    "whatsapp_message",
-                    "whatsapp_call",
                 ]
                 | str
             ) = Field(
                 "sms_message",
-                description=(
-                    "Channel: phone_call | sms_message | email | whatsapp_message | whatsapp_call"
-                ),
+                description=("Channel: phone_call | sms_message | email"),
             )
             participants: Dict[str, Dict[str, Any]] = Field(
                 default_factory=dict,
@@ -2399,10 +2394,7 @@ class TranscriptGenerator:
                             content=content,
                             role="User",
                         )
-                    elif medium == "whatsapp_message":
-                        # TODO: Add WhatsappReceived event if needed
-                        pass
-                    elif medium in ("phone_call", "whatsapp_call"):
+                    elif medium == "phone_call":
                         # Log each utterance in a phone call context
                         event_obj = InboundPhoneUtterance(
                             timestamp=timestamp,
@@ -2445,7 +2437,7 @@ class TranscriptGenerator:
             "- You may also use `update_contacts` before `submit_conversation` to ensure participants exist.\n\n"
             "`submit_conversation` payload shape:\n\n"
             "{\n"
-            '  "medium": "phone_call|sms_message|email|whatsapp_message|whatsapp_call",\n'
+            '  "medium": "phone_call|sms_message|email",\n'
             '  "participants": {\n'
             '      "Alice": { "phone_number": "+1555000001" },\n'
             '      "Bob":   { "email_address": "bob@example.com" }\n'

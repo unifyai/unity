@@ -67,7 +67,6 @@ async def main(project_name: str = "Assistants"):
         user_id=os.getenv("USER_ID"),
         user_name=os.getenv("USER_NAME"),
         user_number=os.getenv("USER_NUMBER"),
-        user_whatsapp_number=os.getenv("USER_WHATSAPP_NUMBER"),
         user_email=os.getenv("USER_EMAIL"),
         voice_provider=os.getenv("VOICE_PROVIDER"),
         voice_id=os.getenv("VOICE_ID"),
@@ -94,7 +93,6 @@ async def main(project_name: str = "Assistants"):
         SESSION_DETAILS.assistant.number,
         SESSION_DETAILS.assistant.email,
         SESSION_DETAILS.user.number,
-        SESSION_DETAILS.user.whatsapp_number,
         SESSION_DETAILS.user.email,
         SESSION_DETAILS.voice.provider,
         SESSION_DETAILS.voice.id or None,
@@ -126,7 +124,7 @@ async def main(project_name: str = "Assistants"):
         managers_utils.publish_bus_events = _async_mock_success
         EventHandler._registry[SummarizeContext] = _async_mock_success
 
-    # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
+    # listens for events coming from calls and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
 
     asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(

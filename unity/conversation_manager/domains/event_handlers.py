@@ -476,9 +476,7 @@ async def _(
 
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
-    # ToDo: Get this working for email and whatsapp as well
-    # Email: Replying to the same thread
-    # Whatsapp: Managing different kinds of chat such as groups, etc.
+    # ToDo: Get this working for email as well (replying to the same thread)
     if event.medium == "phone_call" and cm.call_manager.call_exchange_id == UNASSIGNED:
         cm.call_manager.call_exchange_id = event.exchange_id
     if (

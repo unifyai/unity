@@ -45,7 +45,6 @@ def _get_local_contact() -> dict:
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
-    # "whatsapp": WhatsappMessageReceivedEvent,
     "msg": SMSReceived,
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
@@ -116,7 +115,6 @@ class CommsManager:
                     "assistant_email": event["assistant_email"],
                     "user_name": event["user_name"],
                     "user_number": event["user_number"],
-                    "user_whatsapp_number": event["user_whatsapp_number"],
                     "user_email": event["user_email"],
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
@@ -222,7 +220,7 @@ class CommsManager:
                     )
 
                 else:
-                    topic = event["from_number"].replace("whatsapp:", "").strip()
+                    topic = event["from_number"].strip()
                     # Put the message in the queue instead of creating a task
                     contact = next(c for c in contacts if c["phone_number"] == topic)
                     task = asyncio.run_coroutine_threadsafe(

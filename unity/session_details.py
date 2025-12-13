@@ -53,7 +53,6 @@ class UserDetails:
     id: str = DEFAULT_USER_ID
     name: str = ""
     number: str = ""
-    whatsapp_number: str = ""
     email: str = ""
 
 
@@ -99,7 +98,6 @@ class SessionDetails:
         user_id: str = "",
         user_name: str = "",
         user_number: str = "",
-        user_whatsapp_number: str = "",
         user_email: str = "",
         voice_provider: str = "",
         voice_id: str = "",
@@ -120,7 +118,6 @@ class SessionDetails:
         self.user.id = user_id
         self.user.name = user_name
         self.user.number = user_number
-        self.user.whatsapp_number = user_whatsapp_number
         self.user.email = user_email
         self.voice.provider = voice_provider
         self.voice.id = voice_id
@@ -149,7 +146,6 @@ class SessionDetails:
         os.environ["USER_ID"] = self.user.id
         os.environ["USER_NAME"] = self.user.name
         os.environ["USER_NUMBER"] = self.user.number
-        os.environ["USER_WHATSAPP_NUMBER"] = self.user.whatsapp_number
         os.environ["USER_EMAIL"] = self.user.email
         os.environ["VOICE_PROVIDER"] = self.voice.provider
         os.environ["VOICE_ID"] = self.voice.id
@@ -186,8 +182,6 @@ class SessionDetails:
             self.user.name = val
         if val := os.environ.get("USER_NUMBER"):
             self.user.number = val
-        if val := os.environ.get("USER_WHATSAPP_NUMBER"):
-            self.user.whatsapp_number = val
         if val := os.environ.get("USER_EMAIL"):
             self.user.email = val
         if val := os.environ.get("VOICE_PROVIDER"):

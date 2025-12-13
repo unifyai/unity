@@ -28,7 +28,6 @@ def test_create():
     assert contact.surname is None
     assert contact.email_address is None
     assert contact.phone_number is None
-    assert contact.whatsapp_number is None
     assert contact.rolling_summary is None
     assert contact.respond_to is False
     assert contact.timezone is None
@@ -114,7 +113,6 @@ def test_create_multiple():
     assert tom_contact.bio is None
     assert tom_contact.email_address is None
     assert tom_contact.phone_number is None
-    assert tom_contact.whatsapp_number is None
     assert tom_contact.bio is None
     assert tom_contact.rolling_summary is None
     assert tom_contact.respond_to is False

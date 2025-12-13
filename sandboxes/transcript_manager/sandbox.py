@@ -71,8 +71,8 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
         custom.strip()
         if custom
         else (
-            "Generate 15 realistic message exchanges across email, Slack and "
-            "WhatsApp between 5 colleagues over the last two weeks. Vary the "
+            "Generate 15 realistic message exchanges across email and SMS "
+            "between 5 colleagues over the last two weeks. Vary the "
             "topics (project updates, meeting scheduling, casual banter). "
             "Provide rich, time-ordered message content so that questions "
             "about context, participants and timing are interesting."

@@ -81,7 +81,7 @@ def test_phone_only():
 
 
 @_handle_project
-def test_whatsapp_and_email():
+def test_phone_and_email():
     cm = ContactManager()
     blm = BlackListManager()
     blm.clear()
@@ -89,21 +89,21 @@ def test_whatsapp_and_email():
     cm._create_contact(
         first_name="Bob",
         email_address="bob@example.com",
-        whatsapp_number="+441234567890",
+        phone_number="+441234567890",
     )
     contact = _get_user_contact(cm)
 
     reason = "abuse report"
     out = cm._move_to_blacklist(contact_id=contact.contact_id, reason=reason)
     assert out["outcome"] == "contact details moved to blacklist"
-    # EMAIL + WHATSAPP_MSG + WHATSAPP_CALL
+    # EMAIL + SMS_MESSAGE + PHONE_CALL
     assert len(out["details"]["blacklist_ids"]) == 3
 
     entries = blm.filter_blacklist()["entries"]
     mediums = sorted([e.medium for e in entries], key=lambda m: m.value)
     details = {e.contact_detail for e in entries}
     assert details == {"bob@example.com", "+441234567890"}
-    assert set(mediums) == {Medium.EMAIL, Medium.WHATSAPP_MSG, Medium.WHATSAPP_CALL}
+    assert set(mediums) == {Medium.EMAIL, Medium.SMS_MESSAGE, Medium.PHONE_CALL}
     expected_reason = "Bob, moved to blacklist due to abuse report"
     for e in entries:
         assert e.reason == expected_reason
