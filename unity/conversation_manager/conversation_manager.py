@@ -256,7 +256,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             else:
                 if parsed_out.get("realtime_guidance"):
-                    event = AssistantRealtimeGuidance(
+                    event = RealtimeGuidance(
                         self.contact_index.get_contact(
                             contact_id=self.call_manager.call_contact["contact_id"],
                         ),

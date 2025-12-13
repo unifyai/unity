@@ -187,9 +187,9 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.interject_or_run(event.content)
 
 
-@EventHandler.register(AssistantRealtimeGuidance)
+@EventHandler.register(RealtimeGuidance)
 async def _(
-    event: AssistantRealtimeGuidance,
+    event: RealtimeGuidance,
     cm: "ConversationManager",
     *args,
     **kwargs,
