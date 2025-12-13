@@ -23,13 +23,13 @@ def _get_publisher():
     return _publisher
 
 
-async def send_sms_message_via_number(to_number: str, message: str) -> str:
+async def send_sms_message_via_number(to_number: str, content: str) -> str:
     """
     Send an SMS message using the SMS provider API.
 
     Args:
         to_number: The recipient's phone number
-        message: The message content to send
+        content: The message content to send
 
     Returns:
         str: The response from the SMS API
@@ -38,7 +38,7 @@ async def send_sms_message_via_number(to_number: str, message: str) -> str:
     if not from_number:
         return {"success": False}
 
-    print(f"Sending SMS from {from_number} to {to_number}: {message}")
+    print(f"Sending SMS from {from_number} to {to_number}: {content}")
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
@@ -46,7 +46,7 @@ async def send_sms_message_via_number(to_number: str, message: str) -> str:
             json={
                 "From": from_number,
                 "To": to_number,
-                "Body": message,
+                "Body": content,
             },
         ) as response:
             try:
@@ -57,7 +57,7 @@ async def send_sms_message_via_number(to_number: str, message: str) -> str:
             return await response.json()
 
 
-async def send_unify_message(message: str) -> str:
+async def send_unify_message(content: str) -> str:
     """
     Send a message to the boss chat.
     """
@@ -71,10 +71,10 @@ async def send_unify_message(message: str) -> str:
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
-    print(f"Sending unify message: {message}")
+    print(f"Sending unify message: {content}")
     message_data = {
         "thread": "unify_message_outbound",
-        "event": {"content": message, "role": "assistant"},
+        "event": {"content": content, "role": "assistant"},
     }
     try:
         # Publish with attributes
