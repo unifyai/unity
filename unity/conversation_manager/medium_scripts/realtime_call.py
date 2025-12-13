@@ -197,7 +197,7 @@ async def entrypoint(ctx: JobContext) -> None:
         print("waiting")
         rt = agent.realtime_llm_session  # underlying OpenAI RealtimeSession
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_notifs")
+            await pubsub.subscribe("app:call:realtime_guidance")
             while True:
                 msg = await pubsub.get_message(
                     ignore_subscribe_messages=True,
