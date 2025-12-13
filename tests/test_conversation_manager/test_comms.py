@@ -239,8 +239,8 @@ async def test_unify_message_to_unify_message(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_message_to_sms(test_redis_client, event_capture):
     """
-    Test unify message to unify call flow: send an incoming unify message and receive
-    a response.
+    Test unify message to SMS flow: send an incoming unify message and receive
+    a response via SMS.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -471,7 +471,7 @@ async def test_unify_meet(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send incoming unify call
+    # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
         test_redis_client,
@@ -493,10 +493,10 @@ async def test_unify_meet(test_redis_client, event_capture):
     await pubsub.aclose()
 
     # Verify exchange completed successfully
-    print(f"\n✅ Unify call test complete!")
+    print(f"\n✅ Unify meet test complete!")
     print(f"   Exchange 2 (Response to user): {len(''.join(chunks2))} characters")
 
-    # End the unify call
+    # End the unify meet
     await test_redis_client.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
@@ -507,12 +507,12 @@ async def test_unify_meet(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_meet_to_sms(test_redis_client, event_capture):
     """
-    Test unify call to SMS flow: send an incoming unify call and receive a response.
+    Test unify meet to SMS flow: send an incoming unify meet and receive a response.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send incoming unify call
+    # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
         test_redis_client,
@@ -536,7 +536,7 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
     # Capture outgoing SMS and verify response
     await capture_outgoing_sms(event_capture, contact)
 
-    # End the unify call
+    # End the unify meet
     await test_redis_client.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
@@ -547,12 +547,12 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_meet_to_email(test_redis_client, event_capture):
     """
-    Test unify call to email flow: send an incoming unify call and receive a response.
+    Test unify meet to email flow: send an incoming unify meet and receive a response.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send incoming unify call
+    # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
         test_redis_client,
@@ -576,7 +576,7 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
     # Capture outgoing email and verify response
     await capture_outgoing_email(event_capture, contact)
 
-    # End the unify call
+    # End the unify meet
     await test_redis_client.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
@@ -587,12 +587,12 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
     """
-    Test unify call to unify message flow: send an incoming unify call and receive a response.
+    Test unify meet to unify message flow: send an incoming unify meet and receive a response.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send incoming unify call
+    # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
         test_redis_client,
@@ -616,7 +616,7 @@ async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
     # Capture outgoing unify message and verify response
     await capture_outgoing_unify_message(event_capture, contact)
 
-    # End the unify call
+    # End the unify meet
     await test_redis_client.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
