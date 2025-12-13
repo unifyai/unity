@@ -21,7 +21,6 @@ class Medium(StrEnum):
 
     UNIFY_MESSAGE = "unify_message"
     UNIFY_CALL = "unify_call"
-    UNIFY_MEET = "unify_meet"
     EMAIL = "email"
     SMS_MESSAGE = "sms_message"
     PHONE_CALL = "phone_call"
@@ -45,11 +44,7 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     ),
     Medium.UNIFY_CALL: MediumInfo(
         value=Medium.UNIFY_CALL,
-        description="A live voice call conducted directly through the Unify platform.",
-    ),
-    Medium.UNIFY_MEET: MediumInfo(
-        value=Medium.UNIFY_MEET,
-        description="A live video meeting hosted on the Unify platform.",
+        description="A live voice or video call conducted directly through the Unify platform.",
     ),
     Medium.EMAIL: MediumInfo(
         value=Medium.EMAIL,
