@@ -62,7 +62,7 @@ CallEvents = Union[
     (PhoneCallReceived, PhoneCallSent, UnifyCallReceived, PhoneCallAnswered),
 )
 async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
-    if cm.mode in ["call", "gmeet", "unify_call"]:
+    if cm.mode in ["call", "unify_call"]:
         # can't make call
         # TODO: we should handle this somehow tbh
         # for now do nothing, but we can think of adding a notification of an attempted call
@@ -153,10 +153,8 @@ async def _(
     (
         InboundPhoneUtterance,
         InboundUnifyCallUtterance,
-        InboundGmeetUtterance,
         OutboundPhoneUtterance,
         OutboundUnifyCallUtterance,
-        OutboundGmeetUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
@@ -543,7 +541,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     print(f"Received DirectMessageEvent: {event.content}")
 
     # Speak to voice layer using appropriate channel
-    if cm.mode in ["call", "unify_call", "gmeet"]:
+    if cm.mode in ["call", "unify_call"]:
         if cm.call_manager.realtime:
             # Realtime API: Send as notification
             await cm.event_broker.publish(

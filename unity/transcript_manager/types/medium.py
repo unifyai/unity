@@ -27,7 +27,6 @@ class Medium(StrEnum):
     PHONE_CALL = "phone_call"
     WHATSAPP_MSG = "whatsapp_message"
     WHATSAPP_CALL = "whatsapp_call"
-    GOOGLE_MEET = "google_meet"
 
     @property
     def info(self) -> MediumInfo:
@@ -73,10 +72,6 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.WHATSAPP_CALL: MediumInfo(
         value=Medium.WHATSAPP_CALL,
         description="A voice or video call made via WhatsApp.",
-    ),
-    Medium.GOOGLE_MEET: MediumInfo(
-        value=Medium.GOOGLE_MEET,
-        description="A video conference meeting hosted on Google Meet.",
     ),
 }
 

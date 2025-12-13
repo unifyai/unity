@@ -7,8 +7,6 @@ Prefer a quick demo? Watch this [video walkthrough](https://www.loom.com/share/f
 
 For understanding how natural conversations are, users can also be simulated. Watch this [video walkthrough](https://www.loom.com/share/9a2f1c0655af46c883bf5edb19f90dca?sid=74b9b39d-88e0-4748-b036-b4577144e84e)
 
-This [video walkthrough](https://www.loom.com/share/608a025efdb64e82b48ba3e03b34a055?sid=a1879903-2ec3-46fa-aa67-9555aa132093) also gives a general overview on how assistant is capable of joining Google Meet sessions.
-
 What is the `ConversationManager`?
 -------------------------------
 `ConversationManager` orchestrates real-time conversational flows, handling speech-to-text, LLM interactions, text-to-speech, and event dispatch (e.g. phone calls, SMS, email, WhatsApp). It wires up the shared `EventBus`, manages prompt builders, and auto-pins relevant events while streaming audio.

@@ -157,7 +157,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.is_summarizing = None
         self.max_messages = 30
 
-        # filler callback when user finishes speaking (phone/gmeet only)
+        # filler callback when user finishes speaking (phone/unify_call only)
         self.user_turn_end_callback: Optional[Callable[[list[dict]], str]] = (
             user_turn_end_callback
         )
@@ -224,34 +224,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
             # realtime model will handle the call so no need to stream anything to the call
-            stream_to_call=self.mode in ["call", "unify_call", "gmeet"]
+            stream_to_call=self.mode in ["call", "unify_call"]
             and not self.call_manager.realtime,
             response_model=response_model,
             call_type=self.mode,
             before_stream_start=(
                 self.before_stream_start
                 if (
-                    self.mode in ["call", "unify_call", "gmeet"]
+                    self.mode in ["call", "unify_call"]
                     and not self.call_manager.realtime
                 )
                 else None
             ),
         )
         parsed_out = json.loads(out)
-        if self.mode in ["call", "unify_call", "gmeet"]:
+        if self.mode in ["call", "unify_call"]:
             if not self.call_manager.realtime:
                 if self.mode == "unify_call":
                     topic = "app:comms:unify_call_utterance"
                     event = OutboundUnifyCallUtterance(
                         self.contact_index.get_contact(contact_id=1),
-                        parsed_out["voice_utterance"],
-                    )
-                elif self.mode == "gmeet":
-                    topic = "app:comms:gmeet_utterance"
-                    event = OutboundGmeetUtterance(
-                        self.contact_index.get_contact(
-                            contact_id=self.call_manager.call_contact.get("contact_id"),
-                        ),
                         parsed_out["voice_utterance"],
                     )
                 else:
@@ -463,7 +455,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if self.call_manager.realtime or self.mode not in [
             "call",
             "unify_call",
-            "gmeet",
         ]:
             return
 
@@ -522,7 +513,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         await self.cancel_proactive_speech()
 
         # Only schedule if we are in a call/voice mode where silence matters
-        if self.mode not in ["call", "unify_call", "gmeet"]:
+        if self.mode not in ["call", "unify_call"]:
             print(
                 f"[Proactive Speech] Skipping: mode {self.mode} not in supported modes",
             )
