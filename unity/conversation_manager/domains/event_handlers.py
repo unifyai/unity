@@ -153,8 +153,10 @@ async def _(
     (
         InboundPhoneUtterance,
         InboundUnifyCallUtterance,
+        InboundGmeetUtterance,
         OutboundPhoneUtterance,
         OutboundUnifyCallUtterance,
+        OutboundGmeetUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):

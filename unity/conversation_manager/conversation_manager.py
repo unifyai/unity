@@ -238,12 +238,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
             ),
         )
         parsed_out = json.loads(out)
-        if "call" in self.mode:
+        if self.mode in ["call", "unify_call", "gmeet"]:
             if not self.call_manager.realtime:
                 if self.mode == "unify_call":
                     topic = "app:comms:unify_call_utterance"
                     event = OutboundUnifyCallUtterance(
                         self.contact_index.get_contact(contact_id=1),
+                        parsed_out["voice_utterance"],
+                    )
+                elif self.mode == "gmeet":
+                    topic = "app:comms:gmeet_utterance"
+                    event = OutboundGmeetUtterance(
+                        self.contact_index.get_contact(
+                            contact_id=self.call_manager.call_contact.get("contact_id"),
+                        ),
                         parsed_out["voice_utterance"],
                     )
                 else:
