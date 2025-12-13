@@ -3,7 +3,10 @@ from typing import Awaitable, Callable, Optional
 
 from pydantic_core import from_json
 
-from unity.common.llm_client import new_llm_client
+from unity.common.llm_client import (
+    new_llm_client,
+    pydantic_to_json_schema_response_format,
+)
 
 
 class LLM:
@@ -106,36 +109,6 @@ class LLM:
         return out
 
     def _to_streaming_format(self, response_model) -> dict:
-        """Convert Pydantic model to json_schema format for streaming.
-
-        OpenAI's strict mode requires:
-        1. All properties must be in the `required` array
-        2. `additionalProperties` must be false
-
-        Pydantic excludes fields with default values from `required`, so we
-        post-process the schema to ensure strict mode compliance.
-        """
-        schema = response_model.model_json_schema()
-        self._make_strict_mode_compatible(schema)
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_model.__name__,
-                "schema": schema,
-                "strict": False,
-            },
-        }
-
-    def _make_strict_mode_compatible(self, schema: dict) -> None:
-        """Recursively make a JSON schema compatible with OpenAI's strict mode.
-
-        For strict mode, all properties must be in `required` and
-        `additionalProperties` must be false.
-        """
-        if schema.get("type") == "object" and "properties" in schema:
-            schema["additionalProperties"] = False
-            schema["required"] = list(schema["properties"].keys())
-
-        # Process nested definitions
-        for def_schema in schema.get("$defs", {}).values():
-            self._make_strict_mode_compatible(def_schema)
+        """Convert Pydantic model to json_schema format for streaming."""
+        # Keep strict mode enabled for deterministic structured output.
+        return pydantic_to_json_schema_response_format(response_model, strict=True)
