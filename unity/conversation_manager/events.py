@@ -183,9 +183,9 @@ class OutboundUnifyMeetUtterance(Event):
 
 
 @dataclass
-class AssistantRealtimeGuidance(Event):
+class RealtimeGuidance(Event):
     """
-    Notification from the conversation manager sent to the assistant.
+    Guidance from the conversation manager sent to the realtime voice agent.
     """
 
     contact: dict
