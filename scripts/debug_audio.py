@@ -195,7 +195,7 @@ class AudioPlayer(App):
                 project="Assistants",
                 context=context,
                 filter=(
-                    "payload_cls == 'PhoneUtteranceEvent' "
+                    "payload_cls == 'InboundPhoneUtterance' "
                     f"and timestamp > '{self.timestamp_str}'"
                 ),
                 limit=1000,

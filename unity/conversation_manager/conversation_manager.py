@@ -242,13 +242,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if not self.call_manager.realtime:
                 if self.mode == "unify_call":
                     topic = "app:comms:unify_call_utterance"
-                    event = AssistantUnifyCallUtterance(
+                    event = OutboundUnifyCallUtterance(
                         self.contact_index.get_contact(contact_id=1),
                         parsed_out["voice_utterance"],
                     )
                 else:
                     topic = "app:comms:phone_utterance"
-                    event = AssistantPhoneUtterance(
+                    event = OutboundPhoneUtterance(
                         self.contact_index.get_contact(
                             phone_number=self.call_manager.call_contact["phone_number"],
                         ),

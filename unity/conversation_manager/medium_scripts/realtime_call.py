@@ -132,11 +132,11 @@ async def entrypoint(ctx: JobContext) -> None:
 
     user_is_speaking = False
     if channel == "phone":
-        user_utterance_event = PhoneUtterance
-        assistant_utterance_event = AssistantPhoneUtterance
+        user_utterance_event = InboundPhoneUtterance
+        assistant_utterance_event = OutboundPhoneUtterance
     else:
-        user_utterance_event = UnifyCallUtterance
-        assistant_utterance_event = AssistantUnifyCallUtterance
+        user_utterance_event = InboundUnifyCallUtterance
+        assistant_utterance_event = OutboundUnifyCallUtterance
 
     # NEW: shared end_call + inactivity + participant disconnect handler
     end_call = create_end_call(contact, channel)
