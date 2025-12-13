@@ -263,7 +263,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         parsed_out["realtime_guidance"],
                     )
                     await self.event_broker.publish(
-                        "app:call:call_notifs",
+                        "app:call:realtime_guidance",
                         event.to_json(),
                     )
                     await self.event_broker.publish(
@@ -637,7 +637,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             # Publish to voice layer
             if self.call_manager.realtime:
                 await self.event_broker.publish(
-                    "app:call:call_notifs",
+                    "app:call:realtime_guidance",
                     json.dumps({"content": decision.content}),
                 )
             else:
