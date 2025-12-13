@@ -69,7 +69,7 @@ class Assistant(Agent):
         self.contact = contact
         self.channel = channel
         self.utterance_event = (
-            InboundPhoneUtterance if channel == "phone" else InboundUnifyCallUtterance
+            InboundPhoneUtterance if channel == "phone" else InboundUnifyMeetUtterance
         )
         self.call_received = not outbound
 
@@ -213,7 +213,7 @@ async def entrypoint(ctx: agents.JobContext):
         async with event_broker.pubsub() as pubsub:
             await pubsub.subscribe(
                 "app:call:response_gen",
-                "app:unify_call:response_gen",
+                "app:unify_meet:response_gen",
                 "app:call:status",
             )
             print("waiting for events...")

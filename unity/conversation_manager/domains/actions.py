@@ -151,7 +151,7 @@ def build_dynamic_response_models(realtime=False):
         realtime: Whether the response model is for realtime mode
 
     Returns:
-        dict: Response models for different modes (call, unify_call, text)
+        dict: Response models for different modes (call, unify_meet, text)
     """
     # Build list of always available action types
     available_actions = [
@@ -175,7 +175,7 @@ def build_dynamic_response_models(realtime=False):
         __base__=BaseModel,
     )
 
-    # Dynamically create ResponsePhone model for call/unify_call modes
+    # Dynamically create ResponsePhone model for call/unify_meet modes
     if not realtime:
         DynamicResponsePhone = create_model(
             "DynamicResponsePhone",
@@ -195,7 +195,7 @@ def build_dynamic_response_models(realtime=False):
 
     return {
         "call": DynamicResponsePhone,
-        "unify_call": DynamicResponsePhone,
+        "unify_meet": DynamicResponsePhone,
         "text": DynamicResponse,
     }
 

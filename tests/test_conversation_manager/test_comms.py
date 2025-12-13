@@ -22,7 +22,7 @@ from tests.test_conversation_manager.helpers import (
     send_incoming_sms,
     send_incoming_unify_message,
 )
-from unity.conversation_manager.events import PhoneCallEnded, UnifyCallEnded
+from unity.conversation_manager.events import PhoneCallEnded, UnifyMeetEnded
 
 
 @pytest.mark.asyncio
@@ -466,8 +466,8 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_call(test_redis_client, event_capture):
-    """Test unify call flow."""
+async def test_unify_meet(test_redis_client, event_capture):
+    """Test unify meet flow."""
     # Clear any events from initialization
     event_capture.clear()
 
@@ -478,7 +478,7 @@ async def test_unify_call(test_redis_client, event_capture):
         contact,
         "test_conference",
         "Tell me a joke",
-        mode="unify_call",
+        mode="unify_meet",
     )
 
     # Capture the assistant's response to the user utterance
@@ -489,7 +489,7 @@ async def test_unify_call(test_redis_client, event_capture):
     assert end2, "Should receive end_gen for response"
 
     # Cleanup subscription
-    await pubsub.unsubscribe("app:unify_call:response_gen")
+    await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
     # Verify exchange completed successfully
@@ -498,14 +498,14 @@ async def test_unify_call(test_redis_client, event_capture):
 
     # End the unify call
     await test_redis_client.publish(
-        "app:comms:unify_call_ended",
-        UnifyCallEnded(contact=contact).to_json(),
+        "app:comms:unify_meet_ended",
+        UnifyMeetEnded(contact=contact).to_json(),
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_call_to_sms(test_redis_client, event_capture):
+async def test_unify_meet_to_sms(test_redis_client, event_capture):
     """
     Test unify call to SMS flow: send an incoming unify call and receive a response.
     """
@@ -519,7 +519,7 @@ async def test_unify_call_to_sms(test_redis_client, event_capture):
         contact,
         "test_conference",
         "Tell me a joke via sms right now",
-        mode="unify_call",
+        mode="unify_meet",
     )
 
     # Capture the assistant's response to the user utterance
@@ -530,7 +530,7 @@ async def test_unify_call_to_sms(test_redis_client, event_capture):
     assert end2, "Should receive end_gen for response"
 
     # Cleanup subscription
-    await pubsub.unsubscribe("app:unify_call:response_gen")
+    await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
     # Capture outgoing SMS and verify response
@@ -538,14 +538,14 @@ async def test_unify_call_to_sms(test_redis_client, event_capture):
 
     # End the unify call
     await test_redis_client.publish(
-        "app:comms:unify_call_ended",
-        UnifyCallEnded(contact=contact).to_json(),
+        "app:comms:unify_meet_ended",
+        UnifyMeetEnded(contact=contact).to_json(),
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_call_to_email(test_redis_client, event_capture):
+async def test_unify_meet_to_email(test_redis_client, event_capture):
     """
     Test unify call to email flow: send an incoming unify call and receive a response.
     """
@@ -559,7 +559,7 @@ async def test_unify_call_to_email(test_redis_client, event_capture):
         contact,
         "test_conference",
         "Tell me a joke via email right now",
-        mode="unify_call",
+        mode="unify_meet",
     )
 
     # Capture the assistant's response to the user utterance
@@ -570,7 +570,7 @@ async def test_unify_call_to_email(test_redis_client, event_capture):
     assert end2, "Should receive end_gen for response"
 
     # Cleanup subscription
-    await pubsub.unsubscribe("app:unify_call:response_gen")
+    await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
     # Capture outgoing email and verify response
@@ -578,14 +578,14 @@ async def test_unify_call_to_email(test_redis_client, event_capture):
 
     # End the unify call
     await test_redis_client.publish(
-        "app:comms:unify_call_ended",
-        UnifyCallEnded(contact=contact).to_json(),
+        "app:comms:unify_meet_ended",
+        UnifyMeetEnded(contact=contact).to_json(),
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_call_to_unify_message(test_redis_client, event_capture):
+async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
     """
     Test unify call to unify message flow: send an incoming unify call and receive a response.
     """
@@ -599,7 +599,7 @@ async def test_unify_call_to_unify_message(test_redis_client, event_capture):
         contact,
         "test_conference",
         "Tell me a joke via unify message right now",
-        mode="unify_call",
+        mode="unify_meet",
     )
 
     # Capture the assistant's response to the user utterance
@@ -610,7 +610,7 @@ async def test_unify_call_to_unify_message(test_redis_client, event_capture):
     assert end2, "Should receive end_gen for response"
 
     # Cleanup subscription
-    await pubsub.unsubscribe("app:unify_call:response_gen")
+    await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
     # Capture outgoing unify message and verify response
@@ -618,6 +618,6 @@ async def test_unify_call_to_unify_message(test_redis_client, event_capture):
 
     # End the unify call
     await test_redis_client.publish(
-        "app:comms:unify_call_ended",
-        UnifyCallEnded(contact=contact).to_json(),
+        "app:comms:unify_meet_ended",
+        UnifyMeetEnded(contact=contact).to_json(),
     )

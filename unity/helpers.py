@@ -167,7 +167,7 @@ def cleanup_dangling_call_processes() -> int:
     """
     Find and force-kill all dangling call processes from previous runs.
 
-    This searches for Python processes running call/unify_call/realtime_call scripts
+    This searches for Python processes running call/unify_meet/realtime_call scripts
     and immediately terminates them with SIGKILL. Since these are leftover processes
     from crashed/ungraceful shutdowns, there's no need for graceful termination.
 
@@ -186,7 +186,7 @@ def cleanup_dangling_call_processes() -> int:
     try:
         # Find all Python processes running call scripts
         output = subprocess.getoutput(
-            "ps -eo pid,command | grep -E 'medium_scripts/(call|unify_call|realtime_call)\\.py'",
+            "ps -eo pid,command | grep -E 'medium_scripts/(call|unify_meet|realtime_call)\\.py'",
         )
 
         # Parse PIDs and commands, excluding the grep process itself
