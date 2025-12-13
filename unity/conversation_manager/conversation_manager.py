@@ -244,7 +244,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     topic = "app:comms:unify_call_utterance"
                     event = AssistantUnifyCallUtterance(
                         self.contact_index.get_contact(contact_id=1),
-                        parsed_out["phone_utterance"],
+                        parsed_out["voice_utterance"],
                     )
                 else:
                     topic = "app:comms:phone_utterance"
@@ -252,7 +252,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         self.contact_index.get_contact(
                             phone_number=self.call_manager.call_contact["phone_number"],
                         ),
-                        parsed_out["phone_utterance"],
+                        parsed_out["voice_utterance"],
                     )
                 await self.event_broker.publish(topic, event.to_json())
 

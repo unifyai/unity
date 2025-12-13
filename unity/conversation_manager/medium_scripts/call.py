@@ -189,9 +189,9 @@ async def entrypoint(ctx: agents.JobContext):
             if result:
                 print("RESULT", result)
                 try:
-                    phone_utterance = result[0]
+                    utterance = result[0]
                 except Exception:  # noqa: BLE001
-                    phone_utterance = ""
+                    utterance = ""
 
                 # We could publish assistant utterances here if needed.
                 # Update activity time on assistant response
