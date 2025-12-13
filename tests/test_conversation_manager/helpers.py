@@ -10,12 +10,12 @@ from unity.conversation_manager.events import (
     PhoneCallReceived,
     PhoneCallSent,
     PhoneCallStarted,
-    PhoneUtterance,
+    InboundPhoneUtterance,
     SMSReceived,
     SMSSent,
     UnifyCallReceived,
     UnifyCallStarted,
-    UnifyCallUtterance,
+    InboundUnifyCallUtterance,
     UnifyMessageReceived,
     UnifyMessageSent,
 )
@@ -140,12 +140,15 @@ async def send_incoming_call(
     if mode == "call":
         await test_redis_client.publish(
             "app:comms:phone_utterance",
-            PhoneUtterance(contact=contact, content=user_utterance).to_json(),
+            InboundPhoneUtterance(contact=contact, content=user_utterance).to_json(),
         )
     else:
         await test_redis_client.publish(
             "app:comms:unify_call_utterance",
-            UnifyCallUtterance(contact=contact, content=user_utterance).to_json(),
+            InboundUnifyCallUtterance(
+                contact=contact,
+                content=user_utterance,
+            ).to_json(),
         )
     print(f"   Exchange 1 (Initial greeting): {len(''.join(chunks1))} characters")
     return pubsub

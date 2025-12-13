@@ -12,26 +12,27 @@ from unity.conversation_manager.prompt_builders import (
     build_user_agent_prompt,
 )
 from unity.conversation_manager.events import (
-    PhoneUtteranceEvent,
-    SMSMessageRecievedEvent,
-    SMSMessageSentEvent,
-    EmailRecievedEvent,
-    EmailSentEvent,
+    InboundPhoneUtterance,
+    OutboundPhoneUtterance,
+    SMSReceived,
+    SMSSent,
+    EmailReceived,
+    EmailSent,
 )
 
 
 MEDIUM = "phone"
 
 RECEIVED_MAP = {
-    "phone": PhoneUtteranceEvent,
-    "sms": SMSMessageRecievedEvent,
-    "email": EmailRecievedEvent,
+    "phone": InboundPhoneUtterance,
+    "sms": SMSReceived,
+    "email": EmailReceived,
 }
 
 SENT_MAP = {
-    "phone": PhoneUtteranceEvent,
-    "sms": SMSMessageSentEvent,
-    "email": EmailSentEvent,
+    "phone": OutboundPhoneUtterance,
+    "sms": SMSSent,
+    "email": EmailSent,
 }
 
 COMMANDS_HELP = (
@@ -75,7 +76,7 @@ async def simulate_turn(agent, message, start=False, user=False):
     global MEDIUM
     if not start:
         # record user utterance via appropriate event class
-        recv_cls = RECEIVED_MAP.get(MEDIUM, PhoneUtteranceEvent)
+        recv_cls = RECEIVED_MAP.get(MEDIUM, InboundPhoneUtterance)
         ue = recv_cls(timestamp=None, content=message, role="User")
         agent["history"].append(ue.to_dict())
     # build system prompt
@@ -132,7 +133,7 @@ async def simulate_turn(agent, message, start=False, user=False):
     resp = await client.generate(user_message=ua_prompt)
     # record assistant response via appropriate event class
     reply = getattr(resp, "voice_utterance", None) or str(resp)
-    send_cls = SENT_MAP.get(MEDIUM, PhoneUtteranceEvent)
+    send_cls = SENT_MAP.get(MEDIUM, OutboundPhoneUtterance)
     ae = send_cls(timestamp=None, content=reply, role="Assistant")
     agent["history"].append(ae.to_dict())
     return reply

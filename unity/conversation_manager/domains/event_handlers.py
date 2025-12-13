@@ -151,10 +151,10 @@ async def _(
 
 @EventHandler.register(
     (
-        PhoneUtterance,
-        UnifyCallUtterance,
-        AssistantPhoneUtterance,
-        AssistantUnifyCallUtterance,
+        InboundPhoneUtterance,
+        InboundUnifyCallUtterance,
+        OutboundPhoneUtterance,
+        OutboundUnifyCallUtterance,
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):

@@ -109,7 +109,7 @@ Registry-based event dispatcher that routes events to handlers:
 ### `Events` (`events.py`)
 
 Dataclass-based event definitions:
-- **Comms Events**: `SMSReceived`, `EmailReceived`, `PhoneUtterance`, etc.
+- **Comms Events**: `SMSReceived`, `EmailReceived`, `InboundPhoneUtterance`, `OutboundPhoneUtterance`, etc.
 - **Conductor Events**: `ConductorRequest`, `ConductorResponse`, etc.
 - **Control Events**: `DirectMessageEvent`, `NotificationInjectedEvent`, etc.
 
@@ -126,7 +126,7 @@ Manages voice call lifecycle:
 ### 1. Non-Realtime Mode (TTS/STT Pipeline)
 
 ```
-User speaks → STT transcribes → PhoneUtterance event
+User speaks → STT transcribes → InboundPhoneUtterance event
     → Main CM Brain thinks → generates response
     → Response published → TTS speaks
 ```
@@ -195,8 +195,8 @@ Key insight: While `active_ask_handle` is set, user input is routed to the neste
 |-------|-------------|
 | `DirectMessageEvent` | Bypass Main CM Brain, send message directly to user |
 | `NotificationInjectedEvent` | Inject notification into Main CM Brain's context |
-| `PhoneUtterance` / `UnifyCallUtterance` | User spoke during a call |
-| `AssistantPhoneUtterance` | Assistant response during a call |
+| `InboundPhoneUtterance` / `InboundUnifyCallUtterance` | User spoke during a call |
+| `OutboundPhoneUtterance` / `OutboundUnifyCallUtterance` | Assistant response during a call |
 | `ConductorRequest` | Request the Conductor to perform an action |
 
 ---

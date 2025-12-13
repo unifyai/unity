@@ -2378,10 +2378,9 @@ class TranscriptGenerator:
                     # Emit comms messages following events.py schema
                     # Map medium to the appropriate Event class
                     from unity.conversation_manager.events import (
-                        SMSMessageRecievedEvent,
-                        EmailRecievedEvent,
-                        WhatsappMessageRecievedEvent,
-                        PhoneUtteranceEvent,
+                        SMSReceived,
+                        EmailReceived,
+                        InboundPhoneUtterance,
                     )
                     from pydantic import BaseModel
                     from unity.events.event_bus import Event
@@ -2389,26 +2388,23 @@ class TranscriptGenerator:
 
                     event_obj = None
                     if medium == "sms_message":
-                        event_obj = SMSMessageRecievedEvent(
+                        event_obj = SMSReceived(
                             timestamp=timestamp,
                             content=content,
                             role="User",
                         )
                     elif medium == "email":
-                        event_obj = EmailRecievedEvent(
+                        event_obj = EmailReceived(
                             timestamp=timestamp,
                             content=content,
                             role="User",
                         )
                     elif medium == "whatsapp_message":
-                        event_obj = WhatsappMessageRecievedEvent(
-                            timestamp=timestamp,
-                            content=content,
-                            role="User",
-                        )
+                        # TODO: Add WhatsappReceived event if needed
+                        pass
                     elif medium in ("phone_call", "whatsapp_call"):
                         # Log each utterance in a phone call context
-                        event_obj = PhoneUtteranceEvent(
+                        event_obj = InboundPhoneUtterance(
                             timestamp=timestamp,
                             role=sender_name.strip(),
                             content=content,

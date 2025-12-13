@@ -69,7 +69,7 @@ class Assistant(Agent):
         self.contact = contact
         self.channel = channel
         self.utterance_event = (
-            PhoneUtterance if channel == "phone" else UnifyCallUtterance
+            InboundPhoneUtterance if channel == "phone" else InboundUnifyCallUtterance
         )
         self.call_received = not outbound
 

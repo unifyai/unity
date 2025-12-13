@@ -152,8 +152,8 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         (
             UnifyMessageSent,
             UnifyMessageReceived,
-            UnifyCallUtterance,
-            AssistantUnifyCallUtterance,
+            InboundUnifyCallUtterance,
+            OutboundUnifyCallUtterance,
             PreHireMessage,
         ),
     ):

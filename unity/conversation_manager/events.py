@@ -117,14 +117,16 @@ class UnifyCallStarted(Event):
 
 
 @dataclass
-class PhoneUtterance(Event):
+class InboundPhoneUtterance(Event):
+    """Utterance received from the other party during a phone call."""
+
     contact: dict
     content: str
 
 
 @dataclass
-class UnifyCallUtterance(Event):
-    """User utterance during a browser-based voice call session."""
+class InboundUnifyCallUtterance(Event):
+    """Utterance received from the other party during a browser-based voice call."""
 
     contact: dict
     content: str
@@ -165,14 +167,16 @@ class PhoneCallSent(Event):
 
 
 @dataclass
-class AssistantPhoneUtterance(Event):
+class OutboundPhoneUtterance(Event):
+    """Utterance sent by the assistant during a phone call."""
+
     contact: dict
     content: str
 
 
 @dataclass
-class AssistantUnifyCallUtterance(Event):
-    """Assistant utterance during a browser-based voice call session."""
+class OutboundUnifyCallUtterance(Event):
+    """Utterance sent by the assistant during a browser-based voice call."""
 
     contact: dict
     content: str
