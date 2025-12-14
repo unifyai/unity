@@ -160,39 +160,52 @@ fi
 # pytest and bash processes can become orphaned. This finds and kills them.
 # Enabled by default because silent resource pollution is worse than accidentally
 # killing a running test (which you'd notice and can re-run).
+#
+# IMPORTANT: Purge scope matches kill scope:
+# - Single socket (default): only purge processes for THIS socket
+# - --all or --global: purge all unity test processes
 if (( ! SKIP_PURGE )); then
   echo ""
   echo "Purging orphaned test processes..."
 
   purge_count=0
 
-  # Find ALL pytest processes running from unity's virtualenv
-  # Pattern: unity/.venv.*pytest matches any pytest process from the unity project
-  while IFS= read -r pid; do
-    [[ -z "$pid" ]] && continue
-    kill -TERM "$pid" 2>/dev/null || true
-    ((purge_count++)) || true
-  done < <(pgrep -f "unity/.venv.*pytest" 2>/dev/null || true)
-
-  # Find orphaned bash/tmux processes with unity test markers in command line
-  # These have UNITY_TEST_SOCKET, unity_dev_, or unity_test_ in their args
-  while IFS= read -r pid; do
-    [[ -z "$pid" ]] && continue
-    # Don't kill the current shell or its parent
-    [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
-    cmdline=$(ps -o command= -p "$pid" 2>/dev/null || true)
-    # Only kill if it's a shell process, not this script itself
-    if [[ "$cmdline" == "bash"* || "$cmdline" == "tmux"* ]]; then
+  if (( KILL_GLOBAL || KILL_ALL )); then
+    # Killing multiple servers - purge all unity test processes
+    while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
       kill -TERM "$pid" 2>/dev/null || true
       ((purge_count++)) || true
-    fi
-  done < <(pgrep -f "UNITY_TEST_SOCKET|unity_dev_|unity_test_" 2>/dev/null || true)
+    done < <(pgrep -f "unity/.venv.*pytest" 2>/dev/null || true)
 
-  # Brief wait for SIGTERM to take effect
+    while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
+      [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+      cmdline=$(ps -o command= -p "$pid" 2>/dev/null || true)
+      if [[ "$cmdline" == "bash"* || "$cmdline" == "tmux"* ]]; then
+        kill -TERM "$pid" 2>/dev/null || true
+        ((purge_count++)) || true
+      fi
+    done < <(pgrep -f "UNITY_TEST_SOCKET|unity_dev_|unity_test_" 2>/dev/null || true)
+
+    if (( purge_count > 0 )); then
+      sleep 1
+      pkill -9 -f "unity/.venv.*pytest" 2>/dev/null || true
+    fi
+  else
+    # Killing single socket - only purge processes for THIS socket
+    while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
+      [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+      cmdline=$(ps -o command= -p "$pid" 2>/dev/null || true)
+      if [[ "$cmdline" == "bash"* || "$cmdline" == "tmux"* ]]; then
+        kill -TERM "$pid" 2>/dev/null || true
+        ((purge_count++)) || true
+      fi
+    done < <(pgrep -f "$TMUX_SOCKET" 2>/dev/null || true)
+  fi
+
   if (( purge_count > 0 )); then
-    sleep 1
-    # Follow up with SIGKILL for any stubborn processes
-    pkill -9 -f "unity/.venv.*pytest" 2>/dev/null || true
     echo "Terminated $purge_count orphaned process(es)."
   else
     echo "No orphaned test processes found."
