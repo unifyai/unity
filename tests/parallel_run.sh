@@ -46,41 +46,6 @@ tmux_cmd() {
   LC_ALL=en_US.UTF-8 tmux -L "$TMUX_SOCKET" "$@"
 }
 
-# ---- Clean up dead sockets from previous runs ----
-# Socket files persist after tmux server exits. This removes orphaned socket
-# files to prevent accumulation and slow helper script execution.
-#
-# IMPORTANT: Only run for top-level invocations. Nested parallel_run.sh calls
-# (e.g., from test_parallel_run tests) must NOT clean up other sockets because:
-# 1. Under heavy load, `tmux info` may timeout even for live servers
-# 2. Concurrent cleanup attempts can race to delete an active socket
-_cleanup_dead_sockets() {
-  # Skip cleanup in nested invocations to avoid deleting the outer socket
-  if [[ -n "${UNITY_SKIP_SHARED_PROJECT_PREP:-}" ]]; then
-    return 0
-  fi
-
-  local cleaned=0
-  while IFS= read -r name; do
-    [[ -z "$name" ]] && continue
-    local sock="/tmp/tmux-$(id -u)/$name"
-    # If tmux can't connect (server dead), remove the stale socket file
-    if [[ -n "$UNITY_TIMEOUT_CMD" ]]; then
-      if ! $UNITY_TIMEOUT_CMD tmux -L "$name" info >/dev/null 2>&1; then
-        rm -f "$sock" 2>/dev/null && ((cleaned++)) || true
-      fi
-    else
-      if ! tmux -L "$name" info >/dev/null 2>&1; then
-        rm -f "$sock" 2>/dev/null && ((cleaned++)) || true
-      fi
-    fi
-  done < <(_get_unity_sockets)
-  if (( cleaned > 0 )); then
-    echo "Cleaned up $cleaned stale socket file(s) from previous runs."
-  fi
-}
-_cleanup_dead_sockets
-
 # ---- Cleanup on interrupt ----
 # Track session IDs for cleanup on SIGINT/SIGTERM
 declare -a CREATED_SESSION_IDS=()
