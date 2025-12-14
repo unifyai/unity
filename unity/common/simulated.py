@@ -108,6 +108,9 @@ class SimulatedLog:
         "clar_req": "❓",
         "clar_ans": "💬",
         "notification": "🔔",
+        # session lifecycle
+        "session_start": "🚀",
+        "session_end": "🏁",
     }
     _VERBS = {
         "ask": "Ask requested",
@@ -122,6 +125,9 @@ class SimulatedLog:
         "clar_req": "Clarification requested",
         "clar_ans": "Clarification answer received",
         "notification": "Notification",
+        # session lifecycle
+        "session_start": "Session started",
+        "session_end": "Session ended",
     }
 
     @staticmethod

@@ -12,6 +12,7 @@ import contextlib
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.hierarchical_logger import SessionLogger
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.domains.call_manager import (
     CallConfig,
@@ -170,6 +171,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # ask handles
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
 
+        # Hierarchical session logger for consistent nested logging
+        self._session_logger = SessionLogger("ConversationManager")
+        self._session_logger.info(
+            "session_start",
+            "ConversationManager session initialized",
+        )
+
     def snapshot(self):
         self._current_snapshot = datetime.now()
         return self._current_snapshot
@@ -179,13 +187,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
         notifs = self.notifications_bar.notifications
         self.notifications_bar.notifications = [n for n in notifs if n.pinned]
 
+    @property
+    def session_logger(self) -> SessionLogger:
+        """The hierarchical session logger for this ConversationManager instance."""
+        return self._session_logger
+
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
-            print(f"🔀 ROUTING: Forwarding to ConversationManagerHandle.ask")
+            self._session_logger.info(
+                "event",
+                "Routing to active ask handle",
+                icon_override="🔀",
+            )
             await self.active_ask_handle.interject(content)
         else:
-            print(f"🧠 ROUTING: Triggering Main CM Brain")
+            self._session_logger.info(
+                "llm_thinking",
+                "Triggering main CM brain",
+                icon_override="🔀",
+            )
             await self.run_llm(delay=0, cancel_running=True)
 
     # this is non-blocking, it will quickly submit the
@@ -216,6 +237,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             phone_number=boss_contact.phone_number,
             email_address=boss_contact.email_address,
         )
+
+        # Log LLM thinking start
+        self._session_logger.log_llm_thinking(f"mode={self.mode}")
 
         response_model = self.dynamic_response_models[self.mode]
         out = await self.llm.run(
@@ -271,8 +295,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         event.to_json(),
                     )
 
-        print(f"parsed_out {parsed_out}")
+        # Log LLM response
         actions = parsed_out.get("actions") or []  # sometimes actions exist but is None
+        action_names = (
+            [a.get("action_name", "unknown") for a in actions] if actions else []
+        )
+        self._session_logger.log_llm_response(
+            f"{len(actions)} action(s): {action_names}" if actions else "no actions",
+        )
+
+        print(f"parsed_out {parsed_out}")
         for action in actions:
             print("taking actions...")
             Action.take_action(

@@ -499,12 +499,20 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             reasoning_effort=None,
             service_tier=None,
         )
+
+        # Get the parent lineage from the ConversationManager's session logger
+        parent_lineage: list[str] = []
+        if hasattr(self.conversation_manager, "_session_logger"):
+            parent_lineage = self.conversation_manager._session_logger.child_lineage()
+
         inner_handle = start_async_tool_loop(
             client=llm,
             message=seeded_messages,
             tools=tools,
             response_format=wrapped_response_format,
             interrupt_llm_with_interjections=True,
+            loop_id="ConversationManager.ask",
+            parent_lineage=parent_lineage,
         )
 
         # ──────────────────────────────────────────────────────────────────

@@ -11,6 +11,16 @@ if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 
+def _event_type_to_log_key(event_cls) -> str:
+    """Convert an event class name to a log key for icon lookup."""
+    name = event_cls.__name__
+    # Convert CamelCase to snake_case
+    import re
+
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+
 class EventHandler:
     _registry = {}
 
@@ -28,8 +38,11 @@ class EventHandler:
 
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
-        # maybe add the event bus logging thing here
-        print(f"Received EVENT: {event}")
+        # Log the event using the session logger
+        event_key = _event_type_to_log_key(event.__class__)
+        if hasattr(cm, "_session_logger"):
+            cm._session_logger.info(event_key, f"Event: {event.__class__.__name__}")
+
         if event.__class__.loggable:
             asyncio.create_task(
                 managers_utils.queue_operation(
@@ -37,7 +50,7 @@ class EventHandler:
                     event,
                 ),
             )
-        print(event)
+
         f = cls._registry.get(event.__class__)
         if not f:
             # do nothing basically (?)
