@@ -133,24 +133,31 @@ def stub_controller_deps(monkeypatch):
     )
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
+    # Two sources of timestamps appear in LLM prompts:
+    # 1. prompt_helpers.now() -> string for "Current UTC time is..." footer
+    # 2. Event/Message timestamps -> datetime for "@ Friday, June 13, 2025..." in messages
+    # We stub both to the same fixed point in time for cache consistency.
+    from datetime import datetime, timezone
+
+    _fixed_dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+
     def _static_now(time_only: bool = False):
-        """Return a fixed timestamp for consistent test caching in assistant TZ.
-
-        The fixed base is Friday, June 13, 2025 at 12:00:00 UTC; for tests we
-        treat the assistant timezone as UTC so the rendered label is "UTC".
-        """
-        from datetime import datetime, timezone
-
-        dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        """Return a fixed timestamp string for prompt footers."""
         label = "UTC"
         return (
-            dt.strftime("%H:%M:%S ") + label
+            _fixed_dt.strftime("%H:%M:%S ") + label
             if time_only
-            else dt.strftime("%Y-%m-%d %H:%M:%S ") + label
+            else _fixed_dt.strftime("%Y-%m-%d %H:%M:%S ") + label
         )
 
-    # Patch the central helper once so all prompts inherit a stable timestamp
+    # Patch prompt_helpers.now for prompt footers
     monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
+
+    # Patch events._get_now for Event/Message timestamps in renderer output
+    monkeypatch.setattr(
+        "unity.conversation_manager.events._get_now",
+        lambda: _fixed_dt,
+    )
 
 
 # --------------------------------------------------------------------------- #

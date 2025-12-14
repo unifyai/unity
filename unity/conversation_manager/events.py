@@ -7,6 +7,11 @@ from dataclasses import dataclass, asdict, field
 from pydantic import BaseModel
 
 
+def _get_now() -> datetime:
+    """Return current datetime. Extracted for test stubbing."""
+    return datetime.now()
+
+
 def custom_dict_factory(kv):
     d = {}
     for k, v in kv:
@@ -21,7 +26,7 @@ def custom_dict_factory(kv):
 
 @dataclass(kw_only=True)
 class Event:
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=_get_now)
 
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
