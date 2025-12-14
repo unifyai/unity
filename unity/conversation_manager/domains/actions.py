@@ -1,16 +1,23 @@
 import asyncio
 import inspect
 from typing import Literal, Optional, Union, TYPE_CHECKING
-import asyncio
+
 from pydantic import BaseModel, Field, create_model
+
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.domains.contact_index import Contact
-from unity.common.async_tool_loop import SteerableToolHandle
-from unity.conductor.base import BaseConductor
+from unity.conversation_manager.task_actions import (
+    STEERING_OPERATIONS,
+    derive_short_name,
+    build_action_name,
+    safe_call_id_suffix,
+    parse_action_name,
+    is_dynamic_action,
+)
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -18,84 +25,19 @@ if TYPE_CHECKING:
 event_broker = get_event_broker()
 
 
-def _get_method_summary(cls: type, method_name: str) -> str:
-    """Extract the first line of a method's docstring as a summary."""
-    method = getattr(cls, method_name, None)
-    if method is None:
-        return ""
-    doc = inspect.getdoc(method)
-    if not doc:
-        return ""
-    return doc.strip().split("\n")[0]
+# Starting a new task (replaces ConductorAction)
+class StartTaskAction(BaseModel):
+    """Start a new task for the assistant to work on."""
 
-
-def _build_conductor_action_description() -> str:
-    """Build description for ConductorAction.action_name from BaseConductor docstrings."""
-    ask_summary = _get_method_summary(BaseConductor, "ask")
-    request_summary = _get_method_summary(BaseConductor, "request")
-    return (
-        "The action to perform on the Conductor. Options are:\n"
-        f"'conductor_ask': {ask_summary}\n"
-        f"'conductor_request': {request_summary}\n"
-    )
-
-
-def _build_conductor_handle_action_description() -> str:
-    """Build description for ConductorHandleAction.action_name from SteerableToolHandle docstrings."""
-    ask_summary = _get_method_summary(SteerableToolHandle, "ask")
-    interject_summary = _get_method_summary(SteerableToolHandle, "interject")
-    stop_summary = _get_method_summary(SteerableToolHandle, "stop")
-    pause_summary = _get_method_summary(SteerableToolHandle, "pause")
-    resume_summary = _get_method_summary(SteerableToolHandle, "resume")
-    done_summary = _get_method_summary(SteerableToolHandle, "done")
-    answer_clarification_summary = _get_method_summary(
-        SteerableToolHandle,
-        "answer_clarification",
-    )
-    return (
-        "The action to perform on the handle. Options are:\n"
-        f"'conductor_handle_ask': {ask_summary}\n"
-        f"'conductor_handle_interject': {interject_summary}\n"
-        f"'conductor_handle_stop': {stop_summary}\n"
-        f"'conductor_handle_pause': {pause_summary}\n"
-        f"'conductor_handle_resume': {resume_summary}\n"
-        f"'conductor_handle_done': {done_summary}\n"
-        f"'conductor_handle_answer_clarification': {answer_clarification_summary}\n"
-    )
-
-
-# conductor
-class ConductorAction(BaseModel):
-    """Ask or request the Conductor to perform a task."""
-
-    action_name: Literal["conductor_ask", "conductor_request"] = Field(
+    action_name: Literal["start_task", "start_task_readonly"] = Field(
         ...,
-        description=_build_conductor_action_description(),
+        description=(
+            "Start a new task. Options are:\n"
+            "'start_task': Start a task that may read or modify data (contacts, tasks, knowledge, etc.)\n"
+            "'start_task_readonly': Start a read-only task (answering questions, looking up information)\n"
+        ),
     )
-    query: str = Field(...)
-
-
-class ConductorHandleAction(BaseModel):
-    """Intervene on an existing Conductor handle."""
-
-    handle_id: int
-    action_name: Literal[
-        "conductor_handle_ask",
-        "conductor_handle_interject",
-        "conductor_handle_stop",
-        "conductor_handle_pause",
-        "conductor_handle_resume",
-        "conductor_handle_done",
-        "conductor_handle_answer_clarification",
-    ] = Field(
-        ...,
-        description=_build_conductor_handle_action_description(),
-    )
-    query: str = Field(...)
-    call_id: Optional[str] = Field(
-        ...,
-        description="the call id of the call that the intervention is for (only used for clarifications)",
-    )
+    query: str = Field(..., description="The task description or question")
 
 
 # wait
@@ -178,11 +120,86 @@ class SendUnifyMessage(BaseModel):
     contact_id: Literal[1] = 1
 
 
-def build_dynamic_response_models(realtime=False):
+def _generate_dynamic_task_actions(active_tasks: dict) -> list[type[BaseModel]]:
+    """Generate dynamic Pydantic action models for each active task.
+
+    Uses STEERING_OPERATIONS from task_actions module to programmatically
+    generate actions based on SteerableToolHandle's methods.
     """
-    Create response models.
+    dynamic_actions = []
+
+    for handle_id, handle_data in (active_tasks or {}).items():
+        query = handle_data.get("query", "")
+        short_name = derive_short_name(query)
+        handle_actions = handle_data.get("handle_actions", [])
+
+        # Get pending clarifications for this handle
+        pending_clarifications = [
+            a
+            for a in handle_actions
+            if a.get("action_name") == "clarification_request" and not a.get("response")
+        ]
+
+        for op in STEERING_OPERATIONS:
+            docstring = op.get_docstring()
+
+            if op.requires_clarification:
+                # Only generate if there are pending clarifications
+                for clar in pending_clarifications:
+                    call_id = clar.get("call_id", "")
+                    suffix = safe_call_id_suffix(call_id)
+                    action_name = build_action_name(
+                        op.name,
+                        short_name,
+                        handle_id,
+                        suffix,
+                    )
+                    model_name = f"{op.name.title().replace('_', '')}{short_name.title().replace('_', '')}{handle_id}_{suffix}"
+
+                    # Build fields based on operation's param_name
+                    fields = {
+                        "action_name": (
+                            Literal[action_name],
+                            Field(default=action_name),
+                        ),
+                    }
+                    if op.param_name:
+                        fields[op.param_name] = (str, Field(..., description=docstring))
+
+                    dynamic_actions.append(
+                        create_model(model_name, __base__=BaseModel, **fields),
+                    )
+            else:
+                action_name = build_action_name(op.name, short_name, handle_id)
+                model_name = f"{op.name.title().replace('_', '')}{short_name.title().replace('_', '')}{handle_id}"
+
+                # Build fields based on operation's param_name
+                fields = {
+                    "action_name": (Literal[action_name], Field(default=action_name)),
+                }
+                if op.param_name:
+                    # Some params are optional (like "reason" for stop)
+                    if op.name == "stop":
+                        fields[op.param_name] = (
+                            Optional[str],
+                            Field(default=None, description=docstring),
+                        )
+                    else:
+                        fields[op.param_name] = (str, Field(..., description=docstring))
+
+                dynamic_actions.append(
+                    create_model(model_name, __base__=BaseModel, **fields),
+                )
+
+    return dynamic_actions
+
+
+def build_dynamic_response_models(active_tasks: dict = None, realtime: bool = False):
+    """
+    Create response models with dynamic per-task actions.
 
     Args:
+        active_tasks: Dict of active task handles {handle_id: {"query": str, "handle": ..., ...}}
         realtime: Whether the response model is for realtime mode
 
     Returns:
@@ -190,14 +207,16 @@ def build_dynamic_response_models(realtime=False):
     """
     # Build list of always available action types
     available_actions = [
-        ConductorAction,
-        ConductorHandleAction,
+        StartTaskAction,
         WaitForNextEvent,
         SendUnifyMessage,
         SendEmail,
         SendSMS,
         MakeCall,
     ]
+
+    # Add dynamic per-task actions
+    available_actions.extend(_generate_dynamic_task_actions(active_tasks))
 
     # Create dynamic Union of available actions
     ActionsUnion = Union[tuple(available_actions)]
@@ -240,10 +259,16 @@ class Action:
 
     @classmethod
     def take_action(cls, cm, action_name, _as_task=True, *args, **kwargs):
+        # Check static handlers first
         f = cls.action_handlers.get(action_name)
+
+        # If not found, check if it's a dynamic task action
+        if not f and is_dynamic_action(action_name):
+            f = DynamicTaskActionHandler.handle
+
         if not f:
             raise Exception(
-                f"unregisted action: {action_name}, make sure to register action",
+                f"unregistered action: {action_name}, make sure to register action",
             )
         if inspect.iscoroutinefunction(f):
             if _as_task:
@@ -514,19 +539,21 @@ async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs
 _next_handle_id = 0
 
 
-@Action.register(["conductor_ask", "conductor_request"])
-async def conductor_ask_request(
+@Action.register(["start_task", "start_task_readonly"])
+async def start_task_action(
     cm: "ConversationManager",
     action_name: str,
     *args,
     **kwargs,
 ):
-    """Start a Conductor ask/request, store handle, and publish started."""
+    """Start a new task, store handle, and publish started."""
     global _next_handle_id
 
     await managers_utils.wait_for_initialization(cm)
     query = kwargs["query"]
-    if "ask" in action_name:
+
+    # Map to internal conductor methods
+    if action_name == "start_task_readonly":
         handle = await cm.conductor.ask(
             query,
             _parent_chat_context=cm.chat_history,
@@ -540,7 +567,7 @@ async def conductor_ask_request(
     # allocate handle id and register
     handle_id = _next_handle_id
     _next_handle_id += 1
-    cm.conductor_handles[handle_id] = {
+    cm.active_tasks[handle_id] = {
         "handle": handle,
         "query": query,
         "handle_actions": [],
@@ -564,87 +591,114 @@ async def conductor_ask_request(
     )
 
 
-@Action.register(
-    [
-        "conductor_handle_ask",
-        "conductor_handle_interject",
-        "conductor_handle_stop",
-        "conductor_handle_pause",
-        "conductor_handle_resume",
-        "conductor_handle_done",
-        "conductor_handle_answer_clarification",
-    ],
-)
-async def conductor_handle_actions(
-    cm: "ConversationManager",
-    action_name: str,
-    *args,
-    **kwargs,
-):
-    await managers_utils.wait_for_initialization(cm)
-    handle_id = kwargs["handle_id"]
-    query = kwargs["query"]
-    call_id = kwargs["call_id"]
-    handle_data = cm.conductor_handles.get(handle_id)
-    if not handle_data:
-        print(f"[ManagersWorker] Unknown handle_id={handle_id} for action")
-        return
+class DynamicTaskActionHandler:
+    """Handler for dynamic per-task actions derived from SteerableToolHandle methods."""
 
-    # record intervention
-    handle_data["handle_actions"].append(
-        {"action_name": action_name, "query": query},
-    )
-    handle = handle_data["handle"]
+    @staticmethod
+    async def handle(
+        cm: "ConversationManager",
+        action_name: str,
+        *args,
+        **kwargs,
+    ):
+        await managers_utils.wait_for_initialization(cm)
 
-    # perform intervention
-    result = ""
-    try:
-        match action_name:
-            case "conductor_handle_ask":
-                ask_handle = await handle.ask(
-                    query,
-                    parent_chat_context_cont=cm.chat_history,
-                )
-                result = await ask_handle.result()
-            case "conductor_handle_interject":
-                await handle.interject(
-                    query,
-                    parent_chat_context_cont=cm.chat_history,
-                )
-                result = "Handle Interjected"
-            case "conductor_handle_stop":
-                handle.stop(reason=query)
-                result = "Handle Stopped"
-                cm.conductor_handles.pop(handle_id, None)
-            case "conductor_handle_pause":
-                handle.pause()
-                result = "Handle Paused"
-            case "conductor_handle_resume":
-                handle.resume()
-                result = "Handle Resumed"
-            case "conductor_handle_done":
-                done_result = handle.done()
-                result = "Handle Done" if done_result else "Handle Not Done"
-            case "conductor_handle_answer_clarification":
-                await handle.answer_clarification(call_id, query)
-                result = "Handle Answer Clarification"
-            case _:
-                print(
-                    f"[ManagersWorker] Unknown action_name={action_name} for intervention",
-                )
-                return
-    except Exception as e:
-        result = f"Error in conductor handle request: {e}"
-        print(f"[ManagersWorker] {result}")
+        parsed = parse_action_name(action_name)
+        operation = parsed.operation
+        handle_id = parsed.handle_id
+        call_id_suffix = parsed.call_id_suffix
 
-    # publish response
-    await event_broker.publish(
-        f"app:conductor:handle_{handle_id}_{action_name}_issued",
-        ConductorHandleResponse(
-            handle_id=handle_id,
-            action_name=action_name,
-            query=query,
-            response=f"Intervened: {action_name} {result}",
-            call_id=call_id,
-        ).to_json(),
-    )
+        handle_data = cm.active_tasks.get(handle_id)
+        if not handle_data:
+            print(
+                f"[TaskHandler] Unknown handle_id={handle_id} for action {action_name}",
+            )
+            return
+
+        handle = handle_data["handle"]
+        steering_op = parsed.steering_operation
+
+        # Extract the appropriate parameter based on operation's param_name
+        param_value = ""
+        if steering_op and steering_op.param_name:
+            param_value = kwargs.get(steering_op.param_name, "")
+        # Fallback: check common parameter names
+        if not param_value:
+            param_value = kwargs.get(
+                "query",
+                kwargs.get("message", kwargs.get("answer", kwargs.get("reason", ""))),
+            )
+
+        # Record intervention
+        handle_data["handle_actions"].append(
+            {"action_name": action_name, "query": param_value},
+        )
+
+        # Perform intervention by calling the corresponding method on handle
+        result = ""
+        full_call_id = ""
+        try:
+            match operation:
+                case "ask":
+                    ask_handle = await handle.ask(
+                        param_value,
+                        parent_chat_context_cont=cm.chat_history,
+                    )
+                    result = await ask_handle.result()
+                case "interject":
+                    await handle.interject(
+                        param_value,
+                        parent_chat_context_cont=cm.chat_history,
+                    )
+                    result = "Interjected"
+                case "stop":
+                    handle.stop(reason=param_value or None)
+                    result = "Stopped"
+                    cm.active_tasks.pop(handle_id, None)
+                case "pause":
+                    handle.pause()
+                    result = "Paused"
+                case "resume":
+                    handle.resume()
+                    result = "Resumed"
+                case "answer_clarification":
+                    # Find the full call_id from pending clarifications
+                    pending_clars = [
+                        a
+                        for a in handle_data.get("handle_actions", [])
+                        if a.get("action_name") == "clarification_request"
+                        and not a.get("response")
+                    ]
+                    for clar in pending_clars:
+                        cid = clar.get("call_id", "")
+                        if call_id_suffix and cid.endswith(call_id_suffix):
+                            full_call_id = cid
+                            break
+                    if not full_call_id and pending_clars:
+                        full_call_id = pending_clars[0].get("call_id", "")
+
+                    if full_call_id:
+                        await handle.answer_clarification(full_call_id, param_value)
+                        result = "Clarification Answered"
+                    else:
+                        result = "No pending clarification found"
+                case _:
+                    print(
+                        f"[TaskHandler] Unknown operation={operation} for {action_name}",
+                    )
+                    return
+        except Exception as e:
+            result = f"Error: {e}"
+            print(f"[TaskHandler] {result}")
+
+        # publish response
+        await event_broker.publish(
+            f"app:conductor:handle_{handle_id}_{operation}_issued",
+            ConductorHandleResponse(
+                handle_id=handle_id,
+                action_name=action_name,
+                query=param_value,
+                response=f"{operation.title()}: {result}",
+                call_id=full_call_id,
+            ).to_json(),
+        )

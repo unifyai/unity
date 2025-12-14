@@ -141,7 +141,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
-        self.conductor_handles: dict[int, dict] = (
+        self.active_tasks: dict[int, dict] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = datetime.now()
@@ -216,7 +216,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         prompt = self.prompt_renderer.render_state(
             self.contact_index,
             self.notifications_bar,
-            self.conductor_handles,
+            self.active_tasks,
             self.last_snapshot,
         )
         print(prompt)
@@ -230,12 +230,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
             phone_number=boss_contact.phone_number,
             email_address=boss_contact.email_address,
             realtime=self._realtime_mode,
+            active_tasks=self.active_tasks,
         )
 
         # Log LLM thinking start
         self._session_logger.log_llm_thinking(f"mode={self.mode}")
 
-        response_model = self.dynamic_response_models[self.mode]
+        # Build response model dynamically with current active tasks
+        response_models = build_dynamic_response_models(
+            active_tasks=self.active_tasks,
+            realtime=self.call_manager.realtime,
+        )
+        response_model = response_models[self.mode]
         out = await self.llm.run(
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
@@ -447,7 +453,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
     def build_response_model(self):
+        # Initial build without active tasks - actual models are rebuilt per LLM call
         self.dynamic_response_models = build_dynamic_response_models(
+            active_tasks={},
             realtime=self.call_manager.realtime,
         )
 
