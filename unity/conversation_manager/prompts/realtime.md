@@ -83,14 +83,14 @@
 Your output will be in the following format:
 {
     "thoughts": [your concise thoughts before taking actions],
-    "actions": [list of actions in the format {"action_type": ..., **action_args}]
+    "actions": [list of actions in the format {"action_name": ..., **action_args}]
 }
 
 If you are on a voice call with a contact, your output format will have an additional field, "realtime_guidance".
 {
     "thoughts": [your concise thoughts before talking or taking actions],
     "realtime_guidance": [your guidance to the realtime agent handling the call on your behalf],
-    "actions": [list of actions in the format {"action_type": ..., **action_args}]
+    "actions": [list of actions in the format {"action_name": ..., **action_args}]
 }
 
 These are actions you can perform:
