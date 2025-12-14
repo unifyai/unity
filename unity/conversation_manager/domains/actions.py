@@ -9,11 +9,59 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.domains.contact_index import Contact
+from unity.common.async_tool_loop import SteerableToolHandle
+from unity.conductor.base import BaseConductor
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 event_broker = get_event_broker()
+
+
+def _get_method_summary(cls: type, method_name: str) -> str:
+    """Extract the first line of a method's docstring as a summary."""
+    method = getattr(cls, method_name, None)
+    if method is None:
+        return ""
+    doc = inspect.getdoc(method)
+    if not doc:
+        return ""
+    return doc.strip().split("\n")[0]
+
+
+def _build_conductor_action_description() -> str:
+    """Build description for ConductorAction.action_name from BaseConductor docstrings."""
+    ask_summary = _get_method_summary(BaseConductor, "ask")
+    request_summary = _get_method_summary(BaseConductor, "request")
+    return (
+        "The action to perform on the Conductor. Options are:\n"
+        f"'conductor_ask': {ask_summary}\n"
+        f"'conductor_request': {request_summary}\n"
+    )
+
+
+def _build_conductor_handle_action_description() -> str:
+    """Build description for ConductorHandleAction.action_name from SteerableToolHandle docstrings."""
+    ask_summary = _get_method_summary(SteerableToolHandle, "ask")
+    interject_summary = _get_method_summary(SteerableToolHandle, "interject")
+    stop_summary = _get_method_summary(SteerableToolHandle, "stop")
+    pause_summary = _get_method_summary(SteerableToolHandle, "pause")
+    resume_summary = _get_method_summary(SteerableToolHandle, "resume")
+    done_summary = _get_method_summary(SteerableToolHandle, "done")
+    answer_clarification_summary = _get_method_summary(
+        SteerableToolHandle,
+        "answer_clarification",
+    )
+    return (
+        "The action to perform on the handle. Options are:\n"
+        f"'conductor_handle_ask': {ask_summary}\n"
+        f"'conductor_handle_interject': {interject_summary}\n"
+        f"'conductor_handle_stop': {stop_summary}\n"
+        f"'conductor_handle_pause': {pause_summary}\n"
+        f"'conductor_handle_resume': {resume_summary}\n"
+        f"'conductor_handle_done': {done_summary}\n"
+        f"'conductor_handle_answer_clarification': {answer_clarification_summary}\n"
+    )
 
 
 # conductor
@@ -22,11 +70,7 @@ class ConductorAction(BaseModel):
 
     action_name: Literal["conductor_ask", "conductor_request"] = Field(
         ...,
-        description=(
-            "The action to perform on the Conductor. Options are:\n"
-            "'conductor_ask': read-only request\n"
-            "'conductor_request': read-write request\n"
-        ),
+        description=_build_conductor_action_description(),
     )
     query: str = Field(...)
 
@@ -45,16 +89,7 @@ class ConductorHandleAction(BaseModel):
         "conductor_handle_answer_clarification",
     ] = Field(
         ...,
-        description=(
-            "The action to perform on the handle. Options are:\n"
-            "'conductor_handle_ask': ask about the conductor status to the handle\n"
-            "'conductor_handle_interject': interject the handle with more information\n"
-            "'conductor_handle_stop': stop the handle\n"
-            "'conductor_handle_pause': pause the handle\n"
-            "'conductor_handle_resume': resume the handle\n"
-            "'conductor_handle_done': check if the handle is done\n"
-            "'conductor_handle_answer_clarification': answer a clarification question from the conductor\n"
-        ),
+        description=_build_conductor_handle_action_description(),
     )
     query: str = Field(...)
     call_id: Optional[str] = Field(
