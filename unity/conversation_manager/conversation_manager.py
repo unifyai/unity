@@ -2,14 +2,12 @@ import os
 import asyncio
 import logging
 
-# import threading
-from jinja2 import Template
 import json
-from pathlib import Path
 from typing import Callable, Optional
 import contextlib
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.hierarchical_logger import SessionLogger
@@ -134,15 +132,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.prompt_renderer = Renderer()
 
         # state - TODO: put the state into a dict or state class
-        # access is as a propery with a lock, that is locked when an llm run
+        # access is as a property with a lock, that is locked when an llm run
         # such that you can never modify state while the LLM is running (so actions do not break)
-        if not self.call_manager.realtime:
-            with open(Path(__file__).parent.resolve() / "prompts" / "prompt.md") as f:
-                self.system_prompt = f.read()
-        else:
-            # This prompt needs to have the conductor stuff inserted
-            with open(Path(__file__).parent.resolve() / "prompts" / "realtime.md") as f:
-                self.system_prompt = f.read()
+        # Note: realtime flag is stored for prompt building in _run_llm
+        self._realtime_mode = self.call_manager.realtime
 
         self.mode = "text"
         self.chat_history = []
@@ -229,13 +222,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
         print(prompt)
         input_message = {"role": "user", "content": prompt}
         boss_contact = self.contact_index.boss_contact
-        system_prompt = Template(self.system_prompt).render(
+        system_prompt = build_system_prompt(
             bio=self.assistant_about,
             contact_id=boss_contact.contact_id,
             first_name=boss_contact.first_name,
             surname=boss_contact.surname,
             phone_number=boss_contact.phone_number,
             email_address=boss_contact.email_address,
+            realtime=self._realtime_mode,
         )
 
         # Log LLM thinking start

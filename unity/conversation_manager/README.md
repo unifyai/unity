@@ -236,10 +236,7 @@ conversation_manager/
 │   ├── realtime_call.py     # GPT Realtime API calls
 │   └── common.py            # Shared voice utilities
 │
-└── prompts/                 # LLM system prompts
-    ├── prompt.md            # Non-realtime prompt
-    ├── realtime.md          # Realtime mode prompt
-    └── realtime_phone_agent.md
+└── prompt_builders.py       # Dynamic prompt construction (like other managers)
 ```
 
 ---
