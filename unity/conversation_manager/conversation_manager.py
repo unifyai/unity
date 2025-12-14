@@ -137,7 +137,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # access is as a propery with a lock, that is locked when an llm run
         # such that you can never modify state while the LLM is running (so actions do not break)
         if not self.call_manager.realtime:
-            with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
+            with open(Path(__file__).parent.resolve() / "prompts" / "prompt.md") as f:
                 self.system_prompt = f.read()
         else:
             # This prompt needs to have the conductor stuff inserted
