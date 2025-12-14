@@ -70,7 +70,7 @@ async def test_task_ask(test_redis_client, event_capture):
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "What contacts do I have in my contact manager?",
+        "List all contacts in my contact manager. Don't ask for clarification, just do it.",
     )
 
     # Wait for task started
@@ -124,7 +124,7 @@ async def test_task_interject(test_redis_client, event_capture):
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "What contacts do I have in my contact manager?",
+        "List all contacts in my contact manager. Don't ask for clarification, just do it.",
     )
 
     # Wait for task started
@@ -177,7 +177,7 @@ async def test_task_stop(test_redis_client, event_capture):
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "What contacts do I have in my contact manager?",
+        "List all contacts in my contact manager. Don't ask for clarification, just do it.",
     )
 
     # Wait for task started
@@ -279,7 +279,7 @@ async def test_task_pause(test_redis_client, event_capture):
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "What contacts do I have in my contact manager?",
+        "List all contacts in my contact manager. Don't ask for clarification, just do it.",
     )
 
     # Wait for task started
@@ -332,7 +332,7 @@ async def test_task_resume(test_redis_client, event_capture):
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "What contacts do I have in my contact manager?",
+        "List all contacts in my contact manager. Don't ask for clarification, just do it.",
     )
 
     # Wait for task started
@@ -389,7 +389,7 @@ async def test_task_progress_query(test_redis_client, event_capture):
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "List all contacts in my contact manager",
+        "List all contacts in my contact manager. Don't ask for clarification, just do it.",
     )
 
     # Wait for task started
@@ -443,7 +443,7 @@ async def test_task_answer_clarification(test_redis_client, event_capture):
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "What contacts do I have in my contact manager?",
+        "List all contacts in my contact manager. Don't ask for clarification, just do it.",
     )
 
     # Wait for task started
