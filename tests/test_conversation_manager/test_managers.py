@@ -311,19 +311,23 @@ async def test_task_resume(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_done_check(test_redis_client, event_capture):
+async def test_task_progress_query(test_redis_client, event_capture):
     """
-    Test checking if a task is done.
+    Test querying specific progress details from a running task.
+
+    This verifies that questions requiring task-internal knowledge (e.g.,
+    intermediate results, current step) route through the ask operation
+    on the in-flight handle rather than being answered directly.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Start a task
+    # Start a task that will have meaningful progress to query
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "What contacts do I have in my contact manager?",
+        "List all contacts in my contact manager",
     )
 
     # Wait for task started
@@ -332,14 +336,15 @@ async def test_task_done_check(test_redis_client, event_capture):
         "start_task",
     )
 
-    # Check if the task is done
+    # Ask a question that requires querying the in-flight task for details
+    # This cannot be answered without asking the task itself
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Is that task finished yet?",
+        "How many contacts have you found so far in that task?",
     )
 
-    # Status checks use the ask operation
+    # Progress queries use the ask operation on the in-flight handle
     handle_response = await capture_task_action_response(
         event_capture,
         task_started.handle_id,
