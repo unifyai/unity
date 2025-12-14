@@ -7,6 +7,7 @@ pytestmark = pytest.mark.eval
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.helpers import (
     contacts,
+    capture_outgoing_sms,
     capture_task_started,
     capture_task_action_response,
     send_conductor_clarification_request,
@@ -201,6 +202,41 @@ async def test_task_stop(test_redis_client, event_capture):
 
     # Verify request
     assert handle_response.handle_id == task_started.handle_id
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_task_completion_notification(test_redis_client, event_capture):
+    """
+    Test that task completion triggers an LLM response to notify the user.
+
+    When a task completes (handle.result() returns), a ConductorResult event
+    is published which triggers cm.run_llm(), allowing the assistant to
+    inform the user that the task is done.
+    """
+    # Clear any events from initialization
+    event_capture.clear()
+
+    # Start a task with explicit request to notify on completion
+    contact = contacts[1]
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "List all my contacts and let me know once you're done",
+    )
+
+    # Wait for task to start
+    await capture_task_started(
+        event_capture,
+        "start_task",
+    )
+
+    # With steps=1, the task completes when handle.result() is awaited
+    # by the background watcher, which publishes ConductorResult and
+    # triggers cm.run_llm() - the LLM should then notify the user
+
+    # Wait for the assistant to send a completion notification
+    await capture_outgoing_sms(event_capture, contact)
 
 
 @pytest.mark.asyncio
