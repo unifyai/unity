@@ -33,3 +33,4 @@ intranet/logs/
 *:Zone.Identifier
 assets/
 discord_messages.md
+.cursor/debug.log
