@@ -117,7 +117,7 @@ class Renderer:
     def render_conductor_handles(self, handles):
         out = "<active_conductor_handles>\n"
         if not handles:
-            out += "No active condcuter handles\n"
+            out += "No active conductor handles\n"
         else:
             for handle_id, handle_data in handles.items():
                 out += f"<conductor_handle handle_id='{handle_id}'>\n"
@@ -130,8 +130,8 @@ class Renderer:
                         out += f"<response>{a_res}</response>\n"
                     if a_call_id := a.get("call_id"):
                         out += f"<call_id>{a_call_id}</call_id>\n"
-                    # the original code has a 'call_id'here, which i dont fully understand
-                    out += "</handle_actions>\n"
+                    out += "</action>\n"
+                out += "</handle_actions>\n"
                 out += "</conductor_handle>\n"
         out += "</active_conductor_handles>"
         return out
