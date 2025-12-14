@@ -169,6 +169,24 @@ class EventCapture:
             f"Timeout waiting for {event_type.__name__} with {attributes}",
         )
 
+    async def wait_for_event_with_matcher(
+        self,
+        event_type: Type[Event],
+        matcher: callable,
+        timeout: float = 30.0,
+    ) -> Event:
+        """Wait for a specific event type that matches a custom matcher function."""
+        start = time.perf_counter()
+        while time.perf_counter() - start < timeout:
+            for event in self._captured_events:
+                if isinstance(event, event_type) and matcher(event):
+                    return event
+            await asyncio.sleep(0.05)
+
+        raise TimeoutError(
+            f"Timeout waiting for {event_type.__name__} matching custom criteria",
+        )
+
     def get_events(self, event_type: Type[Event] = None, **attributes) -> List[Event]:
         """Get all captured events, optionally filtered."""
         events = self._captured_events

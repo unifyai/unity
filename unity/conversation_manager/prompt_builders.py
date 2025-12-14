@@ -8,68 +8,41 @@ using static markdown files.
 
 from __future__ import annotations
 
-import inspect
 import textwrap
 from typing import TYPE_CHECKING
 
-from ..common.async_tool_loop import SteerableToolHandle
-from ..conductor.base import BaseConductor
+from unity.conversation_manager.task_actions import iter_available_actions_for_task
 
 if TYPE_CHECKING:
     pass
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers for extracting docstrings
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _get_method_summary(cls: type, method_name: str) -> str:
-    """Extract the first line of a method's docstring as a summary."""
-    method = getattr(cls, method_name, None)
-    if method is None:
+def _build_active_tasks_action_descriptions(active_tasks: dict) -> str:
+    """Build descriptions for dynamic per-task actions based on active tasks."""
+    if not active_tasks:
         return ""
-    doc = inspect.getdoc(method)
-    if not doc:
-        return ""
-    return doc.strip().split("\n")[0]
 
+    lines = []
+    for handle_id, handle_data in active_tasks.items():
+        query = handle_data.get("query", "")
+        handle_actions = handle_data.get("handle_actions", [])
 
-def _build_conductor_action_descriptions() -> str:
-    """Build descriptions for conductor actions from BaseConductor docstrings."""
-    ask_summary = _get_method_summary(BaseConductor, "ask")
-    request_summary = _get_method_summary(BaseConductor, "request")
-    return textwrap.dedent(
-        f"""
-        - `conductor_ask`: {ask_summary}
-        - `conductor_request`: {request_summary}
-    """,
-    ).strip()
+        # Get pending clarifications
+        pending_clarifications = [
+            a
+            for a in handle_actions
+            if a.get("action_name") == "clarification_request" and not a.get("response")
+        ]
 
+        lines.append(f"\n                For task '{query}' (id={handle_id}):")
+        for action_name, description in iter_available_actions_for_task(
+            handle_id,
+            query,
+            pending_clarifications,
+        ):
+            lines.append(f"                - `{action_name}`: {description}")
 
-def _build_conductor_handle_action_descriptions() -> str:
-    """Build descriptions for conductor handle actions from SteerableToolHandle docstrings."""
-    ask_summary = _get_method_summary(SteerableToolHandle, "ask")
-    interject_summary = _get_method_summary(SteerableToolHandle, "interject")
-    stop_summary = _get_method_summary(SteerableToolHandle, "stop")
-    pause_summary = _get_method_summary(SteerableToolHandle, "pause")
-    resume_summary = _get_method_summary(SteerableToolHandle, "resume")
-    done_summary = _get_method_summary(SteerableToolHandle, "done")
-    answer_clarification_summary = _get_method_summary(
-        SteerableToolHandle,
-        "answer_clarification",
-    )
-    return textwrap.dedent(
-        f"""
-        - `conductor_handle_ask`: {ask_summary}
-        - `conductor_handle_interject`: {interject_summary}
-        - `conductor_handle_stop`: {stop_summary}
-        - `conductor_handle_pause`: {pause_summary}
-        - `conductor_handle_resume`: {resume_summary}
-        - `conductor_handle_done`: {done_summary}
-        - `conductor_handle_answer_clarification`: {answer_clarification_summary}
-    """,
-    ).strip()
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,6 +59,7 @@ def build_system_prompt(
     phone_number: str | None = None,
     email_address: str | None = None,
     realtime: bool = False,
+    active_tasks: dict | None = None,
 ) -> str:
     """
     Build the system prompt for the ConversationManager LLM.
@@ -106,6 +80,8 @@ def build_system_prompt(
         The boss contact's email address (enables email actions).
     realtime : bool
         Whether this is for realtime voice mode (uses realtime_guidance instead of voice_utterance).
+    active_tasks : dict | None
+        Currently active tasks with their handles and state.
 
     Returns
     -------
@@ -135,9 +111,10 @@ def build_system_prompt(
     comms_actions_list = "\n        ".join(f"- {a}" for a in comms_actions)
     comms_actions_names = ", ".join(comms_actions)
 
-    # Get action descriptions from docstrings
-    conductor_action_descriptions = _build_conductor_action_descriptions()
-    conductor_handle_descriptions = _build_conductor_handle_action_descriptions()
+    # Build dynamic task action descriptions
+    active_tasks_descriptions = _build_active_tasks_action_descriptions(
+        active_tasks or {},
+    )
 
     # Voice-specific output format
     if realtime:
@@ -237,14 +214,13 @@ def build_system_prompt(
                     [Comms Notification @ DATE] SMS Received from 'SOME CONTACT NAME'
                     [Comms Notification @ DATE] Email Received from 'SOME OTHER CONTACT NAME'
                 </notifications>
-                <active_conductor_handles>
-                    <conductor_handle handle_id='0'>
-                        <query>[the original query that started this conductor task]</query>
-                        <handle_actions>
-                            [list of actions taken on this handle so far]
-                        </handle_actions>
-                    </conductor_handle>
-                </active_conductor_handles>
+                <active_tasks>
+                    <task id='0' short_name='list_contacts'>
+                        <description>[the original query that started this task]</description>
+                        <available_actions>[list of actions you can take on this task]</available_actions>
+                        <history>[events and responses from this task so far]</history>
+                    </task>
+                </active_tasks>
                 <active_conversations>
                     <contact contact_id="contact_id" first_name="contact first name" surname="contact surname" is_boss="bool, is it the boss user" phone_number="contact phone number" email_address="contact email address" on_call="bool, are you on a voice call with this contact">
                         <contact_details>
@@ -262,7 +238,7 @@ def build_system_prompt(
                 </active_conversations>
             </format>
 
-            You will receive <notifications> indicating what events have happened, <active_conductor_handles> showing any ongoing conductor tasks (use the handle_id when intervening with conductor_handle_* actions), and the current <active_conversations>, across mediums.
+            You will receive <notifications> indicating what events have happened, <active_tasks> showing any ongoing tasks with their available actions listed, and the current <active_conversations>, across mediums.
             New messages will have **NEW** tag prepended to them.
         </input_format>
 
@@ -278,21 +254,17 @@ def build_system_prompt(
         These are actions you can perform:
             <actions>
                 {comms_actions_list}
-                - conductor_action
-                - conductor_handle_action
+                - start_task
+                - start_task_readonly
                 - wait
 
                 For each of the comms actions ({comms_actions_names}), you will have to provide the available contact data (infer them from the active conversation or <contact> tags available). Actions like sending SMS can be done while on a call but you shouldn't attempt making a call while on a call.
 
-                The `conductor_action` is for any task that is not related to comms, such as searching the web, doing research, registering websites, managing contacts, scheduling tasks, etc.
-                The `action_name` can be:
-                {conductor_action_descriptions}
+                Use `start_task` for any task that is not related to comms, such as searching the web, doing research, registering websites, managing contacts, scheduling tasks, etc. This starts a new task that may read or modify data.
 
-                The `conductor_handle_action` is for intervening on an existing conductor handle (identified by handle_id in <active_conductor_handles>).
-                The `action_name` can be:
-                {conductor_handle_descriptions}
+                Use `start_task_readonly` for read-only queries like answering questions or looking up information without making changes.
 
-                IMPORTANT: To interact with an existing handle, you MUST use `conductor_handle_action` with the appropriate handle_id. NEVER use `conductor_action` to check on, modify, or query an existing handle.
+                {active_tasks_descriptions}
 
                 You can use the `wait` action when there is nothing else to do at the moment (waiting for more input from the contacts for example).
             </actions>

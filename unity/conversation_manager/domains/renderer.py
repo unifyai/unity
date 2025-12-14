@@ -7,6 +7,12 @@ from unity.conversation_manager.domains.contact_index import (
     ContactIndex,
 )
 from unity.conversation_manager.domains.notifications import NotificationBar
+from unity.conversation_manager.task_actions import (
+    derive_short_name,
+    iter_available_actions_for_task,
+    build_action_name,
+    safe_call_id_suffix,
+)
 
 
 class Renderer:
@@ -15,12 +21,12 @@ class Renderer:
         self,
         contact_index: ContactIndex = None,
         notification_bar: NotificationBar = None,
-        conductor_handles: dict = None,
+        active_tasks: dict = None,
         last_snapshot: datetime = None,
     ):
         return (
             f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
-            f"{self.render_conductor_handles(conductor_handles)}\n\n"
+            f"{self.render_active_tasks(active_tasks)}\n\n"
             f"{self.render_active_conversations(contact_index.active_conversations, last_snapshot=last_snapshot)}"
         )
 
@@ -113,25 +119,64 @@ class Renderer:
         )
         return "<notifications>\n" f"{rendered_notifs}\n" "</notifications>"
 
-    # conductor stuff
-    def render_conductor_handles(self, handles):
-        out = "<active_conductor_handles>\n"
-        if not handles:
-            out += "No active conductor handles\n"
+    def render_active_tasks(self, active_tasks: dict):
+        """Render currently active tasks with their status and history."""
+        out = "<active_tasks>\n"
+        if not active_tasks:
+            out += "No active tasks\n"
         else:
-            for handle_id, handle_data in handles.items():
-                out += f"<conductor_handle handle_id='{handle_id}'>\n"
-                out += f"<query>{handle_data['query']}</query>\n"
-                out += f"<handle_actions>\n"
-                for a in handle_data["handle_actions"]:
-                    out += f"<action action_name={a['action_name']}>\n"
-                    out += f"<query>{a['query']}</query>\n"
-                    if a_res := a.get("response"):
-                        out += f"<response>{a_res}</response>\n"
-                    if a_call_id := a.get("call_id"):
-                        out += f"<call_id>{a_call_id}</call_id>\n"
-                    out += "</action>\n"
-                out += "</handle_actions>\n"
-                out += "</conductor_handle>\n"
-        out += "</active_conductor_handles>"
+            for handle_id, handle_data in active_tasks.items():
+                query = handle_data.get("query", "")
+                short_name = derive_short_name(query)
+                handle_actions = handle_data.get("handle_actions", [])
+
+                # Get pending clarifications
+                pending_clarifications = [
+                    a
+                    for a in handle_actions
+                    if a.get("action_name") == "clarification_request"
+                    and not a.get("response")
+                ]
+
+                out += f"<task id='{handle_id}' short_name='{short_name}'>\n"
+                out += f"<description>{query}</description>\n"
+
+                # Show available actions using centralized helper
+                out += "<available_actions>\n"
+                for action_name, description in iter_available_actions_for_task(
+                    handle_id,
+                    query,
+                    pending_clarifications,
+                ):
+                    out += f"  - {action_name}: {description}\n"
+                out += "</available_actions>\n"
+
+                # Show task history
+                if handle_actions:
+                    out += "<history>\n"
+                    for a in handle_actions:
+                        action_type = a.get("action_name", "")
+                        action_query = a.get("query", "")
+                        out += f"<event type='{action_type}'>\n"
+                        if action_query:
+                            out += f"  <content>{action_query}</content>\n"
+                        if a_res := a.get("response"):
+                            out += f"  <response>{a_res}</response>\n"
+                        if action_type == "clarification_request" and not a.get(
+                            "response",
+                        ):
+                            call_id = a.get("call_id", "")
+                            suffix = safe_call_id_suffix(call_id)
+                            action = build_action_name(
+                                "answer_clarification",
+                                short_name,
+                                handle_id,
+                                suffix,
+                            )
+                            out += f"  <pending>Use {action} to respond</pending>\n"
+                        out += "</event>\n"
+                    out += "</history>\n"
+
+                out += "</task>\n"
+        out += "</active_tasks>"
         return out

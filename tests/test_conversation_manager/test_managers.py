@@ -7,8 +7,8 @@ pytestmark = pytest.mark.eval
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.helpers import (
     contacts,
-    capture_conductor_handle_response,
-    capture_conductor_handle_started,
+    capture_task_started,
+    capture_task_action_response,
     send_conductor_clarification_request,
     send_incoming_sms,
 )
@@ -16,431 +16,422 @@ from tests.test_conversation_manager.helpers import (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_ask(test_redis_client, event_capture):
+async def test_start_task_readonly(test_redis_client, event_capture):
     """
-    Test conductor_ask: send an SMS that triggers the assistant to use conductor_ask,
-    and verify that a ConductorRequest is published with the correct format.
+    Test start_task_readonly: send an SMS that triggers the assistant to start a read-only task,
+    and verify that a task started event is published with the correct format.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send an SMS that prompts the assistant to use conductor_ask
+    # Send an SMS that prompts the assistant to start a read-only task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
     # Verify the request has the correct format
-    assert conductor_handle_started.action_name == "conductor_ask"
-    assert len(conductor_handle_started.query) > 0
+    assert task_started.action_name == "start_task_readonly"
+    assert len(task_started.query) > 0
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Actually, stop that task please",
     )
-    await capture_conductor_handle_response(
+    await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_request(test_redis_client, event_capture):
+async def test_start_task(test_redis_client, event_capture):
     """
-    Test conductor_request: send an SMS that triggers the assistant to use conductor_request,
-    and verify that a ConductorRequest is published with the correct format.
+    Test start_task: send an SMS that triggers the assistant to start a task,
+    and verify that a task started event is published with the correct format.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send an SMS that prompts the assistant to use conductor_request
+    # Send an SMS that prompts the assistant to start a task that modifies data
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Use the conductor to create a new task to buy groceries tomorrow",
+        "Create a new task to buy groceries tomorrow",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_request",
+        "start_task",
     )
 
     # Verify the request has the correct format
-    assert conductor_handle_started.action_name == "conductor_request"
-    assert len(conductor_handle_started.query) > 0
+    assert task_started.action_name == "start_task"
+    assert len(task_started.query) > 0
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Never mind, please stop that task",
     )
-    await capture_conductor_handle_response(
+    await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_handle_ask(test_redis_client, event_capture):
+async def test_task_ask(test_redis_client, event_capture):
     """
-    Test conductor_handle_ask: manually create a handle_id, then send a message
-    to ask about the status and verify ConductorHandleRequest is generated.
+    Test asking a question about a running task.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send an SMS that prompts the assistant to use conductor_ask
+    # Start a task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
-    # Ask about the handle status
+    # Ask about the task status
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Check on the status of conductor handle {conductor_handle_started.handle_id}",
+        "What's the status of that task you're working on?",
     )
 
-    # Wait for ConductorHandleRequest with action_name="ask"
-    handle_response = await capture_conductor_handle_response(
+    # Wait for ask action response
+    handle_response = await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_ask",
+        task_started.handle_id,
+        "ask",
     )
 
     # Verify request has correct format
-    assert handle_response.handle_id == conductor_handle_started.handle_id
-    assert handle_response.action_name == "conductor_handle_ask"
+    assert handle_response.handle_id == task_started.handle_id
     assert len(handle_response.query) > 0
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Stop that task please",
     )
-    await capture_conductor_handle_response(
+    await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_handle_interject(test_redis_client, event_capture):
+async def test_task_interject(test_redis_client, event_capture):
     """
-    Test conductor_handle_interject: manually create a handle, then interject
-    and verify ConductorHandleRequest is generated.
+    Test interjecting additional instructions into a running task.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send an SMS that prompts the assistant to use conductor_ask
+    # Start a task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
     # Interject with more information
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"For conductor handle {conductor_handle_started.handle_id}, add that I don't want my contact to be listed",
+        "Actually, for that task, please exclude my own contact from the list",
     )
 
-    # Wait for ConductorHandleResponse with action_name="interject"
-    handle_response = await capture_conductor_handle_response(
+    # Wait for interject action response
+    handle_response = await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_interject",
+        task_started.handle_id,
+        "interject",
     )
 
     # Verify response
-    assert handle_response.handle_id == conductor_handle_started.handle_id
-    assert handle_response.action_name == "conductor_handle_interject"
+    assert handle_response.handle_id == task_started.handle_id
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Stop that task please",
     )
-    await capture_conductor_handle_response(
+    await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_handle_stop(test_redis_client, event_capture):
+async def test_task_stop(test_redis_client, event_capture):
     """
-    Test conductor_handle_stop: manually create a handle, then stop it.
+    Test stopping a running task.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send an SMS that prompts the assistant to use conductor_ask
+    # Start a task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Stop that task, I don't need it anymore",
     )
 
-    # Wait for ConductorHandleResponse with action_name="stop"
-    handle_response = await capture_conductor_handle_response(
+    # Wait for stop action response
+    handle_response = await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
     # Verify request
-    assert handle_response.handle_id == conductor_handle_started.handle_id
-    assert handle_response.action_name == "conductor_handle_stop"
+    assert handle_response.handle_id == task_started.handle_id
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_handle_pause(test_redis_client, event_capture):
+async def test_task_pause(test_redis_client, event_capture):
     """
-    Test conductor_handle_pause: manually create a handle, then pause it.
+    Test pausing a running task.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send an SMS that prompts the assistant to use conductor_ask
+    # Start a task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
-    # Pause the handle
+    # Pause the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Pause conductor handle {conductor_handle_started.handle_id}",
+        "Pause that task for now",
     )
 
-    # Wait for ConductorHandleResponse with action_name="pause"
-    handle_response = await capture_conductor_handle_response(
+    # Wait for pause action response
+    handle_response = await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_pause",
+        task_started.handle_id,
+        "pause",
     )
 
     # Verify response
-    assert handle_response.handle_id == conductor_handle_started.handle_id
-    assert handle_response.action_name == "conductor_handle_pause"
+    assert handle_response.handle_id == task_started.handle_id
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Actually just stop that task",
     )
-    await capture_conductor_handle_response(
+    await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_handle_resume(test_redis_client, event_capture):
+async def test_task_resume(test_redis_client, event_capture):
     """
-    Test conductor_handle_resume: manually create a handle, pause it, then resume it.
+    Test resuming a paused task.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Send an SMS that prompts the assistant to use conductor_ask
+    # Start a task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
-    # Resume the handle (we don't need to pause first for this test)
+    # Resume the task (even without pausing first, for test simplicity)
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Resume conductor handle {conductor_handle_started.handle_id}",
+        "Resume that task please",
     )
 
-    # Wait for ConductorHandleResponse with action_name="resume"
-    handle_response = await capture_conductor_handle_response(
+    # Wait for resume action response
+    handle_response = await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_resume",
+        task_started.handle_id,
+        "resume",
     )
 
     # Verify response
-    assert handle_response.handle_id == conductor_handle_started.handle_id
-    assert handle_response.action_name == "conductor_handle_resume"
+    assert handle_response.handle_id == task_started.handle_id
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Stop that task please",
     )
-    await capture_conductor_handle_response(
+    await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_handle_done(test_redis_client, event_capture):
+async def test_task_done_check(test_redis_client, event_capture):
     """
-    Test conductor_handle_done: manually create a handle, then check if it's done.
+    Test checking if a task is done.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Manually send a ConductorResponse to simulate having a handle
+    # Start a task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
-    # Check if the handle is done
+    # Check if the task is done
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Check if conductor handle {conductor_handle_started.handle_id} is done",
+        "Is that task finished yet?",
     )
 
-    # Wait for ConductorHandleResponse with action_name="done"
-    handle_response = await capture_conductor_handle_response(
+    # Status checks use the ask operation
+    handle_response = await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_done",
+        task_started.handle_id,
+        "ask",
     )
 
     # Verify response
-    assert handle_response.handle_id == conductor_handle_started.handle_id
-    assert handle_response.action_name == "conductor_handle_done"
+    assert handle_response.handle_id == task_started.handle_id
 
-    # Stop the handle
+    # Stop the task
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"Stop conductor handle {conductor_handle_started.handle_id}",
+        "Stop that task please",
     )
-    await capture_conductor_handle_response(
+    await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_stop",
+        task_started.handle_id,
+        "stop",
     )
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_handle_answer_clarification(test_redis_client, event_capture):
+async def test_task_answer_clarification(test_redis_client, event_capture):
     """
-    Test conductor_handle_answer_clarification: manually send a ConductorClarificationRequest,
-    then send an SMS to answer and verify ConductorClarificationResponse is generated.
+    Test answering a clarification request from a task.
     """
     # Clear any events from initialization
     event_capture.clear()
 
-    # Manually send a ConductorResponse to simulate having a handle
+    # Start a task
     contact = contacts[1]
     await send_incoming_sms(
         test_redis_client,
         contact,
-        "Ask the conductor what contacts I have in my contact manager",
+        "What contacts do I have in my contact manager?",
     )
 
-    # Wait for ConductorHandleStarted
-    conductor_handle_started = await capture_conductor_handle_started(
+    # Wait for task started
+    task_started = await capture_task_started(
         event_capture,
-        "conductor_ask",
+        "start_task_readonly",
     )
 
     # Manually send a ConductorClarificationRequest
-    # (simulating what the conductor would send if it needed clarification)
+    # (simulating what the inner task would send if it needed clarification)
     call_id = "test_clarification_123"
     await send_conductor_clarification_request(
         test_redis_client,
-        handle_id=conductor_handle_started.handle_id,
+        handle_id=task_started.handle_id,
         query="Should I include the assistant's name in the contact?",
         call_id=call_id,
     )
@@ -452,18 +443,17 @@ async def test_conductor_handle_answer_clarification(test_redis_client, event_ca
     await send_incoming_sms(
         test_redis_client,
         contact,
-        f"For the clarification on handle {conductor_handle_started.handle_id}, yes, include the assistant's name in the contact",
+        "Yes, include the assistant's name in the contact",
     )
 
-    # Step 4: Wait for ConductorClarificationResponse
-    clarification_response = await capture_conductor_handle_response(
+    # Wait for clarification answer response
+    clarification_response = await capture_task_action_response(
         event_capture,
-        conductor_handle_started.handle_id,
-        "conductor_handle_answer_clarification",
+        task_started.handle_id,
+        "answer_clarification",
         call_id=call_id,
     )
 
     # Verify response has correct format
-    assert clarification_response.handle_id == conductor_handle_started.handle_id
-    assert clarification_response.call_id == call_id
+    assert clarification_response.handle_id == task_started.handle_id
     assert len(clarification_response.response) > 0

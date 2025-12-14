@@ -258,13 +258,13 @@ async def capture_stream_response(pubsub, label: str, timeout: float = 60.0):
     return got_start, chunks, got_end
 
 
-async def capture_conductor_handle_started(
+async def capture_task_started(
     event_capture,
     action_name: str,
     timeout: float = 60.0,
 ):
-    """Wait for and capture a ConductorHandleStarted event"""
-    print(f"⏳ Waiting for Conductor {action_name} request (timeout: 60s)...")
+    """Wait for and capture a ConductorHandleStarted event (task started)"""
+    print(f"⏳ Waiting for task {action_name} request (timeout: 60s)...")
     handle_started = await event_capture.wait_for_event(
         ConductorHandleStarted,
         timeout=timeout,
@@ -275,41 +275,61 @@ async def capture_conductor_handle_started(
     assert handle_started.action_name == action_name
     assert len(handle_started.query) > 0
 
-    print(f"✅ Got Conductor {action_name} request")
+    print(f"✅ Got task {action_name} request")
     print(f"   Query: {handle_started.query[:100]}...")
     return handle_started
 
 
-async def capture_conductor_handle_response(
+async def capture_task_action_response(
     event_capture,
     handle_id: int,
-    action_name: str,
+    operation: str,
     call_id: str = "",
     timeout: float = 60.0,
 ):
-    """Wait for and capture a ConductorHandleResponse event"""
-    print(f"⏳ Waiting for Conductor handle {action_name} request (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
+    """Wait for and capture a ConductorHandleResponse event for a task action.
+
+    Args:
+        event_capture: The event capture fixture
+        handle_id: The task handle ID to match
+        operation: The steering operation to match (e.g., "stop", "ask", "interject")
+        call_id: Optional call_id for clarification responses
+        timeout: Timeout in seconds
+    """
+    from unity.conversation_manager.task_actions import parse_action_name, OPERATION_MAP
+
+    print(
+        f"⏳ Waiting for task action '{operation}' on handle {handle_id} (timeout: {timeout}s)...",
+    )
+
+    def match_action(event):
+        if not isinstance(event, ConductorHandleResponse):
+            return False
+        if event.handle_id != handle_id:
+            return False
+        parsed = parse_action_name(event.action_name)
+        return parsed.operation == operation and parsed.handle_id == handle_id
+
+    response = await event_capture.wait_for_event_with_matcher(
         ConductorHandleResponse,
+        match_action,
         timeout=timeout,
-        handle_id=handle_id,
-        action_name=action_name,
     )
 
     assert isinstance(response, ConductorHandleResponse)
     assert response.handle_id == handle_id
-    assert response.action_name == action_name
-    if action_name in [
-        "conductor_handle_ask",
-        "conductor_handle_interject",
-        "conductor_handle_answer_clarification",
-    ]:
+
+    op = OPERATION_MAP.get(operation)
+    if op and op.param_name in ("query", "message", "answer"):
         assert len(response.query) > 0
+
     if call_id:
         assert response.call_id == call_id
 
-    print(f"✅ Got Conductor handle {action_name} request: handle_id={handle_id}")
-    print(f"   Query: {response.query[:100]}...")
+    print(
+        f"✅ Got task action response: handle_id={handle_id}, action={response.action_name}",
+    )
+    print(f"   Query: {response.query[:100] if response.query else '(none)'}...")
     return response
 
 

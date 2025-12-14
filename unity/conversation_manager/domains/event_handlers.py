@@ -246,15 +246,26 @@ async def _(
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
-    # just run llm here
+    # Track clarification requests in the task's handle_actions and notify
     if isinstance(event, ConductorClarificationRequest):
-        cm.conductor_handles[event.handle_id]["handle_actions"].append(
-            {
-                "action_name": "conductor_handle_clarification_request",
-                "query": event.query,
-                "call_id": event.call_id,
-            },
-        )
+        if event.handle_id in cm.active_tasks:
+            cm.active_tasks[event.handle_id]["handle_actions"].append(
+                {
+                    "action_name": "clarification_request",
+                    "query": event.query,
+                    "call_id": event.call_id,
+                },
+            )
+            # Add notification about the clarification request
+            task_query = cm.active_tasks[event.handle_id].get("query", "")
+            short_desc = task_query[:30] + "..." if len(task_query) > 30 else task_query
+            cm.notifications_bar.push_notif(
+                "Task",
+                f"Task '{short_desc}' needs clarification: {event.query}",
+                event.timestamp,
+            )
+            # Trigger LLM run so assistant can see and respond to the clarification
+            await cm.run_llm()
     else:
         ...
 
@@ -382,11 +393,11 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
 
 
 @EventHandler.register(ConductorHandleStarted)
-async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
-    # update the conductor handles state
+async def _(event: ConductorHandleStarted, cm: "ConversationManager", *args, **kwargs):
+    # Notify that a new task has started
     cm.notifications_bar.push_notif(
-        "Conductor",
-        f"Conductor handle started with id {event.handle_id}",
+        "Task",
+        f"Task started: {event.query[:50]}{'...' if len(event.query) > 50 else ''}",
         event.timestamp,
     )
     await cm.run_llm()
@@ -432,12 +443,17 @@ async def _(
 
 @EventHandler.register(ConductorResult)
 async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
+    # Get task description for notification
+    task_data = cm.active_tasks.get(event.handle_id, {})
+    task_query = task_data.get("query", f"Task {event.handle_id}")
+    short_desc = task_query[:30] + "..." if len(task_query) > 30 else task_query
+
     cm.notifications_bar.push_notif(
-        "Conductor",
-        f"Received result for handle_id: {event.handle_id}\nResult: {event.result}",
+        "Task",
+        f"Task completed: {short_desc}\nResult: {event.result}",
         event.timestamp,
     )
-    cm.conductor_handles.pop(event.handle_id, None)
+    cm.active_tasks.pop(event.handle_id, None)
     await cm.run_llm()
 
 
@@ -448,12 +464,12 @@ async def _(
     *args,
     **kwargs,
 ):
-    print("Received conductor pause/resume event", event.to_dict())
+    print("Received task pause/resume event", event.to_dict())
     action = "pause" if isinstance(event, ConductorPauseActor) else "resume"
     reason = getattr(event, "reason", "")
     affected: list[int] = []
-    for hid, data in list(cm.conductor_handles.items()):
-        # get conductor request handle
+    for hid, data in list(cm.active_tasks.items()):
+        # get task handle
         handle = data.get("handle")
         if handle is None:
             continue
@@ -465,11 +481,11 @@ async def _(
             elif action == "resume" and hasattr(handle, "resume_actor"):
                 await handle.resume_actor(reason)
             else:
-                print(f"Handle {hid} does not have {action} method")
+                print(f"Task {hid} does not have {action} method")
                 continue
             affected.append(int(hid))
         except Exception as e:
-            print(f"Failed to {action} handle {hid}: {e}")
+            print(f"Failed to {action} task {hid}: {e}")
 
     # notify per handle without triggering LLM runs
     for hid in affected:
@@ -478,12 +494,12 @@ async def _(
                 "app:conductor:notification",
                 ConductorNotification(
                     handle_id=int(hid),
-                    response=f"Actor {action}d: {reason}",
+                    response=f"Task {action}d: {reason}",
                 ).to_json(),
             )
         except Exception as e:
             print(
-                f"Failed to publish {action} notification for {hid}: {e}",
+                f"Failed to publish {action} notification for task {hid}: {e}",
             )
 
 
