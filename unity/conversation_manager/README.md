@@ -237,7 +237,7 @@ conversation_manager/
 │   └── common.py            # Shared voice utilities
 │
 └── prompts/                 # LLM system prompts
-    ├── v1.md, v2.md         # Non-realtime prompts
+    ├── prompt.md            # Non-realtime prompt
     ├── realtime.md          # Realtime mode prompt
     └── realtime_phone_agent.md
 ```
