@@ -66,7 +66,7 @@ async def test_questions_use_only_skill_tool(case: dict[str, str]):
     )
 
     # Nudge routing deterministically to SkillManager by explicitly stating the surface
-    handle = await cond.ask(
+    handle = await cond.request(
         case["question"],
         _return_reasoning_steps=True,
     )

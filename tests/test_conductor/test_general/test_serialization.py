@@ -71,7 +71,7 @@ def _assert_dict_subset(expected: dict, actual: dict):
 @_handle_project
 async def test_serialize_contact_ask():
     cond = Conductor()
-    h = await cond.ask("Who is the contact living in Berlin working as a designer?")
+    h = await cond.request("Who is the contact living in Berlin working as a designer?")
 
     try:
         client = getattr(h, "_client", None)  # internal test-only access
@@ -98,8 +98,8 @@ async def test_serialize_contact_ask():
         expected = {
             "version": 1,
             "root": {
-                "tool": "Conductor.ask",
-                "handle": "AsyncToolLoopHandle",
+                "tool": "Conductor.request",
+                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
             },
             "children": [
                 {
@@ -108,7 +108,7 @@ async def test_serialize_contact_ask():
             ],
         }
         _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.ask")
+        assert snap.get("loop_id", "").startswith("Conductor.request")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
     finally:
@@ -126,7 +126,7 @@ async def test_serialize_contact_ask():
 @_handle_project
 async def test_serialize_transcript_ask():
     cond = Conductor()
-    h = await cond.ask(
+    h = await cond.request(
         "Show me the most recent message mentioning budgeting or banking.",
     )
 
@@ -154,8 +154,8 @@ async def test_serialize_transcript_ask():
         expected = {
             "version": 1,
             "root": {
-                "tool": "Conductor.ask",
-                "handle": "AsyncToolLoopHandle",
+                "tool": "Conductor.request",
+                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
             },
             "children": [
                 {
@@ -164,7 +164,7 @@ async def test_serialize_transcript_ask():
             ],
         }
         _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.ask")
+        assert snap.get("loop_id", "").startswith("Conductor.request")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
     finally:
@@ -182,7 +182,7 @@ async def test_serialize_transcript_ask():
 @_handle_project
 async def test_serialize_guidance_ask():
     cond = Conductor()
-    h = await cond.ask("Find the onboarding demo guidance.")
+    h = await cond.request("Find the onboarding demo guidance.")
 
     try:
         client = getattr(h, "_client", None)
@@ -208,8 +208,8 @@ async def test_serialize_guidance_ask():
         expected = {
             "version": 1,
             "root": {
-                "tool": "Conductor.ask",
-                "handle": "AsyncToolLoopHandle",
+                "tool": "Conductor.request",
+                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
             },
             "children": [
                 {
@@ -218,7 +218,7 @@ async def test_serialize_guidance_ask():
             ],
         }
         _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.ask")
+        assert snap.get("loop_id", "").startswith("Conductor.request")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
     finally:
@@ -236,7 +236,7 @@ async def test_serialize_guidance_ask():
 @_handle_project
 async def test_serialize_secret_ask():
     cond = Conductor()
-    h = await cond.ask("Which secrets are currently stored?")
+    h = await cond.request("Which secrets are currently stored?")
 
     try:
         client = getattr(h, "_client", None)
@@ -262,8 +262,8 @@ async def test_serialize_secret_ask():
         expected = {
             "version": 1,
             "root": {
-                "tool": "Conductor.ask",
-                "handle": "AsyncToolLoopHandle",
+                "tool": "Conductor.request",
+                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
             },
             "children": [
                 {
@@ -272,7 +272,7 @@ async def test_serialize_secret_ask():
             ],
         }
         _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.ask")
+        assert snap.get("loop_id", "").startswith("Conductor.request")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
     finally:
@@ -290,7 +290,9 @@ async def test_serialize_secret_ask():
 @_handle_project
 async def test_serialize_skill_ask():
     cond = Conductor()
-    h = await cond.ask("What high-level skills do you have for spreadsheets and CSVs?")
+    h = await cond.request(
+        "What high-level skills do you have for spreadsheets and CSVs?",
+    )
 
     try:
         client = getattr(h, "_client", None)
@@ -316,8 +318,8 @@ async def test_serialize_skill_ask():
         expected = {
             "version": 1,
             "root": {
-                "tool": "Conductor.ask",
-                "handle": "AsyncToolLoopHandle",
+                "tool": "Conductor.request",
+                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
             },
             "children": [
                 {
@@ -326,7 +328,7 @@ async def test_serialize_skill_ask():
             ],
         }
         _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.ask")
+        assert snap.get("loop_id", "").startswith("Conductor.request")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
     finally:
@@ -344,7 +346,7 @@ async def test_serialize_skill_ask():
 @_handle_project
 async def test_serialize_task_ask():
     cond = Conductor()
-    h = await cond.ask("What tasks are scheduled for today?")
+    h = await cond.request("What tasks are scheduled for today?")
 
     try:
         client = getattr(h, "_client", None)
@@ -370,8 +372,8 @@ async def test_serialize_task_ask():
         expected = {
             "version": 1,
             "root": {
-                "tool": "Conductor.ask",
-                "handle": "AsyncToolLoopHandle",
+                "tool": "Conductor.request",
+                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
             },
             "children": [
                 {
@@ -380,7 +382,7 @@ async def test_serialize_task_ask():
             ],
         }
         _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.ask")
+        assert snap.get("loop_id", "").startswith("Conductor.request")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
     finally:
@@ -398,7 +400,7 @@ async def test_serialize_task_ask():
 @_handle_project
 async def test_serialize_web_ask():
     cond = Conductor()
-    h = await cond.ask("What are the latest developments in retrieval for LLMs?")
+    h = await cond.request("What are the latest developments in retrieval for LLMs?")
 
     try:
         client = getattr(h, "_client", None)
@@ -424,8 +426,8 @@ async def test_serialize_web_ask():
         expected = {
             "version": 1,
             "root": {
-                "tool": "Conductor.ask",
-                "handle": "AsyncToolLoopHandle",
+                "tool": "Conductor.request",
+                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
             },
             "children": [
                 {
@@ -434,7 +436,7 @@ async def test_serialize_web_ask():
             ],
         }
         _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.ask")
+        assert snap.get("loop_id", "").startswith("Conductor.request")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
     finally:
@@ -467,8 +469,11 @@ async def test_deserialize_continue_contact_ask():
 
     snap = {
         "version": 1,
-        "loop_id": "Conductor.ask(static-contact)",
-        "root": {"tool": "Conductor.ask", "handle": "AsyncToolLoopHandle"},
+        "loop_id": "Conductor.request(static-contact)",
+        "root": {
+            "tool": "Conductor.request",
+            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
+        },
         "system_message": "You are helpful.",
         "initial_user_message": "Who is the contact living in Berlin working as a designer?",
         "assistant": [],
@@ -519,8 +524,11 @@ async def test_deserialize_continue_transcript_ask():
 
     snap = {
         "version": 1,
-        "loop_id": "Conductor.ask(static-transcript)",
-        "root": {"tool": "Conductor.ask", "handle": "AsyncToolLoopHandle"},
+        "loop_id": "Conductor.request(static-transcript)",
+        "root": {
+            "tool": "Conductor.request",
+            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
+        },
         "system_message": "You are helpful.",
         "initial_user_message": "Show me the most recent message mentioning budgeting or banking.",
         "assistant": [],
@@ -565,8 +573,11 @@ async def test_deserialize_continue_guidance_ask():
 
     snap = {
         "version": 1,
-        "loop_id": "Conductor.ask(static-guidance)",
-        "root": {"tool": "Conductor.ask", "handle": "AsyncToolLoopHandle"},
+        "loop_id": "Conductor.request(static-guidance)",
+        "root": {
+            "tool": "Conductor.request",
+            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
+        },
         "system_message": "You are helpful.",
         "initial_user_message": "Find the onboarding demo guidance.",
         "assistant": [],
@@ -616,8 +627,11 @@ async def test_deserialize_continue_secret_ask():
 
     snap = {
         "version": 1,
-        "loop_id": "Conductor.ask(static-secret)",
-        "root": {"tool": "Conductor.ask", "handle": "AsyncToolLoopHandle"},
+        "loop_id": "Conductor.request(static-secret)",
+        "root": {
+            "tool": "Conductor.request",
+            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
+        },
         "system_message": "You are helpful.",
         "initial_user_message": "Which secrets are currently stored?",
         "assistant": [],
@@ -655,8 +669,11 @@ async def test_deserialize_continue_secret_ask():
 async def test_deserialize_continue_skill_ask():
     snap = {
         "version": 1,
-        "loop_id": "Conductor.ask(static-skill)",
-        "root": {"tool": "Conductor.ask", "handle": "AsyncToolLoopHandle"},
+        "loop_id": "Conductor.request(static-skill)",
+        "root": {
+            "tool": "Conductor.request",
+            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
+        },
         "system_message": "You are helpful.",
         "initial_user_message": "What high-level skills do you have for spreadsheets and CSVs?",
         "assistant": [],
@@ -705,8 +722,11 @@ async def test_deserialize_continue_task_ask():
 
     snap = {
         "version": 1,
-        "loop_id": "Conductor.ask(static-task)",
-        "root": {"tool": "Conductor.ask", "handle": "AsyncToolLoopHandle"},
+        "loop_id": "Conductor.request(static-task)",
+        "root": {
+            "tool": "Conductor.request",
+            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
+        },
         "system_message": "You are helpful.",
         "initial_user_message": "What tasks are scheduled for today?",
         "assistant": [],
@@ -744,8 +764,11 @@ async def test_deserialize_continue_task_ask():
 async def test_deserialize_continue_web_ask():
     snap = {
         "version": 1,
-        "loop_id": "Conductor.ask(static-web)",
-        "root": {"tool": "Conductor.ask", "handle": "AsyncToolLoopHandle"},
+        "loop_id": "Conductor.request(static-web)",
+        "root": {
+            "tool": "Conductor.request",
+            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
+        },
         "system_message": "You are helpful.",
         "initial_user_message": "What are the latest developments in retrieval for LLMs?",
         "assistant": [],

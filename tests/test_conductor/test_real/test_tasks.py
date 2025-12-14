@@ -28,7 +28,7 @@ async def test_ask_calls_scheduler():
 
     cond = SimulatedConductor(task_scheduler=ts, actor=actor)
 
-    handle = await cond.ask(
+    handle = await cond.request(
         "Which task is currently primed?",
         _return_reasoning_steps=True,
     )

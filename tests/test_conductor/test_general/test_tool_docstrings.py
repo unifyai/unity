@@ -12,26 +12,11 @@ def _unwrap_callable(tool):
     return getattr(tool, "fn", tool)
 
 
-def test_ask_tools_have_docstrings():
-    c = Conductor()
-    tools = c.get_tools("ask")
-
-    assert tools, "Conductor.ask should expose at least one tool"
-
-    for name, value in tools.items():
-        fn = _unwrap_callable(value)
-        doc = (getattr(fn, "__doc__", None) or "").strip()
-        assert doc, f"Tool '{name}' is missing a docstring"
-        assert (
-            len(doc) >= 100
-        ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
-
-
 def _build_tools_schema_in_subprocess(method: str) -> str:
     """
     Build tools→schema JSON in a fresh Python process to catch cross-session drift.
     """
-    assert method in {"ask", "request"}
+    assert method in {"request"}
     code = textwrap.dedent(
         f"""
 		import os, sys, json
@@ -59,23 +44,6 @@ def _build_tools_schema_in_subprocess(method: str) -> str:
         check=True,
     )
     return proc.stdout
-
-
-def test_ask_schemas_stable():
-    p1 = _build_tools_schema_in_subprocess("ask")
-    p2 = _build_tools_schema_in_subprocess("ask")
-    if p1 != p2:
-        snippet = first_diff_block(
-            p1,
-            p2,
-            context=3,
-            label_a="First JSON",
-            label_b="Second JSON",
-        )
-        raise AssertionError(
-            "Tool schemas for ask-tools changed between separate Python sessions.\n\n"
-            + snippet,
-        )
 
 
 def test_request_tools_have_docstrings():

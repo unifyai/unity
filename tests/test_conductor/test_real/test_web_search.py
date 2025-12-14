@@ -30,7 +30,7 @@ async def test_ask_calls_searcher(monkeypatch):
     cond = SimulatedConductor(web_searcher=ws)
 
     # Ask a straightforward web-style question that should route to WebSearcher
-    handle = await cond.ask(
+    handle = await cond.request(
         "What is the Eisenhower Matrix and when should it be used?",
         _return_reasoning_steps=True,
     )

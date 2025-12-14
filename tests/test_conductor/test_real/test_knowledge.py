@@ -48,7 +48,7 @@ async def test_ask_calls_manager():
     # SimulatedConductor wired to the real KnowledgeManager instance
     cond = SimulatedConductor(knowledge_manager=km)
 
-    handle = await cond.ask(
+    handle = await cond.request(
         "What are our office hours?",
         _return_reasoning_steps=True,
     )

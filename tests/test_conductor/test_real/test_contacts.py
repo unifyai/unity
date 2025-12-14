@@ -67,7 +67,7 @@ async def test_ask_calls_manager():
     # SimulatedConductor wired to the real ContactManager instance
     cond = SimulatedConductor(contact_manager=cm)
 
-    handle = await cond.ask(
+    handle = await cond.request(
         "What is Eve Adams' email address?",
         _return_reasoning_steps=True,
     )

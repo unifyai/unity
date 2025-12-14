@@ -5,11 +5,10 @@ The top-level manager unifies four sub-domains
 
 • tasks  • contacts  • transcripts  • knowledge
 
-and it exposes exactly **three** conversational entry-points:
+and it exposes exactly **two** conversational entry-points:
 
-1. `ask`        – read-only Q&A across all domains
-2. `request`    – read-write mutations (plus everything in *ask*)
-3. `start_task` – immediately start execution of a queued task (returns a live handle)
+1. `request`    – unified read-write orchestrator across all domains
+2. `start_task` – immediately start execution of a queued task (returns a live handle)
 """
 
 from __future__ import annotations
@@ -34,10 +33,10 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
     )
 
     # ------------------------------------------------------------------ #
-    #  ask – read-only                                                   #
+    #  request – unified read/write orchestrator                          #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    async def ask(
+    async def request(
         self,
         text: str,
         *,
@@ -48,15 +47,16 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Ask a question without making any changes.
+        Unified orchestrator for all Conductor interactions.
 
-        Use this for any read-only query. Provide the question in natural
-        language; the Conductor determines which managers to query.
+        Use this for any question, mutation, or execution. Describe the desired
+        outcome in natural language; the Conductor determines which managers
+        and tools to apply.
 
         Parameters
         ----------
         text : str
-            The exact user question (natural language).
+            The exact user question or request (natural language).
         _return_reasoning_steps : bool, default ``False``
             When *True*, the handle's ``.result()`` yields
             ``(assistant_answer, hidden_messages)`` instead of just the answer.
@@ -76,30 +76,6 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
             Await ``handle.result()`` for the final answer or steer execution
             mid-flight via ``pause()``, ``resume()``, ``interject()`` or
             ``stop()``.
-        """
-
-    # ------------------------------------------------------------------ #
-    #  request – read **and** write                                      #
-    # ------------------------------------------------------------------ #
-    @abstractmethod
-    async def request(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _log_tool_steps: bool = True,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> SteerableToolHandle:
-        """
-        Request an action that creates, modifies, or executes something.
-
-        Use this for any mutation or execution. Describe the desired outcome
-        in natural language; the Conductor determines which managers and tools
-        to apply.
-
-        All parameters & return value mirror :py:meth:`ask`.
         """
 
     # ------------------------------------------------------------------ #

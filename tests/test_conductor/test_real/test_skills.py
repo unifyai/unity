@@ -35,7 +35,7 @@ async def test_ask_calls_manager():
     sk = SkillManager()
     cond = SimulatedConductor(skill_manager=sk)
 
-    handle = await cond.ask(
+    handle = await cond.request(
         "List your available skills and include the underlying function names.",
         _return_reasoning_steps=True,
     )

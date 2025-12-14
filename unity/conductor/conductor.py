@@ -31,10 +31,8 @@ from ..common.async_tool_loop import (
     SteerableToolHandle as _SteerableBase,
 )
 from .request_handle import ConductorRequestHandle
-from ..constants import is_readonly_ask_guard_enabled
-from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from .types import StateManager
-from .prompt_builders import build_ask_prompt, build_request_prompt
+from .prompt_builders import build_request_prompt
 from .base import BaseConductor
 from ..contact_manager.base import BaseContactManager
 from ..transcript_manager.base import BaseTranscriptManager
@@ -53,7 +51,6 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..constants import is_semantic_cache_enabled
 from .concurrency_guard import ActiveSessionRegistry
 from ..common.sentinels import _DisabledSentinel
 from ..settings import SETTINGS
@@ -65,11 +62,9 @@ if TYPE_CHECKING:  # type hints only
 
 class Conductor(BaseConductor):
     """
-    Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
-    different tool surfaces which include the knowledge, task list, contacts, and transcript histories:
-
-    • `ask()`     → read-only (passive) tools + passive plan methods
-    • `request()` → read-only + *all* active tools + all plan methods
+    Top-level façade that *can* own a maximum of *one* live plan at a time and exposes a
+    unified tool surface (via ``request()``) which includes all read-only and write-capable
+    tools across knowledge, tasks, contacts, transcripts, and other managers.
     """
 
     # ------------------------------------------------------------------ #
@@ -297,10 +292,7 @@ class Conductor(BaseConductor):
         # Track live Conductor.request handles (weakly) for quick nested scans
         self._live_requests: "weakref.WeakSet[AsyncToolLoopHandle]" = weakref.WeakSet()
 
-        # These two dicts are rebuilt lazily before every ask/request
-        """Re-compute passive / active tool maps based on current active task."""
-
-        # -------- base passive helpers -------------------------------- #
+        # -------- build passive helpers (read-only managers) ---------- #
         # Build list of ask methods, filtering out None managers
         passive_methods = [
             # Foundational managers (always present)
@@ -326,18 +318,6 @@ class Conductor(BaseConductor):
             passive_methods.append(self._file_manager.ask)
 
         passive = methods_to_tool_dict(*passive_methods, include_class_name=True)
-
-        # -------- add active_task.ask when a plan is alive ------------------- #
-        if self._active_task is not None and not self._active_task.done():
-
-            # We expose _ask_plan_call_ (Unify expects this naming)
-            async def _plan_ask_proxy(question: str):
-                return await self._active_task.ask(question)  # type: ignore[attr-defined]
-
-            _plan_ask_proxy.__name__ = "_ask_plan_call_"
-            passive[_plan_ask_proxy.__name__] = _plan_ask_proxy
-
-        self.add_tools("ask", passive)
 
         # -------- build active helpers (passive + writers) ------------ #
         # Build list of write methods, filtering out None managers
@@ -469,106 +449,6 @@ class Conductor(BaseConductor):
                 active[exec_key] = _wrap_and_track(_orig, kind="execute")  # type: ignore[arg-type]
 
         self.add_tools("request", active)
-
-    # ------------------------------------------------------------------ #
-    #  Public API                                                        #
-    # ------------------------------------------------------------------ #
-
-    @functools.wraps(BaseConductor.ask, updated=())
-    async def ask(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _log_tool_steps: bool = True,
-        _parent_chat_context: list[dict] | None = None,  # Unused – synthetic
-        _requests_clarification: bool = False,
-        _clarification_up_q: asyncio.Queue[str] | None = None,
-        _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
-        rolling_summary_in_prompts: Optional[bool] = None,
-    ):
-        """
-        Read-only question: exposes *passive* helpers (+ active_task.ask when available).
-        """
-        should_log = self._log_events or log_events
-        call_id = None
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "Conductor",
-                "ask",
-                phase="incoming",
-                question=text,
-            )
-
-        tools: Dict[str, Callable] = dict(self.get_tools("ask"))
-
-        if _clarification_up_q is not None or _clarification_down_q is not None:
-
-            async def request_clarification(question: str) -> str:
-                if _clarification_up_q is None or _clarification_down_q is None:
-                    raise RuntimeError("Clarification queues missing.")
-                await _clarification_up_q.put(question)
-                return await _clarification_down_q.get()
-
-            tools["request_clarification"] = request_clarification
-
-        client = new_llm_client()
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-        client.set_system_message(
-            build_ask_prompt(tools, include_activity=include_activity),
-        )
-
-        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
-        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-        if use_semantic_cache in ("read", "both"):
-            tool_policy = None
-        else:
-            tool_policy = lambda i, _: ("required", _) if i < 1 else ("auto", _)
-
-        handle = start_async_tool_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
-            parent_chat_context=_parent_chat_context,
-            log_steps=_log_tool_steps,
-            max_steps=None,
-            timeout=None,
-            # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
-            tool_policy=tool_policy,
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
-            handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
-            ),
-        )
-
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "Conductor",
-                "ask",
-            )
-
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def _wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = _wrapped_result
-
-        return handle
 
     # ------------------------------------------------------------------ #
     #  start_task – auto-start request loop to execute a task       #
