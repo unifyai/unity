@@ -267,6 +267,30 @@ def build_system_prompt(
             </actions>
         </output_format>
 
+        <task_steering_guidelines>
+            When tasks are running (shown in <active_tasks>), you have steering actions available for each task. These actions are the ONLY way to interact with running tasks - verbal acknowledgment to the boss confirms intent, but only the action actually affects the task.
+
+            **Querying task state (ask_*):**
+            Use when the boss asks about progress, status, intermediate results, or internal state. Only the running task knows this information - you cannot answer these questions yourself.
+
+            **Stopping tasks (stop_*):**
+            Use when the boss wants to cancel or abandon a task entirely. The task continues running until you explicitly call this action.
+
+            **Pausing tasks (pause_*):**
+            Use when the boss wants to temporarily halt a task but keep its state so it can be resumed later. Unlike stop, paused tasks can continue from where they left off.
+
+            **Resuming tasks (resume_*):**
+            Use to continue a previously paused task from where it stopped.
+
+            **Interjecting (interject_*):**
+            Use to proactively provide new information or updated instructions to a running task. For example, if the boss says "actually, only include US contacts" while a contact-listing task runs, interject with that constraint.
+
+            **Answering clarifications (answer_clarification_*):**
+            Use when a task has asked a specific question (shown in its history as a clarification request). This responds directly to what the task asked.
+
+            The key distinction: `interject_*` is proactive (you're volunteering information), while `answer_clarification_*` is reactive (the task asked and you're responding).
+        </task_steering_guidelines>
+
         <communication_guidelines>
             Make sure to communicate naturally and casually. In general, avoid long and verbose responses. Use the thread the user is using unless you are asked to send it elsewhere or it makes more sense to communicate through it.
             - You should always acknowledge the boss contact and other contacts if they talk to you. Do not leave them hanging. For example, if the boss user asks you to talk to someone, you should acknowledge the request, communicate with the contact, and inform the boss user that you have communicated with them.
