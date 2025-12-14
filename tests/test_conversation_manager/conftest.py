@@ -262,6 +262,8 @@ async def conversation_manager_process(redis_server):
             "UNITY_TASKS_IMPL": "simulated",
             "UNITY_CONVERSATION_IMPL": "simulated",
             "UNITY_CONDUCTOR_IMPL": "simulated",
+            # Steps for SimulatedActor - 3 allows for pause+resume interactions
+            "UNITY_SIMULATED_ACTOR_STEPS": "3",
             # Disable optional managers that might connect to real backends
             "UNITY_KNOWLEDGE_ENABLED": "false",
             "UNITY_GUIDANCE_ENABLED": "false",

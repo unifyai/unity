@@ -108,6 +108,10 @@ class ProductionSettings(BaseSettings):
     # Conductor: real | simulated
     UNITY_CONDUCTOR_IMPL: str = "real"
 
+    # SimulatedActor steps: number of steps before auto-completion, or None for manual
+    # Used when UNITY_CONDUCTOR_IMPL=simulated or UNITY_ACTOR_IMPL=simulated
+    UNITY_SIMULATED_ACTOR_STEPS: int | None = 1
+
     # -- Optional managers (disabled by default for minimal initial rollout) --
     # These will be enabled incrementally as they become stable and fully featured.
     # KnowledgeManager

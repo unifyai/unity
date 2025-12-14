@@ -213,6 +213,11 @@ async def test_task_completion_notification(test_redis_client, event_capture):
     When a task completes (handle.result() returns), a ConductorResult event
     is published which triggers cm.run_llm(), allowing the assistant to
     inform the user that the task is done.
+
+    With steps=3, the task completes after 3 interactions:
+    1. Watcher's result() call (1 step)
+    2. First progress query (1 step)
+    3. Second progress query (1 step) -> task completes
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -225,17 +230,38 @@ async def test_task_completion_notification(test_redis_client, event_capture):
         "List all my contacts and let me know once you're done",
     )
 
-    # Wait for task to start
-    await capture_task_started(
+    # Wait for task to start (watcher's result() consumes 1 step)
+    task_started = await capture_task_started(
         event_capture,
         "start_task",
     )
 
-    # With steps=1, the task completes when handle.result() is awaited
-    # by the background watcher, which publishes ConductorResult and
-    # triggers cm.run_llm() - the LLM should then notify the user
+    # Send progress queries to consume remaining steps
+    # Each ask operation consumes 1 step
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "How's that task going?",
+    )
+    await capture_task_action_response(
+        event_capture,
+        task_started.handle_id,
+        "ask",
+    )
 
-    # Wait for the assistant to send a completion notification
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "Any progress yet?",
+    )
+    await capture_task_action_response(
+        event_capture,
+        task_started.handle_id,
+        "ask",
+    )
+
+    # After 3 steps (result + 2 asks), task auto-completes
+    # ConductorResult triggers cm.run_llm() - LLM should notify the user
     await capture_outgoing_sms(event_capture, contact)
 
 

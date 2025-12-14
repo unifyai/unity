@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .conductor import Conductor
+from ..settings import SETTINGS
 
 # Base contracts (for type hints)
 from ..contact_manager.base import BaseContactManager
@@ -69,7 +70,7 @@ class SimulatedConductor(Conductor):
             actor
             if actor is not None
             else SimulatedActor(
-                steps=1,
+                steps=SETTINGS.UNITY_SIMULATED_ACTOR_STEPS,
                 duration=None,
                 simulation_guidance=simulation_guidance,
             )
