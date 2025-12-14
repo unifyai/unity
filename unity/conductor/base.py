@@ -48,12 +48,10 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Answer a **read-only question** that may reference tasks, contacts,
-        transcripts *or* stored knowledge.
+        Ask a question without making any changes.
 
-        Do *not* request *how* the question should be answered; just ask the
-        question in natural language and allow the `ask` method to determine
-        the best method to answer it.
+        Use this for any read-only query. Provide the question in natural
+        language; the Conductor determines which managers to query.
 
         Parameters
         ----------
@@ -95,12 +93,11 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Execute a **mutation request** – create / edit / delete tasks, contacts
-        or knowledge – and return a steerable LLM handle.
+        Request an action that creates, modifies, or executes something.
 
-        Do *not* request *how* the change should be implemented; describe the
-        desired end-state in natural language and allow the `request` method to
-        determine the best method and tools to apply it.
+        Use this for any mutation or execution. Describe the desired outcome
+        in natural language; the Conductor determines which managers and tools
+        to apply.
 
         All parameters & return value mirror :py:meth:`ask`.
         """
