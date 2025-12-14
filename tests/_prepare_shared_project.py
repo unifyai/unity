@@ -12,13 +12,14 @@ Usage (internal - typically invoked via parallel_run.sh):
     python tests/_prepare_shared_project.py
 """
 
+# Suppress urllib3 connection pool warnings before any imports configure logging
 import logging
+
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
 import sys
 
 from dotenv import load_dotenv
-
-# Suppress urllib3 connection pool warnings during parallel API calls
-logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 load_dotenv()
 
