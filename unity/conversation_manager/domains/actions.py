@@ -25,18 +25,11 @@ if TYPE_CHECKING:
 event_broker = get_event_broker()
 
 
-# Starting a new task (replaces ConductorAction)
+# Starting a new task
 class StartTaskAction(BaseModel):
     """Start a new task for the assistant to work on."""
 
-    action_name: Literal["start_task", "start_task_readonly"] = Field(
-        ...,
-        description=(
-            "Start a new task. Options are:\n"
-            "'start_task': Start a task that may read or modify data (contacts, tasks, knowledge, etc.)\n"
-            "'start_task_readonly': Start a read-only task (answering questions, looking up information)\n"
-        ),
-    )
+    action_name: Literal["start_task"] = Field(default="start_task")
     query: str = Field(..., description="The task description or question")
 
 
@@ -539,7 +532,7 @@ async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs
 _next_handle_id = 0
 
 
-@Action.register(["start_task", "start_task_readonly"])
+@Action.register(["start_task"])
 async def start_task_action(
     cm: "ConversationManager",
     action_name: str,
@@ -552,17 +545,10 @@ async def start_task_action(
     await managers_utils.wait_for_initialization(cm)
     query = kwargs["query"]
 
-    # Map to internal conductor methods
-    if action_name == "start_task_readonly":
-        handle = await cm.conductor.ask(
-            query,
-            _parent_chat_context=cm.chat_history,
-        )
-    else:
-        handle = await cm.conductor.request(
-            query,
-            _parent_chat_context=cm.chat_history,
-        )
+    handle = await cm.conductor.request(
+        query,
+        _parent_chat_context=cm.chat_history,
+    )
 
     # allocate handle id and register
     handle_id = _next_handle_id

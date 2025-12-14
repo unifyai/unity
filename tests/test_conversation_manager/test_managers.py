@@ -16,47 +16,6 @@ from tests.test_conversation_manager.helpers import (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_task_readonly(test_redis_client, event_capture):
-    """
-    Test start_task_readonly: send an SMS that triggers the assistant to start a read-only task,
-    and verify that a task started event is published with the correct format.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send an SMS that prompts the assistant to start a read-only task
-    contact = contacts[1]
-    await send_incoming_sms(
-        test_redis_client,
-        contact,
-        "What contacts do I have in my contact manager?",
-    )
-
-    # Wait for task started
-    task_started = await capture_task_started(
-        event_capture,
-        "start_task_readonly",
-    )
-
-    # Verify the request has the correct format
-    assert task_started.action_name == "start_task_readonly"
-    assert len(task_started.query) > 0
-
-    # Stop the task
-    await send_incoming_sms(
-        test_redis_client,
-        contact,
-        "Actually, stop that task please",
-    )
-    await capture_task_action_response(
-        event_capture,
-        task_started.handle_id,
-        "stop",
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
 async def test_start_task(test_redis_client, event_capture):
     """
     Test start_task: send an SMS that triggers the assistant to start a task,
@@ -116,7 +75,7 @@ async def test_task_ask(test_redis_client, event_capture):
     # Wait for task started
     task_started = await capture_task_started(
         event_capture,
-        "start_task_readonly",
+        "start_task",
     )
 
     # Ask about the task status
@@ -170,7 +129,7 @@ async def test_task_interject(test_redis_client, event_capture):
     # Wait for task started
     task_started = await capture_task_started(
         event_capture,
-        "start_task_readonly",
+        "start_task",
     )
 
     # Interject with more information
@@ -223,7 +182,7 @@ async def test_task_stop(test_redis_client, event_capture):
     # Wait for task started
     task_started = await capture_task_started(
         event_capture,
-        "start_task_readonly",
+        "start_task",
     )
 
     # Stop the task
@@ -264,7 +223,7 @@ async def test_task_pause(test_redis_client, event_capture):
     # Wait for task started
     task_started = await capture_task_started(
         event_capture,
-        "start_task_readonly",
+        "start_task",
     )
 
     # Pause the task
@@ -317,7 +276,7 @@ async def test_task_resume(test_redis_client, event_capture):
     # Wait for task started
     task_started = await capture_task_started(
         event_capture,
-        "start_task_readonly",
+        "start_task",
     )
 
     # Resume the task (even without pausing first, for test simplicity)
@@ -370,7 +329,7 @@ async def test_task_done_check(test_redis_client, event_capture):
     # Wait for task started
     task_started = await capture_task_started(
         event_capture,
-        "start_task_readonly",
+        "start_task",
     )
 
     # Check if the task is done
@@ -423,7 +382,7 @@ async def test_task_answer_clarification(test_redis_client, event_capture):
     # Wait for task started
     task_started = await capture_task_started(
         event_capture,
-        "start_task_readonly",
+        "start_task",
     )
 
     # Manually send a ConductorClarificationRequest

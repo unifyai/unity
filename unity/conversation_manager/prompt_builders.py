@@ -255,14 +255,11 @@ def build_system_prompt(
             <actions>
                 {comms_actions_list}
                 - start_task
-                - start_task_readonly
                 - wait
 
                 For each of the comms actions ({comms_actions_names}), you will have to provide the available contact data (infer them from the active conversation or <contact> tags available). Actions like sending SMS can be done while on a call but you shouldn't attempt making a call while on a call.
 
-                Use `start_task` for any task that is not related to comms, such as searching the web, doing research, registering websites, managing contacts, scheduling tasks, etc. This starts a new task that may read or modify data.
-
-                Use `start_task_readonly` for read-only queries like answering questions or looking up information without making changes.
+                Use `start_task` for any task that is not related to comms, such as searching the web, doing research, answering questions, managing contacts, scheduling tasks, etc.
 
                 {active_tasks_descriptions}
 
