@@ -6,11 +6,15 @@ Fixtures for conversation manager integration tests.
 
 Sets up:
 - Redis server (dynamic port to support parallel test runs)
-- Conversation manager process
+- Conversation manager process (using simulated implementations)
 - Event capture utilities
 
 IMPORTANT: These tests are compatible with `-t` per-test parallelism because
 each test gets its own Redis server on a unique port.
+
+The tests use simulated implementations for all managers (ContactManager,
+TranscriptManager, TaskScheduler, etc.) to avoid connecting to real backends.
+This is controlled via UNITY_*_IMPL environment variables.
 """
 
 import asyncio
@@ -241,7 +245,7 @@ async def event_capture(redis_server):
 
 @pytest_asyncio.fixture(scope="module")
 async def conversation_manager_process(redis_server):
-    """Start the conversation manager as a background process."""
+    """Start the conversation manager as a background process with simulated managers."""
     import sys
 
     test_env = os.environ.copy()
@@ -251,6 +255,20 @@ async def conversation_manager_process(redis_server):
             "UNIFY_CACHE": "true",
             "TEST": "true",
             "REDIS_PORT": str(redis_server),
+            # Use simulated implementations for all managers
+            "UNITY_ACTOR_IMPL": "simulated",
+            "UNITY_CONTACTS_IMPL": "simulated",
+            "UNITY_TRANSCRIPTS_IMPL": "simulated",
+            "UNITY_TASKS_IMPL": "simulated",
+            "UNITY_CONVERSATION_IMPL": "simulated",
+            "UNITY_CONDUCTOR_IMPL": "simulated",
+            # Disable optional managers that might connect to real backends
+            "UNITY_KNOWLEDGE_ENABLED": "false",
+            "UNITY_GUIDANCE_ENABLED": "false",
+            "UNITY_SECRETS_ENABLED": "false",
+            "UNITY_SKILLS_ENABLED": "false",
+            "UNITY_WEB_SEARCH_ENABLED": "false",
+            "UNITY_FILES_ENABLED": "false",
         },
     )
 
@@ -274,6 +292,7 @@ async def conversation_manager_process(redis_server):
     print(
         f"✓ Conversation manager started (PID: {cm_proc.pid}, Redis port: {redis_server})",
     )
+    print("  Using simulated implementations for all managers")
 
     yield cm_proc
 

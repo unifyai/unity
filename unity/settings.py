@@ -105,6 +105,8 @@ class ProductionSettings(BaseSettings):
     UNITY_TASKS_IMPL: str = "real"
     # ConversationManager: real | simulated
     UNITY_CONVERSATION_IMPL: str = "real"
+    # Conductor: real | simulated
+    UNITY_CONDUCTOR_IMPL: str = "real"
 
     # -- Optional managers (disabled by default for minimal initial rollout) --
     # These will be enabled incrementally as they become stable and fully featured.
