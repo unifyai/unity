@@ -189,8 +189,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                         contact["contact_id"]
                     ]
                 )
-                phone_thread = active_contact.threads.get("phone", [])
-                recent_msgs_raw = list(phone_thread)[-20:] if phone_thread else []
+                voice_thread = active_contact.threads.get("voice", [])
+                recent_msgs_raw = list(voice_thread)[-20:] if voice_thread else []
 
                 prompt_lines: list[str] = []
                 for msg in recent_msgs_raw:

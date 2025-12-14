@@ -15,8 +15,7 @@ class Contact(ContactType):
         default_factory=lambda: {
             "sms": deque(maxlen=25),
             "email": deque(maxlen=25),
-            "phone": deque(maxlen=25),
-            "unify_meet": deque(maxlen=25),
+            "voice": deque(maxlen=25),
             "unify_message": deque(maxlen=25),
         },
     )

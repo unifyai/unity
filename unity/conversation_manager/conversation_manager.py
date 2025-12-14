@@ -559,9 +559,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 active_contact = self.contact_index.active_conversations[
                     contact["contact_id"]
                 ]
-                phone_thread = active_contact.threads.get("phone", [])
+                voice_thread = active_contact.threads.get("voice", [])
 
-                for msg in phone_thread:
+                for msg in voice_thread:
                     role = "assistant" if msg.name == "You" else "user"
                     content = msg.content
 
@@ -629,7 +629,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if contact:
                 self.contact_index.push_message(
                     contact,
-                    "phone" if self.mode == "call" else "unify_meet",
+                    "voice",
                     message_content=decision.content,
                     role="assistant",
                 )
