@@ -15,6 +15,7 @@ from unity.conversation_manager.events import *
 from unity.events.event_bus import EVENT_BUS
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.conductor.conductor import Conductor
+from unity.conductor.simulated import SimulatedConductor
 from unity.conductor.manager_registry import get_class
 from unity.settings import SETTINGS
 
@@ -434,17 +435,26 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 7. Initialize Conductor (all other managers use settings automatically)
+    # 7. Initialize Conductor (respects UNITY_CONDUCTOR_IMPL setting)
     print("[ManagersWorker] Initializing Conductor...")
     try:
         local_start_time = perf_counter()
-        cm.conductor = Conductor(
-            contact_manager=cm.contact_manager,
-            transcript_manager=cm.transcript_manager,
-            conversation_manager=cm._conversation_manager_handle,
-        )
+        if SETTINGS.UNITY_CONDUCTOR_IMPL == "simulated":
+            cm.conductor = SimulatedConductor(
+                description="production deployment",
+                contact_manager=cm.contact_manager,
+                transcript_manager=cm.transcript_manager,
+                conversation_manager=cm._conversation_manager_handle,
+            )
+        else:
+            cm.conductor = Conductor(
+                contact_manager=cm.contact_manager,
+                transcript_manager=cm.transcript_manager,
+                conversation_manager=cm._conversation_manager_handle,
+            )
+        conductor_cls = type(cm.conductor).__name__
         print(
-            f"[ManagersWorker] Conductor initialized in "
+            f"[ManagersWorker] Conductor ({conductor_cls}) initialized in "
             f"{perf_counter() - local_start_time:.2f} seconds",
         )
     except Exception as e:
