@@ -99,7 +99,10 @@ class SteerableHandle(ABC):
         images: list | dict | None = None,
     ) -> "SteerableHandle":
         """
-        Ask a question to the running process.
+        Ask about the current status or progress of this running task.
+
+        Use this to check on updates, get a summary of what has happened so far,
+        or ask clarifying questions about the task's state without modifying it.
 
         Parameters
         ----------
@@ -125,7 +128,10 @@ class SteerableHandle(ABC):
         parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
-        """Inject an additional *user* turn into the running conversation.
+        """Provide additional information or instructions to the running task.
+
+        Use this to give the task new context, correct its approach, or add
+        requirements mid-flight without stopping or restarting it.
 
         Parameters
         ----------
@@ -156,7 +162,10 @@ class SteerableToolHandle(SteerableHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
-        """Shutdown the loop, killing any pending work in the process.
+        """Stop this task immediately, cancelling any pending work.
+
+        Use this when the task should be terminated. This is a destructive
+        action that cannot be undone.
 
         Parameters
         ----------
@@ -170,7 +179,10 @@ class SteerableToolHandle(SteerableHandle):
 
     @abstractmethod
     async def pause(self) -> Optional[str]:
-        """Pause the outer conversational loop without stopping running tools.
+        """Pause this task temporarily without cancelling it.
+
+        Use this when the user needs to step away or wants to hold the task.
+        In-flight operations continue, but no new actions are taken until resumed.
 
         Behaviour
         ---------
@@ -183,7 +195,10 @@ class SteerableToolHandle(SteerableHandle):
 
     @abstractmethod
     async def resume(self) -> Optional[str]:
-        """Resume a loop previously paused with :pyfunc:`pause`.
+        """Resume a task that was previously paused.
+
+        Use this to continue a paused task. Any work that completed while
+        paused will be processed before the task continues.
 
         Behaviour
         ---------
@@ -196,7 +211,7 @@ class SteerableToolHandle(SteerableHandle):
 
     @abstractmethod
     def done(self) -> Awaitable[bool] | bool:
-        """Flag for whether or not this task is done."""
+        """Check if this task has completed."""
 
     @abstractmethod
     def result(self) -> Awaitable[str] | str:
@@ -213,7 +228,11 @@ class SteerableToolHandle(SteerableHandle):
 
     @abstractmethod
     async def answer_clarification(self, call_id: str, answer: str) -> None:
-        """Programmatically answer a clarification for a pending tool call.
+        """Answer a clarification question that the task is waiting on.
+
+        Use this when the task has asked for more information and is blocked
+        waiting for a response. Provide the call_id from the clarification
+        request and the answer text.
 
         Parameters
         ----------
