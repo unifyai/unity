@@ -107,7 +107,7 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
         cm.contact_index.push_message(
             contact,
-            "phone",
+            "voice",
             message_content=message_content,
             role=(
                 "user"
@@ -141,7 +141,7 @@ async def _(
     )
     cm.contact_index.push_message(
         contact,
-        "phone",
+        "voice",
         "<Call Started>",
         timestamp=event.timestamp,
     )
@@ -168,7 +168,7 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     role = (
         "user" if "assistant" not in event.__class__.__name__.lower() else "assistant"
     )
-    cm.contact_index.push_message(contact, "phone", event.content, role=role)
+    cm.contact_index.push_message(contact, "voice", event.content, role=role)
 
     # cancel proactive speech
     if role == "user":
@@ -197,7 +197,7 @@ async def _(
     print("received realtime guidance", event)
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
-    cm.contact_index.push_message(contact, "phone", event.content, role="Guidance")
+    cm.contact_index.push_message(contact, "voice", event.content, role="Guidance")
 
 
 @EventHandler.register((PhoneCallEnded, UnifyMeetEnded))
@@ -560,7 +560,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     contact = cm.call_manager.call_contact or cm.contact_index.get_contact(contact_id=1)
     cm.contact_index.push_message(
         contact,
-        "phone" if cm.mode == "call" else "unify_meet",
+        "voice",
         message_content=event.content,
         role="assistant",
         timestamp=event.timestamp,
