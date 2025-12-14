@@ -168,27 +168,21 @@ class SimulatedConversationManagerHandle(
         ask_label = SimulatedLineage.make_label("SimulatedConversationManager.ask")
         SimulatedLog.log_request("ask", ask_label, question)
 
-        ask_client = new_llm_client()
-        ask_client.set_system_message(self._llm.system_message)
-
         prompt = f"""The external process is asking the user a question. Based on your persona and the conversation history, provide a direct and plausible answer.
 **Question:** "{question}"
 """
         if response_format:
-            ask_client.set_response_format(response_format)
             prompt += "\n**FORMAT INSTRUCTIONS:** Your response MUST be a JSON object that strictly conforms to the provided Pydantic model schema."
 
         class _AnswerHandle(SteerableToolHandle, SimulatedHandleMixin):
             def __init__(
                 inner_self,
-                client: unify.AsyncUnify,
-                parent_llm: unify.AsyncUnify,
+                stateful_llm: unify.AsyncUnify,
                 prompt_str: str,
                 pydantic_model: Optional[Type[BaseModel]],
                 log_label: str,
             ):
-                inner_self._client = client
-                inner_self._parent_llm = parent_llm
+                inner_self._llm = stateful_llm
                 inner_self._prompt = prompt_str
                 inner_self._model = pydantic_model
                 inner_self._result_cache: Optional[Any] = None
@@ -198,7 +192,7 @@ class SimulatedConversationManagerHandle(
             async def result(inner_self) -> Any:
                 if inner_self._result_cache is None:
                     response_str = await simulated_llm_roundtrip(
-                        inner_self._client,
+                        inner_self._llm,
                         label=inner_self._log_label,
                         prompt=inner_self._prompt,
                         response_format=inner_self._model,
@@ -250,7 +244,7 @@ class SimulatedConversationManagerHandle(
             ) -> None:
                 pass
 
-        return _AnswerHandle(ask_client, self._llm, prompt, response_format, ask_label)
+        return _AnswerHandle(self._llm, prompt, response_format, ask_label)
 
     async def interject(
         self,
