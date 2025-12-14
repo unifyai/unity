@@ -36,7 +36,7 @@ def _count_tool_calls_in_reasoning(reasoning_steps) -> int:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_semantic_one_manager(monkeypatch):
+async def test_request_semantic_one_manager(monkeypatch):
     monkeypatch.setenv("UNITY_SEMANTIC_CACHE", "true")
 
     cm = ContactManager()
@@ -48,13 +48,13 @@ async def test_ask_semantic_one_manager(monkeypatch):
     query = "Is there any contacts with name John? Answer with either Yes or No."
 
     manager = Conductor()
-    handle = await manager.ask(query)
+    handle = await manager.request(query)
     res = await handle.result()
     assert "Yes" in res
 
     sc._SEMANTIC_CACHE_SAVER.wait()
 
-    second_handle = await manager.ask(query, _return_reasoning_steps=True)
+    second_handle = await manager.request(query, _return_reasoning_steps=True)
     second_res, reasoning_steps = await second_handle.result()
 
     assert "Yes" in second_res

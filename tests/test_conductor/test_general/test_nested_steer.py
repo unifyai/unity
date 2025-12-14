@@ -36,7 +36,7 @@ async def _adopted_child_handle(h, tool_name: str):
 @_handle_project
 async def test_conductor_nested_steer_interject_reaches_contactmanager_ask():
     cond = Conductor()
-    h = await cond.ask("Who is the contact living in Berlin working as a designer?")
+    h = await cond.request("Who is the contact living in Berlin working as a designer?")
 
     try:
         client = getattr(h, "_client", None)  # internal test-only access
@@ -97,7 +97,7 @@ async def test_conductor_nested_steer_interject_reaches_contactmanager_ask():
 @_handle_project
 async def test_conductor_nested_steer_interject_reaches_transcriptmanager_ask():
     cond = Conductor()
-    h = await cond.ask(
+    h = await cond.request(
         "Show me the most recent message mentioning budgeting or banking.",
     )
 
@@ -157,7 +157,7 @@ async def test_conductor_nested_steer_interject_reaches_transcriptmanager_ask():
 @_handle_project
 async def test_conductor_nested_steer_interject_reaches_guidancemanager_ask():
     cond = Conductor()
-    h = await cond.ask("Find the onboarding demo guidance.")
+    h = await cond.request("Find the onboarding demo guidance.")
 
     try:
         client = getattr(h, "_client", None)
@@ -215,7 +215,7 @@ async def test_conductor_nested_steer_interject_reaches_guidancemanager_ask():
 @_handle_project
 async def test_conductor_nested_steer_interject_reaches_secretmanager_ask():
     cond = Conductor()
-    h = await cond.ask("Which secrets are currently stored?")
+    h = await cond.request("Which secrets are currently stored?")
 
     try:
         client = getattr(h, "_client", None)
@@ -273,7 +273,9 @@ async def test_conductor_nested_steer_interject_reaches_secretmanager_ask():
 @_handle_project
 async def test_conductor_nested_steer_interject_reaches_skillmanager_ask():
     cond = Conductor()
-    h = await cond.ask("What high-level skills do you have for spreadsheets and CSVs?")
+    h = await cond.request(
+        "What high-level skills do you have for spreadsheets and CSVs?",
+    )
 
     try:
         client = getattr(h, "_client", None)
@@ -331,7 +333,7 @@ async def test_conductor_nested_steer_interject_reaches_skillmanager_ask():
 @_handle_project
 async def test_conductor_nested_steer_interject_reaches_taskscheduler_ask():
     cond = Conductor()
-    h = await cond.ask("What tasks are scheduled for today?")
+    h = await cond.request("What tasks are scheduled for today?")
 
     try:
         client = getattr(h, "_client", None)
@@ -389,7 +391,7 @@ async def test_conductor_nested_steer_interject_reaches_taskscheduler_ask():
 @_handle_project
 async def test_conductor_nested_steer_interject_reaches_websearcher_ask():
     cond = Conductor()
-    h = await cond.ask("What are the latest developments in retrieval for LLMs?")
+    h = await cond.request("What are the latest developments in retrieval for LLMs?")
 
     try:
         client = getattr(h, "_client", None)

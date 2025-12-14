@@ -91,7 +91,7 @@ async def test_ask_calls_manager():
     # Wire a SimulatedConductor to the real TranscriptManager + ContactManager instances
     cond = SimulatedConductor(contact_manager=cm, transcript_manager=tm)
 
-    handle = await cond.ask(
+    handle = await cond.request(
         "Show the most recent message that mentions the budget.",
         _return_reasoning_steps=True,
     )

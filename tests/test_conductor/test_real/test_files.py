@@ -39,7 +39,7 @@ async def test_ask_calls_global_manager(tmp_path):
     gfm = GlobalFileManager([local])
     cond = SimulatedConductor(global_file_manager=gfm)
 
-    handle = await cond.ask(
+    handle = await cond.request(
         "List available filesystems and provide a brief inventory overview.",
         _return_reasoning_steps=True,
     )

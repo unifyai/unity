@@ -32,7 +32,7 @@ async def test_questions_use_global_ask(question: str):
         ),
     )
 
-    handle = await cond.ask(
+    handle = await cond.request(
         question,
         _return_reasoning_steps=True,
     )

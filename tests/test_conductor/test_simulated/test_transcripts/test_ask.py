@@ -51,7 +51,7 @@ async def test_questions_use_only_transcript_tool(question: str):
         ),
     )
 
-    handle = await cond.ask(
+    handle = await cond.request(
         question,
         _return_reasoning_steps=True,
     )

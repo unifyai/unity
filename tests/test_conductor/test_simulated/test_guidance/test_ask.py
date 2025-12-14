@@ -41,7 +41,7 @@ async def test_ask_calls_manager():
         guidance_manager=sim_gm,
     )
 
-    handle = await cond.ask(
+    handle = await cond.request(
         "What guidance do you have for incident response?",
         _return_reasoning_steps=True,
     )

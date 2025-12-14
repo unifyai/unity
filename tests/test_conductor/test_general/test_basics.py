@@ -24,28 +24,24 @@ def test_docstrings_match_base():
     from unity.conductor.simulated import SimulatedConductor
 
     assert (
-        BaseConductor.ask.__doc__.strip() in SimulatedConductor.ask.__doc__.strip()
-    ), ".ask doc-string was not copied correctly"
-
-    assert (
         BaseConductor.request.__doc__.strip()
         in SimulatedConductor.request.__doc__.strip()
     ), ".request doc-string was not copied correctly"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2.  Basic start-and-ask                                                    #
+# 2.  Basic start-and-request                                                #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask():
+async def test_start_and_request():
     cond = SimulatedConductor(
         description=(
             "Operations assistant for Acme Real Estate handling listings, client follow-ups, "
             "and internal knowledge."
         ),
     )
-    h = await cond.ask(
+    h = await cond.request(
         "Which follow-ups and tasks are due today across active buyers and listings?",
     )
     answer = await h.result()
@@ -53,7 +49,7 @@ async def test_start_and_ask():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3.  Reasoning steps toggle (ask + request)                                 #
+# 3.  Reasoning steps toggle                                                 #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
@@ -64,8 +60,8 @@ async def test_reasoning_steps_toggle():
         ),
     )
 
-    # ask() – request hidden messages tuple
-    h1 = await cond.ask(
+    # request() with read-only question – returns (answer, messages) tuple
+    h1 = await cond.request(
         "List top priorities across active opportunities and existing customers.",
         _return_reasoning_steps=True,
     )
@@ -73,7 +69,7 @@ async def test_reasoning_steps_toggle():
     assert isinstance(ans1, str) and ans1.strip()
     assert isinstance(msgs1, list) and len(msgs1) >= 1
 
-    # request() – also return (answer, messages)
+    # request() with mutation – also return (answer, messages)
     h2 = await cond.request(
         (
             "Create a high-priority task to call Bob tomorrow at 09:00 and log it against the "
@@ -87,14 +83,14 @@ async def test_reasoning_steps_toggle():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4.  Write (request) then Read (ask) – state carries via sub-managers        #
+# 4.  Write then Read – state carries via sub-managers                        #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_request_then_ask_stateful():
+async def test_request_then_query_stateful():
     """
     A `request()` that (likely) touches the TaskScheduler should influence a
-    subsequent `ask()` routed to the same sub-manager (stateful LLM behind it).
+    subsequent read-only `request()` routed to the same sub-manager (stateful LLM behind it).
     """
     cond = SimulatedConductor(
         description=(
@@ -109,8 +105,8 @@ async def test_request_then_ask_stateful():
     )
     await h_upd.result()
 
-    # 2) Ask about high-priority tasks – the answer should reference our task
-    h_q = await cond.ask("Which tasks are high priority right now?")
+    # 2) Query about high-priority tasks – the answer should reference our task
+    h_q = await cond.request("Which tasks are high priority right now?")
     answer = (await h_q.result()).lower()
 
     assert "budget" in answer, "Answer should reference the task added via request()"
@@ -142,7 +138,7 @@ async def test_handle_interject(monkeypatch):
             "SaaS launch week assistant coordinating tasks, contacts, transcripts, and KB."
         ),
     )
-    h = await cond.ask(
+    h = await cond.request(
         "Draft a morning brief covering high-priority tasks, top contacts to reach out to, "
         "and notable messages in the last 24h.",
     )
@@ -164,7 +160,7 @@ async def test_handle_stop():
             "Data team sprint planning assistant summarizing backlog, PRs, and stakeholder requests."
         ),
     )
-    h = await cond.ask(
+    h = await cond.request(
         "Produce a comprehensive weekly report across backlog, open PRs, and pending stakeholder requests.",
     )
     await asyncio.sleep(0.05)
@@ -194,7 +190,7 @@ async def test_supports_clarification_channels():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    h = await cond.ask(
+    h = await cond.request(
         (
             "Outline a follow-up sequence for registrants of the 'AI for Finance' webinar; "
             "include channels and timing. Ask for any necessary details before proceeding."
@@ -273,7 +269,7 @@ async def test_handle_pause_and_resume(monkeypatch):
             "Sales pipeline assistant tracking deals closing this week and required follow-ups."
         ),
     )
-    handle = await cond.ask(
+    handle = await cond.request(
         "Generate a short summary of deals closing this week, related contacts, and required tasks.",
     )
 

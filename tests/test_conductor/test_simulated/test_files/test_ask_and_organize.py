@@ -50,8 +50,8 @@ async def test_ask_then_organize_separate(tmp_path):
         global_file_manager=gfm,
     )
 
-    # First: ask across filesystems
-    ask_handle = await cond.ask(
+    # First: query across filesystems
+    ask_handle = await cond.request(
         "List available filesystems and provide a brief inventory overview.",
         _return_reasoning_steps=True,
     )

@@ -28,7 +28,7 @@ async def test_ask_calls_manager():
     cond = SimulatedConductor(guidance_manager=gm)
 
     # Ask a question that clearly targets Guidance content
-    handle = await cond.ask(
+    handle = await cond.request(
         "What does the Guidance entry titled 'Onboarding Overview' say?",
         _return_reasoning_steps=True,
     )

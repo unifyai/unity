@@ -37,7 +37,7 @@ async def test_live_events_use_web_tool(question: str):
         ),
     )
 
-    handle = await cond.ask(
+    handle = await cond.request(
         question,
         _return_reasoning_steps=True,
     )
