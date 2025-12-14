@@ -483,3 +483,115 @@ async def test_task_answer_clarification(test_redis_client, event_capture):
     # Verify response has correct format
     assert clarification_response.handle_id == task_started.handle_id
     assert len(clarification_response.response) > 0
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_llm_asks_clarification_for_ambiguous_request(
+    test_redis_client,
+    event_capture,
+):
+    """
+    Test that the LLM asks for clarification when given an ambiguous request.
+
+    When a user's request is vague or could be interpreted multiple ways,
+    the LLM should ask for clarification rather than immediately starting a task.
+    """
+    from unity.conversation_manager.events import SMSSent, ConductorHandleStarted
+
+    # Clear any events from initialization
+    event_capture.clear()
+
+    # Send an ambiguous request that could be interpreted multiple ways
+    contact = contacts[1]
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "I need help with a contact",  # Ambiguous: which contact? what kind of help?
+    )
+
+    # Wait for an SMS response (the LLM should ask for clarification)
+    print("⏳ Waiting for clarification SMS (timeout: 60s)...")
+    response = await event_capture.wait_for_event(SMSSent, timeout=60.0)
+
+    # Verify the LLM asked a clarifying question
+    content_lower = response.content.lower()
+    clarification_indicators = ["which", "what", "how", "would you like", "prefer", "?"]
+    has_clarification = any(
+        indicator in content_lower for indicator in clarification_indicators
+    )
+    assert (
+        has_clarification
+    ), f"Expected LLM to ask a clarifying question, but got: {response.content}"
+
+    print(f"✅ LLM asked for clarification: {response.content[:100]}...")
+
+    # Verify no task was started (LLM should wait for clarification)
+    task_events = event_capture.get_events(ConductorHandleStarted)
+    assert (
+        len(task_events) == 0
+    ), f"Expected no task to be started before clarification, but found {len(task_events)} task(s)"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_llm_uses_clarification_response_in_task(
+    test_redis_client,
+    event_capture,
+):
+    """
+    Test that the LLM uses the clarification response when starting a task.
+
+    When the user provides clarification after an ambiguous request,
+    the LLM should incorporate that clarification into the task it starts.
+    """
+    from unity.conversation_manager.events import SMSSent
+
+    # Clear any events from initialization
+    event_capture.clear()
+
+    # Send an ambiguous request
+    contact = contacts[1]
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "I need help with a contact",  # Ambiguous: which contact? what kind of help?
+    )
+
+    # Wait for the LLM to ask for clarification
+    print("⏳ Waiting for clarification SMS (timeout: 60s)...")
+    clarification_sms = await event_capture.wait_for_event(SMSSent, timeout=60.0)
+    print(f"✅ LLM asked: {clarification_sms.content[:100]}...")
+
+    # Provide clarification - be specific about what we want
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "Show me only contacts that have email addresses. Include their names and emails.",
+    )
+
+    # Wait for task to be started with the clarified request
+    task_started = await capture_task_started(
+        event_capture,
+        "start_task",
+    )
+
+    # Verify the task query incorporates the clarification (email-related)
+    query_lower = task_started.query.lower()
+    assert (
+        "email" in query_lower
+    ), f"Expected task query to mention 'email' from clarification, but got: {task_started.query}"
+
+    print(f"✅ Task started with clarified query: {task_started.query[:100]}...")
+
+    # Clean up - stop the task
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "Stop that task please",
+    )
+    await capture_task_action_response(
+        event_capture,
+        task_started.handle_id,
+        "stop",
+    )
