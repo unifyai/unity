@@ -69,7 +69,7 @@ class SimulatedConductor(Conductor):
             actor
             if actor is not None
             else SimulatedActor(
-                steps=0,
+                steps=1,
                 duration=None,
                 simulation_guidance=simulation_guidance,
             )
