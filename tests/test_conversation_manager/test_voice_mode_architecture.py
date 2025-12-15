@@ -116,11 +116,12 @@ class TestResponseModelConstruction:
         assert "voice_utterance" not in props
         assert "realtime_guidance" not in props
 
-    def test_voice_model_tts_mode_current(self):
+    def test_voice_model_tts_mode_uses_guidance(self):
         """
-        [Stage 0 - Baseline] TTS mode currently uses voice_utterance.
+        [Stage 2] TTS mode now uses realtime_guidance (same as Realtime mode).
 
-        This test documents the CURRENT behavior that will change in Stage 2.
+        Both TTS and Realtime modes use the unified guidance-based architecture
+        where the Main CM Brain provides guidance to the Voice Agent.
         """
         from unity.conversation_manager.domains.actions import (
             build_dynamic_response_models,
@@ -134,9 +135,9 @@ class TestResponseModelConstruction:
 
         assert "thoughts" in props
         assert "actions" in props
-        # Current TTS mode uses voice_utterance
-        assert "voice_utterance" in props
-        assert "realtime_guidance" not in props
+        # Stage 2: TTS mode now uses realtime_guidance
+        assert "realtime_guidance" in props
+        assert "voice_utterance" not in props
 
     def test_voice_model_realtime_mode_uses_guidance(self):
         """Realtime mode uses realtime_guidance instead of voice_utterance."""
@@ -176,12 +177,11 @@ class TestResponseModelConstruction:
             ).keys()
         )
 
-    @pytest.mark.skip(reason="Stage 2: Enable after unifying voice response models")
     def test_voice_model_tts_mode_uses_guidance_after_refactor(self):
         """
-        [Stage 2] TTS mode should use realtime_guidance after refactoring.
+        [Stage 2] TTS mode uses realtime_guidance after refactoring.
 
-        This test will PASS after Stage 2 is implemented.
+        Stage 2 is complete - TTS mode now uses the same guidance pattern as Realtime.
         """
         from unity.conversation_manager.domains.actions import (
             build_dynamic_response_models,
@@ -193,7 +193,7 @@ class TestResponseModelConstruction:
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
 
-        # After Stage 2, TTS mode should also use realtime_guidance
+        # Stage 2 complete: TTS mode uses realtime_guidance
         assert "realtime_guidance" in props
         assert "voice_utterance" not in props
 
@@ -222,8 +222,9 @@ class TestPromptBuilders:
         assert "<boss_details>" in prompt
         assert "<output_format>" in prompt
 
-        # Text/TTS mode specific
-        assert "voice_utterance" in prompt
+        # Stage 2: All voice modes use realtime_guidance
+        assert "realtime_guidance" in prompt
+        assert "voice_utterance" not in prompt
 
     def test_build_system_prompt_realtime_mode(self):
         """System prompt for realtime mode mentions realtime_guidance."""
@@ -240,10 +241,10 @@ class TestPromptBuilders:
             active_tasks={},
         )
 
-        # Realtime mode specific
+        # Stage 2: All voice modes use guidance-based architecture
         assert "realtime_guidance" in prompt
         assert "<voice_calls_guide>" in prompt
-        assert "Realtime Agent" in prompt
+        assert "Voice Agent" in prompt
 
     def test_build_realtime_phone_agent_prompt(self):
         """Realtime phone agent prompt has fast brain instructions."""
@@ -264,12 +265,11 @@ class TestPromptBuilders:
         assert "conversation manager" in prompt.lower()
         assert "<communication_guidelines>" in prompt
 
-    @pytest.mark.skip(reason="Stage 2: Enable after unifying voice response models")
     def test_build_system_prompt_tts_mode_uses_guidance_after_refactor(self):
         """
-        [Stage 2] TTS mode system prompt should mention realtime_guidance.
+        [Stage 2] TTS mode system prompt mentions realtime_guidance.
 
-        After refactoring, TTS mode will also use the guidance pattern.
+        Stage 2 is complete - TTS mode now uses the guidance pattern.
         """
         from unity.conversation_manager.prompt_builders import build_system_prompt
 
@@ -282,7 +282,7 @@ class TestPromptBuilders:
             active_tasks={},
         )
 
-        # After Stage 2, TTS mode should also mention realtime_guidance
+        # Stage 2 complete: TTS mode uses realtime_guidance
         assert "realtime_guidance" in prompt
         assert "voice_utterance" not in prompt
 
@@ -796,13 +796,12 @@ class TestStage2UnifiedVoiceResponse:
     """
     [Stage 2] Tests for unified voice response model (realtime_guidance everywhere).
 
-    These tests verify that after Stage 2:
+    Stage 2 is complete. These tests verify:
     - TTS mode outputs realtime_guidance instead of voice_utterance
     - Both TTS and Realtime modes use the same response model structure
     - The system prompt for TTS mode mentions realtime_guidance
     """
 
-    @pytest.mark.skip(reason="Stage 2: Enable after unifying voice response models")
     def test_tts_mode_response_model_has_guidance(self):
         """TTS mode response model uses realtime_guidance field."""
         from unity.conversation_manager.domains.actions import (
@@ -817,7 +816,6 @@ class TestStage2UnifiedVoiceResponse:
         assert "realtime_guidance" in props
         assert "voice_utterance" not in props
 
-    @pytest.mark.skip(reason="Stage 2: Enable after unifying voice response models")
     def test_tts_and_realtime_models_match(self):
         """TTS and Realtime modes use identical response model structure."""
         from unity.conversation_manager.domains.actions import (
@@ -830,7 +828,7 @@ class TestStage2UnifiedVoiceResponse:
         tts_schema = tts_models["call"].model_json_schema()
         rt_schema = rt_models["call"].model_json_schema()
 
-        # After Stage 2, these should be identical
+        # Stage 2 complete: TTS and Realtime models are identical
         assert (
             tts_schema.get("properties", {}).keys()
             == rt_schema.get(
