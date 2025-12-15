@@ -240,7 +240,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Build response model dynamically with current active tasks
         response_models = build_dynamic_response_models(
             active_tasks=self.active_tasks,
-            is_voice_call=self.call_manager.uses_realtime_api,
         )
         response_model = response_models[self.mode]
         out = await self.llm.run(
@@ -443,7 +442,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Initial build without active tasks - actual models are rebuilt per LLM call
         self.dynamic_response_models = build_dynamic_response_models(
             active_tasks={},
-            is_voice_call=self.call_manager.uses_realtime_api,
         )
 
     async def store_chat_history(self):
