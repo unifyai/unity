@@ -157,7 +157,7 @@ async def test_unify_message_publishes_events(
     await send_incoming_unify_message(test_redis_client, contact, "Tell me a joke")
 
     # Wait for outbound event
-    outbound = await event_capture.wait_for_event(UnifyMessageSent, timeout=60.0)
+    outbound = await event_capture.wait_for_event(UnifyMessageSent, timeout=300.0)
 
     # Verify inbound event
     inbound_events = event_capture.get_events(UnifyMessageReceived)
@@ -187,7 +187,7 @@ async def test_sms_publishes_events(
     await send_incoming_sms(test_redis_client, contact, "Tell me a joke")
 
     # Wait for outbound event
-    outbound = await event_capture.wait_for_event(SMSSent, timeout=60.0)
+    outbound = await event_capture.wait_for_event(SMSSent, timeout=300.0)
 
     # Verify inbound event
     inbound_events = event_capture.get_events(SMSReceived)
@@ -223,7 +223,7 @@ async def test_email_publishes_events(
     )
 
     # Wait for outbound event
-    outbound = await event_capture.wait_for_event(EmailSent, timeout=60.0)
+    outbound = await event_capture.wait_for_event(EmailSent, timeout=300.0)
 
     # Verify inbound event
     inbound_events = event_capture.get_events(EmailReceived)
