@@ -50,7 +50,7 @@ class LivekitCallManager:
             self.assistant_bio,
         ]
         if self.uses_realtime_api:
-            target_path = target_path / "realtime_call.py"
+            target_path = target_path / "sts_call.py"
         else:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
@@ -96,7 +96,7 @@ class LivekitCallManager:
             self.assistant_bio,
         ]
         if self.uses_realtime_api:
-            target_path = target_path / "realtime_call.py"
+            target_path = target_path / "sts_call.py"
         else:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]

@@ -910,16 +910,16 @@ class TestStage3TTSFastBrain:
         import inspect
         from unity.conversation_manager.medium_scripts import (
             call as call_module,
-            realtime_call as realtime_module,
+            sts_call as sts_module,
         )
 
         call_source = inspect.getsource(call_module)
-        realtime_source = inspect.getsource(realtime_module)
+        sts_source = inspect.getsource(sts_module)
 
         # Both should use CONTACT, BOSS, and ASSISTANT_BIO env vars
         for env_var in ["CONTACT", "BOSS", "ASSISTANT_BIO"]:
             assert env_var in call_source, f"call.py should use {env_var}"
-            assert env_var in realtime_source, f"realtime_call.py should use {env_var}"
+            assert env_var in sts_source, f"sts_call.py should use {env_var}"
 
     def test_call_manager_passes_boss_to_tts_mode(self):
         """CallManager passes boss details to TTS mode (not just Realtime)."""

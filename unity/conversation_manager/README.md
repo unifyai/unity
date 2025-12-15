@@ -233,7 +233,7 @@ conversation_manager/
 │
 ├── medium_scripts/          # Medium-specific voice handling
 │   ├── call.py              # Twilio phone calls
-│   ├── realtime_call.py     # GPT Realtime API calls
+│   ├── sts_call.py          # STS mode calls (OpenAI Realtime API)
 │   └── common.py            # Shared voice utilities
 │
 └── prompt_builders.py       # Dynamic prompt construction (like other managers)
