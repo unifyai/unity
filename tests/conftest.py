@@ -23,7 +23,6 @@ import logging
 import os
 import random
 import re
-import string
 import threading
 
 import httpx
@@ -289,20 +288,12 @@ def get_test_log_format(config):
 # --------------------------------------------------------------------------- #
 
 
-def _generate_random_project_name():
-    return f"UnityTests_{''.join(random.choices(string.ascii_letters + string.digits, k=8))}"
-
-
 def pytest_sessionstart(session):
     # ------------------------------------------------------------------
     #  Activate the UnityTests project
     # ------------------------------------------------------------------
 
-    project_name = (
-        _generate_random_project_name()
-        if SETTINGS.UNIFY_TESTS_RAND_PROJ
-        else "UnityTests"
-    )
+    project_name = SETTINGS.test_project_name
 
     if os.environ.get("CI"):
         unify.set_cache_backend("local_separate")

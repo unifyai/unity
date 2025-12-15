@@ -8,7 +8,11 @@ TestingSettings inherits all production settings from unity.settings.ProductionS
 and adds test-only configuration. This mirrors the structure of unity/settings.py.
 """
 
+import random
+import string
+
 from unity.settings import ProductionSettings
+from pydantic.fields import computed_field
 
 
 class TestingSettings(ProductionSettings):
@@ -31,6 +35,22 @@ class TestingSettings(ProductionSettings):
     UNIFY_PRETEST_CONTEXT_CREATE: bool = False
     UNIFY_TEST_TAGS: str = ""  # Comma-separated list of tags for duration logging
     UNIFY_SKIP_SESSION_SETUP: bool = False  # Skip project/context creation (pre-done)
+    UNITY_TEST_PROJECT_NAME: str = "UnityTests"
+
+    @computed_field
+    @property
+    def test_project_name(self) -> str:
+        """Return the test project name based on settings.
+
+        If UNIFY_TESTS_RAND_PROJ is True, returns a random project name.
+        Otherwise, returns UNITY_TEST_PROJECT_NAME (defaults to 'UnityTests').
+        """
+        if self.UNIFY_TESTS_RAND_PROJ:
+            suffix = "".join(
+                random.choices(string.ascii_letters + string.digits, k=8),
+            )
+            return f"UnityTests_{suffix}"
+        return self.UNITY_TEST_PROJECT_NAME
 
 
 # Singleton instance for test code
