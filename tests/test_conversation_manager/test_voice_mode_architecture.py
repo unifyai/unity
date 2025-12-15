@@ -628,70 +628,26 @@ class TestVoiceCallFlowIntegration:
 
 
 # =============================================================================
-# Integration Tests: Mode-Specific Response Streaming
+# Integration Tests: Voice Guidance Channel
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestResponseStreaming:
-    """Tests for response streaming in different voice modes."""
+class TestCallGuidanceChannel:
+    """Tests for call_guidance channel used by both TTS and STS modes."""
 
-    async def test_stream_response_channel_format(self, test_redis_client):
-        """Verify response streaming channel message format."""
+    async def test_call_guidance_channel_format(self, test_redis_client):
+        """Verify call_guidance channel message format."""
         pubsub = test_redis_client.pubsub()
-        await pubsub.subscribe("app:call:response_gen")
+        await pubsub.subscribe("app:call:call_guidance")
 
         # Consume the subscription confirmation message
         await pubsub.get_message(timeout=1.0)
 
-        # Simulate the streaming protocol
+        # Publish guidance (the format used by Main CM Brain)
         await test_redis_client.publish(
-            "app:call:response_gen",
-            json.dumps({"type": "start_gen"}),
-        )
-        await test_redis_client.publish(
-            "app:call:response_gen",
-            json.dumps({"type": "gen_chunk", "chunk": "Hello "}),
-        )
-        await test_redis_client.publish(
-            "app:call:response_gen",
-            json.dumps({"type": "gen_chunk", "chunk": "there!"}),
-        )
-        await test_redis_client.publish(
-            "app:call:response_gen",
-            json.dumps({"type": "end_gen"}),
-        )
-
-        # Collect messages with polling
-        messages = []
-        for _ in range(40):
-            msg = await pubsub.get_message(
-                ignore_subscribe_messages=True,
-                timeout=0.1,
-            )
-            if msg and msg["type"] == "message":
-                messages.append(json.loads(msg["data"]))
-            await asyncio.sleep(0.025)
-
-        await pubsub.unsubscribe()
-
-        # Verify protocol
-        types = [m["type"] for m in messages]
-        assert "start_gen" in types, f"Expected start_gen in {types}"
-        assert "gen_chunk" in types, f"Expected gen_chunk in {types}"
-        assert "end_gen" in types, f"Expected end_gen in {types}"
-
-    async def test_unify_meet_response_channel(self, test_redis_client):
-        """Verify unify_meet uses separate response channel."""
-        pubsub = test_redis_client.pubsub()
-        await pubsub.subscribe("app:unify_meet:response_gen")
-
-        # Consume the subscription confirmation message
-        await pubsub.get_message(timeout=1.0)
-
-        await test_redis_client.publish(
-            "app:unify_meet:response_gen",
-            json.dumps({"type": "start_gen"}),
+            "app:call:call_guidance",
+            json.dumps({"content": "Please ask about their schedule"}),
         )
 
         # Poll for message with retries
@@ -706,7 +662,9 @@ class TestResponseStreaming:
 
         assert msg is not None, "Expected to receive published message"
         assert msg["type"] == "message"
-        assert json.loads(msg["data"])["type"] == "start_gen"
+        data = json.loads(msg["data"])
+        assert "content" in data
+        assert data["content"] == "Please ask about their schedule"
 
 
 # =============================================================================
