@@ -103,7 +103,7 @@ class TestResponseModelConstruction:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=False)
+        models = build_dynamic_response_models(active_tasks={})
         text_model = models["text"]
 
         # Get the schema
@@ -127,7 +127,7 @@ class TestResponseModelConstruction:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=False)
+        models = build_dynamic_response_models(active_tasks={})
         voice_model = models["call"]
 
         schema = voice_model.model_json_schema()
@@ -145,7 +145,7 @@ class TestResponseModelConstruction:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=True)
+        models = build_dynamic_response_models(active_tasks={})
         voice_model = models["call"]
 
         schema = voice_model.model_json_schema()
@@ -163,7 +163,7 @@ class TestResponseModelConstruction:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=False)
+        models = build_dynamic_response_models(active_tasks={})
 
         call_schema = models["call"].model_json_schema()
         meet_schema = models["unify_meet"].model_json_schema()
@@ -187,7 +187,7 @@ class TestResponseModelConstruction:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=False)
+        models = build_dynamic_response_models(active_tasks={})
         voice_model = models["call"]
 
         schema = voice_model.model_json_schema()
@@ -728,7 +728,7 @@ class TestRegressionBaseline:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=False)
+        models = build_dynamic_response_models(active_tasks={})
         text_model = models["text"]
         schema = text_model.model_json_schema()
         props = schema.get("properties", {})
@@ -742,7 +742,7 @@ class TestRegressionBaseline:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=False)
+        models = build_dynamic_response_models(active_tasks={})
         text_model = models["text"]
         schema = text_model.model_json_schema()
 
@@ -818,7 +818,7 @@ class TestStage2UnifiedVoiceResponse:
             build_dynamic_response_models,
         )
 
-        models = build_dynamic_response_models(active_tasks={}, realtime=False)
+        models = build_dynamic_response_models(active_tasks={})
         voice_model = models["call"]
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
@@ -832,16 +832,16 @@ class TestStage2UnifiedVoiceResponse:
             build_dynamic_response_models,
         )
 
-        tts_models = build_dynamic_response_models(active_tasks={}, realtime=False)
-        rt_models = build_dynamic_response_models(active_tasks={}, realtime=True)
+        tts_models = build_dynamic_response_models(active_tasks={})
+        sts_models = build_dynamic_response_models(active_tasks={})
 
         tts_schema = tts_models["call"].model_json_schema()
-        rt_schema = rt_models["call"].model_json_schema()
+        sts_schema = sts_models["call"].model_json_schema()
 
-        # Stage 2 complete: TTS and Realtime models are identical
+        # Stage 2 complete: TTS and STS models are identical
         assert (
             tts_schema.get("properties", {}).keys()
-            == rt_schema.get(
+            == sts_schema.get(
                 "properties",
                 {},
             ).keys()

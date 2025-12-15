@@ -187,13 +187,12 @@ def _generate_dynamic_task_actions(active_tasks: dict) -> list[type[BaseModel]]:
     return dynamic_actions
 
 
-def build_dynamic_response_models(active_tasks: dict = None, realtime: bool = False):
+def build_dynamic_response_models(active_tasks: dict = None):
     """
     Create response models with dynamic per-task actions.
 
     Args:
         active_tasks: Dict of active task handles {handle_id: {"query": str, "handle": ..., ...}}
-        realtime: Whether the response model is for realtime mode
 
     Returns:
         dict: Response models for different modes (call, unify_meet, text)
