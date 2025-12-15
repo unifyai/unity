@@ -116,57 +116,46 @@ def build_system_prompt(
         active_tasks or {},
     )
 
-    # Voice-specific output format
-    if realtime:
-        voice_output_block = textwrap.dedent(
-            """
-            If you are on a voice call with a contact, your output format will have an additional field, "realtime_guidance".
-            {
-                "thoughts": [your concise thoughts before talking or taking actions],
-                "realtime_guidance": [your guidance to the realtime agent handling the call on your behalf],
-                "actions": [list of actions in the format {"action_name": ..., **action_args}]
-            }
-        """,
-        ).strip()
-        voice_calls_guide = textwrap.dedent(
-            """
-            <voice_calls_guide>
-                You cannot handle voice calls directly. When you make or receive a call, a "Realtime Agent" handles the entire conversation for you. The Realtime Agent has full context and autonomously manages all conversation flow, responses, and dialogue.
+    # Voice-specific output format - both TTS and Realtime modes use the same
+    # guidance-based architecture. The Main CM Brain provides guidance to the
+    # Voice Agent (fast brain) which handles the actual conversation.
+    voice_output_block = textwrap.dedent(
+        """
+        If you are on a voice call with a contact, your output format will have an additional field, "realtime_guidance".
+        {
+            "thoughts": [your concise thoughts before talking or taking actions],
+            "realtime_guidance": [your guidance to the voice agent handling the call on your behalf],
+            "actions": [list of actions in the format {"action_name": ..., **action_args}]
+        }
+    """,
+    ).strip()
+    voice_calls_guide = textwrap.dedent(
+        """
+        <voice_calls_guide>
+            You cannot handle voice calls directly. When you make or receive a call, a "Voice Agent" handles the entire conversation for you. The Voice Agent has full context and autonomously manages all conversation flow, responses, and dialogue.
 
-                Your role during voice calls is LIMITED to:
-                1. Data provision: Providing critical information the Realtime Agent needs but doesn't have access to
-                2. Data requests: Requesting specific information from the Realtime Agent that you need for other tasks
-                3. Notifications: Alerting the Realtime Agent about important updates from other communication channels
+            Your role during voice calls is LIMITED to:
+            1. Data provision: Providing critical information the Voice Agent needs but doesn't have access to
+            2. Data requests: Requesting specific information from the Voice Agent that you need for other tasks
+            3. Notifications: Alerting the Voice Agent about important updates from other communication channels
 
-                Call transcriptions will appear as another communication <thread>, with the Realtime Agent's responses shown as if they were yours.
+            Call transcriptions will appear as another communication <thread>, with the Voice Agent's responses shown as if they were yours.
 
-                Your output during voice calls will contain a `realtime_guidance` field. This field should ONLY be used for:
-                - Providing data: "The meeting time the boss mentioned earlier was 3pm on Thursday"
-                - Requesting data: "Please ask for their preferred contact method"
-                - Notifications: "The boss just confirmed via SMS that the budget is approved"
+            Your output during voice calls will contain a `realtime_guidance` field. This field should ONLY be used for:
+            - Providing data: "The meeting time the boss mentioned earlier was 3pm on Thursday"
+            - Requesting data: "Please ask for their preferred contact method"
+            - Notifications: "The boss just confirmed via SMS that the budget is approved"
 
-                DO NOT use `realtime_guidance` to:
-                - Steer the conversation
-                - Suggest responses or dialogue
-                - Provide conversational guidance
-                - Micromanage the Realtime Agent's approach
+            DO NOT use `realtime_guidance` to:
+            - Steer the conversation
+            - Suggest responses or dialogue
+            - Provide conversational guidance
+            - Micromanage the Voice Agent's approach
 
-                The Realtime Agent independently handles ALL conversational aspects. You are strictly a data interface, not a conversation director. Leave `realtime_guidance` empty unless you need to exchange specific information with the Realtime Agent.
-            </voice_calls_guide>
-        """,
-        ).strip()
-    else:
-        voice_output_block = textwrap.dedent(
-            """
-            If you are on a voice call with a contact (phone, video call, or browser call), your output format will have an additional field, "voice_utterance".
-            {
-                "thoughts": [your concise thoughts before talking or taking actions],
-                "voice_utterance": [your voice response],
-                "actions": [list of actions in the format {"action_name": ..., **action_args}]
-            }
-        """,
-        ).strip()
-        voice_calls_guide = ""
+            The Voice Agent independently handles ALL conversational aspects. You are strictly a data interface, not a conversation director. Leave `realtime_guidance` empty unless you need to exchange specific information with the Voice Agent.
+        </voice_calls_guide>
+    """,
+    ).strip()
 
     # Phone-specific guidelines
     phone_guidelines = ""

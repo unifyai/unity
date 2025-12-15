@@ -262,39 +262,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
         parsed_out = json.loads(out)
         if self.mode in ["call", "unify_meet"]:
-            if not self.call_manager.realtime:
-                if self.mode == "unify_meet":
-                    topic = "app:comms:unify_meet_utterance"
-                    event = OutboundUnifyMeetUtterance(
-                        self.contact_index.get_contact(contact_id=1),
-                        parsed_out["voice_utterance"],
-                    )
-                else:
-                    topic = "app:comms:phone_utterance"
-                    event = OutboundPhoneUtterance(
-                        self.contact_index.get_contact(
-                            phone_number=self.call_manager.call_contact["phone_number"],
-                        ),
-                        parsed_out["voice_utterance"],
-                    )
-                await self.event_broker.publish(topic, event.to_json())
-
-            else:
-                if parsed_out.get("realtime_guidance"):
-                    event = RealtimeGuidance(
-                        self.contact_index.get_contact(
-                            contact_id=self.call_manager.call_contact["contact_id"],
-                        ),
-                        parsed_out["realtime_guidance"],
-                    )
-                    await self.event_broker.publish(
-                        "app:call:realtime_guidance",
-                        event.to_json(),
-                    )
-                    await self.event_broker.publish(
-                        "app:comms:assistant_realtime_guidance",
-                        event.to_json(),
-                    )
+            # Both TTS and Realtime modes use realtime_guidance - publish guidance events
+            # The Voice Agent (fast brain) handles conversational responses independently
+            if parsed_out.get("realtime_guidance"):
+                contact = (
+                    self.call_manager.call_contact
+                    or self.contact_index.get_contact(contact_id=1)
+                )
+                event = RealtimeGuidance(
+                    contact,
+                    parsed_out["realtime_guidance"],
+                )
+                await self.event_broker.publish(
+                    "app:call:realtime_guidance",
+                    event.to_json(),
+                )
+                await self.event_broker.publish(
+                    "app:comms:assistant_realtime_guidance",
+                    event.to_json(),
+                )
 
         # Log LLM response
         actions = parsed_out.get("actions") or []  # sometimes actions exist but is None

@@ -84,7 +84,7 @@ class LLM:
                 )
                 done = True
 
-            utterance = parsed.get("voice_utterance", "")
+            utterance = parsed.get("realtime_guidance", "")
             if len(utterance) > last_utterance_len:
                 if not started:
                     if before_stream_start:
