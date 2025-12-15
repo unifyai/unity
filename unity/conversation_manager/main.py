@@ -99,7 +99,6 @@ async def main(project_name: str = "Assistants"):
         SESSION_DETAILS.voice.mode,
         project_name=project_name,
         stop=stop,
-        user_turn_end_callback=None,
     )
 
     # Monkeypatch functions/methods for testing

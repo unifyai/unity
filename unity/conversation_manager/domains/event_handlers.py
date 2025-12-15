@@ -222,7 +222,6 @@ async def _(
         )
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
-    await cm.cancel_filler()
     await cm.cancel_proactive_speech()
     await cm.run_llm(delay=0, cancel_running=True)
 
