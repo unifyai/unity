@@ -151,7 +151,8 @@ async def entrypoint(ctx: agents.JobContext):
         VAD = silero.VAD.load(min_speech_duration=0.15)
 
     # Fast brain LLM - lightweight model for responsive conversation
-    llm_model = openai.LLM(model="gpt-4o-mini")
+    # gpt-5-nano with reasoning_effort="none" for maximum speed (disables reasoning)
+    llm_model = openai.LLM(model="gpt-5-nano", reasoning_effort="none")
 
     # Build fast brain prompt (same as Realtime mode)
     system_prompt = build_realtime_phone_agent_prompt(
