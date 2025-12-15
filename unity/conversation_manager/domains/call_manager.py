@@ -33,7 +33,7 @@ class LivekitCallManager:
         self.assistant_number = config.assistant_number
         self.voice_provider = config.voice_provider
         self.voice_id = config.voice_id
-        self.realtime = config.voice_mode == "sts"
+        self.uses_realtime_api = config.voice_mode == "sts"
 
     def start_call(self, contact: dict, boss: dict, outbound: bool = False):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
@@ -49,7 +49,7 @@ class LivekitCallManager:
             json.dumps(boss),
             self.assistant_bio,
         ]
-        if self.realtime:
+        if self.uses_realtime_api:
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"
@@ -95,7 +95,7 @@ class LivekitCallManager:
             json.dumps(boss),
             self.assistant_bio,
         ]
-        if self.realtime:
+        if self.uses_realtime_api:
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"
