@@ -1,12 +1,4 @@
-import json
-from typing import Awaitable, Callable, Optional
-
-from pydantic_core import from_json
-
-from unity.common.llm_client import (
-    new_llm_client,
-    pydantic_to_json_schema_response_format,
-)
+from unity.common.llm_client import new_llm_client
 
 
 class LLM:
@@ -19,23 +11,12 @@ class LLM:
         system_prompt: str,
         messages: str,
         response_model,
-        stream_to_call: bool = False,
-        call_type: str = None,
-        before_stream_start: Optional[Callable[[], Awaitable[None]]] = None,
     ):
-        if not stream_to_call:
-            return await self._run_non_stream(system_prompt, messages, response_model)
-        if not call_type:
-            raise Exception("call type must be specified if using stream_to_call")
-        return await self._run_stream(
-            system_prompt,
-            messages,
-            response_model,
-            call_type,
-            before_stream_start,
-        )
+        """Run the LLM with the given prompt and return structured output.
 
-    async def _run_non_stream(self, system_prompt, messages, response_model):
+        The Main CM Brain always runs in non-streaming mode. The Voice Agent
+        (fast brain) handles all speech generation independently.
+        """
         client = new_llm_client(self.model, reasoning_effort="low")
         client.set_response_format(response_model)
         return await client.generate(
@@ -43,72 +24,3 @@ class LLM:
             messages=messages if isinstance(messages, list) else None,
             user_message=messages if isinstance(messages, str) else None,
         )
-
-    async def _run_stream(
-        self,
-        system_prompt,
-        messages,
-        response_model,
-        call_type,
-        before_stream_start: Optional[Callable[[], Awaitable[None]]],
-    ):
-        client = new_llm_client(self.model, reasoning_effort="low")
-        client.set_response_format(self._to_streaming_format(response_model))
-
-        out = ""
-        last_utterance_len = 0
-        done = False
-        started = False
-
-        stream = await client.generate(
-            system_message=system_prompt,
-            messages=messages if isinstance(messages, list) else None,
-            user_message=messages if isinstance(messages, str) else None,
-            stream=True,
-        )
-
-        async for chunk in stream:
-            out += chunk
-            try:
-                parsed = from_json(out, allow_partial="trailing-strings")
-            except Exception:
-                continue
-
-            if not isinstance(parsed, dict):
-                continue
-
-            if "actions" in parsed and not done:
-                await self.event_broker.publish(
-                    f"app:{call_type}:response_gen",
-                    json.dumps({"type": "end_gen"}),
-                )
-                done = True
-
-            utterance = parsed.get("call_guidance", "")
-            if len(utterance) > last_utterance_len:
-                if not started:
-                    if before_stream_start:
-                        await before_stream_start()
-                    await self.event_broker.publish(
-                        f"app:{call_type}:response_gen",
-                        json.dumps({"type": "start_gen"}),
-                    )
-                    started = True
-
-                await self.event_broker.publish(
-                    f"app:{call_type}:response_gen",
-                    json.dumps(
-                        {
-                            "type": "gen_chunk",
-                            "chunk": utterance[last_utterance_len:],
-                        },
-                    ),
-                )
-                last_utterance_len = len(utterance)
-
-        return out
-
-    def _to_streaming_format(self, response_model) -> dict:
-        """Convert Pydantic model to json_schema format for streaming."""
-        # Keep strict mode enabled for deterministic structured output.
-        return pydantic_to_json_schema_response_format(response_model, strict=True)
