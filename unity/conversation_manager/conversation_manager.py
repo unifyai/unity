@@ -7,6 +7,7 @@ from typing import Callable, Optional
 import contextlib
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.settings import SETTINGS
 from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
@@ -120,8 +121,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.memory_manager: MemoryManager = None
         self.conductor: Conductor = None
 
-        # llm
-        self.llm = LLM("gpt-5-mini@openai", event_broker)
+        # llm - uses system default model for careful orchestration decisions
+        self.llm = LLM(SETTINGS.UNIFY_MODEL, event_broker)
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
