@@ -243,12 +243,12 @@ async def entrypoint(ctx: agents.JobContext):
         """
         Subscribe to guidance from Main CM Brain and inject into conversation.
 
-        The Main CM Brain (slow brain) sends realtime_guidance events when it has
+        The Main CM Brain (slow brain) sends call_guidance events when it has
         important information to share (data provision, data requests, notifications).
         """
         print("waiting for guidance from Main CM Brain...")
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:realtime_guidance", "app:call:status")
+            await pubsub.subscribe("app:call:call_guidance", "app:call:status")
             while True:
                 msg = await pubsub.get_message(
                     ignore_subscribe_messages=True,
