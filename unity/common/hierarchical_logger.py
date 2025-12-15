@@ -50,7 +50,7 @@ CM_ICONS = {
     # Voice/utterance events
     "inbound_utterance": "🎤",
     "outbound_utterance": "🔊",
-    "realtime_guidance": "🎙️",
+    "call_guidance": "🎙️",
     # Session lifecycle
     "session_start": "🚀",
     "session_end": "🏁",

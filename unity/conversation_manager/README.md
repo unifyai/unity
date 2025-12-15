@@ -141,7 +141,7 @@ User speaks → GPT Realtime processes live → responds immediately
     → Main CM Brain receives for logging/guidance
 ```
 
-GPT Realtime handles the live conversation. The Main CM Brain provides "guidance" via `RealtimeGuidance` events rather than direct responses.
+GPT Realtime handles the live conversation. The Main CM Brain provides "guidance" via `CallGuidance` events rather than direct responses.
 
 ---
 

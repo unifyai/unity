@@ -79,7 +79,7 @@ def build_system_prompt(
     email_address : str | None
         The boss contact's email address (enables email actions).
     realtime : bool
-        Whether this is for realtime voice mode (uses realtime_guidance instead of voice_utterance).
+        Whether this is for realtime voice mode (uses call_guidance instead of voice_utterance).
     active_tasks : dict | None
         Currently active tasks with their handles and state.
 
@@ -121,10 +121,10 @@ def build_system_prompt(
     # same for both TTS and Realtime modes.
     voice_output_block = textwrap.dedent(
         """
-        If you are on a voice call with a contact, your output format will have an additional field, "realtime_guidance".
+        If you are on a voice call with a contact, your output format will have an additional field, "call_guidance".
         {
             "thoughts": [your concise thoughts before talking or taking actions],
-            "realtime_guidance": [your guidance to the voice agent handling the call on your behalf],
+            "call_guidance": [your guidance to the voice agent handling the call on your behalf],
             "actions": [list of actions in the format {"action_name": ..., **action_args}]
         }
     """,
@@ -141,18 +141,18 @@ def build_system_prompt(
 
             Call transcriptions will appear as another communication <thread>, with the Voice Agent's responses shown as if they were yours.
 
-            Your output during voice calls will contain a `realtime_guidance` field. This field should ONLY be used for:
+            Your output during voice calls will contain a `call_guidance` field. This field should ONLY be used for:
             - Providing data: "The meeting time the boss mentioned earlier was 3pm on Thursday"
             - Requesting data: "Please ask for their preferred contact method"
             - Notifications: "The boss just confirmed via SMS that the budget is approved"
 
-            DO NOT use `realtime_guidance` to:
+            DO NOT use `call_guidance` to:
             - Steer the conversation
             - Suggest responses or dialogue
             - Provide conversational guidance
             - Micromanage the Voice Agent's approach
 
-            The Voice Agent independently handles ALL conversational aspects. You are strictly a data interface, not a conversation director. Leave `realtime_guidance` empty unless you need to exchange specific information with the Voice Agent.
+            The Voice Agent independently handles ALL conversational aspects. You are strictly a data interface, not a conversation director. Leave `call_guidance` empty unless you need to exchange specific information with the Voice Agent.
         </voice_calls_guide>
     """,
     ).strip()

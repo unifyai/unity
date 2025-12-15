@@ -8,7 +8,7 @@ This test file validates the "fast brain / slow brain" architecture for voice ca
 ensuring that:
 1. The Main CM Brain uses the system default model (SETTINGS.UNIFY_MODEL)
 2. TTS mode works like Realtime mode with concurrent guidance streams
-3. Both modes output `realtime_guidance` for orchestration
+3. Both modes output `call_guidance` for orchestration
 
 ## Test Categories
 
@@ -26,7 +26,7 @@ ensuring that:
 
 Stage 0: Baseline (current behavior)
 Stage 1: Main CM Brain uses SETTINGS.UNIFY_MODEL
-Stage 2: TTS mode outputs realtime_guidance instead of voice_utterance
+Stage 2: TTS mode outputs call_guidance instead of voice_utterance
 Stage 3: TTS fast brain handles conversational responses
 
 Each test is tagged with the stage it validates.
@@ -112,13 +112,13 @@ class TestResponseModelConstruction:
 
         assert "thoughts" in props
         assert "actions" in props
-        # Text mode should NOT have voice_utterance or realtime_guidance
+        # Text mode should NOT have voice_utterance or call_guidance
         assert "voice_utterance" not in props
-        assert "realtime_guidance" not in props
+        assert "call_guidance" not in props
 
     def test_voice_model_tts_mode_uses_guidance(self):
         """
-        [Stage 2] TTS mode now uses realtime_guidance (same as Realtime mode).
+        [Stage 2] TTS mode now uses call_guidance (same as Realtime mode).
 
         Both TTS and Realtime modes use the unified guidance-based architecture
         where the Main CM Brain provides guidance to the Voice Agent.
@@ -135,12 +135,12 @@ class TestResponseModelConstruction:
 
         assert "thoughts" in props
         assert "actions" in props
-        # Stage 2: TTS mode now uses realtime_guidance
-        assert "realtime_guidance" in props
+        # Stage 2: TTS mode now uses call_guidance
+        assert "call_guidance" in props
         assert "voice_utterance" not in props
 
     def test_voice_model_realtime_mode_uses_guidance(self):
-        """Realtime mode uses realtime_guidance instead of voice_utterance."""
+        """Realtime mode uses call_guidance instead of voice_utterance."""
         from unity.conversation_manager.domains.actions import (
             build_dynamic_response_models,
         )
@@ -153,8 +153,8 @@ class TestResponseModelConstruction:
 
         assert "thoughts" in props
         assert "actions" in props
-        # Realtime mode uses realtime_guidance
-        assert "realtime_guidance" in props
+        # Realtime mode uses call_guidance
+        assert "call_guidance" in props
         assert "voice_utterance" not in props
 
     def test_unify_meet_model_matches_call_model(self):
@@ -179,7 +179,7 @@ class TestResponseModelConstruction:
 
     def test_voice_model_tts_mode_uses_guidance_after_refactor(self):
         """
-        [Stage 2] TTS mode uses realtime_guidance after refactoring.
+        [Stage 2] TTS mode uses call_guidance after refactoring.
 
         Stage 2 is complete - TTS mode now uses the same guidance pattern as Realtime.
         """
@@ -193,8 +193,8 @@ class TestResponseModelConstruction:
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
 
-        # Stage 2 complete: TTS mode uses realtime_guidance
-        assert "realtime_guidance" in props
+        # Stage 2 complete: TTS mode uses call_guidance
+        assert "call_guidance" in props
         assert "voice_utterance" not in props
 
 
@@ -222,12 +222,12 @@ class TestPromptBuilders:
         assert "<boss_details>" in prompt
         assert "<output_format>" in prompt
 
-        # Stage 2: All voice modes use realtime_guidance
-        assert "realtime_guidance" in prompt
+        # Stage 2: All voice modes use call_guidance
+        assert "call_guidance" in prompt
         assert "voice_utterance" not in prompt
 
     def test_build_system_prompt_realtime_mode(self):
-        """System prompt for realtime mode mentions realtime_guidance."""
+        """System prompt for realtime mode mentions call_guidance."""
         from unity.conversation_manager.prompt_builders import build_system_prompt
 
         prompt = build_system_prompt(
@@ -242,7 +242,7 @@ class TestPromptBuilders:
         )
 
         # Stage 2: All voice modes use guidance-based architecture
-        assert "realtime_guidance" in prompt
+        assert "call_guidance" in prompt
         assert "<voice_calls_guide>" in prompt
         assert "Voice Agent" in prompt
 
@@ -267,7 +267,7 @@ class TestPromptBuilders:
 
     def test_build_system_prompt_tts_mode_uses_guidance_after_refactor(self):
         """
-        [Stage 2] TTS mode system prompt mentions realtime_guidance.
+        [Stage 2] TTS mode system prompt mentions call_guidance.
 
         Stage 2 is complete - TTS mode now uses the guidance pattern.
         """
@@ -282,8 +282,8 @@ class TestPromptBuilders:
             active_tasks={},
         )
 
-        # Stage 2 complete: TTS mode uses realtime_guidance
-        assert "realtime_guidance" in prompt
+        # Stage 2 complete: TTS mode uses call_guidance
+        assert "call_guidance" in prompt
         assert "voice_utterance" not in prompt
 
 
@@ -363,35 +363,35 @@ class TestVoiceModeStateManagement:
 class TestVoiceEvents:
     """Tests for voice-related event types."""
 
-    def test_realtime_guidance_event_structure(self):
-        """RealtimeGuidance event has required fields."""
-        from unity.conversation_manager.events import RealtimeGuidance
+    def test_call_guidance_event_structure(self):
+        """CallGuidance event has required fields."""
+        from unity.conversation_manager.events import CallGuidance
 
         contact = {"contact_id": 1, "first_name": "Test", "surname": "User"}
-        event = RealtimeGuidance(contact=contact, content="Test guidance")
+        event = CallGuidance(contact=contact, content="Test guidance")
 
         assert event.contact == contact
         assert event.content == "Test guidance"
         assert hasattr(event, "timestamp")
 
-    def test_realtime_guidance_serialization(self):
-        """RealtimeGuidance event can be serialized and deserialized."""
-        from unity.conversation_manager.events import Event, RealtimeGuidance
+    def test_call_guidance_serialization(self):
+        """CallGuidance event can be serialized and deserialized."""
+        from unity.conversation_manager.events import Event, CallGuidance
 
         contact = {"contact_id": 1, "first_name": "Test", "surname": "User"}
-        original = RealtimeGuidance(contact=contact, content="Test guidance")
+        original = CallGuidance(contact=contact, content="Test guidance")
 
         # Serialize
         json_str = original.to_json()
         data = json.loads(json_str)
 
         # Verify structure
-        assert data["event_name"] == "RealtimeGuidance"
+        assert data["event_name"] == "CallGuidance"
         assert data["payload"]["content"] == "Test guidance"
 
         # Deserialize
         restored = Event.from_json(json_str)
-        assert isinstance(restored, RealtimeGuidance)
+        assert isinstance(restored, CallGuidance)
         assert restored.content == original.content
 
     def test_outbound_phone_utterance_event(self):
@@ -440,12 +440,12 @@ class TestLLMOutputRouting:
             "email_address": "test@example.com",
         }
 
-    def test_llm_domain_streaming_extracts_realtime_guidance(self):
-        """LLM domain extracts realtime_guidance from streaming output."""
+    def test_llm_domain_streaming_extracts_call_guidance(self):
+        """LLM domain extracts call_guidance from streaming output."""
         from unity.conversation_manager.domains.llm import LLM
 
-        # The LLM class has _to_streaming_format which handles realtime_guidance
-        # Stage 2: Both TTS and Realtime modes use realtime_guidance
+        # The LLM class has _to_streaming_format which handles call_guidance
+        # Stage 2: Both TTS and Realtime modes use call_guidance
         llm_instance = LLM("test-model", event_broker=None)
 
         # Test the streaming format conversion
@@ -453,11 +453,11 @@ class TestLLMOutputRouting:
 
         class TestResponse(BaseModel):
             thoughts: str
-            realtime_guidance: str
+            call_guidance: str
 
         format_result = llm_instance._to_streaming_format(TestResponse)
         assert format_result["type"] == "json_schema"
-        assert "realtime_guidance" in str(format_result)
+        assert "call_guidance" in str(format_result)
 
 
 # =============================================================================
@@ -574,23 +574,23 @@ class TestVoiceCallFlowIntegration:
         events = event_capture.get_events(PhoneCallStarted)
         assert len(events) >= 1
 
-    async def test_realtime_guidance_event_flow(
+    async def test_call_guidance_event_flow(
         self,
         test_redis_client,
         event_capture,
         boss_contact,
     ):
         """
-        Verify realtime guidance events flow through the system.
+        Verify call guidance events flow through the system.
         """
-        from unity.conversation_manager.events import RealtimeGuidance
+        from unity.conversation_manager.events import CallGuidance
 
         # Publish a guidance event
-        event = RealtimeGuidance(
+        event = CallGuidance(
             contact=boss_contact,
             content="Please ask about their schedule",
         )
-        await test_redis_client.publish("app:call:realtime_guidance", event.to_json())
+        await test_redis_client.publish("app:call:call_guidance", event.to_json())
 
         # Wait briefly for event propagation
         await asyncio.sleep(0.5)
@@ -606,20 +606,18 @@ class TestVoiceCallFlowIntegration:
         boss_contact,
     ):
         """
-        [Stage 2] TTS mode publishes realtime_guidance events.
+        [Stage 2] TTS mode publishes call_guidance events.
 
         Stage 2 is complete - when the Main CM Brain responds during a TTS call,
-        it publishes RealtimeGuidance instead of OutboundPhoneUtterance.
+        it publishes CallGuidance instead of OutboundPhoneUtterance.
         """
         # Verify by checking the conversation_manager code uses guidance pattern
         import inspect
         from unity.conversation_manager import conversation_manager as cm_module
 
         source = inspect.getsource(cm_module.ConversationManager._run_llm)
-        # After Stage 2, TTS mode should publish RealtimeGuidance
-        assert (
-            "RealtimeGuidance" in source
-        ), "Should use RealtimeGuidance for voice modes"
+        # After Stage 2, TTS mode should publish CallGuidance
+        assert "CallGuidance" in source, "Should use CallGuidance for voice modes"
         # Should NOT have separate paths for realtime vs TTS utterance publishing
         assert (
             "OutboundPhoneUtterance" not in source
@@ -736,7 +734,7 @@ class TestRegressionBaseline:
         props = schema.get("properties", {})
 
         assert "voice_utterance" not in props
-        assert "realtime_guidance" not in props
+        assert "call_guidance" not in props
 
     def test_actions_union_includes_core_actions(self):
         """Response model includes all core action types."""
@@ -806,16 +804,16 @@ class TestStage1MainBrainModel:
 
 class TestStage2UnifiedVoiceResponse:
     """
-    [Stage 2] Tests for unified voice response model (realtime_guidance everywhere).
+    [Stage 2] Tests for unified voice response model (call_guidance everywhere).
 
     Stage 2 is complete. These tests verify:
-    - TTS mode outputs realtime_guidance instead of voice_utterance
+    - TTS mode outputs call_guidance instead of voice_utterance
     - Both TTS and Realtime modes use the same response model structure
-    - The system prompt for TTS mode mentions realtime_guidance
+    - The system prompt for TTS mode mentions call_guidance
     """
 
     def test_tts_mode_response_model_has_guidance(self):
-        """TTS mode response model uses realtime_guidance field."""
+        """TTS mode response model uses call_guidance field."""
         from unity.conversation_manager.domains.actions import (
             build_dynamic_response_models,
         )
@@ -825,7 +823,7 @@ class TestStage2UnifiedVoiceResponse:
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
 
-        assert "realtime_guidance" in props
+        assert "call_guidance" in props
         assert "voice_utterance" not in props
 
     def test_tts_and_realtime_models_match(self):
