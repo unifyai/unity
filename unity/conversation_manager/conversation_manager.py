@@ -262,16 +262,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
         parsed_out = json.loads(out)
         if self.mode in ["call", "unify_meet"]:
-            # Both TTS and Realtime modes use realtime_guidance - publish guidance events
+            # Both TTS and Realtime modes use call_guidance - publish guidance events
             # The Voice Agent (fast brain) handles conversational responses independently
-            if parsed_out.get("realtime_guidance"):
+            if parsed_out.get("call_guidance"):
                 contact = (
                     self.call_manager.call_contact
                     or self.contact_index.get_contact(contact_id=1)
                 )
-                event = RealtimeGuidance(
+                event = CallGuidance(
                     contact,
-                    parsed_out["realtime_guidance"],
+                    parsed_out["call_guidance"],
                 )
                 await self.event_broker.publish(
                     "app:call:realtime_guidance",

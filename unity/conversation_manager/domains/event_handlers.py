@@ -200,14 +200,14 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.interject_or_run(event.content)
 
 
-@EventHandler.register(RealtimeGuidance)
+@EventHandler.register(CallGuidance)
 async def _(
-    event: RealtimeGuidance,
+    event: CallGuidance,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
-    print("received realtime guidance", event)
+    print("received call guidance", event)
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
     cm.contact_index.push_message(contact, "voice", event.content, role="Guidance")

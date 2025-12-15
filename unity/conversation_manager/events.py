@@ -190,9 +190,13 @@ class OutboundUnifyMeetUtterance(Event):
 
 
 @dataclass
-class RealtimeGuidance(Event):
+class CallGuidance(Event):
     """
-    Guidance from the conversation manager sent to the realtime voice agent.
+    Guidance from the Main CM Brain sent to the Voice Agent during a call.
+
+    Used in both TTS and STS voice modes. The Voice Agent (fast brain) handles
+    all conversational responses autonomously; this guidance provides data,
+    notifications, or requests that the Main CM Brain needs to communicate.
     """
 
     contact: dict

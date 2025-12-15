@@ -223,14 +223,14 @@ def build_dynamic_response_models(active_tasks: dict = None, realtime: bool = Fa
     )
 
     # Dynamically create ResponseVoice model for call/unify_meet modes
-    # Both TTS and Realtime modes use realtime_guidance - the Main CM Brain
+    # Both TTS and Realtime modes use call_guidance - the Main CM Brain
     # provides guidance/data to the voice agent (fast brain) which handles
     # the actual conversation. This enables careful orchestration decisions
     # without blocking the voice stream.
     DynamicResponseVoice = create_model(
         "DynamicResponseVoice",
         thoughts=(str, ...),
-        realtime_guidance=(str, ...),
+        call_guidance=(str, ...),
         actions=(Optional[list[ActionsUnion]], ...),
         __base__=BaseModel,
     )
