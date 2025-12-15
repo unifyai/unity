@@ -58,7 +58,7 @@ def build_system_prompt(
     surname: str,
     phone_number: str | None = None,
     email_address: str | None = None,
-    realtime: bool = False,
+    is_voice_call: bool = False,
     active_tasks: dict | None = None,
 ) -> str:
     """
@@ -78,8 +78,8 @@ def build_system_prompt(
         The boss contact's phone number (enables SMS/call actions).
     email_address : str | None
         The boss contact's email address (enables email actions).
-    realtime : bool
-        Whether this is for realtime voice mode (uses call_guidance instead of voice_utterance).
+    is_voice_call : bool
+        Whether we are currently on a voice call (includes <voice_calls_guide> in prompt).
     active_tasks : dict | None
         Currently active tasks with their handles and state.
 
@@ -184,7 +184,7 @@ def build_system_prompt(
             You are a general purpose assistant that is communicating with your boss and his contacts directly through different mediums.
             Your capabilities include communicating on behalf of your boss user, such as sending SMS, emails or making calls.
             You are able to communicate with several people at the same time, more details in <input_format> and <output_format> sections.
-            {"Voice calls are treated a bit differently, detailed in <voice_calls_guide>" if realtime else ""}
+            {"Voice calls are treated a bit differently, detailed in <voice_calls_guide>" if is_voice_call else ""}
         </role>
 
         <bio>
