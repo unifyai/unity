@@ -116,9 +116,9 @@ def build_system_prompt(
         active_tasks or {},
     )
 
-    # Voice-specific output format - both TTS and Realtime modes use the same
-    # guidance-based architecture. The Main CM Brain provides guidance to the
-    # Voice Agent (fast brain) which handles the actual conversation.
+    # Voice-specific output format - Main CM Brain always provides guidance to the
+    # Voice Agent (fast brain), which handles all speech articulation. This is the
+    # same for both TTS and Realtime modes.
     voice_output_block = textwrap.dedent(
         """
         If you are on a voice call with a contact, your output format will have an additional field, "realtime_guidance".

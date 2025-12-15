@@ -91,6 +91,14 @@ async def send_incoming_call(
     user_utterance: str,
     mode: str = "call",
 ):
+    """
+    Simulate an incoming voice call and send a user utterance.
+
+    In the new voice architecture, the Main CM Brain only provides guidance
+    to the Voice Agent (fast brain) - it doesn't produce speech directly.
+    The Voice Agent handles all conversational responses. In tests, the
+    Voice Agent isn't running, so we don't expect streaming speech content.
+    """
     # Send call received event
     if mode == "call":
         incoming_call = PhoneCallReceived(
@@ -108,7 +116,7 @@ async def send_incoming_call(
     )
     await asyncio.sleep(0.5)
 
-    # Subscribe to the response streaming channel
+    # Subscribe to the response streaming channel (for any guidance that gets streamed)
     print(f"📞 Subscribing to app:{mode}:response_gen channel")
     pubsub = test_redis_client.pubsub()
     await pubsub.subscribe(f"app:{mode}:response_gen")
@@ -126,14 +134,8 @@ async def send_incoming_call(
             "app:comms:unify_meet_started",
             UnifyMeetStarted(contact=contact).to_json(),
         )
-    await asyncio.sleep(0.5)
-
-    # Capture the initial greeting
-    print("📞 Waiting for assistant's initial greeting...")
-    start1, chunks1, end1 = await capture_stream_response(pubsub, "Initial greeting")
-    assert start1, "Should receive start_gen for initial greeting"
-    assert len(chunks1) > 0, "Should receive chunks for initial greeting"
-    assert end1, "Should receive end_gen for initial greeting"
+    # Give Main CM Brain time to process and respond
+    await asyncio.sleep(2.0)
 
     # Send a user utterance
     print(f"📞 Sending user utterance from {contact_str}")
@@ -150,7 +152,7 @@ async def send_incoming_call(
                 content=user_utterance,
             ).to_json(),
         )
-    print(f"   Exchange 1 (Initial greeting): {len(''.join(chunks1))} characters")
+    print(f"📞 User utterance sent: {user_utterance}")
     return pubsub
 
 
