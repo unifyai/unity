@@ -11,6 +11,7 @@ from livekit.plugins import (
     cartesia,
     deepgram,
     elevenlabs,
+    openai,
     silero,
 )
 
@@ -27,8 +28,9 @@ load_dotenv()
 
 from unity.conversation_manager.events import *
 from unity.conversation_manager.utils import dispatch_agent
+from unity.conversation_manager.prompt_builders import build_realtime_phone_agent_prompt
 
-# NEW: shared helpers
+# Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
     create_end_call,
@@ -39,10 +41,7 @@ from unity.conversation_manager.medium_scripts.common import (
     should_dispatch_agent,
 )
 
-chunk_queue = asyncio.Queue()
-current_running_response: asyncio.Task | None = None
-
-# globals initialized lazily or via prewarm to avoid duplicate heavy init
+# Globals initialized lazily or via prewarm to avoid duplicate heavy init
 STT = None
 VAD = None
 
@@ -56,24 +55,38 @@ def prewarm(_ctx=None):
         print("Prewarm complete")
     except Exception as e:  # noqa: BLE001
         print(f"Prewarm failed: {e}")
-        # ensure fallback path runs by resetting all globals
         STT = None
         VAD = None
 
 
 class Assistant(Agent):
-    def __init__(self, contact: dict, channel: str, outbound: bool = False) -> None:
-        self.past_events = []
-        self.new_events = []
-        self.current_tasks_status = None
+    """
+    TTS Fast Brain - handles real-time conversation independently.
+
+    Uses a lightweight LLM (gpt-4o-mini) for fast conversational responses.
+    Receives guidance from the Main CM Brain (slow brain) via Redis pub/sub.
+    """
+
+    def __init__(
+        self,
+        contact: dict,
+        boss: dict,
+        channel: str,
+        instructions: str,
+        outbound: bool = False,
+    ) -> None:
         self.contact = contact
+        self.boss = boss
         self.channel = channel
         self.utterance_event = (
             InboundPhoneUtterance if channel == "phone" else InboundUnifyMeetUtterance
         )
+        self.assistant_utterance_event = (
+            OutboundPhoneUtterance if channel == "phone" else OutboundUnifyMeetUtterance
+        )
         self.call_received = not outbound
 
-        super().__init__(instructions="")
+        super().__init__(instructions=instructions)
 
     def set_call_received(self):
         self.call_received = True
@@ -83,6 +96,7 @@ class Assistant(Agent):
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
+        """Forward user utterances to the Main CM Brain for orchestration."""
         print("sending user message...")
         await event_broker.publish(
             f"app:comms:{self.channel}_utterance",
@@ -91,7 +105,6 @@ class Assistant(Agent):
                 content=new_message.text_content,
             ).to_json(),
         )
-        raise llm.StopResponse()
 
     async def llm_node(
         self,
@@ -99,18 +112,15 @@ class Assistant(Agent):
         tools: list[FunctionTool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
+        """Wait for call connection then delegate to parent LLM."""
         print("waiting for call to be received...")
         while not self.call_received:
             await asyncio.sleep(0.1)
         print("call received")
 
         print("running llm node...")
-        while True:
-            chunk = await chunk_queue.get()
-            if chunk["type"] == "end_gen":
-                break
-            elif chunk["chunk"] is not None:
-                yield chunk["chunk"]
+        async for chunk in super().llm_node(chat_ctx, tools, model_settings):
+            yield chunk
 
 
 async def entrypoint(ctx: agents.JobContext):
@@ -120,26 +130,47 @@ async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
     print("Connected to room")
 
-    # read static config
+    # Read static config
     voice_provider = os.environ.get("VOICE_PROVIDER")
     voice_id = os.environ.get("VOICE_ID")
     outbound = os.environ.get("OUTBOUND") == "True"
     channel = os.environ.get("CHANNEL")
+    assistant_bio = os.environ.get("ASSISTANT_ABOUT", "")
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)
     print("channel", channel)
 
-    # contact payloads passed as json env vars
+    # Contact/boss payloads passed as json env vars
     contact = json.loads(os.getenv("CONTACT", "{}"))
+    boss = json.loads(os.getenv("BOSS", "{}"))
 
-    # fallback for whenever pre-loading fails
+    # Fallback for whenever pre-loading fails
     if STT is None:
         STT = deepgram.STT(model="nova-3", language="en-GB")
         VAD = silero.VAD.load(min_speech_duration=0.15)
 
-    # LLM inference handled by Assistant.llm_node override via Redis/ConversationManager
+    # Fast brain LLM - lightweight model for responsive conversation
+    llm_model = openai.LLM(model="gpt-4o-mini")
+
+    # Build fast brain prompt (same as Realtime mode)
+    system_prompt = build_realtime_phone_agent_prompt(
+        bio=assistant_bio,
+        boss_first_name=boss.get("first_name", ""),
+        boss_surname=boss.get("surname", ""),
+        boss_email_address=boss.get("email_address", ""),
+        boss_phone_number=boss.get("phone_number", ""),
+        contact_first_name=contact.get("first_name", ""),
+        contact_surname=contact.get("surname", ""),
+        contact_phone_number=contact.get("phone_number", ""),
+        contact_email=contact.get("email_address", ""),
+        is_boss_user=contact.get("is_boss", False),
+    )
+    print("PRINTING SYSTEM PROMPT")
+    print(system_prompt)
+
     session = AgentSession(
+        llm=llm_model,
         stt=STT,
         tts=(
             elevenlabs.TTS(
@@ -155,108 +186,128 @@ async def entrypoint(ctx: agents.JobContext):
         turn_detection=EnglishModel(),
     )
 
-    # NEW: shared end_call + inactivity + participant disconnect handler
+    user_is_speaking = False
+    if channel == "phone":
+        user_utterance_event = InboundPhoneUtterance
+        assistant_utterance_event = OutboundPhoneUtterance
+    else:
+        user_utterance_event = InboundUnifyMeetUtterance
+        assistant_utterance_event = OutboundUnifyMeetUtterance
+
+    # Shared end_call + inactivity + participant disconnect handler
     end_call = create_end_call(contact, channel)
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
-    assistant = Assistant(contact=contact, channel=channel, outbound=outbound)
+    @session.on("user_state_changed")
+    def _on_user_state_changed(ev):
+        nonlocal user_is_speaking
+        user_is_speaking = ev.new_state == "speaking"
+        touch_activity()
 
-    await session.start(
-        room=ctx.room,
-        agent=assistant,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=(
-                noise_cancellation.BVC() if sys.platform == "darwin" else None
-            ),
+    @session.on("conversation_item_added")
+    def _on_chat_item_added(ev):
+        role = ev.item.role  # "user" | "assistant"
+        text = ev.item.text_content or ""
+        if role == "user":
+            event = user_utterance_event(contact, content=text)
+        else:
+            event = assistant_utterance_event(contact, content=text)
+
+        asyncio.create_task(
+            event_broker.publish(f"app:comms:{channel}_utterance", event.to_json()),
+        )
+        print(role, text)
+        touch_activity()
+
+    assistant = Assistant(
+        contact=contact,
+        boss=boss,
+        channel=channel,
+        instructions=system_prompt,
+        outbound=outbound,
+    )
+
+    rio = RoomInputOptions(
+        noise_cancellation=(
+            noise_cancellation.BVC() if sys.platform == "darwin" else None
         ),
     )
 
-    # publish call started (shared helper)
+    # Publish call started (shared helper)
     await publish_call_started(contact, channel)
     touch_activity()
 
-    async def response_task():
-        nonlocal session
-        handle = await session.generate_reply()
-        touch_activity()
-        return handle.chat_items[-1].text_content, handle.interrupted
+    async def wait_for_guidance():
+        """
+        Subscribe to guidance from Main CM Brain and inject into conversation.
 
-    def on_response_end(t: asyncio.Task):
-        print("FIRED!!!")
-        try:
-            result = t.result()
-            if result:
-                print("RESULT", result)
-                try:
-                    utterance = result[0]
-                except Exception:  # noqa: BLE001
-                    utterance = ""
-
-                # We could publish assistant utterances here if needed.
-                # Update activity time on assistant response
-                touch_activity()
-
-                if result[1]:
-                    asyncio.create_task(
-                        event_broker.publish(
-                            "app:comms:interrupt",
-                            VoiceInterrupt(contact=contact).to_json(),
-                        ),
-                    )
-        except asyncio.CancelledError:
-            pass
-
-    async def collect_events():
-        global chunk_queue
-
+        The Main CM Brain (slow brain) sends realtime_guidance events when it has
+        important information to share (data provision, data requests, notifications).
+        """
+        print("waiting for guidance from Main CM Brain...")
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe(
-                "app:call:response_gen",
-                "app:unify_meet:response_gen",
-                "app:call:status",
-            )
-            print("waiting for events...")
+            await pubsub.subscribe("app:call:realtime_guidance", "app:call:status")
             while True:
-                try:
-                    msg = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
-                        timeout=None,
-                    )
-                    if msg is None:
-                        continue
-                    print("done", msg)
-                    msg = json.loads(msg["data"])
-                    print("GOT", msg)
+                msg = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=None,
+                )
+                if msg is not None:
+                    print("got guidance", msg)
+                    data = json.loads(msg["data"])
 
-                    # Update activity time on any event
                     touch_activity()
 
-                    # handle msg
-                    if msg["type"] == "call_answered":
+                    # Handle status messages (call answered, stop)
+                    if data.get("type") == "call_answered":
                         print("call received")
                         assistant.set_call_received()
-                    elif msg["type"] == "start_gen":
-                        chunk_queue = asyncio.Queue()
-                        t = asyncio.create_task(response_task())
-                        t.add_done_callback(on_response_end)
-                    elif msg["type"] == "gen_chunk" or msg["type"] == "end_gen":
-                        chunk_queue.put_nowait(msg)
-                    elif msg["type"] == "stop":
+                        continue
+                    elif data.get("type") == "stop":
                         print("STOPPING CALL")
                         await end_call()
-                except Exception as e:  # noqa: BLE001
-                    print(f"Error in collect_events: {e}")
-                    break  # Exit the loop on error
+                        break
 
-    asyncio.create_task(collect_events())
+                    # Handle guidance from Main CM Brain
+                    payload = data.get("payload", {})
+                    content = payload.get("content", "")
+                    if content:
+                        # Inject guidance into the conversation context
+                        chat_ctx = session.chat_ctx
+                        chat_ctx.add_message(
+                            role="user",
+                            content=[f"[notification] {content}"],
+                        )
+
+                        nonlocal user_is_speaking
+
+                        # Generate response if user isn't speaking and last message wasn't assistant
+                        if (
+                            not user_is_speaking
+                            and chat_ctx.items[-1].role != "assistant"
+                        ):
+                            await session.generate_reply(allow_interruptions=True)
+
+                await asyncio.sleep(0.1)
+
+    print("starting AgentSession")
+    await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
+    asyncio.create_task(wait_for_guidance())
+    await session.generate_reply(allow_interruptions=True)
 
 
 if __name__ == "__main__":
-    # Shared CLI handling
-    agent_name, room_name = configure_from_cli(extra_env=[("CONTACT", True)])
+    # Shared CLI handling (same as realtime_call.py)
+    agent_name, room_name = configure_from_cli(
+        extra_env=[
+            ("CONTACT", True),
+            ("BOSS", True),
+            ("ASSISTANT_BIO", False),
+        ],
+    )
 
-    # dispatch agent
+    # Dispatch agent
     if should_dispatch_agent():
         print(f"Dispatching agent {agent_name}")
         dispatch_agent(agent_name, room_name)
