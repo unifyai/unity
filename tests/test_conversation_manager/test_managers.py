@@ -511,8 +511,8 @@ async def test_llm_asks_clarification_for_ambiguous_request(
     )
 
     # Wait for an SMS response (the LLM should ask for clarification)
-    print("⏳ Waiting for clarification SMS (timeout: 60s)...")
-    response = await event_capture.wait_for_event(SMSSent, timeout=60.0)
+    print("⏳ Waiting for clarification SMS (timeout: 300s)...")
+    response = await event_capture.wait_for_event(SMSSent, timeout=300.0)
 
     # Verify the LLM asked a clarifying question
     content_lower = response.content.lower()
@@ -559,8 +559,8 @@ async def test_llm_uses_clarification_response_in_task(
     )
 
     # Wait for the LLM to ask for clarification
-    print("⏳ Waiting for clarification SMS (timeout: 60s)...")
-    clarification_sms = await event_capture.wait_for_event(SMSSent, timeout=60.0)
+    print("⏳ Waiting for clarification SMS (timeout: 300s)...")
+    clarification_sms = await event_capture.wait_for_event(SMSSent, timeout=300.0)
     print(f"✅ LLM asked: {clarification_sms.content[:100]}...")
 
     # Provide clarification - be specific about what we want

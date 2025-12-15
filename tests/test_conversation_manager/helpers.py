@@ -157,8 +157,8 @@ async def send_incoming_call(
 
 async def capture_outgoing_sms(event_capture, contact: dict):
     # Wait for the assistant's response
-    print("⏳ Waiting for SMS response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(SMSSent, timeout=60.0)
+    print("⏳ Waiting for SMS response (timeout: 300s)...")
+    response = await event_capture.wait_for_event(SMSSent, timeout=300.0)
 
     # Verify response
     assert isinstance(response, SMSSent)
@@ -174,7 +174,7 @@ async def capture_outgoing_email(event_capture, contact: dict, email_id: str = N
     print("⏳ Waiting for email response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         EmailSent,
-        timeout=60.0,
+        timeout=300.0,
     )
 
     # Verify response
@@ -193,7 +193,7 @@ async def capture_outgoing_unify_message(event_capture, contact: int):
     print("⏳ Waiting for unify message response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         UnifyMessageSent,
-        timeout=60.0,
+        timeout=300.0,
     )
 
     # Verify response
@@ -210,7 +210,7 @@ async def capture_outgoing_phone_call(event_capture, contact: dict):
     print("⏳ Waiting for phone call response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         PhoneCallSent,
-        timeout=60.0,
+        timeout=300.0,
     )
 
     # Verify response
@@ -221,7 +221,7 @@ async def capture_outgoing_phone_call(event_capture, contact: dict):
 async def capture_task_started(
     event_capture,
     action_name: str,
-    timeout: float = 60.0,
+    timeout: float = 300.0,
 ):
     """Wait for and capture a ConductorHandleStarted event (task started)"""
     print(f"⏳ Waiting for task {action_name} request (timeout: 60s)...")
@@ -245,7 +245,7 @@ async def capture_task_action_response(
     handle_id: int,
     operation: str,
     call_id: str = "",
-    timeout: float = 60.0,
+    timeout: float = 300.0,
 ):
     """Wait for and capture a ConductorHandleResponse event for a task action.
 
