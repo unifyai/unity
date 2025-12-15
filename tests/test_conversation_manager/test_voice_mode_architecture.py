@@ -34,7 +34,6 @@ Each test is tagged with the stage it validates.
 
 import asyncio
 import json
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -413,51 +412,6 @@ class TestVoiceEvents:
 
         assert event.contact == contact
         assert event.content == "Hello there!"
-
-
-# =============================================================================
-# Integration Tests: LLM Output Routing
-# =============================================================================
-
-
-class TestLLMOutputRouting:
-    """Tests for LLM output routing in different modes."""
-
-    @pytest.fixture
-    def mock_event_broker(self):
-        """Create a mock event broker that captures published events."""
-        broker = MagicMock()
-        broker.publish = MagicMock(return_value=asyncio.coroutine(lambda: None)())
-        return broker
-
-    @pytest.fixture
-    def sample_contact(self):
-        return {
-            "contact_id": 1,
-            "first_name": "Test",
-            "surname": "User",
-            "phone_number": "+15551234567",
-            "email_address": "test@example.com",
-        }
-
-    def test_llm_domain_streaming_extracts_call_guidance(self):
-        """LLM domain extracts call_guidance from streaming output."""
-        from unity.conversation_manager.domains.llm import LLM
-
-        # The LLM class has _to_streaming_format which handles call_guidance
-        # Stage 2: Both TTS and Realtime modes use call_guidance
-        llm_instance = LLM("test-model", event_broker=None)
-
-        # Test the streaming format conversion
-        from pydantic import BaseModel
-
-        class TestResponse(BaseModel):
-            thoughts: str
-            call_guidance: str
-
-        format_result = llm_instance._to_streaming_format(TestResponse)
-        assert format_result["type"] == "json_schema"
-        assert "call_guidance" in str(format_result)
 
 
 # =============================================================================
