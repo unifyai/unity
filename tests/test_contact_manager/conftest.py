@@ -9,6 +9,8 @@ import functools
 
 import unify
 from unity.contact_manager.contact_manager import ContactManager
+from unity.singleton_registry import SingletonRegistry
+from unity.common.context_registry import ContextRegistry
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -145,6 +147,9 @@ async def contact_scenario(
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data. Build scenario once and reuse across tests.
     """
+    SingletonRegistry.clear()
+    ContextRegistry.clear()
+
     os.environ["TQDM_DISABLE"] = "1"
 
     ctx = "tests/test_contact/Scenario"
