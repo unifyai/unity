@@ -258,6 +258,13 @@ class StartupEvent(Event):
 
 
 @dataclass
+class InitializationComplete(Event):
+    """Published when ConversationManager has fully initialized all managers."""
+
+    loggable: ClassVar[bool] = False
+
+
+@dataclass
 class AssistantUpdateEvent(Event):
     loggable: ClassVar[bool] = False
     api_key: str
