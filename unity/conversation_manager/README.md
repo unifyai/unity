@@ -116,32 +116,34 @@ Dataclass-based event definitions:
 ### `CallManager` (`domains/call_manager.py`)
 
 Manages voice call lifecycle:
-- **Realtime Mode**: Uses GPT Realtime API for ultra-low-latency responses
-- **TTS Mode**: Traditional STT → LLM → TTS pipeline
+- **STS Mode**: Speech-to-Speech via audio-native LLM (e.g., OpenAI Realtime API)
+- **TTS Mode**: Text-to-Speech pipeline (STT → Fast Brain → TTS)
 
 ---
 
-## Two Operating Modes
+## Two Voice Modes
 
-### 1. Non-Realtime Mode (TTS/STT Pipeline)
+Both modes use the "fast brain / slow brain" architecture where the Voice Agent (fast brain) handles conversation autonomously while the Main CM Brain (slow brain) provides guidance.
 
-```
-User speaks → STT transcribes → InboundPhoneUtterance event
-    → Main CM Brain thinks → generates response
-    → Response published → TTS speaks
-```
-
-The Main CM Brain has full control over responses.
-
-### 2. Realtime Mode (GPT Realtime API)
+### 1. TTS Mode (Text-to-Speech Pipeline)
 
 ```
-User speaks → GPT Realtime processes live → responds immediately
-    → Transcription of response → AssistantUtterance event
-    → Main CM Brain receives for logging/guidance
+User speaks → STT transcribes → Fast Brain (text LLM) → TTS speaks
+    ↑                                                      ↓
+    └──────── Main CM Brain provides CallGuidance ─────────┘
 ```
 
-GPT Realtime handles the live conversation. The Main CM Brain provides "guidance" via `CallGuidance` events rather than direct responses.
+Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-nano) for fast responses.
+
+### 2. STS Mode (Speech-to-Speech)
+
+```
+User speaks → Audio-native LLM (OpenAI Realtime API) → responds immediately
+    ↑                                                      ↓
+    └──────── Main CM Brain provides CallGuidance ─────────┘
+```
+
+Uses OpenAI's Realtime API for native audio-to-audio processing with ultra-low latency.
 
 ---
 
