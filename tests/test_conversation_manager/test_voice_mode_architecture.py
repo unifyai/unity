@@ -440,24 +440,24 @@ class TestLLMOutputRouting:
             "email_address": "test@example.com",
         }
 
-    def test_llm_domain_streaming_extracts_voice_utterance(self):
-        """LLM domain extracts voice_utterance from streaming output."""
+    def test_llm_domain_streaming_extracts_realtime_guidance(self):
+        """LLM domain extracts realtime_guidance from streaming output."""
         from unity.conversation_manager.domains.llm import LLM
 
-        # The LLM class has _to_streaming_format which handles voice_utterance
-        # This is used in TTS mode for streaming responses
-        llm = LLM("test-model", event_broker=None)
+        # The LLM class has _to_streaming_format which handles realtime_guidance
+        # Stage 2: Both TTS and Realtime modes use realtime_guidance
+        llm_instance = LLM("test-model", event_broker=None)
 
         # Test the streaming format conversion
         from pydantic import BaseModel
 
         class TestResponse(BaseModel):
             thoughts: str
-            voice_utterance: str
+            realtime_guidance: str
 
-        format_result = llm._to_streaming_format(TestResponse)
+        format_result = llm_instance._to_streaming_format(TestResponse)
         assert format_result["type"] == "json_schema"
-        assert "voice_utterance" in str(format_result)
+        assert "realtime_guidance" in str(format_result)
 
 
 # =============================================================================
@@ -599,7 +599,6 @@ class TestVoiceCallFlowIntegration:
         # This test verifies the event is properly formed
         assert event.content == "Please ask about their schedule"
 
-    @pytest.mark.skip(reason="Stage 2: Enable after TTS mode uses guidance pattern")
     async def test_tts_mode_publishes_guidance_not_utterance(
         self,
         test_redis_client,
@@ -607,14 +606,27 @@ class TestVoiceCallFlowIntegration:
         boss_contact,
     ):
         """
-        [Stage 2] TTS mode should publish realtime_guidance events.
+        [Stage 2] TTS mode publishes realtime_guidance events.
 
-        After refactoring, when the Main CM Brain responds during a TTS call,
-        it should publish RealtimeGuidance instead of OutboundPhoneUtterance.
+        Stage 2 is complete - when the Main CM Brain responds during a TTS call,
+        it publishes RealtimeGuidance instead of OutboundPhoneUtterance.
         """
+        # Verify by checking the conversation_manager code uses guidance pattern
+        import inspect
+        from unity.conversation_manager import conversation_manager as cm_module
 
-        # This test will be implemented when Stage 2 is complete
-        # It should verify that TTS mode publishes guidance events
+        source = inspect.getsource(cm_module.ConversationManager._run_llm)
+        # After Stage 2, TTS mode should publish RealtimeGuidance
+        assert (
+            "RealtimeGuidance" in source
+        ), "Should use RealtimeGuidance for voice modes"
+        # Should NOT have separate paths for realtime vs TTS utterance publishing
+        assert (
+            "OutboundPhoneUtterance" not in source
+        ), "Should not publish OutboundPhoneUtterance anymore"
+        assert (
+            "OutboundUnifyMeetUtterance" not in source
+        ), "Should not publish OutboundUnifyMeetUtterance anymore"
 
 
 # =============================================================================
@@ -842,23 +854,87 @@ class TestStage3TTSFastBrain:
     """
     [Stage 3] Tests for TTS Fast Brain implementation.
 
-    These tests verify that after Stage 3:
+    Stage 3 is complete. These tests verify:
     - call.py has its own lightweight LLM for conversational responses
     - The TTS fast brain receives guidance from the Main CM Brain
     - The fast brain uses the same prompt as the Realtime phone agent
     """
 
-    @pytest.mark.skip(reason="Stage 3: Enable after implementing TTS fast brain")
     def test_tts_call_has_fast_brain_model(self):
-        """TTS call.py should have a fast LLM for conversational responses."""
-        # This would inspect the call.py implementation
+        """TTS call.py uses openai.LLM for fast conversational responses."""
+        import inspect
+        from unity.conversation_manager.medium_scripts import call as call_module
 
-    @pytest.mark.skip(reason="Stage 3: Enable after implementing TTS fast brain")
+        # Check that openai plugin is imported
+        assert hasattr(call_module, "openai"), "openai plugin should be imported"
+
+        # Check that entrypoint uses openai.LLM
+        source = inspect.getsource(call_module.entrypoint)
+        assert "openai.LLM" in source, "entrypoint should use openai.LLM for fast brain"
+        assert "gpt-4o-mini" in source, "fast brain should use gpt-4o-mini model"
+
     def test_tts_fast_brain_receives_guidance(self):
-        """TTS fast brain should subscribe to realtime_guidance channel."""
-        # This would verify the event subscription in call.py
+        """TTS fast brain subscribes to realtime_guidance channel."""
+        import inspect
+        from unity.conversation_manager.medium_scripts import call as call_module
 
-    @pytest.mark.skip(reason="Stage 3: Enable after implementing TTS fast brain")
+        source = inspect.getsource(call_module.entrypoint)
+        # Verify subscription to guidance channel
+        assert (
+            "app:call:realtime_guidance" in source
+        ), "call.py should subscribe to realtime_guidance"
+        assert (
+            "wait_for_guidance" in source
+        ), "call.py should have wait_for_guidance function"
+
     def test_tts_fast_brain_uses_phone_agent_prompt(self):
-        """TTS fast brain should use build_realtime_phone_agent_prompt."""
-        # This would verify the prompt used in call.py matches realtime_call.py
+        """TTS fast brain uses build_realtime_phone_agent_prompt."""
+        import inspect
+        from unity.conversation_manager.medium_scripts import call as call_module
+
+        # Check that build_realtime_phone_agent_prompt is imported
+        assert hasattr(
+            call_module,
+            "build_realtime_phone_agent_prompt",
+        ), "build_realtime_phone_agent_prompt should be imported"
+
+        # Check that entrypoint uses this prompt builder
+        source = inspect.getsource(call_module.entrypoint)
+        assert (
+            "build_realtime_phone_agent_prompt" in source
+        ), "entrypoint should use build_realtime_phone_agent_prompt"
+
+    def test_tts_and_realtime_use_same_cli_args(self):
+        """TTS and Realtime modes use the same CLI arguments (CONTACT, BOSS, BIO)."""
+        import inspect
+        from unity.conversation_manager.medium_scripts import (
+            call as call_module,
+            realtime_call as realtime_module,
+        )
+
+        call_source = inspect.getsource(call_module)
+        realtime_source = inspect.getsource(realtime_module)
+
+        # Both should use CONTACT, BOSS, and ASSISTANT_BIO env vars
+        for env_var in ["CONTACT", "BOSS", "ASSISTANT_BIO"]:
+            assert env_var in call_source, f"call.py should use {env_var}"
+            assert env_var in realtime_source, f"realtime_call.py should use {env_var}"
+
+    def test_call_manager_passes_boss_to_tts_mode(self):
+        """CallManager passes boss details to TTS mode (not just Realtime)."""
+        import inspect
+        from unity.conversation_manager.domains import call_manager as cm_module
+
+        source = inspect.getsource(cm_module.LivekitCallManager.start_call)
+        # Boss and assistant_bio should always be in the args list (not conditionally)
+        assert "json.dumps(boss)" in source, "start_call should pass boss"
+        assert "self.assistant_bio" in source, "start_call should pass assistant_bio"
+
+        # The args list should include boss/bio unconditionally - check that they
+        # appear BEFORE the if statement that selects the script
+        boss_line = source.find("json.dumps(boss)")
+        if_realtime_line = source.find("if self.realtime:")
+        assert boss_line < if_realtime_line, (
+            "boss should be added to args before the realtime conditional "
+            "(should not be conditionally added)"
+        )

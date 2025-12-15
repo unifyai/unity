@@ -35,9 +35,10 @@ class LivekitCallManager:
         self.voice_id = config.voice_id
         self.realtime = config.voice_mode == "sts"
 
-    # TODO: support unify calls and clean up boss data passage
     def start_call(self, contact: dict, boss: dict, outbound: bool = False):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
+        # Both TTS and Realtime modes use the fast brain architecture and need
+        # boss details and assistant bio for the phone agent prompt
         args = [
             self.assistant_number,
             self.voice_provider,
@@ -45,9 +46,10 @@ class LivekitCallManager:
             outbound,
             "phone",
             json.dumps(contact),
+            json.dumps(boss),
+            self.assistant_bio,
         ]
         if self.realtime:
-            args += [json.dumps(boss), self.assistant_bio]
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"
@@ -81,6 +83,8 @@ class LivekitCallManager:
                 else "unity_unify_meet_1"
             )
         )
+        # Both TTS and Realtime modes use the fast brain architecture and need
+        # boss details and assistant bio for the phone agent prompt
         args = [
             f"{agent_name}:{room_name}",
             self.voice_provider,
@@ -88,9 +92,10 @@ class LivekitCallManager:
             False,
             "unify",
             json.dumps(contact),
+            json.dumps(boss),
+            self.assistant_bio,
         ]
         if self.realtime:
-            args += [json.dumps(boss), self.assistant_bio]
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"
