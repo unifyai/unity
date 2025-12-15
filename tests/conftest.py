@@ -31,6 +31,8 @@ import pytest
 import unify
 from pytest_metadata.plugin import metadata_key
 
+from datetime import datetime, timezone
+
 # --------------------------------------------------------------------------- #
 # 1. Early logging guard                                                      #
 # --------------------------------------------------------------------------- #
@@ -54,6 +56,13 @@ def pytest_report_header(config):
 # --------------------------------------------------------------------------- #
 # 2. Test stubs (Redis, BrowserWorker, DateTime)                              #
 # --------------------------------------------------------------------------- #
+
+_FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(scope="session")
+def static_now():
+    return _FIXED_DATETIME
 
 
 @pytest.fixture(autouse=True)
@@ -137,17 +146,14 @@ def stub_controller_deps(monkeypatch):
     # 1. prompt_helpers.now() -> string for "Current UTC time is..." footer
     # 2. Event/Message timestamps -> datetime for "@ Friday, June 13, 2025..." in messages
     # We stub both to the same fixed point in time for cache consistency.
-    from datetime import datetime, timezone
-
-    _fixed_dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
 
     def _static_now(time_only: bool = False):
         """Return a fixed timestamp string for prompt footers."""
         label = "UTC"
         return (
-            _fixed_dt.strftime("%H:%M:%S ") + label
+            _FIXED_DATETIME.strftime("%H:%M:%S ") + label
             if time_only
-            else _fixed_dt.strftime("%Y-%m-%d %H:%M:%S ") + label
+            else _FIXED_DATETIME.strftime("%Y-%m-%d %H:%M:%S ") + label
         )
 
     # Patch prompt_helpers.now for prompt footers
@@ -158,7 +164,7 @@ def stub_controller_deps(monkeypatch):
     # Patch events._get_now for Event/Message timestamps in renderer output
     monkeypatch.setattr(
         "unity.conversation_manager.events._get_now",
-        lambda: _fixed_dt,
+        lambda: _FIXED_DATETIME,
     )
 
 
