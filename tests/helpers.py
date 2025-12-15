@@ -273,6 +273,7 @@ def _handle_project(
 import asyncio
 import re
 import uuid
+import random
 
 DEFAULT_TIMEOUT = 60
 
@@ -316,7 +317,8 @@ async def _assert_blocks_while_paused(result_or_coro, delay: float = 0.1):
 
 
 def _unique_token(prefix: str = "TOKEN") -> str:
-    return f"{prefix}-{uuid.uuid4()}"
+    rand_bits = random.getrandbits(128)
+    return f"{prefix}-{uuid.UUID(int=rand_bits, version=4)}"
 
 
 def make_queues():
