@@ -188,7 +188,7 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.cancel_proactive_speech()
 
     # trigger LLM runs for user events in non-realtime mode
-    if not cm.call_manager.realtime and role == "user":
+    if not cm.call_manager.uses_realtime_api and role == "user":
         # start filler only in non-realtime
         await cm.cancel_filler()
         asyncio.create_task(cm.run_filler_once())
@@ -196,7 +196,7 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         await cm.interject_or_run(event.content)
 
     # trigger LLM runs for assistant events in realtime mode
-    elif cm.call_manager.realtime and role == "assistant":
+    elif cm.call_manager.uses_realtime_api and role == "assistant":
         await cm.interject_or_run(event.content)
 
 
@@ -569,7 +569,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
 
     # Speak to voice layer using appropriate channel
     if cm.mode in ["call", "unify_meet"]:
-        if cm.call_manager.realtime:
+        if cm.call_manager.uses_realtime_api:
             # Realtime API: Send as notification
             await cm.event_broker.publish(
                 "app:call:call_guidance",

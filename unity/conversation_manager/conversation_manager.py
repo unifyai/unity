@@ -135,8 +135,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # state - TODO: put the state into a dict or state class
         # access is as a property with a lock, that is locked when an llm run
         # such that you can never modify state while the LLM is running (so actions do not break)
-        # Note: realtime flag is stored for prompt building in _run_llm
-        self._realtime_mode = self.call_manager.realtime
+        # Note: uses_realtime_api flag is stored for prompt building in _run_llm
+        self._uses_realtime_api = self.call_manager.uses_realtime_api
 
         self.mode = "text"
         self.chat_history = []
@@ -230,7 +230,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             surname=boss_contact.surname,
             phone_number=boss_contact.phone_number,
             email_address=boss_contact.email_address,
-            is_voice_call=self._realtime_mode,
+            is_voice_call=self._uses_realtime_api,
             active_tasks=self.active_tasks,
         )
 
@@ -240,7 +240,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Build response model dynamically with current active tasks
         response_models = build_dynamic_response_models(
             active_tasks=self.active_tasks,
-            is_voice_call=self.call_manager.realtime,
+            is_voice_call=self.call_manager.uses_realtime_api,
         )
         response_model = response_models[self.mode]
         out = await self.llm.run(
@@ -248,14 +248,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             messages=self.chat_history + [input_message],
             # realtime model will handle the call so no need to stream anything to the call
             stream_to_call=self.mode in ["call", "unify_meet"]
-            and not self.call_manager.realtime,
+            and not self.call_manager.uses_realtime_api,
             response_model=response_model,
             call_type=self.mode,
             before_stream_start=(
                 self.before_stream_start
                 if (
                     self.mode in ["call", "unify_meet"]
-                    and not self.call_manager.realtime
+                    and not self.call_manager.uses_realtime_api
                 )
                 else None
             ),
@@ -298,7 +298,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self,
                 action.pop("action_name"),
                 **action,
-                is_voice_call=self.call_manager.realtime,
+                is_voice_call=self.call_manager.uses_realtime_api,
             )
             print("done taking actions...")
         self.commit()
@@ -352,7 +352,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await EventHandler.handle_event(
                     event,
                     self,
-                    is_voice_call=self.call_manager.realtime,
+                    is_voice_call=self.call_manager.uses_realtime_api,
                 )
 
     async def check_inactivity(self):
@@ -443,7 +443,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Initial build without active tasks - actual models are rebuilt per LLM call
         self.dynamic_response_models = build_dynamic_response_models(
             active_tasks={},
-            is_voice_call=self.call_manager.realtime,
+            is_voice_call=self.call_manager.uses_realtime_api,
         )
 
     async def store_chat_history(self):
@@ -468,7 +468,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     # Filler related methods
 
     async def run_filler_once(self):
-        if self.call_manager.realtime or self.mode not in [
+        if self.call_manager.uses_realtime_api or self.mode not in [
             "call",
             "unify_meet",
         ]:
@@ -656,7 +656,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
 
             # Publish to voice layer
-            if self.call_manager.realtime:
+            if self.call_manager.uses_realtime_api:
                 await self.event_broker.publish(
                     "app:call:call_guidance",
                     json.dumps({"content": decision.content}),

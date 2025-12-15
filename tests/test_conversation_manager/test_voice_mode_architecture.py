@@ -351,8 +351,8 @@ class TestVoiceModeStateManagement:
         tts_manager = LivekitCallManager(tts_config)
         sts_manager = LivekitCallManager(sts_config)
 
-        assert tts_manager.realtime is False
-        assert sts_manager.realtime is True
+        assert tts_manager.uses_realtime_api is False
+        assert sts_manager.uses_realtime_api is True
 
 
 # =============================================================================
@@ -934,8 +934,8 @@ class TestStage3TTSFastBrain:
         # The args list should include boss/bio unconditionally - check that they
         # appear BEFORE the if statement that selects the script
         boss_line = source.find("json.dumps(boss)")
-        if_realtime_line = source.find("if self.realtime:")
+        if_realtime_line = source.find("if self.uses_realtime_api:")
         assert boss_line < if_realtime_line, (
-            "boss should be added to args before the realtime conditional "
+            "boss should be added to args before the uses_realtime_api conditional "
             "(should not be conditionally added)"
         )
