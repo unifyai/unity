@@ -309,7 +309,7 @@ def build_system_prompt(
     return prompt
 
 
-def build_realtime_phone_agent_prompt(
+def build_voice_agent_prompt(
     *,
     bio: str,
     boss_first_name: str,
@@ -323,10 +323,10 @@ def build_realtime_phone_agent_prompt(
     contact_email: str | None = None,
 ) -> str:
     """
-    Build the system prompt for the realtime phone agent.
+    Build the system prompt for the Voice Agent (fast brain).
 
-    This is the "fast brain" that handles the actual voice conversation,
-    while the ConversationManager is the "slow brain" that handles tasks.
+    The Voice Agent handles the actual voice conversation autonomously,
+    while the Main CM Brain (slow brain) handles orchestration and tasks.
     """
     # Build boss details
     boss_details_parts = [

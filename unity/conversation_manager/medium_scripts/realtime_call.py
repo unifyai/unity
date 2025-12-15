@@ -32,7 +32,7 @@ except ImportError:
 
 from unity.conversation_manager.utils import dispatch_agent
 from unity.conversation_manager.events import *
-from unity.conversation_manager.prompt_builders import build_realtime_phone_agent_prompt
+from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 
 # NEW: shared helpers
 from unity.conversation_manager.medium_scripts.common import (
@@ -161,7 +161,7 @@ async def entrypoint(ctx: JobContext) -> None:
     rio = RoomInputOptions()
 
     # high-level behavior for the assistant.
-    system = build_realtime_phone_agent_prompt(
+    system = build_voice_agent_prompt(
         bio=assistant_bio,
         boss_first_name=boss["first_name"],
         boss_surname=boss["surname"],

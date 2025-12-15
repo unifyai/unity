@@ -246,13 +246,13 @@ class TestPromptBuilders:
         assert "<voice_calls_guide>" in prompt
         assert "Voice Agent" in prompt
 
-    def test_build_realtime_phone_agent_prompt(self):
-        """Realtime phone agent prompt has fast brain instructions."""
+    def test_build_voice_agent_prompt(self):
+        """Voice Agent prompt has fast brain instructions."""
         from unity.conversation_manager.prompt_builders import (
-            build_realtime_phone_agent_prompt,
+            build_voice_agent_prompt,
         )
 
-        prompt = build_realtime_phone_agent_prompt(
+        prompt = build_voice_agent_prompt(
             bio="Test assistant",
             boss_first_name="Test",
             boss_surname="Boss",
@@ -888,22 +888,22 @@ class TestStage3TTSFastBrain:
             "wait_for_guidance" in source
         ), "call.py should have wait_for_guidance function"
 
-    def test_tts_fast_brain_uses_phone_agent_prompt(self):
-        """TTS fast brain uses build_realtime_phone_agent_prompt."""
+    def test_tts_fast_brain_uses_voice_agent_prompt(self):
+        """TTS fast brain uses build_voice_agent_prompt."""
         import inspect
         from unity.conversation_manager.medium_scripts import call as call_module
 
-        # Check that build_realtime_phone_agent_prompt is imported
+        # Check that build_voice_agent_prompt is imported
         assert hasattr(
             call_module,
-            "build_realtime_phone_agent_prompt",
-        ), "build_realtime_phone_agent_prompt should be imported"
+            "build_voice_agent_prompt",
+        ), "build_voice_agent_prompt should be imported"
 
         # Check that entrypoint uses this prompt builder
         source = inspect.getsource(call_module.entrypoint)
         assert (
-            "build_realtime_phone_agent_prompt" in source
-        ), "entrypoint should use build_realtime_phone_agent_prompt"
+            "build_voice_agent_prompt" in source
+        ), "entrypoint should use build_voice_agent_prompt"
 
     def test_tts_and_realtime_use_same_cli_args(self):
         """TTS and Realtime modes use the same CLI arguments (CONTACT, BOSS, BIO)."""
