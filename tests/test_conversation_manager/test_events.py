@@ -5,12 +5,18 @@ tests/test_conversation_manager/test_events.py
 Tests for conversation manager event publishing across all communication mediums.
 
 Verifies that the correct inbound and outbound events are published for:
-- Browser voice (UNIFY_MEET): InboundUnifyMeetUtterance / OutboundUnifyMeetUtterance
-- Phone calls (PHONE_CALL): InboundPhoneUtterance / OutboundPhoneUtterance
+- Browser voice (UNIFY_MEET): InboundUnifyMeetUtterance
+- Phone calls (PHONE_CALL): InboundPhoneUtterance
 - Text chat (UNIFY_MESSAGE): UnifyMessageReceived / UnifyMessageSent
 - SMS (SMS_MESSAGE): SMSReceived / SMSSent
 - Email (EMAIL): EmailReceived / EmailSent
+
+Note: Voice modes (UNIFY_MEET, PHONE_CALL) only verify inbound events since
+the Main CM Brain provides guidance to the Voice Agent (fast brain) which
+handles all speech output. The Voice Agent isn't running in these tests.
 """
+
+import asyncio
 
 import pytest
 
@@ -21,15 +27,12 @@ from tests.test_conversation_manager.helpers import (
     send_incoming_sms,
     send_incoming_email,
     send_incoming_unify_message,
-    capture_stream_response,
 )
 from unity.conversation_manager.events import (
     EmailReceived,
     EmailSent,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
-    OutboundPhoneUtterance,
-    OutboundUnifyMeetUtterance,
     PhoneCallEnded,
     SMSReceived,
     SMSSent,
@@ -51,7 +54,12 @@ async def test_unify_meet_publishes_utterance_events(
     event_capture,
 ):
     """
-    Verify that browser voice calls publish inbound and outbound utterance events.
+    Verify that browser voice calls publish inbound utterance events.
+
+    In the voice mode architecture, the Main CM Brain only provides guidance
+    to the Voice Agent (fast brain) - it doesn't produce speech directly.
+    The Voice Agent (not running in these tests) handles all conversational
+    responses.
     """
     event_capture.clear()
 
@@ -65,26 +73,14 @@ async def test_unify_meet_publishes_utterance_events(
         mode="unify_meet",
     )
 
-    start, chunks, end = await capture_stream_response(pubsub, "unify_meet")
-    assert start, "Should receive start_gen"
-    assert len(chunks) > 0, "Should receive chunks"
+    # Give Main CM Brain time to process (it may or may not produce guidance)
+    await asyncio.sleep(3.0)
 
-    # Wait for outbound event (published after stream ends when LLM response is parsed)
-    outbound = await event_capture.wait_for_event(
-        OutboundUnifyMeetUtterance,
-        timeout=30.0,
-    )
-
-    # Verify inbound event
+    # Verify inbound event was recorded
     inbound_events = event_capture.get_events(InboundUnifyMeetUtterance)
     assert len(inbound_events) >= 1
     inbound = inbound_events[0]
     assert inbound.content == "Tell me a joke"
-
-    # Verify outbound event
-    assert hasattr(outbound, "contact")
-    assert hasattr(outbound, "content")
-    assert len(outbound.content) > 0
 
     await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
@@ -102,7 +98,13 @@ async def test_phone_call_publishes_utterance_events(
     event_capture,
 ):
     """
-    Verify that phone calls publish inbound and outbound utterance events.
+    Verify that phone calls publish inbound utterance events.
+
+    In the voice mode architecture, the Main CM Brain only provides guidance
+    to the Voice Agent (fast brain) - it doesn't produce speech directly.
+    The Voice Agent (not running in these tests) handles all conversational
+    responses. The Main CM Brain may or may not send guidance depending on
+    whether it has data to exchange with the Voice Agent.
     """
     event_capture.clear()
 
@@ -116,23 +118,14 @@ async def test_phone_call_publishes_utterance_events(
         mode="call",
     )
 
-    start, chunks, end = await capture_stream_response(pubsub, "call")
-    assert start, "Should receive start_gen"
-    assert len(chunks) > 0, "Should receive chunks"
+    # Give Main CM Brain time to process (it may or may not produce guidance)
+    await asyncio.sleep(3.0)
 
-    # Wait for outbound event (published after stream ends when LLM response is parsed)
-    outbound = await event_capture.wait_for_event(OutboundPhoneUtterance, timeout=30.0)
-
-    # Verify inbound event
+    # Verify inbound event was recorded
     inbound_events = event_capture.get_events(InboundPhoneUtterance)
     assert len(inbound_events) >= 1
     inbound = inbound_events[0]
     assert inbound.content == "Tell me a joke"
-
-    # Verify outbound event
-    assert hasattr(outbound, "contact")
-    assert hasattr(outbound, "content")
-    assert len(outbound.content) > 0
 
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
