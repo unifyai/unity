@@ -3,7 +3,7 @@ import asyncio
 import logging
 
 import json
-from typing import Callable, Optional
+from typing import Optional
 import contextlib
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
@@ -80,7 +80,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         conv_context_length: int = 50,
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
-        user_turn_end_callback: Optional[Callable[[list[dict]], str]] = None,
     ):
         # assistant details
         self.job_name = job_name
@@ -149,14 +148,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._current_snapshot = None
         self.is_summarizing = None
         self.max_messages = 30
-
-        # filler callback when user finishes speaking (phone/unify_meet only)
-        self.user_turn_end_callback: Optional[Callable[[list[dict]], str]] = (
-            user_turn_end_callback
-        )
-        self._filler_task: asyncio.Task | None = None
-        self._filler_started: asyncio.Event = asyncio.Event()
-        self._filler_done: asyncio.Event = asyncio.Event()
 
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
@@ -245,19 +236,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         out = await self.llm.run(
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
-            # realtime model will handle the call so no need to stream anything to the call
-            stream_to_call=self.mode in ["call", "unify_meet"]
-            and not self.call_manager.uses_realtime_api,
             response_model=response_model,
-            call_type=self.mode,
-            before_stream_start=(
-                self.before_stream_start
-                if (
-                    self.mode in ["call", "unify_meet"]
-                    and not self.call_manager.uses_realtime_api
-                )
-                else None
-            ),
         )
         parsed_out = json.loads(out)
         if self.mode in ["call", "unify_meet"]:
@@ -366,16 +345,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.stop.set()
                 await self.event_broker.aclose()
 
-    # Convenience setter to allow late binding of the callback
-    def set_user_turn_end_callback(self, callback: Callable[[list[dict]], str]) -> None:
-        """Set or replace the callback invoked at user turn end (phone).
-
-        The callback receives the current chat_history (list of messages) and
-        should return a short filler string to be injected just before the
-        assistant's next streamed response begins.
-        """
-        self.user_turn_end_callback = callback
-
     def set_details(self, payload: dict):
         """Populate assistant/user/voice details into SESSION_DETAILS."""
         self.user_id = payload["user_id"]
@@ -460,58 +429,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             print(f"Marking job {self.job_name} done")
             debug_logger.mark_job_done(self.job_name)
         self.stop.set()
-
-    # ToDo: Refactor this to use the debouncer like the LLM run
-
-    # Filler related methods
-
-    async def run_filler_once(self):
-        if self.call_manager.uses_realtime_api or self.mode not in [
-            "call",
-            "unify_meet",
-        ]:
-            return
-
-        # record the running task so before_stream_start can coordinate
-        self._filler_task = asyncio.current_task()
-        self._filler_started = asyncio.Event()
-        self._filler_done = asyncio.Event()
-        if not self.user_turn_end_callback:
-            self._filler_task = None
-            return
-
-        # pre-compute filler so streaming isn't blocked after start
-        try:
-            filler_text = self.user_turn_end_callback(self.chat_history) or ""
-        except Exception:
-            filler_text = ""
-        self._filler_started.set()
-        channel = f"app:{self.mode}:response_gen"
-        await self.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
-        if filler_text:
-            await self.event_broker.publish(
-                channel,
-                json.dumps({"type": "gen_chunk", "chunk": filler_text}),
-            )
-        await self.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
-        self._filler_done.set()
-        self._filler_task = None
-
-    async def cancel_filler(self):
-        # cancel the running filler task
-        if self._filler_task and not self._filler_task.done():
-            self._filler_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._filler_task
-            self._filler_task = None
-
-    async def before_stream_start(self):
-        # called just before the LLM streaming emits first start_gen
-        if self._filler_task and not self._filler_task.done():
-            if not self._filler_started.is_set():
-                await self.cancel_filler()
-            else:
-                await self._filler_done.wait()
 
     # Proactive speech related methods
 
@@ -653,26 +570,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     role="assistant",
                 )
 
-            # Publish to voice layer
-            if self.call_manager.uses_realtime_api:
-                await self.event_broker.publish(
-                    "app:call:call_guidance",
-                    json.dumps({"content": decision.content}),
-                )
-            else:
-                channel = f"app:{self.mode}:response_gen"
-                await self.event_broker.publish(
-                    channel,
-                    json.dumps({"type": "start_gen"}),
-                )
-                await self.event_broker.publish(
-                    channel,
-                    json.dumps({"type": "gen_chunk", "chunk": decision.content}),
-                )
-                await self.event_broker.publish(
-                    channel,
-                    json.dumps({"type": "end_gen"}),
-                )
+            # Publish to Voice Agent via call_guidance channel
+            await self.event_broker.publish(
+                "app:call:call_guidance",
+                json.dumps({"content": decision.content}),
+            )
 
             await self.schedule_proactive_speech()
 

@@ -183,20 +183,10 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     )
     cm.contact_index.push_message(contact, "voice", event.content, role=role)
 
-    # cancel proactive speech
+    # cancel proactive speech on user input
     if role == "user":
         await cm.cancel_proactive_speech()
-
-    # trigger LLM runs for user events in non-realtime mode
-    if not cm.call_manager.uses_realtime_api and role == "user":
-        # start filler only in non-realtime
-        await cm.cancel_filler()
-        asyncio.create_task(cm.run_filler_once())
-
-        await cm.interject_or_run(event.content)
-
-    # trigger LLM runs for assistant events in realtime mode
-    elif cm.call_manager.uses_realtime_api and role == "assistant":
+        # Trigger Main CM Brain to process user input and potentially send guidance
         await cm.interject_or_run(event.content)
 
 
@@ -567,23 +557,12 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
 async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwargs):
     print(f"Received DirectMessageEvent: {event.content}")
 
-    # Speak to voice layer using appropriate channel
+    # Send to Voice Agent via call_guidance channel
     if cm.mode in ["call", "unify_meet"]:
-        if cm.call_manager.uses_realtime_api:
-            # Realtime API: Send as notification
-            await cm.event_broker.publish(
-                "app:call:call_guidance",
-                json.dumps({"content": event.content}),
-            )
-        else:
-            # STT-TTS pipeline: Send to response_gen channel
-            channel = f"app:{cm.mode}:response_gen"
-            await cm.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
-            await cm.event_broker.publish(
-                channel,
-                json.dumps({"type": "gen_chunk", "chunk": event.content}),
-            )
-            await cm.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
+        await cm.event_broker.publish(
+            "app:call:call_guidance",
+            json.dumps({"content": event.content}),
+        )
 
     # Record in contact_index for transcript access
     contact = cm.call_manager.call_contact or cm.contact_index.get_contact(contact_id=1)
