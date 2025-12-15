@@ -299,7 +299,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    # Shared CLI handling (same as realtime_call.py)
+    # Shared CLI handling (same as sts_call.py)
     agent_name, room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),
