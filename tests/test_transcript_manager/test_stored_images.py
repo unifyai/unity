@@ -96,7 +96,7 @@ def test_attach_image_promotes_block():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_ask_uses_images_for_color():
+async def test_ask_uses_images_for_color(static_now):
     """
     Contrived scenario:
     - Create an image (blue pixel) and log a message that references it, framed as a
@@ -113,7 +113,7 @@ async def test_ask_uses_images_for_color():
     [img_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(days=7),
+                "timestamp": static_now - timedelta(days=7),
                 "caption": "zoe video-conference blue screen",
                 "data": PNG_BLUE_B64,
             },
@@ -126,7 +126,7 @@ async def test_ask_uses_images_for_color():
             "medium": "phone_call",
             "sender_id": Contact(first_name="Zoe"),
             "receiver_ids": [Contact(first_name="Sam")],
-            "timestamp": datetime.now(timezone.utc) - timedelta(days=7),
+            "timestamp": static_now - timedelta(days=7),
             "content": (
                 "Zoe on video conference: my screen is one colour, what is happening?"
             ),

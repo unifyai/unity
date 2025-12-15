@@ -57,7 +57,7 @@ def test_json_omits_empty_fields():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_search_tool_omits_empty():
+async def test_ask_search_tool_omits_empty(static_now):
     """
     Real tool-loop: TM.ask triggers search_messages on first step. Verify the
     tool result inserted into the transcript does not expose empty fields like
@@ -76,7 +76,7 @@ async def test_ask_search_tool_omits_empty():
                 medium="email",
                 sender_id=0,
                 receiver_ids=[1],
-                timestamp=datetime.now(UTC),
+                timestamp=static_now,
                 content="banking and budgeting discussion",
                 exchange_id=100,
             ),
@@ -84,7 +84,7 @@ async def test_ask_search_tool_omits_empty():
                 medium="email",
                 sender_id=1,
                 receiver_ids=[0],
-                timestamp=datetime.now(UTC),
+                timestamp=static_now,
                 content="random unrelated",
                 exchange_id=101,
             ),
