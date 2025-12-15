@@ -152,6 +152,8 @@ def stub_controller_deps(monkeypatch):
 
     # Patch prompt_helpers.now for prompt footers
     monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
+    monkeypatch.setattr("unity.guidance_manager.prompt_builders.now", _static_now)
+    monkeypatch.setattr("unity.secret_manager.prompt_builders.now", _static_now)
 
     # Patch events._get_now for Event/Message timestamps in renderer output
     monkeypatch.setattr(
