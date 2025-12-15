@@ -346,7 +346,7 @@ async def test_phone_call(test_redis_client, event_capture):
     assert inbound_events[0].content == "Tell me a joke"
 
     # Cleanup subscription
-    await pubsub.unsubscribe("app:call:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     print("\n✅ Phone call test complete!")
@@ -380,7 +380,7 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
     )
 
     # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     # Capture outgoing SMS and verify response
@@ -415,7 +415,7 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
     )
 
     # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     # Capture outgoing email and verify response
@@ -450,7 +450,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
     )
 
     # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     # Capture outgoing unify message and verify response
@@ -498,7 +498,7 @@ async def test_unify_meet(test_redis_client, event_capture):
     assert inbound_events[0].content == "Tell me a joke"
 
     # Cleanup subscription
-    await pubsub.unsubscribe("app:unify_meet:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     print("\n✅ Unify meet test complete!")
@@ -538,7 +538,7 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
     )
 
     # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:unify_meet:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     # Capture outgoing SMS and verify response
@@ -574,7 +574,7 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
     )
 
     # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:unify_meet:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     # Capture outgoing email and verify response
@@ -610,7 +610,7 @@ async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
     )
 
     # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:unify_meet:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     # Capture outgoing unify message and verify response

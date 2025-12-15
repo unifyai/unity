@@ -82,7 +82,7 @@ async def test_unify_meet_publishes_utterance_events(
     inbound = inbound_events[0]
     assert inbound.content == "Tell me a joke"
 
-    await pubsub.unsubscribe("app:unify_meet:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     await test_redis_client.publish(
@@ -127,7 +127,7 @@ async def test_phone_call_publishes_utterance_events(
     inbound = inbound_events[0]
     assert inbound.content == "Tell me a joke"
 
-    await pubsub.unsubscribe("app:call:response_gen")
+    await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
     await test_redis_client.publish(
