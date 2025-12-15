@@ -230,7 +230,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             surname=boss_contact.surname,
             phone_number=boss_contact.phone_number,
             email_address=boss_contact.email_address,
-            realtime=self._realtime_mode,
+            is_voice_call=self._realtime_mode,
             active_tasks=self.active_tasks,
         )
 
@@ -240,7 +240,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Build response model dynamically with current active tasks
         response_models = build_dynamic_response_models(
             active_tasks=self.active_tasks,
-            realtime=self.call_manager.realtime,
+            is_voice_call=self.call_manager.realtime,
         )
         response_model = response_models[self.mode]
         out = await self.llm.run(
@@ -298,7 +298,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self,
                 action.pop("action_name"),
                 **action,
-                realtime=self.call_manager.realtime,
+                is_voice_call=self.call_manager.realtime,
             )
             print("done taking actions...")
         self.commit()
@@ -352,7 +352,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await EventHandler.handle_event(
                     event,
                     self,
-                    realtime=self.call_manager.realtime,
+                    is_voice_call=self.call_manager.realtime,
                 )
 
     async def check_inactivity(self):
@@ -443,7 +443,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Initial build without active tasks - actual models are rebuilt per LLM call
         self.dynamic_response_models = build_dynamic_response_models(
             active_tasks={},
-            realtime=self.call_manager.realtime,
+            is_voice_call=self.call_manager.realtime,
         )
 
     async def store_chat_history(self):

@@ -212,7 +212,7 @@ class TestPromptBuilders:
             surname="User",
             phone_number="+15551234567",
             email_address="test@example.com",
-            realtime=False,
+            is_voice_call=False,
             active_tasks={},
         )
 
@@ -226,8 +226,8 @@ class TestPromptBuilders:
         assert "call_guidance" in prompt
         assert "voice_utterance" not in prompt
 
-    def test_build_system_prompt_realtime_mode(self):
-        """System prompt for realtime mode mentions call_guidance."""
+    def test_build_system_prompt_voice_call_mode(self):
+        """System prompt for voice call mode mentions call_guidance."""
         from unity.conversation_manager.prompt_builders import build_system_prompt
 
         prompt = build_system_prompt(
@@ -237,7 +237,7 @@ class TestPromptBuilders:
             surname="User",
             phone_number="+15551234567",
             email_address="test@example.com",
-            realtime=True,
+            is_voice_call=True,
             active_tasks={},
         )
 
@@ -278,7 +278,7 @@ class TestPromptBuilders:
             contact_id=1,
             first_name="Test",
             surname="User",
-            realtime=False,  # TTS mode
+            is_voice_call=False,  # TTS mode
             active_tasks={},
         )
 
