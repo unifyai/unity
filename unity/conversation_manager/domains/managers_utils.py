@@ -498,6 +498,12 @@ async def init_conv_manager(cm: "ConversationManager") -> None:
             # Mark as initialized
             cm.initialized = True
 
+            # Publish initialization complete event for test synchronization
+            await event_broker.publish(
+                "app:comms:initialization_complete",
+                InitializationComplete().to_json(),
+            )
+
             print(
                 "[ManagersWorker] Initialization complete in "
                 f"{perf_counter() - start_time:.2f} seconds",

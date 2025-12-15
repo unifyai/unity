@@ -31,6 +31,7 @@ import redis.asyncio as redis
 from unity.conversation_manager.events import (
     Event,
     GetContactsResponse,
+    InitializationComplete,
     StartupEvent,
 )
 
@@ -321,8 +322,9 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
     This fixture is module-scoped and runs automatically (autouse=True) for all
     tests in this module, so tests don't need to explicitly request it.
 
-    Waits for the CM to subscribe to Redis channels, then publishes startup
-    and contacts events.
+    Waits for the CM to subscribe to Redis channels, publishes startup and
+    contacts events, then waits for the InitializationComplete event to ensure
+    all managers are fully initialized before tests run.
 
     Returns: cm_process
     """
@@ -345,10 +347,6 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
         voice_provider="cartesia",
         voice_id="test_voice",
     )
-
-    # wait for the conversation manager to initialize
-    print("Waiting for initialization to complete...")
-    await asyncio.sleep(20)
 
     # Wait for CM to subscribe to channels by checking for active pattern subscriptions
     print("⏳ Waiting for conversation manager to subscribe to Redis channels...")
@@ -375,7 +373,12 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
     # Brief additional wait to ensure CM's get_message() loop is actively polling
     await asyncio.sleep(1)
 
-    # Send startup event
+    # Subscribe to initialization_complete channel BEFORE sending startup event
+    # so we don't miss the event if init is fast
+    pubsub = temp_client.pubsub()
+    await pubsub.subscribe("app:comms:initialization_complete")
+
+    # Send startup event (triggers init_conv_manager in CM)
     print("📤 Publishing startup event...")
     await temp_client.publish("app:comms:startup", startup.to_json())
 
@@ -401,8 +404,32 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
     )
     await temp_client.publish("app:comms:contacts", contacts_event.to_json())
 
-    print("✅ System initialized and ready")
+    # Wait for InitializationComplete event (symbolic synchronization)
+    print("⏳ Waiting for InitializationComplete event...")
+    init_timeout = 300  # 5 minutes for slow initialization under high concurrency
+    start_time = time.perf_counter()
+    while time.perf_counter() - start_time < init_timeout:
+        msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+        if msg and msg["type"] == "message":
+            try:
+                event = Event.from_json(msg["data"])
+                if isinstance(event, InitializationComplete):
+                    elapsed = time.perf_counter() - start_time
+                    print(f"✅ CM initialization complete after {elapsed:.1f}s")
+                    break
+            except Exception:
+                pass
+    else:
+        await pubsub.unsubscribe()
+        await pubsub.aclose()
+        await temp_client.aclose()
+        raise RuntimeError(
+            f"Timeout ({init_timeout}s) waiting for InitializationComplete event",
+        )
 
+    await pubsub.unsubscribe()
+    await pubsub.aclose()
     await temp_client.aclose()
 
+    print("✅ System initialized and ready")
     return conversation_manager_process
