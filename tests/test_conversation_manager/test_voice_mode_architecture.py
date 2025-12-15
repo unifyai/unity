@@ -868,10 +868,13 @@ class TestStage3TTSFastBrain:
         # Check that openai plugin is imported
         assert hasattr(call_module, "openai"), "openai plugin should be imported"
 
-        # Check that entrypoint uses openai.LLM
+        # Check that entrypoint uses openai.LLM with gpt-5-nano
         source = inspect.getsource(call_module.entrypoint)
         assert "openai.LLM" in source, "entrypoint should use openai.LLM for fast brain"
-        assert "gpt-4o-mini" in source, "fast brain should use gpt-4o-mini model"
+        assert "gpt-5-nano" in source, "fast brain should use gpt-5-nano model"
+        assert (
+            'reasoning_effort="none"' in source
+        ), "fast brain should disable reasoning for max speed"
 
     def test_tts_fast_brain_receives_guidance(self):
         """TTS fast brain subscribes to realtime_guidance channel."""
