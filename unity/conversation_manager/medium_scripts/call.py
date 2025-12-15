@@ -28,7 +28,7 @@ load_dotenv()
 
 from unity.conversation_manager.events import *
 from unity.conversation_manager.utils import dispatch_agent
-from unity.conversation_manager.prompt_builders import build_realtime_phone_agent_prompt
+from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 
 # Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
@@ -154,8 +154,8 @@ async def entrypoint(ctx: agents.JobContext):
     # gpt-5-nano with reasoning_effort="none" for maximum speed (disables reasoning)
     llm_model = openai.LLM(model="gpt-5-nano", reasoning_effort="none")
 
-    # Build fast brain prompt (same as Realtime mode)
-    system_prompt = build_realtime_phone_agent_prompt(
+    # Build Voice Agent prompt (used by both TTS and STS modes)
+    system_prompt = build_voice_agent_prompt(
         bio=assistant_bio,
         boss_first_name=boss.get("first_name", ""),
         boss_surname=boss.get("surname", ""),
