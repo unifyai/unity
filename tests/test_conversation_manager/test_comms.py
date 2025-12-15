@@ -3,7 +3,14 @@ tests/test_conversation_manager/test_comms.py
 =============================================
 
 Tests for communication flows (SMS, email, calls, etc.)
+
+Voice call tests verify that events are handled correctly. In the voice
+architecture, the Main CM Brain only provides guidance to the Voice Agent
+(fast brain) - it doesn't produce speech directly. The Voice Agent handles
+all conversational responses. These tests verify event flow, not speech output.
 """
+
+import asyncio
 
 import pytest
 
@@ -16,7 +23,6 @@ from tests.test_conversation_manager.helpers import (
     capture_outgoing_phone_call,
     capture_outgoing_sms,
     capture_outgoing_unify_message,
-    capture_stream_response,
     send_incoming_email,
     send_incoming_call,
     send_incoming_sms,
@@ -309,7 +315,16 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
 @pytest.mark.asyncio
 @_handle_project
 async def test_phone_call(test_redis_client, event_capture):
-    """Test phone call flow."""
+    """
+    Test phone call flow.
+
+    In the voice architecture, the Main CM Brain only provides guidance to the
+    Voice Agent (fast brain) - it doesn't produce speech directly. The Voice
+    Agent handles all conversational responses. We verify the call events are
+    processed correctly.
+    """
+    from unity.conversation_manager.events import InboundPhoneUtterance
+
     # Clear any events from initialization
     event_capture.clear()
 
@@ -322,21 +337,19 @@ async def test_phone_call(test_redis_client, event_capture):
         "Tell me a joke",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
+    # Give Main CM Brain time to process
+    await asyncio.sleep(3.0)
 
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
+    # Verify inbound utterance event was recorded
+    inbound_events = event_capture.get_events(InboundPhoneUtterance)
+    assert len(inbound_events) >= 1, "Should record inbound phone utterance"
+    assert inbound_events[0].content == "Tell me a joke"
 
     # Cleanup subscription
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
-    # Verify exchange completed successfully
-    print(f"\n✅ Phone call test complete!")
-    print(f"   Exchange 2 (Response to user): {len(''.join(chunks2))} characters")
+    print("\n✅ Phone call test complete!")
 
     # End the phone call
     await test_redis_client.publish(
@@ -349,7 +362,10 @@ async def test_phone_call(test_redis_client, event_capture):
 @_handle_project
 async def test_phone_call_to_sms(test_redis_client, event_capture):
     """
-    Test phone call to SMS flow: send an incoming phone call and receive a response.
+    Test phone call to SMS flow: user on a call requests SMS, verify SMS is sent.
+
+    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
+    speech directly. The key assertion is that the SMS action is executed.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -363,15 +379,7 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
         "Tell me a joke via SMS right now",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
-
-    # Cleanup subscription
+    # Cleanup subscription (we don't expect voice streaming)
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
@@ -389,7 +397,10 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
 @_handle_project
 async def test_phone_call_to_email(test_redis_client, event_capture):
     """
-    Test phone call to email flow: send an incoming phone call and receive a response.
+    Test phone call to email flow: user on a call requests email, verify email is sent.
+
+    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
+    speech directly. The key assertion is that the email action is executed.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -403,14 +414,7 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
         "Tell me a joke via email right now",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
-
-    # Cleanup subscription
+    # Cleanup subscription (we don't expect voice streaming)
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
@@ -428,14 +432,16 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
 @_handle_project
 async def test_phone_call_to_unify_message(test_redis_client, event_capture):
     """
-    Test phone call to unify message flow: send an incoming phone call and receive a response.
+    Test phone call to unify message flow: user on a call requests a message.
+
+    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
+    speech directly. The key assertion is that the unify message action is executed.
     """
     # Clear any events from initialization
     event_capture.clear()
 
     # Send incoming phone call
     contact = contacts[1]
-    contact_id = 1
     pubsub = await send_incoming_call(
         test_redis_client,
         contact,
@@ -443,14 +449,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
         "Tell me a joke via unify message right now",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
-
-    # Cleanup subscription
+    # Cleanup subscription (we don't expect voice streaming)
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
@@ -467,7 +466,16 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_meet(test_redis_client, event_capture):
-    """Test unify meet flow."""
+    """
+    Test unify meet flow.
+
+    In the voice architecture, the Main CM Brain only provides guidance to the
+    Voice Agent (fast brain) - it doesn't produce speech directly. The Voice
+    Agent handles all conversational responses. We verify the call events are
+    processed correctly.
+    """
+    from unity.conversation_manager.events import InboundUnifyMeetUtterance
+
     # Clear any events from initialization
     event_capture.clear()
 
@@ -481,20 +489,19 @@ async def test_unify_meet(test_redis_client, event_capture):
         mode="unify_meet",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
+    # Give Main CM Brain time to process
+    await asyncio.sleep(3.0)
+
+    # Verify inbound utterance event was recorded
+    inbound_events = event_capture.get_events(InboundUnifyMeetUtterance)
+    assert len(inbound_events) >= 1, "Should record inbound unify meet utterance"
+    assert inbound_events[0].content == "Tell me a joke"
 
     # Cleanup subscription
     await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
-    # Verify exchange completed successfully
-    print(f"\n✅ Unify meet test complete!")
-    print(f"   Exchange 2 (Response to user): {len(''.join(chunks2))} characters")
+    print("\n✅ Unify meet test complete!")
 
     # End the unify meet
     await test_redis_client.publish(
@@ -512,7 +519,10 @@ async def test_unify_meet(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_meet_to_sms(test_redis_client, event_capture):
     """
-    Test unify meet to SMS flow: send an incoming unify meet and receive a response.
+    Test unify meet to SMS flow: user on a call requests SMS, verify SMS is sent.
+
+    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
+    speech directly. The key assertion is that the SMS action is executed.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -527,14 +537,7 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
         mode="unify_meet",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
-
-    # Cleanup subscription
+    # Cleanup subscription (we don't expect voice streaming)
     await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
@@ -552,7 +555,10 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_meet_to_email(test_redis_client, event_capture):
     """
-    Test unify meet to email flow: send an incoming unify meet and receive a response.
+    Test unify meet to email flow: user on a call requests email, verify email is sent.
+
+    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
+    speech directly. The key assertion is that the email action is executed.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -567,14 +573,7 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
         mode="unify_meet",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
-
-    # Cleanup subscription
+    # Cleanup subscription (we don't expect voice streaming)
     await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
@@ -592,7 +591,10 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
     """
-    Test unify meet to unify message flow: send an incoming unify meet and receive a response.
+    Test unify meet to unify message flow: user on a call requests a message.
+
+    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
+    speech directly. The key assertion is that the unify message action is executed.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -607,14 +609,7 @@ async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
         mode="unify_meet",
     )
 
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
-
-    # Cleanup subscription
+    # Cleanup subscription (we don't expect voice streaming)
     await pubsub.unsubscribe("app:unify_meet:response_gen")
     await pubsub.aclose()
 
