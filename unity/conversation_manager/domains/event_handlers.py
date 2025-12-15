@@ -572,7 +572,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
         if cm.call_manager.realtime:
             # Realtime API: Send as notification
             await cm.event_broker.publish(
-                "app:call:realtime_guidance",
+                "app:call:call_guidance",
                 json.dumps({"content": event.content}),
             )
         else:

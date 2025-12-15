@@ -875,15 +875,15 @@ class TestStage3TTSFastBrain:
         ), "fast brain should disable reasoning for max speed"
 
     def test_tts_fast_brain_receives_guidance(self):
-        """TTS fast brain subscribes to realtime_guidance channel."""
+        """TTS fast brain subscribes to call_guidance channel."""
         import inspect
         from unity.conversation_manager.medium_scripts import call as call_module
 
         source = inspect.getsource(call_module.entrypoint)
         # Verify subscription to guidance channel
         assert (
-            "app:call:realtime_guidance" in source
-        ), "call.py should subscribe to realtime_guidance"
+            "app:call:call_guidance" in source
+        ), "call.py should subscribe to call_guidance"
         assert (
             "wait_for_guidance" in source
         ), "call.py should have wait_for_guidance function"
