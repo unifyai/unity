@@ -64,6 +64,10 @@ class ContactIndex:
         if c_neg1 and c_boss and c_neg1.first_name == c_boss.first_name:
             self.contacts.pop(-1, None)
 
+    def clear_conversations(self):
+        """Clear all active conversations for test isolation."""
+        self.active_conversations.clear()
+
     # is this supposed to fail for any reason?
     def push_message(
         self,
