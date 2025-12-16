@@ -150,6 +150,18 @@ ASSISTANT_ID=<id>
 ASSISTANT_NAME=<name>
 ```
 
+### Cursor Worktree Mode (Optional)
+
+If you use Cursor's worktree mode for agent windows, install [direnv](https://direnv.net/) to auto-load your `.env`:
+
+```bash
+brew install direnv
+echo 'eval "$(direnv hook zsh)"' >> ~/.zshenv
+direnv allow  # run once in the repo
+```
+
+The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
+
 ### Local Unify Development (Optional)
 
 If you're developing features in the [unify](https://github.com/unifyai/unify) package alongside Unity, you can bind your `.venv` to a local clone:
