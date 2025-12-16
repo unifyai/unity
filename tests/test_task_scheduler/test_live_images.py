@@ -27,7 +27,7 @@ def _load_png_b64(filename: str) -> str:
         "Organize Weekly Rota",  # scenario B – Organize first
     ],
 )
-async def test_ask_live_images_queue_order(first_head: str) -> None:
+async def test_ask_live_images_queue_order(first_head: str, static_now) -> None:
     ts = TaskScheduler()
 
     # Seed three tasks and materialize a single queue; switch head based on param
@@ -70,12 +70,12 @@ async def test_ask_live_images_queue_order(first_head: str) -> None:
     generic_caption = "screenshots captured from the user sharing their screen with us during our live ongoing meet; a more detailed caption is pending..."
     [img_a] = manager.add_images(
         [
-            {"caption": generic_caption, "data": b64_first},
+            {"caption": generic_caption, "data": b64_first, "timestamp": static_now},
         ],
     )
     [img_b] = manager.add_images(
         [
-            {"caption": generic_caption, "data": b64_second},
+            {"caption": generic_caption, "data": b64_second, "timestamp": static_now},
         ],
     )
 
@@ -157,7 +157,7 @@ async def test_ask_live_images_queue_order(first_head: str) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_live_images_reorder_three_tasks() -> None:
+async def test_update_live_images_reorder_three_tasks(static_now) -> None:
     ts = TaskScheduler()
 
     # Seed three tasks and materialize a single queue with a fixed initial order
@@ -200,17 +200,17 @@ async def test_update_live_images_reorder_three_tasks() -> None:
     generic_caption = "screenshots captured from the user sharing their screen with us during our live ongoing meet; a more detailed caption is pending..."
     [img_invite] = manager.add_images(
         [
-            {"caption": generic_caption, "data": b64_invite},
+            {"caption": generic_caption, "data": b64_invite, "timestamp": static_now},
         ],
     )
     [img_rota] = manager.add_images(
         [
-            {"caption": generic_caption, "data": b64_rota},
+            {"caption": generic_caption, "data": b64_rota, "timestamp": static_now},
         ],
     )
     [img_photo] = manager.add_images(
         [
-            {"caption": generic_caption, "data": b64_photo},
+            {"caption": generic_caption, "data": b64_photo, "timestamp": static_now},
         ],
     )
 

@@ -21,7 +21,7 @@ def _load_contact_card_png_b64() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_lookup_via_image(contact_manager_scenario) -> None:
+async def test_lookup_via_image(contact_manager_scenario, static_now) -> None:
     cm, _ = contact_manager_scenario
 
     # Persist a real image row and build typed ImageRefs for the loop
@@ -32,6 +32,7 @@ async def test_lookup_via_image(contact_manager_scenario) -> None:
             {
                 "caption": "contact card",
                 "data": b64,
+                "timestamp": static_now,
             },
         ],
         synchronous=True,
