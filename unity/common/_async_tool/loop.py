@@ -88,6 +88,21 @@ def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
     return unique_calls, pruned_ids
 
 
+def _sort_completed_tasks_by_call_id(
+    tasks: Set[asyncio.Task],
+    tools_data: "ToolsData",
+) -> list[asyncio.Task]:
+    """
+    Sort completed tasks by call_id for deterministic processing order.
+    """
+    return sorted(
+        tasks,
+        key=lambda t: (
+            tools_data.info.get(t).call_id if tools_data.info.get(t) else ""
+        ),
+    )
+
+
 class LoopLogger:
     def __init__(self, cfg: LoopConfig, log_steps: bool | str) -> None:
         self._label = cfg.label
@@ -1856,7 +1871,10 @@ async def async_tool_loop_inner(
                             await asyncio.gather(w, return_exceptions=True)
 
                     # tool finished?
-                    for t in done & tools_data.pending:
+                    for t in _sort_completed_tasks_by_call_id(
+                        done & tools_data.pending,
+                        tools_data,
+                    ):
                         await tools_data.process_completed_task(
                             task=t,
                             consecutive_failures=consecutive_failures,
@@ -2245,7 +2263,10 @@ async def async_tool_loop_inner(
 
                 needs_turn = False
                 # Only process completion for actual tool tasks; exclude helper waiters
-                for task in done & tools_data.pending:  # finished tool(s)
+                for task in _sort_completed_tasks_by_call_id(
+                    done & tools_data.pending,
+                    tools_data,
+                ):
                     if await tools_data.process_completed_task(
                         task=task,
                         consecutive_failures=consecutive_failures,
@@ -2519,7 +2540,10 @@ async def async_tool_loop_inner(
                     )
                     # — handle each newly-finished task exactly as branch A does
                     needs_turn = False
-                    for task in done & pending_snapshot:
+                    for task in _sort_completed_tasks_by_call_id(
+                        done & pending_snapshot,
+                        tools_data,
+                    ):
                         if await tools_data.process_completed_task(
                             task=task,
                             consecutive_failures=consecutive_failures,
