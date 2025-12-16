@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import textwrap
-from typing import Dict, Callable, List
+from typing import Dict, Callable, List, Union
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
@@ -11,6 +11,7 @@ from ..common.prompt_helpers import (
     now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    get_custom_columns,
     # New standardized composer utilities
     PromptSpec,
     compose_system_prompt,
@@ -59,12 +60,13 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
-    columns: List[Dict[str, str]],
+    columns: Union[List[Dict[str, str]], Dict[str, str]],
     *,
     include_activity: bool = True,
 ) -> str:
     """Return the system-prompt used by *ask* using the shared composer."""
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    # Extract custom columns (not in Contact model)
+    custom_cols = get_custom_columns(Contact, columns)
 
     # ------------------------------------------------------------------ #
     #  Dynamic helpers for custom-column tools
@@ -168,7 +170,7 @@ Anti‑patterns to avoid
 
     # Early exit policy for mutation-intent requests reaching ask() is handled by composer toggle
 
-    # Build spec using standardized composer
+    # Build spec using standardized composer with schema-based table info
     spec = PromptSpec(
         manager="ContactManager",
         method="ask",
@@ -184,8 +186,9 @@ Anti‑patterns to avoid
         positioning_lines=[],
         counts_entity_plural="contacts",
         counts_value=num_contacts,
-        columns_payload=columns,
-        columns_heading="columns",
+        # Schema-based table info (avoids duplication)
+        table_schema_name="Contact",
+        custom_columns=custom_cols if custom_cols else None,
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
@@ -193,7 +196,7 @@ Anti‑patterns to avoid
         include_images_forwarding=True,
         images_extras_block=None,
         include_parallelism=True,
-        schemas=[],
+        schemas=[("Contact", Contact)],
         special_blocks=[special_block],
         include_clarification_footer=True,
         include_time_footer=True,
@@ -205,12 +208,13 @@ Anti‑patterns to avoid
 def build_update_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
-    columns: List[Dict[str, str]],
+    columns: Union[List[Dict[str, str]], Dict[str, str]],
     *,
     include_activity: bool = True,
 ) -> str:
     """Return the system-prompt used by *update* using the shared composer."""
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    # Extract custom columns (not in Contact model)
+    custom_cols = get_custom_columns(Contact, columns)
 
     # Pick out canonical names heuristically (all dynamic)
     create_fname = _tool_name(tools, "create_contact")
@@ -335,12 +339,13 @@ Anti‑patterns to avoid
             ],
         )
 
-    # Compose using standardized composer
+    # Compose using standardized composer with schema-based table info
     special_block = _special_contacts_block()
 
+    # Schemas: Contact for table columns, ColumnType for custom column creation
     schemas = [
-        ("Contact schema", Contact.model_json_schema()),
-        ("ColumnType schema (for custom columns)", column_type_schema),
+        ("Contact", Contact),  # Full schema defines table columns
+        ("ColumnType (for custom columns)", column_type_schema),
     ]
 
     spec = PromptSpec(
@@ -364,8 +369,9 @@ Anti‑patterns to avoid
         positioning_lines=[],
         counts_entity_plural="contacts",
         counts_value=num_contacts,
-        columns_payload=columns,
-        columns_heading="columns",
+        # Schema-based table info (avoids duplication)
+        table_schema_name="Contact",
+        custom_columns=custom_cols if custom_cols else None,
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
