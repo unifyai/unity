@@ -1,18 +1,20 @@
 """Prompt builders for TranscriptManager.
 
-These builders parallel *contact_manager/prompt_builders.py*:
-they receive a **live** ``tools``-dict and construct the
-corresponding **system** messages *without ever hard-coding* tool
-counts, names or arg-signatures.  Each prompt also contains an
-explicit "Examples" placeholder to make it easy to append
-illustrative calls at runtime if desired.
+These builders use the centralized `PromptSpec` and `compose_system_prompt`
+utilities from common/prompt_helpers.py to ensure consistent prompt structure.
+
+The TranscriptManager queries two tables:
+1. Transcripts table (messages) - defined by the Message schema
+2. Contacts table (sender info) - defined by the Contact schema
+
+Schemas are rendered once early in the prompt and referenced throughout.
 """
 
 from __future__ import annotations
 
 import json
 import textwrap
-from typing import Callable, Dict
+from typing import Callable, Dict, Union, List, Optional
 
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
@@ -24,6 +26,7 @@ from ..common.prompt_helpers import (
     now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    get_custom_columns,
     # New standardized composer utilities
     PromptSpec,
     compose_system_prompt,
@@ -52,8 +55,35 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Shared historic activity snippet
+# Two-table info helper
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _render_two_table_info(
+    num_messages: int,
+    transcript_custom_columns: Optional[Dict[str, str]] = None,
+) -> str:
+    """Render table info for TranscriptManager's two-table architecture.
+
+    The Transcripts table stores messages; the Contacts table provides sender info.
+    Both schemas are rendered early in the prompt; this block references them.
+    """
+    lines = [
+        f"There are currently {num_messages} messages.",
+        "",
+        "Data architecture:",
+        "- **Transcripts table**: Stores messages. Columns defined in the Message schema above.",
+        "- **Contacts table**: Stores sender information. Columns defined in the Contact schema above.",
+        "- Semantic search (`search_messages`) can query across both tables via sender_id → contact_id joins.",
+        "- Exact filtering (`filter_messages`) is limited to Transcript columns only.",
+    ]
+
+    if transcript_custom_columns:
+        lines.append(
+            f"- Additional custom columns on Transcripts: {json.dumps(transcript_custom_columns)}",
+        )
+
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,23 +94,20 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_messages: int,
-    transcript_columns: Dict[str, str] | list[dict] | list[str],
-    contact_columns: Dict[str, str] | list[dict] | list[str],
+    transcript_columns: Union[Dict[str, str], List[dict], List[str]],
+    contact_columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
 ) -> str:  # noqa: C901 – long, but flat
     """
     Build the system-prompt for :pyfunc:`TranscriptManager.ask`.
 
-    The generated prompt:
-      • lists the *actual* tools and their arg-specs,
-      • embeds the three Pydantic schemas the model needs,
-      • shows a handful of **dynamic** usage examples whose function
-        names always reflect the *current* toolkit,
-      • contains a placeholder block ready for additional examples.
+    Uses schema-first approach: Message and Contact schemas are rendered once
+    early in the prompt. Table info references these schemas instead of
+    duplicating column definitions.
     """
-
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    # Extract custom columns for transcripts (not in Message model)
+    transcript_custom_cols = get_custom_columns(Message, transcript_columns)
 
     # Resolve canonical tool names dynamically
     filter_messages_fname = _tool_name(tools, "filter_messages")
@@ -225,10 +252,16 @@ def build_ask_prompt(
 
     clar_section = clarification_guidance(tools)
 
-    # Build using standardized composer
+    # Build using standardized composer with schema-based table info
     two_table_block = _two_table_reasoning_block(
         filter_fname=filter_messages_fname,
         search_fname=search_messages_fname,
+    )
+
+    # Two-table info: explains both tables and references schemas
+    two_table_info = _render_two_table_info(
+        num_messages=num_messages,
+        transcript_custom_columns=transcript_custom_cols if transcript_custom_cols else None,
     )
 
     positioning_lines = [
@@ -245,12 +278,12 @@ def build_ask_prompt(
         attach_msg_imgs_fname=attach_msg_imgs_fname,
     )
 
-    # NEW: Build a dictionary of medium descriptions
+    # Build schemas: use model classes for automatic JSON schema extraction
     medium_descriptions = {m.value: m.description for m in Medium}
 
     schemas = [
-        ("Contact", Contact.model_json_schema()),
-        ("Message", Message.model_json_schema()),
+        ("Contact", Contact),  # Full schema for sender info
+        ("Message", Message),  # Full schema for transcript messages
         ("Communication Channels (Mediums)", medium_descriptions),
         ("Message field shorthand (full → shorthand)", Message.shorthand_map()),
         ("Message field shorthand (shorthand → full)", Message.shorthand_inverse_map()),
@@ -267,13 +300,10 @@ def build_ask_prompt(
         ],
         include_read_only_guard=True,
         positioning_lines=positioning_lines,
-        counts_entity_plural="messages",
-        counts_value=num_messages,
-        columns_payload={
-            "Transcript columns": transcript_columns,
-            "Sender contact columns (fields available on the Contacts table for the message sender)": contact_columns,
-        },
-        columns_heading="sections",
+        # Schema-based table info: schemas define columns, custom block explains two-table architecture
+        table_schema_name="Message",  # Primary table schema
+        counts_entity_plural=None,  # Handled by two_table_info special block
+        counts_value=None,
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
@@ -282,7 +312,7 @@ def build_ask_prompt(
         images_extras_block=images_extras or None,
         include_parallelism=True,
         schemas=schemas,
-        special_blocks=[],
+        special_blocks=[two_table_info],  # Custom two-table info block
         include_clarification_footer=True,
         include_time_footer=True,
     )
