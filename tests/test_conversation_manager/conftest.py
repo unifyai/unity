@@ -24,9 +24,13 @@ import pytest_asyncio
 import socket
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Type
 import redis.asyncio as redis
+
+# Fixed datetime for LLM cache consistency - must match tests/conftest.py
+_FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
 
 from unity.conversation_manager.events import (
     Event,
@@ -256,6 +260,8 @@ async def conversation_manager_process(redis_server):
             "UNIFY_CACHE": "true",
             "TEST": "true",
             "REDIS_PORT": str(redis_server),
+            # Fixed datetime for LLM cache consistency
+            "UNITY_FIXED_DATETIME": _FIXED_DATETIME.isoformat(),
             # Use simulated implementations for all managers
             "UNITY_ACTOR_IMPL": "simulated",
             "UNITY_CONTACTS_IMPL": "simulated",
