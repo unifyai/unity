@@ -33,7 +33,7 @@ from unity.conversation_manager.events import PhoneCallEnded, UnifyMeetEnded
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_sms(test_redis_client, event_capture):
+async def test_sms_to_sms(event_broker, event_capture):
     """
     Test basic SMS flow: send an incoming SMS and receive a response.
 
@@ -48,7 +48,7 @@ async def test_sms_to_sms(test_redis_client, event_capture):
 
     # Send incoming SMS
     contact = contacts[1]
-    await send_incoming_sms(test_redis_client, contact, "Tell me a joke")
+    await send_incoming_sms(event_broker, contact, "Tell me a joke")
 
     # Capture outgoing SMS and verify response
     await capture_outgoing_sms(event_capture, contact)
@@ -56,7 +56,7 @@ async def test_sms_to_sms(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_email(test_redis_client, event_capture):
+async def test_sms_to_email(event_broker, event_capture):
     """
     Test SMS to email flow: send an incoming SMS and receive a response.
     """
@@ -65,7 +65,7 @@ async def test_sms_to_email(test_redis_client, event_capture):
 
     # Send incoming SMS
     contact = contacts[1]
-    await send_incoming_sms(test_redis_client, contact, "Tell me a joke via email")
+    await send_incoming_sms(event_broker, contact, "Tell me a joke via email")
 
     # Capture outgoing email and verify response
     await capture_outgoing_email(event_capture, contact)
@@ -73,7 +73,7 @@ async def test_sms_to_email(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_unify_message(test_redis_client, event_capture):
+async def test_sms_to_unify_message(event_broker, event_capture):
     """
     Test SMS to unify message flow: send an incoming SMS and receive a response.
     """
@@ -83,7 +83,7 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
     # Send incoming SMS
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Tell me a joke via unify message",
     )
@@ -94,7 +94,7 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_phone_call(test_redis_client, event_capture):
+async def test_sms_to_phone_call(event_broker, event_capture):
     """
     Test SMS to phone call flow: send an incoming SMS and receive a response.
     """
@@ -103,13 +103,13 @@ async def test_sms_to_phone_call(test_redis_client, event_capture):
 
     # Send incoming SMS
     contact = contacts[1]
-    await send_incoming_sms(test_redis_client, contact, "Tell me a joke via phone call")
+    await send_incoming_sms(event_broker, contact, "Tell me a joke via phone call")
 
     # Capture outgoing phone call and verify response
     await capture_outgoing_phone_call(event_capture, contact)
 
     # End the phone call
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -117,7 +117,7 @@ async def test_sms_to_phone_call(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_email(test_redis_client, event_capture):
+async def test_email_to_email(event_broker, event_capture):
     """
     Test basic email flow: send an incoming email and receive a response.
 
@@ -134,7 +134,7 @@ async def test_email_to_email(test_redis_client, event_capture):
     contact = contacts[1]
     email_id = "test_email_id"
     await send_incoming_email(
-        test_redis_client,
+        event_broker,
         contact,
         "Test Subject",
         "Tell me a joke",
@@ -147,7 +147,7 @@ async def test_email_to_email(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_sms(test_redis_client, event_capture):
+async def test_email_to_sms(event_broker, event_capture):
     """
     Test email to SMS flow: send an incoming email and receive a response.
     """
@@ -158,7 +158,7 @@ async def test_email_to_sms(test_redis_client, event_capture):
     contact = contacts[1]
     email_id = "test_email_id"
     await send_incoming_email(
-        test_redis_client,
+        event_broker,
         contact,
         "Test Subject",
         "Tell me a joke via SMS",
@@ -171,7 +171,7 @@ async def test_email_to_sms(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_unify_message(test_redis_client, event_capture):
+async def test_email_to_unify_message(event_broker, event_capture):
     """
     Test email to unify message flow: send an incoming email and receive a response.
     """
@@ -182,7 +182,7 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
     contact = contacts[1]
     email_id = "test_email_id"
     await send_incoming_email(
-        test_redis_client,
+        event_broker,
         contact,
         "Test Subject",
         "Tell me a joke via unify message",
@@ -195,7 +195,7 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_phone_call(test_redis_client, event_capture):
+async def test_email_to_phone_call(event_broker, event_capture):
     """
     Test email to phone call flow: send an incoming email and receive a response.
     """
@@ -206,7 +206,7 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
     contact = contacts[1]
     email_id = "test_email_id"
     await send_incoming_email(
-        test_redis_client,
+        event_broker,
         contact,
         "Test Subject",
         "Tell me a joke via phone call",
@@ -217,7 +217,7 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
     await capture_outgoing_phone_call(event_capture, contact)
 
     # End the phone call
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -225,7 +225,7 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_message_to_unify_message(test_redis_client, event_capture):
+async def test_unify_message_to_unify_message(event_broker, event_capture):
     """
     Test unify message to unify message flow: send an incoming unify message and
     receive a response.
@@ -235,7 +235,7 @@ async def test_unify_message_to_unify_message(test_redis_client, event_capture):
 
     # Send incoming unify message
     contact = contacts[1]
-    await send_incoming_unify_message(test_redis_client, contact, "Tell me a joke")
+    await send_incoming_unify_message(event_broker, contact, "Tell me a joke")
 
     # Capture outgoing unify message and verify response
     await capture_outgoing_unify_message(event_capture, contact)
@@ -243,7 +243,7 @@ async def test_unify_message_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_message_to_sms(test_redis_client, event_capture):
+async def test_unify_message_to_sms(event_broker, event_capture):
     """
     Test unify message to SMS flow: send an incoming unify message and receive
     a response via SMS.
@@ -254,7 +254,7 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
     # Send incoming unify message
     contact = contacts[1]
     await send_incoming_unify_message(
-        test_redis_client,
+        event_broker,
         contact,
         "Tell me a joke via SMS",
     )
@@ -265,7 +265,7 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_message_to_email(test_redis_client, event_capture):
+async def test_unify_message_to_email(event_broker, event_capture):
     """
     Test unify message to email flow: send an incoming unify message and receive a
     response.
@@ -276,7 +276,7 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
     # Send incoming unify message
     contact = contacts[1]
     await send_incoming_unify_message(
-        test_redis_client,
+        event_broker,
         contact,
         "Tell me a joke via email",
     )
@@ -287,7 +287,7 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_message_to_phone_call(test_redis_client, event_capture):
+async def test_unify_message_to_phone_call(event_broker, event_capture):
     """
     Test unify message to phone call flow: send an incoming unify message and receive a response.
     """
@@ -297,7 +297,7 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
     # Send incoming unify message
     contact = contacts[1]
     await send_incoming_unify_message(
-        test_redis_client,
+        event_broker,
         contact,
         "Tell me a joke via phone call",
     )
@@ -306,7 +306,7 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
     await capture_outgoing_phone_call(event_capture, contact)
 
     # End the phone call
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -314,7 +314,7 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_phone_call(test_redis_client, event_capture):
+async def test_phone_call(event_broker, event_capture):
     """
     Test phone call flow.
 
@@ -331,7 +331,7 @@ async def test_phone_call(test_redis_client, event_capture):
     # Send incoming phone call
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke",
@@ -352,7 +352,7 @@ async def test_phone_call(test_redis_client, event_capture):
     print("\n✅ Phone call test complete!")
 
     # End the phone call
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -360,7 +360,7 @@ async def test_phone_call(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_phone_call_to_sms(test_redis_client, event_capture):
+async def test_phone_call_to_sms(event_broker, event_capture):
     """
     Test phone call to SMS flow: user on a call requests SMS, verify SMS is sent.
 
@@ -373,7 +373,7 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
     # Send incoming phone call
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke via SMS right now",
@@ -387,7 +387,7 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
     await capture_outgoing_sms(event_capture, contact)
 
     # End the phone call
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -395,7 +395,7 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_phone_call_to_email(test_redis_client, event_capture):
+async def test_phone_call_to_email(event_broker, event_capture):
     """
     Test phone call to email flow: user on a call requests email, verify email is sent.
 
@@ -408,7 +408,7 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
     # Send incoming phone call
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke via email right now",
@@ -422,7 +422,7 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
     await capture_outgoing_email(event_capture, contact)
 
     # End the phone call
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -430,7 +430,7 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_phone_call_to_unify_message(test_redis_client, event_capture):
+async def test_phone_call_to_unify_message(event_broker, event_capture):
     """
     Test phone call to unify message flow: user on a call requests a message.
 
@@ -443,7 +443,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
     # Send incoming phone call
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke via unify message right now",
@@ -457,7 +457,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
     await capture_outgoing_unify_message(event_capture, contact)
 
     # End the phone call
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -465,7 +465,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_meet(test_redis_client, event_capture):
+async def test_unify_meet(event_broker, event_capture):
     """
     Test unify meet flow.
 
@@ -482,7 +482,7 @@ async def test_unify_meet(test_redis_client, event_capture):
     # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke",
@@ -504,7 +504,7 @@ async def test_unify_meet(test_redis_client, event_capture):
     print("\n✅ Unify meet test complete!")
 
     # End the unify meet
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
     )
@@ -517,7 +517,7 @@ async def test_unify_meet(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_meet_to_sms(test_redis_client, event_capture):
+async def test_unify_meet_to_sms(event_broker, event_capture):
     """
     Test unify meet to SMS flow: user on a call requests SMS, verify SMS is sent.
 
@@ -530,7 +530,7 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
     # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke via sms right now",
@@ -545,7 +545,7 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
     await capture_outgoing_sms(event_capture, contact)
 
     # End the unify meet
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
     )
@@ -553,7 +553,7 @@ async def test_unify_meet_to_sms(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_meet_to_email(test_redis_client, event_capture):
+async def test_unify_meet_to_email(event_broker, event_capture):
     """
     Test unify meet to email flow: user on a call requests email, verify email is sent.
 
@@ -566,7 +566,7 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
     # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke via email right now",
@@ -581,7 +581,7 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
     await capture_outgoing_email(event_capture, contact)
 
     # End the unify meet
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
     )
@@ -589,7 +589,7 @@ async def test_unify_meet_to_email(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
+async def test_unify_meet_to_unify_message(event_broker, event_capture):
     """
     Test unify meet to unify message flow: user on a call requests a message.
 
@@ -602,7 +602,7 @@ async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
     # Send incoming unify meet
     contact = contacts[1]
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke via unify message right now",
@@ -617,7 +617,7 @@ async def test_unify_meet_to_unify_message(test_redis_client, event_capture):
     await capture_outgoing_unify_message(event_capture, contact)
 
     # End the unify meet
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
     )
