@@ -2,7 +2,7 @@
 CommsManager: External communications handler for ConversationManager.
 
 This module bridges external communication channels (GCP PubSub for SMS, email,
-calls, etc.) to the internal event broker (Redis or in-memory).
+calls, etc.) to the internal event broker.
 
 Threading Model:
 ----------------
@@ -14,12 +14,11 @@ is called from these background threads, NOT from the asyncio event loop. Theref
 - `send_pings` and `start` are async methods that run on the event loop and can
   use direct `await` for async operations.
 
-In-Process Mode:
-----------------
-When running ConversationManager in-process with UNITY_EVENT_BROKER=in_memory,
-CommsManager is typically disabled (enable_comms_manager=False) since there are
-no real external events to receive. Tests can publish events directly to the
-in-memory broker instead.
+Testing:
+--------
+For testing, CommsManager is typically disabled (enable_comms_manager=False) since
+there are no real external events to receive. Tests can publish events directly
+to the event broker instead.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ import asyncio
 import json
 import os
 import time
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 from google.cloud import pubsub_v1
@@ -41,11 +40,9 @@ from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 load_dotenv()
 
 if TYPE_CHECKING:
-    import redis.asyncio as redis
-
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
-    EventBroker = Union[redis.Redis, InMemoryEventBroker]
+    EventBroker = InMemoryEventBroker
 
 
 # Subscription IDs

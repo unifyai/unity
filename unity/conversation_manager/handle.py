@@ -6,7 +6,6 @@ import uuid
 import time
 import inspect
 from typing import Optional, Type, TypeVar, TYPE_CHECKING
-import redis.asyncio as redis
 from pydantic import BaseModel
 from enum import Enum
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
@@ -23,6 +22,7 @@ import logging
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
+    from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
 T = TypeVar("T", bound=[BaseModel, Enum])
 
@@ -33,14 +33,14 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
     """
     The concrete implementation for steering a live ConversationManager instance.
 
-    This handle communicates with the ConversationManager over a Redis event broker,
-    allowing external processes like the Actor or Conductor to steer the conversation
+    This handle communicates with the ConversationManager over the event broker,
+    allowing components like the Actor or Conductor to steer the conversation
     by publishing and subscribing to specific event channels.
     """
 
     def __init__(
         self,
-        event_broker: redis.Redis,
+        event_broker: "InMemoryEventBroker",
         conversation_id: str,
         contact_id: int,
         *,

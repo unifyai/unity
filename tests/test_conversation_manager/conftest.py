@@ -46,9 +46,6 @@ _FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
 
 def pytest_configure(config):
     """Configure environment variables before any tests run."""
-    # Use in-memory event broker (no Redis required)
-    os.environ["UNITY_EVENT_BROKER"] = "in_memory"
-
     # Use simulated implementations for all managers
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_CONTACTS_IMPL"] = "simulated"
