@@ -50,7 +50,7 @@ from unity.conversation_manager.events import (
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_meet_publishes_utterance_events(
-    test_redis_client,
+    event_broker,
     event_capture,
 ):
     """
@@ -66,7 +66,7 @@ async def test_unify_meet_publishes_utterance_events(
     contact = contacts[1]
 
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke",
@@ -85,7 +85,7 @@ async def test_unify_meet_publishes_utterance_events(
     await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:unify_meet_ended",
         UnifyMeetEnded(contact=contact).to_json(),
     )
@@ -94,7 +94,7 @@ async def test_unify_meet_publishes_utterance_events(
 @pytest.mark.asyncio
 @_handle_project
 async def test_phone_call_publishes_utterance_events(
-    test_redis_client,
+    event_broker,
     event_capture,
 ):
     """
@@ -111,7 +111,7 @@ async def test_phone_call_publishes_utterance_events(
     contact = contacts[1]
 
     pubsub = await send_incoming_call(
-        test_redis_client,
+        event_broker,
         contact,
         "test_conference",
         "Tell me a joke",
@@ -130,7 +130,7 @@ async def test_phone_call_publishes_utterance_events(
     await pubsub.unsubscribe("app:call:call_guidance")
     await pubsub.aclose()
 
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:phone_call_ended",
         PhoneCallEnded(contact=contact).to_json(),
     )
@@ -144,7 +144,7 @@ async def test_phone_call_publishes_utterance_events(
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_message_publishes_events(
-    test_redis_client,
+    event_broker,
     event_capture,
 ):
     """
@@ -154,7 +154,7 @@ async def test_unify_message_publishes_events(
 
     contact = contacts[1]
 
-    await send_incoming_unify_message(test_redis_client, contact, "Tell me a joke")
+    await send_incoming_unify_message(event_broker, contact, "Tell me a joke")
 
     # Wait for outbound event
     outbound = await event_capture.wait_for_event(UnifyMessageSent, timeout=300.0)
@@ -174,7 +174,7 @@ async def test_unify_message_publishes_events(
 @pytest.mark.asyncio
 @_handle_project
 async def test_sms_publishes_events(
-    test_redis_client,
+    event_broker,
     event_capture,
 ):
     """
@@ -184,7 +184,7 @@ async def test_sms_publishes_events(
 
     contact = contacts[1]
 
-    await send_incoming_sms(test_redis_client, contact, "Tell me a joke")
+    await send_incoming_sms(event_broker, contact, "Tell me a joke")
 
     # Wait for outbound event
     outbound = await event_capture.wait_for_event(SMSSent, timeout=300.0)
@@ -204,7 +204,7 @@ async def test_sms_publishes_events(
 @pytest.mark.asyncio
 @_handle_project
 async def test_email_publishes_events(
-    test_redis_client,
+    event_broker,
     event_capture,
 ):
     """
@@ -215,7 +215,7 @@ async def test_email_publishes_events(
     contact = contacts[1]
 
     await send_incoming_email(
-        test_redis_client,
+        event_broker,
         contact,
         subject="Test Subject",
         body="Tell me a joke",

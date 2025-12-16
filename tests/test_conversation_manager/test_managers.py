@@ -17,7 +17,7 @@ from tests.test_conversation_manager.helpers import (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_task(test_redis_client, event_capture):
+async def test_start_task(event_broker, event_capture):
     """
     Test start_task: send an SMS that triggers the assistant to start a task,
     and verify that a task started event is published with the correct format.
@@ -28,7 +28,7 @@ async def test_start_task(test_redis_client, event_capture):
     # Send an SMS that prompts the assistant to start a task that modifies data
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Create a new task to buy groceries tomorrow",
     )
@@ -45,7 +45,7 @@ async def test_start_task(test_redis_client, event_capture):
 
     # Stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Never mind, please stop that task",
     )
@@ -58,7 +58,7 @@ async def test_start_task(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_ask(test_redis_client, event_capture):
+async def test_task_ask(event_broker, event_capture):
     """
     Test asking a question about a running task.
     """
@@ -68,7 +68,7 @@ async def test_task_ask(test_redis_client, event_capture):
     # Start a task with a clear, direct command
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me all my contacts with their names and phone numbers.",
     )
@@ -81,7 +81,7 @@ async def test_task_ask(test_redis_client, event_capture):
 
     # Ask about the task status
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "What's the status of that task you're working on?",
     )
@@ -99,7 +99,7 @@ async def test_task_ask(test_redis_client, event_capture):
 
     # Stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Stop that task please",
     )
@@ -112,7 +112,7 @@ async def test_task_ask(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_interject(test_redis_client, event_capture):
+async def test_task_interject(event_broker, event_capture):
     """
     Test interjecting additional instructions into a running task.
     """
@@ -122,7 +122,7 @@ async def test_task_interject(test_redis_client, event_capture):
     # Start a task with a clear, direct command
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me all my contacts with their names and phone numbers.",
     )
@@ -135,7 +135,7 @@ async def test_task_interject(test_redis_client, event_capture):
 
     # Interject with more information
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Actually, for that task, please exclude my own contact from the list",
     )
@@ -152,7 +152,7 @@ async def test_task_interject(test_redis_client, event_capture):
 
     # Stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Stop that task please",
     )
@@ -165,7 +165,7 @@ async def test_task_interject(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_stop(test_redis_client, event_capture):
+async def test_task_stop(event_broker, event_capture):
     """
     Test stopping a running task.
     """
@@ -175,7 +175,7 @@ async def test_task_stop(test_redis_client, event_capture):
     # Start a task with a clear, direct command
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me all my contacts with their names and phone numbers.",
     )
@@ -188,7 +188,7 @@ async def test_task_stop(test_redis_client, event_capture):
 
     # Stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Stop that task, I don't need it anymore",
     )
@@ -206,7 +206,7 @@ async def test_task_stop(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_completion_notification(test_redis_client, event_capture):
+async def test_task_completion_notification(event_broker, event_capture):
     """
     Test that task completion triggers an LLM response to notify the user.
 
@@ -225,7 +225,7 @@ async def test_task_completion_notification(test_redis_client, event_capture):
     # Start a task with explicit request to notify on completion
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "List all my contacts and let me know once you're done",
     )
@@ -239,7 +239,7 @@ async def test_task_completion_notification(test_redis_client, event_capture):
     # Send progress queries to consume remaining steps
     # Each ask operation consumes 1 step
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "How's that task going?",
     )
@@ -250,7 +250,7 @@ async def test_task_completion_notification(test_redis_client, event_capture):
     )
 
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Any progress yet?",
     )
@@ -267,7 +267,7 @@ async def test_task_completion_notification(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_pause(test_redis_client, event_capture):
+async def test_task_pause(event_broker, event_capture):
     """
     Test pausing a running task.
     """
@@ -277,7 +277,7 @@ async def test_task_pause(test_redis_client, event_capture):
     # Start a task with a clear, direct command
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me all my contacts with their names and phone numbers.",
     )
@@ -290,7 +290,7 @@ async def test_task_pause(test_redis_client, event_capture):
 
     # Pause the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Pause that task for now",
     )
@@ -307,7 +307,7 @@ async def test_task_pause(test_redis_client, event_capture):
 
     # Stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Actually just stop that task",
     )
@@ -320,7 +320,7 @@ async def test_task_pause(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_resume(test_redis_client, event_capture):
+async def test_task_resume(event_broker, event_capture):
     """
     Test resuming a paused task.
     """
@@ -330,7 +330,7 @@ async def test_task_resume(test_redis_client, event_capture):
     # Start a task with a clear, direct command
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me all my contacts with their names and phone numbers.",
     )
@@ -343,7 +343,7 @@ async def test_task_resume(test_redis_client, event_capture):
 
     # Resume the task (even without pausing first, for test simplicity)
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Resume that task please",
     )
@@ -360,7 +360,7 @@ async def test_task_resume(test_redis_client, event_capture):
 
     # Stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Stop that task please",
     )
@@ -373,7 +373,7 @@ async def test_task_resume(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_progress_query(test_redis_client, event_capture):
+async def test_task_progress_query(event_broker, event_capture):
     """
     Test querying specific progress details from a running task.
 
@@ -387,7 +387,7 @@ async def test_task_progress_query(test_redis_client, event_capture):
     # Start a task that will have meaningful progress to query
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me all my contacts with their names and phone numbers.",
     )
@@ -401,7 +401,7 @@ async def test_task_progress_query(test_redis_client, event_capture):
     # Ask a question that requires querying the in-flight task for details
     # This cannot be answered without asking the task itself
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "How many contacts have you found so far in that task?",
     )
@@ -418,7 +418,7 @@ async def test_task_progress_query(test_redis_client, event_capture):
 
     # Stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Stop that task please",
     )
@@ -431,7 +431,7 @@ async def test_task_progress_query(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_answer_clarification(test_redis_client, event_capture):
+async def test_task_answer_clarification(event_broker, event_capture):
     """
     Test answering a clarification request from a task.
     """
@@ -441,7 +441,7 @@ async def test_task_answer_clarification(test_redis_client, event_capture):
     # Start a task with a clear, direct command
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me all my contacts with their names and phone numbers.",
     )
@@ -456,7 +456,7 @@ async def test_task_answer_clarification(test_redis_client, event_capture):
     # (simulating what the inner task would send if it needed clarification)
     call_id = "test_clarification_123"
     await send_conductor_clarification_request(
-        test_redis_client,
+        event_broker,
         handle_id=task_started.handle_id,
         query="Should I include the assistant's name in the contact?",
         call_id=call_id,
@@ -467,7 +467,7 @@ async def test_task_answer_clarification(test_redis_client, event_capture):
 
     # Answer the clarification via SMS
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Yes, include the assistant's name in the contact",
     )
@@ -488,7 +488,7 @@ async def test_task_answer_clarification(test_redis_client, event_capture):
 @pytest.mark.asyncio
 @_handle_project
 async def test_llm_asks_clarification_for_ambiguous_request(
-    test_redis_client,
+    event_broker,
     event_capture,
 ):
     """
@@ -505,7 +505,7 @@ async def test_llm_asks_clarification_for_ambiguous_request(
     # Send an ambiguous request that could be interpreted multiple ways
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "I need help with a contact",  # Ambiguous: which contact? what kind of help?
     )
@@ -536,7 +536,7 @@ async def test_llm_asks_clarification_for_ambiguous_request(
 @pytest.mark.asyncio
 @_handle_project
 async def test_llm_uses_clarification_response_in_task(
-    test_redis_client,
+    event_broker,
     event_capture,
 ):
     """
@@ -553,7 +553,7 @@ async def test_llm_uses_clarification_response_in_task(
     # Send an ambiguous request
     contact = contacts[1]
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "I need help with a contact",  # Ambiguous: which contact? what kind of help?
     )
@@ -565,7 +565,7 @@ async def test_llm_uses_clarification_response_in_task(
 
     # Provide clarification - be specific about what we want
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Show me only contacts that have email addresses. Include their names and emails.",
     )
@@ -586,7 +586,7 @@ async def test_llm_uses_clarification_response_in_task(
 
     # Clean up - stop the task
     await send_incoming_sms(
-        test_redis_client,
+        event_broker,
         contact,
         "Stop that task please",
     )

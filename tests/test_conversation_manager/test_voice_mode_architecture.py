@@ -505,7 +505,7 @@ class TestVoiceCallFlowIntegration:
 
     async def test_phone_call_started_event_flow(
         self,
-        test_redis_client,
+        event_broker,
         event_capture,
         boss_contact,
     ):
@@ -516,7 +516,7 @@ class TestVoiceCallFlowIntegration:
 
         # Publish a call started event
         event = PhoneCallStarted(contact=boss_contact)
-        await test_redis_client.publish(
+        await event_broker.publish(
             "app:comms:phone_call_started",
             event.to_json(),
         )
@@ -530,7 +530,7 @@ class TestVoiceCallFlowIntegration:
 
     async def test_call_guidance_event_flow(
         self,
-        test_redis_client,
+        event_broker,
         event_capture,
         boss_contact,
     ):
@@ -544,7 +544,7 @@ class TestVoiceCallFlowIntegration:
             contact=boss_contact,
             content="Please ask about their schedule",
         )
-        await test_redis_client.publish("app:call:call_guidance", event.to_json())
+        await event_broker.publish("app:call:call_guidance", event.to_json())
 
         # Wait briefly for event propagation
         await asyncio.sleep(0.5)
@@ -555,7 +555,7 @@ class TestVoiceCallFlowIntegration:
 
     async def test_tts_mode_publishes_guidance_not_utterance(
         self,
-        test_redis_client,
+        event_broker,
         event_capture,
         boss_contact,
     ):
@@ -590,35 +590,36 @@ class TestVoiceCallFlowIntegration:
 class TestCallGuidanceChannel:
     """Tests for call_guidance channel used by both TTS and STS modes."""
 
-    async def test_call_guidance_channel_format(self, test_redis_client):
+    async def test_call_guidance_channel_format(self, event_broker):
         """Verify call_guidance channel message format."""
-        pubsub = test_redis_client.pubsub()
-        await pubsub.subscribe("app:call:call_guidance")
+        async with event_broker.pubsub() as pubsub:
+            await pubsub.subscribe("app:call:call_guidance")
 
-        # Consume the subscription confirmation message
-        await pubsub.get_message(timeout=1.0)
+            # Consume the subscription confirmation message
+            await pubsub.get_message(timeout=1.0)
 
-        # Publish guidance (the format used by Main CM Brain)
-        await test_redis_client.publish(
-            "app:call:call_guidance",
-            json.dumps({"content": "Please ask about their schedule"}),
-        )
+            # Publish guidance (the format used by Main CM Brain)
+            await event_broker.publish(
+                "app:call:call_guidance",
+                json.dumps({"content": "Please ask about their schedule"}),
+            )
 
-        # Poll for message with retries
-        msg = None
-        for _ in range(20):
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            if msg and msg["type"] == "message":
-                break
-            await asyncio.sleep(0.05)
+            # Poll for message with retries
+            msg = None
+            for _ in range(20):
+                msg = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=0.1,
+                )
+                if msg and msg["type"] == "message":
+                    break
+                await asyncio.sleep(0.05)
 
-        await pubsub.unsubscribe()
-
-        assert msg is not None, "Expected to receive published message"
-        assert msg["type"] == "message"
-        data = json.loads(msg["data"])
-        assert "content" in data
-        assert data["content"] == "Please ask about their schedule"
+            assert msg is not None, "Expected to receive published message"
+            assert msg["type"] == "message"
+            data = json.loads(msg["data"])
+            assert "content" in data
+            assert data["content"] == "Please ask about their schedule"
 
 
 # =============================================================================

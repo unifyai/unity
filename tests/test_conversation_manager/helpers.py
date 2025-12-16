@@ -38,17 +38,17 @@ contacts = [
 ]
 
 
-async def send_incoming_sms(test_redis_client, contact: dict, content: str):
+async def send_incoming_sms(event_broker, contact: dict, content: str):
     incoming_sms = SMSReceived(
         contact=contact,
         content=content,
     )
     print(f"\n📱 Sending SMS from {contact['phone_number']}")
-    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
+    await event_broker.publish("app:comms:sms_received", incoming_sms.to_json())
 
 
 async def send_incoming_email(
-    test_redis_client,
+    event_broker,
     contact: dict,
     subject: str,
     body: str,
@@ -61,14 +61,14 @@ async def send_incoming_email(
         email_id=email_id,
     )
     print(f"\n📧 Sending email from {contact['email_address']}")
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:email_received",
         incoming_email.to_json(),
     )
 
 
 async def send_incoming_unify_message(
-    test_redis_client,
+    event_broker,
     contact: dict,
     content: str,
 ):
@@ -77,14 +77,14 @@ async def send_incoming_unify_message(
         content=content,
     )
     print(f"\n📧 Sending unify message from {contact['contact_id']}")
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:comms:unify_message_received",
         incoming_unify_message.to_json(),
     )
 
 
 async def send_incoming_call(
-    test_redis_client,
+    event_broker,
     contact: dict,
     conference_name: str,
     user_utterance: str,
@@ -109,7 +109,7 @@ async def send_incoming_call(
         incoming_call = UnifyMeetReceived(contact=contact)
         contact_str = contact["contact_id"]
     print(f"\n📞 Sending {incoming_call.to_dict()['event_name']} from {contact_str}")
-    await test_redis_client.publish(
+    await event_broker.publish(
         f"app:comms:{mode}_received",
         incoming_call.to_json(),
     )
@@ -117,19 +117,20 @@ async def send_incoming_call(
 
     # Subscribe to the call_guidance channel (for any guidance from Main CM Brain)
     print(f"📞 Subscribing to app:call:call_guidance channel")
-    pubsub = test_redis_client.pubsub()
+    # InMemoryEventBroker.pubsub() is an async context manager, so we need to enter it
+    pubsub = await event_broker.pubsub().__aenter__()
     await pubsub.subscribe("app:call:call_guidance")
     await asyncio.sleep(0.5)
 
     # Send call started event
     print(f"📞 Sending call started event from {contact_str}")
     if mode == "call":
-        await test_redis_client.publish(
+        await event_broker.publish(
             "app:comms:phone_call_started",
             PhoneCallStarted(contact=contact).to_json(),
         )
     else:
-        await test_redis_client.publish(
+        await event_broker.publish(
             "app:comms:unify_meet_started",
             UnifyMeetStarted(contact=contact).to_json(),
         )
@@ -139,12 +140,12 @@ async def send_incoming_call(
     # Send a user utterance
     print(f"📞 Sending user utterance from {contact_str}")
     if mode == "call":
-        await test_redis_client.publish(
+        await event_broker.publish(
             "app:comms:phone_utterance",
             InboundPhoneUtterance(contact=contact, content=user_utterance).to_json(),
         )
     else:
-        await test_redis_client.publish(
+        await event_broker.publish(
             "app:comms:unify_meet_utterance",
             InboundUnifyMeetUtterance(
                 contact=contact,
@@ -294,7 +295,7 @@ async def capture_task_action_response(
 
 
 async def send_conductor_clarification_request(
-    test_redis_client,
+    event_broker,
     handle_id: int,
     query: str,
     call_id: str,
@@ -309,7 +310,7 @@ async def send_conductor_clarification_request(
         f"\n❓ Sending ConductorClarificationRequest: handle_id={handle_id}, call_id={call_id}",
     )
     print(f"   Query: {query}")
-    await test_redis_client.publish(
+    await event_broker.publish(
         "app:conductor:output_events",
         clarification_request.to_json(),
     )
