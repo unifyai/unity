@@ -1,6 +1,8 @@
-from typing import Callable, Dict, Any, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Any, List, Optional, Sequence, Tuple, Type, Union
 from dataclasses import dataclass, field
 import json
+
+from pydantic import BaseModel
 
 __all__ = [
     "clarification_guidance",
@@ -17,6 +19,8 @@ __all__ = [
     "render_tools_block",
     "render_counts_and_columns",
     "render_schemas",
+    "render_table_info",
+    "get_custom_columns",
     "clarification_top_sentence",
     "clarification_else_policy",
     "special_contacts_block",
@@ -223,6 +227,17 @@ class PromptSpec:
 
     Fields are intentionally generic to allow manager/method specific content
     without changing the common ordering. Absent/None fields are skipped.
+
+    Schema-based Table Handling
+    ---------------------------
+    To avoid duplicating column definitions, use `table_schema_name` to reference
+    a schema already defined in `schemas`. The table info will then say
+    "Columns are defined in the X schema above" instead of listing them again.
+
+    - `schemas`: List of (name, model_or_dict) pairs rendered early in the prompt
+    - `table_schema_name`: Name of the schema that defines the table columns
+    - `custom_columns`: Only non-schema columns (dynamic/custom fields)
+    - `columns_payload`: Legacy field; use only when NOT using schema-based approach
     """
 
     manager: str
@@ -242,11 +257,15 @@ class PromptSpec:
     # Positioning/cross-manager lines (before counts/tools)
     positioning_lines: List[str] = field(default_factory=list)
 
-    # Counts/columns
+    # Counts/columns (legacy approach - duplicates schema if both used)
     counts_entity_plural: Optional[str] = None
     counts_value: Optional[int] = None
-    columns_payload: Optional[Any] = None  # dict | list
+    columns_payload: Optional[Any] = None  # dict | list (legacy, prefer schema-based)
     columns_heading: str = "columns"
+
+    # Schema-based table info (preferred - avoids duplication)
+    table_schema_name: Optional[str] = None  # e.g., "Contact" - references schema
+    custom_columns: Optional[Dict[str, str]] = None  # Only non-schema columns
 
     # Tools block
     include_tools_block: bool = True
@@ -263,8 +282,8 @@ class PromptSpec:
     # Parallelism
     include_parallelism: bool = True
 
-    # Schemas
-    schemas: List[Tuple[str, dict]] = field(default_factory=list)
+    # Schemas - rendered early; accepts model classes or dicts
+    schemas: List[Tuple[str, Any]] = field(default_factory=list)  # (name, Model | dict)
 
     # Special blocks near the end
     special_blocks: List[str] = field(default_factory=list)
@@ -300,12 +319,118 @@ def render_counts_and_columns(
     )
 
 
-def render_schemas(schemas: Sequence[Tuple[str, dict]]) -> str:
-    """Render multiple schemas under a single heading."""
+def get_custom_columns(
+    model: Type[BaseModel],
+    columns: Union[Dict[str, str], List[Dict[str, str]], List[str]],
+) -> Dict[str, str]:
+    """Extract columns that are NOT defined in the Pydantic model (i.e., custom/dynamic columns).
+
+    Parameters
+    ----------
+    model : Type[BaseModel]
+        The Pydantic model class (e.g., Contact, Task).
+    columns : Union[Dict[str, str], List[Dict[str, str]], List[str]]
+        The runtime columns, either as a dict {name: type} or list of dicts/strings.
+
+    Returns
+    -------
+    Dict[str, str]
+        Only the columns not present in model.model_fields.
+    """
+    builtin_fields = set(model.model_fields.keys())
+
+    # Normalize columns to dict
+    if isinstance(columns, dict):
+        cols_dict = columns
+    elif isinstance(columns, list):
+        if not columns:
+            return {}
+        if isinstance(columns[0], dict):
+            # List of single-key dicts: [{"field1": "type1"}, ...]
+            cols_dict = {}
+            for item in columns:
+                cols_dict.update(item)
+        else:
+            # List of strings: ["field1", "field2", ...]
+            cols_dict = {c: "unknown" for c in columns}
+    else:
+        return {}
+
+    # Return only non-builtin columns (excluding embedding columns)
+    return {
+        name: typ
+        for name, typ in cols_dict.items()
+        if name not in builtin_fields
+        and not str(name).startswith("_")
+        and not str(name).endswith("_emb")
+    }
+
+
+def render_table_info(
+    *,
+    entity_plural: str,
+    count: int,
+    schema_name: Optional[str] = None,
+    custom_columns: Optional[Dict[str, str]] = None,
+) -> str:
+    """Render table info that references a schema instead of duplicating column definitions.
+
+    Parameters
+    ----------
+    entity_plural : str
+        Plural name of the entity (e.g., "contacts", "tasks").
+    count : int
+        Current number of entities in the table.
+    schema_name : Optional[str]
+        Name of the schema to reference (e.g., "Contact"). If provided, columns
+        are referenced rather than listed.
+    custom_columns : Optional[Dict[str, str]]
+        Additional custom/dynamic columns not in the schema.
+
+    Returns
+    -------
+    str
+        Formatted table info block.
+    """
+    parts = [f"There are currently {count} {entity_plural}."]
+
+    if schema_name:
+        parts.append(f"Columns are defined in the {schema_name} schema above.")
+
+    if custom_columns:
+        parts.append(f"Additional custom columns: {json.dumps(custom_columns)}")
+
+    return "\n".join(parts)
+
+
+# Type alias for schema entries: (name, model_class_or_dict)
+SchemaEntry = Tuple[str, Union[Type[BaseModel], dict]]
+
+
+def render_schemas(schemas: Sequence[SchemaEntry]) -> str:
+    """Render multiple schemas under a single heading.
+
+    Accepts either Pydantic model classes or pre-computed dicts. When a model
+    class is provided, its full JSON schema is extracted automatically.
+
+    Parameters
+    ----------
+    schemas : Sequence[Tuple[str, Union[Type[BaseModel], dict]]]
+        List of (name, schema_or_model) pairs.
+
+    Returns
+    -------
+    str
+        Formatted schemas block.
+    """
     if not schemas:
         return ""
     lines: List[str] = ["Schemas", "-------"]
-    for name, schema in schemas:
+    for name, schema_or_model in schemas:
+        if isinstance(schema_or_model, type) and issubclass(schema_or_model, BaseModel):
+            schema = schema_or_model.model_json_schema()
+        else:
+            schema = schema_or_model
         lines.append(f"{name} = {json.dumps(schema, indent=4)}")
         lines.append("")
     # Drop trailing blank line for neatness
@@ -464,12 +589,22 @@ def compose_system_prompt(spec: PromptSpec) -> str:
     expected to prepare method/manager‑specific text (e.g., examples) and pass
     them via the `PromptSpec` while relying on this function to normalize
     structure and shared wording.
+
+    Schema-Based Table Handling
+    ---------------------------
+    When `table_schema_name` is set, schemas are rendered early and the table
+    info references the schema instead of duplicating column definitions.
+    This avoids the duplication that occurs when both `columns_payload` and
+    `schemas` contain the same field information.
     """
 
     from .read_only_ask_guard import read_only_ask_mutation_exit_block
 
     def _nonempty(s: Optional[str]) -> bool:
         return bool(s and s.strip())
+
+    # Determine if using schema-based table info (preferred) vs legacy columns
+    use_schema_table_info = spec.table_schema_name is not None
 
     parts: List[str] = []
 
@@ -495,35 +630,51 @@ def compose_system_prompt(spec: PromptSpec) -> str:
                 parts.append("")
             parts.append(block)
 
-    # 5) Counts and columns
-    if (
-        spec.counts_entity_plural is not None
-        and spec.counts_value is not None
-        and spec.columns_payload is not None
-    ):
-        parts.append("")
-        parts.append(
-            render_counts_and_columns(
-                entity_plural=spec.counts_entity_plural,
-                count=spec.counts_value,
-                columns_payload=spec.columns_payload,
-                columns_heading=spec.columns_heading,
-            ),
-        )
+    # 5) Schemas - render EARLY when using schema-based table info
+    #    This ensures schemas appear before they are referenced in table info
+    if use_schema_table_info and spec.schemas:
+        rendered = render_schemas(spec.schemas)
+        if _nonempty(rendered):
+            parts.append("")
+            parts.append(rendered)
 
-    # 6) Tools block
+    # 6) Counts and table info
+    if spec.counts_entity_plural is not None and spec.counts_value is not None:
+        parts.append("")
+        if use_schema_table_info:
+            # Schema-based: reference schema instead of duplicating columns
+            parts.append(
+                render_table_info(
+                    entity_plural=spec.counts_entity_plural,
+                    count=spec.counts_value,
+                    schema_name=spec.table_schema_name,
+                    custom_columns=spec.custom_columns,
+                ),
+            )
+        elif spec.columns_payload is not None:
+            # Legacy: include full columns (may duplicate schema)
+            parts.append(
+                render_counts_and_columns(
+                    entity_plural=spec.counts_entity_plural,
+                    count=spec.counts_value,
+                    columns_payload=spec.columns_payload,
+                    columns_heading=spec.columns_heading,
+                ),
+            )
+
+    # 7) Tools block
     if spec.include_tools_block:
         parts.append("")
         parts.append(render_tools_block(spec.tools))
 
-    # 7) Usage examples (+ optional clarification examples)
+    # 8) Usage examples (+ optional clarification examples)
     if _nonempty(spec.usage_examples):
         parts.append("")
         parts.append(spec.usage_examples or "")
     if _nonempty(spec.clarification_examples_block):
         parts.append(spec.clarification_examples_block or "")
 
-    # 8) Images policy/forwarding/extras
+    # 9) Images policy/forwarding/extras
     if spec.include_images_policy:
         parts.append("")
         parts.append(images_policy_block())
@@ -534,30 +685,30 @@ def compose_system_prompt(spec: PromptSpec) -> str:
         parts.append("")
         parts.append(spec.images_extras_block or "")
 
-    # 9) Parallelism guidance
+    # 10) Parallelism guidance
     if spec.include_parallelism:
         parts.append("")
         parts.append(parallelism_guidance())
 
-    # 10) Schemas
-    if spec.schemas:
+    # 11) Schemas - render late if NOT using schema-based table info (legacy)
+    if not use_schema_table_info and spec.schemas:
         rendered = render_schemas(spec.schemas)
         if _nonempty(rendered):
             parts.append("")
             parts.append(rendered)
 
-    # 11) Special blocks
+    # 12) Special blocks
     for block in spec.special_blocks:
         if _nonempty(block):
             parts.append("")
             parts.append(block)
 
-    # 12) Current time footer
+    # 13) Current time footer
     if spec.include_time_footer:
         parts.append("")
         parts.append(f"{spec.time_footer_prefix}{now()}.")
 
-    # 13) Clarification footer (single-sourced guidance sentence)
+    # 14) Clarification footer (single-sourced guidance sentence)
     if spec.include_clarification_footer:
         parts.append("")
         parts.append(clarification_guidance(spec.tools))
