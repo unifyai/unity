@@ -60,6 +60,51 @@ def find_assistant_message(thread):
     return None
 
 
+async def handle_message_and_respond(cm, event):
+    """Handle an incoming message event and run LLM directly.
+
+    This is the test-friendly pattern that avoids debouncer/background tasks:
+    1. Call EventHandler.handle_event() - adds message to thread
+    2. Call cm._run_llm() directly - runs LLM synchronously
+       (with test_sync_actions=True, actions are awaited synchronously)
+    3. Process response events directly (bypass event broker)
+    """
+    from unity.conversation_manager.events import SMSSent, EmailSent, UnifyMessageSent
+
+    # Subscribe to capture events BEFORE running LLM
+    captured_events = []
+
+    # Store original publish method
+    original_publish = cm.event_broker.publish
+
+    async def capturing_publish(channel, message):
+        # Capture events we care about
+        if channel.startswith("app:comms:"):
+            try:
+                from unity.conversation_manager.events import Event
+
+                evt = Event.from_json(message)
+                if isinstance(evt, (SMSSent, EmailSent, UnifyMessageSent)):
+                    captured_events.append(evt)
+            except Exception:
+                pass
+        return await original_publish(channel, message)
+
+    # Temporarily replace publish to capture events
+    cm.event_broker.publish = capturing_publish
+
+    try:
+        await EventHandler.handle_event(event, cm)
+        await cm._run_llm()
+    finally:
+        # Restore original publish
+        cm.event_broker.publish = original_publish
+
+    # Process captured response events to update thread state
+    for evt in captured_events:
+        await EventHandler.handle_event(evt, cm)
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_sms_to_sms(initialized_cm):
@@ -72,16 +117,13 @@ async def test_sms_to_sms(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    # Create incoming SMS event
     event = SMSReceived(
         contact=contact,
         content="Tell me a joke",
     )
 
     print(f"\n📱 Processing SMS from {contact['phone_number']}")
-
-    # Call event handler DIRECTLY (not via pubsub)
-    await EventHandler.handle_event(event, cm)
+    await handle_message_and_respond(cm, event)
 
     # Check response in CM state directly
     sms_thread = get_sms_thread(cm, contact["contact_id"])
@@ -108,7 +150,7 @@ async def test_sms_to_email(initialized_cm):
     )
 
     print(f"\n📱 Processing SMS from {contact['phone_number']}")
-    await EventHandler.handle_event(event, cm)
+    await handle_message_and_respond(cm, event)
 
     # Check email thread for response
     email_thread = get_email_thread(cm, contact["contact_id"])
@@ -133,7 +175,7 @@ async def test_email_to_email(initialized_cm):
     )
 
     print(f"\n📧 Processing email from {contact['email_address']}")
-    await EventHandler.handle_event(event, cm)
+    await handle_message_and_respond(cm, event)
 
     # Check email thread for response
     email_thread = get_email_thread(cm, contact["contact_id"])
@@ -158,7 +200,7 @@ async def test_email_to_sms(initialized_cm):
     )
 
     print(f"\n📧 Processing email from {contact['email_address']}")
-    await EventHandler.handle_event(event, cm)
+    await handle_message_and_respond(cm, event)
 
     # Check SMS thread for response
     sms_thread = get_sms_thread(cm, contact["contact_id"])
@@ -181,7 +223,7 @@ async def test_unify_message_to_unify_message(initialized_cm):
     )
 
     print(f"\n💬 Processing unify message from contact {contact['contact_id']}")
-    await EventHandler.handle_event(event, cm)
+    await handle_message_and_respond(cm, event)
 
     # Check unify_message thread for response
     thread = get_unify_message_thread(cm, contact["contact_id"])
@@ -204,7 +246,7 @@ async def test_unify_message_to_sms(initialized_cm):
     )
 
     print(f"\n💬 Processing unify message from contact {contact['contact_id']}")
-    await EventHandler.handle_event(event, cm)
+    await handle_message_and_respond(cm, event)
 
     # Check SMS thread for response
     sms_thread = get_sms_thread(cm, contact["contact_id"])
@@ -227,7 +269,7 @@ async def test_unify_message_to_email(initialized_cm):
     )
 
     print(f"\n💬 Processing unify message from contact {contact['contact_id']}")
-    await EventHandler.handle_event(event, cm)
+    await handle_message_and_respond(cm, event)
 
     # Check email thread for response
     email_thread = get_email_thread(cm, contact["contact_id"])

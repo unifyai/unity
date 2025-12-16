@@ -123,6 +123,10 @@ async def conversation_manager() -> "ConversationManager":
     await managers_utils.init_conv_manager(cm)
     print("✅ Managers initialized")
 
+    # Enable test mode: actions run synchronously (awaited immediately)
+    cm.test_sync_actions = True
+    print("✅ Test mode enabled: sync actions")
+
     # Set test contacts directly on contact_index
     cm.contact_index.set_contacts(TEST_CONTACTS)
     print(f"✅ Test contacts set: {len(TEST_CONTACTS)}")

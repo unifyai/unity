@@ -269,15 +269,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
         print(f"parsed_out {parsed_out}")
+        action_tasks = []
         for action in actions:
             print("taking actions...")
-            Action.take_action(
+            task = Action.take_action(
                 self,
                 action.pop("action_name"),
                 **action,
                 is_voice_call=self.call_manager.uses_realtime_api,
             )
+            if task is not None:
+                action_tasks.append(task)
             print("done taking actions...")
+
+        # In test mode, wait for action tasks to complete synchronously
+        if getattr(self, "test_sync_actions", False) and action_tasks:
+            print("awaiting action tasks (test mode)...")
+            await asyncio.gather(*action_tasks, return_exceptions=True)
+            print("action tasks complete")
+
         self.commit()
         print("commiting...")
         self.chat_history.append(input_message)
