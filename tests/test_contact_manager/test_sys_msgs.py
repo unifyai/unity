@@ -17,7 +17,82 @@ from unity.contact_manager.prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
 )
-from unity.contact_manager.contact_manager import ContactManager
+
+
+def _make_mock_ask_tools():
+    """Create mock tools for ask prompt testing (avoids ContactManager instantiation)."""
+
+    def filter_contacts(filter: str = None, limit: int = 100, offset: int = 0):
+        return []
+
+    def search_contacts(references: dict = None, k: int = 10):
+        return []
+
+    def list_columns(include_types: bool = True):
+        return {}
+
+    def reduce(metric: str = "count", keys: str = None, group_by: str = None):
+        return {}
+
+    return {
+        "filter_contacts": filter_contacts,
+        "search_contacts": search_contacts,
+        "list_columns": list_columns,
+        "reduce": reduce,
+    }
+
+
+def _make_mock_update_tools():
+    """Create mock tools for update prompt testing (avoids ContactManager instantiation)."""
+
+    def ask(text: str):
+        return ""
+
+    def create_contact(**kwargs):
+        return {}
+
+    def update_contact(contact_id: int, **kwargs):
+        return {}
+
+    def delete_contact(contact_id: int):
+        return {}
+
+    def merge_contacts(contact_id_1: int, contact_id_2: int, overrides: dict = None):
+        return {}
+
+    def create_custom_column(column_name: str, column_type: str = "str"):
+        return {}
+
+    def delete_custom_column(column_name: str):
+        return {}
+
+    return {
+        "ask": ask,
+        "create_contact": create_contact,
+        "update_contact": update_contact,
+        "delete_contact": delete_contact,
+        "merge_contacts": merge_contacts,
+        "create_custom_column": create_custom_column,
+        "delete_custom_column": delete_custom_column,
+    }
+
+
+def _mock_columns():
+    """Return mock columns that include both built-in and custom columns."""
+    return {
+        "contact_id": "int",
+        "first_name": "str",
+        "surname": "str",
+        "email_address": "str",
+        "phone_number": "str",
+        "bio": "str",
+        "rolling_summary": "str",
+        "respond_to": "bool",
+        "response_policy": "str",
+        "timezone": "str",
+        # Custom column
+        "occupation": "str",
+    }
 
 
 def _build_prompt_in_subprocess(method: str) -> str:
@@ -75,24 +150,34 @@ def _build_prompt_in_subprocess(method: str) -> str:
 
 
 def test_ask_system_prompt_formatting():
-    cm = ContactManager()
-    tools = dict(cm.get_tools("ask"))
+    """Test ask prompt structure using mock tools (avoids database state issues)."""
+    tools = _make_mock_ask_tools()
+    num_contacts = 10
+    columns = _mock_columns()
+
     prompt = build_ask_prompt(
         tools=tools,
-        num_contacts=cm._num_contacts(),
-        columns=cm._list_columns(),
+        num_contacts=num_contacts,
+        columns=columns,
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
     assert set(tools_json.keys()) == set(tools.keys())
     assert "Tools (name" in prompt
-    m = re.search(
-        r"There are currently\s+(\d+)\s+contacts\s+stored in a table with the following columns:",
-        prompt,
-    )
-    assert m, "Missing counts/columns line"
-    assert int(m.group(1)) == cm._num_contacts()
+
+    # Schema-based table info: count line + schema reference
+    m = re.search(r"There are currently\s+(\d+)\s+contacts\.", prompt)
+    assert m, "Missing counts line"
+    assert int(m.group(1)) == num_contacts
+    assert "Columns are defined in the Contact schema above." in prompt
+    assert "Schemas" in prompt
+    assert "Contact = " in prompt  # Schema rendered early
+
+    # Custom columns should appear separately
+    assert "Additional custom columns:" in prompt
+    assert '"occupation"' in prompt
+
     assert "Special contacts" in prompt
     assert "contact_id==0 is the assistant" in prompt
     assert "contact_id==1 is the central user" in prompt
@@ -106,13 +191,16 @@ def test_ask_system_prompt_formatting():
         re.S,
     )
 
-    # Ordering checks
-    counts_line = f"There are currently {cm._num_contacts()} contacts stored in a table with the following columns:"
+    # Ordering checks - schemas now appear EARLY (before table info)
+    counts_line = f"There are currently {num_contacts} contacts."
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            counts_line,
+            "Schemas",  # Schemas appear early now
+            "Contact = ",  # Schema definition
+            counts_line,  # Table info references schema
+            "Columns are defined in the Contact schema above.",
             "Tools (name",
             "Examples",
             "Images policy (when images are present)",
@@ -141,26 +229,34 @@ def test_ask_system_prompt_formatting():
 
 
 def test_update_system_prompt_formatting():
-    cm = ContactManager()
-    tools = dict(cm.get_tools("update"))
+    """Test update prompt structure using mock tools (avoids database state issues)."""
+    tools = _make_mock_update_tools()
+    num_contacts = 10
+    columns = _mock_columns()
+
     prompt = build_update_prompt(
         tools=tools,
-        num_contacts=cm._num_contacts(),
-        columns=cm._list_columns(),
+        num_contacts=num_contacts,
+        columns=columns,
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
     assert set(tools_json.keys()) == set(tools.keys())
-    m = re.search(
-        r"There are currently\s+(\d+)\s+contacts\s+stored in a table with the following columns:",
-        prompt,
-    )
-    assert m, "Missing counts/columns line"
-    assert int(m.group(1)) == cm._num_contacts()
+
+    # Schema-based table info: count line + schema reference
+    m = re.search(r"There are currently\s+(\d+)\s+contacts\.", prompt)
+    assert m, "Missing counts line"
+    assert int(m.group(1)) == num_contacts
+    assert "Columns are defined in the Contact schema above." in prompt
+
+    # Custom columns should appear separately
+    assert "Additional custom columns:" in prompt
+    assert '"occupation"' in prompt
+
     assert "Schemas" in prompt
-    assert "Contact schema = " in prompt
-    assert "ColumnType schema (for custom columns) = " in prompt
+    assert "Contact = " in prompt  # Primary schema
+    assert "ColumnType (for custom columns) = " in prompt  # Secondary schema
     assert "Do not create new columns if an alias already exists." in prompt
     assert "Images policy (when images are present)" in prompt
     assert "Images forwarding to nested tools" in prompt
@@ -172,19 +268,21 @@ def test_update_system_prompt_formatting():
         re.S,
     )
 
-    # Ordering checks
-    counts_line = f"There are currently {cm._num_contacts()} contacts stored in a table with the following columns:"
+    # Ordering checks - schemas now appear EARLY (before table info)
+    counts_line = f"There are currently {num_contacts} contacts."
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            counts_line,
+            "Schemas",  # Schemas appear early now
+            "Contact = ",  # Schema definition
+            counts_line,  # Table info references schema
+            "Columns are defined in the Contact schema above.",
             "Tools (name",
             "Tool selection",
             "Images policy (when images are present)",
             "Images forwarding to nested tools",
             "Parallelism and single",
-            "Schemas",
             "Special contacts",
             "Do not create new columns if an alias already exists.",
             "Current UTC time is ",
