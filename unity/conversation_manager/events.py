@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from typing import Optional, Any, ClassVar
 from datetime import datetime
@@ -8,7 +9,15 @@ from pydantic import BaseModel
 
 
 def _get_now() -> datetime:
-    """Return current datetime. Extracted for test stubbing."""
+    """Return current datetime.
+
+    In test mode (when UNITY_FIXED_DATETIME env var is set), returns the fixed
+    datetime to ensure LLM cache hits across test runs. The env var should be
+    an ISO format datetime string (e.g., "2025-06-13T12:00:00+00:00").
+    """
+    fixed_dt = os.environ.get("UNITY_FIXED_DATETIME")
+    if fixed_dt:
+        return datetime.fromisoformat(fixed_dt)
     return datetime.now()
 
 

@@ -144,7 +144,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.active_tasks: dict[int, dict] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
-        self.last_snapshot = datetime.now()
+        self.last_snapshot = _get_now()
         self._current_snapshot = None
         self.is_summarizing = None
         self.max_messages = 30
@@ -164,7 +164,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
     def snapshot(self):
-        self._current_snapshot = datetime.now()
+        self._current_snapshot = _get_now()
         return self._current_snapshot
 
     def commit(self):
@@ -511,9 +511,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             # Calculate elapsed time from last message timestamp
             if last_message_timestamp:
-                from datetime import datetime
-
-                now = datetime.now()
+                now = _get_now()
                 if isinstance(last_message_timestamp, datetime):
                     elapsed_seconds = (now - last_message_timestamp).total_seconds()
                 else:
