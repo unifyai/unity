@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
-from typing import Awaitable, Callable, Iterable
+from typing import Awaitable, Callable, Iterable, Optional
+
+import unify
 
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
@@ -16,8 +19,137 @@ from unity.conversation_manager.events import (
     UnifyMeetStarted,
 )
 
+logger = logging.getLogger(__name__)
+
 # Shared event broker instance
 event_broker = get_event_broker()
+
+
+# ---------------------------------------------------------------------------
+# STS (Speech-to-Speech) Usage Tracking
+# ---------------------------------------------------------------------------
+#
+# IMPORTANT: This is a ROUGH HEURISTIC for billing STS calls.
+#
+# OpenAI's Realtime API has a fundamentally different pricing model than text
+# LLMs - it charges per audio minute rather than per token. However, Unify's
+# usage tracking system is built around token-based billing.
+#
+# As a temporary workaround, we estimate token usage from call duration and
+# log it against a text-based model (gpt-4@openai) that has similar-ish costs.
+#
+# Key assumptions (all approximate):
+#   - Audio is processed at ~150 tokens/second (OpenAI's internal tokenization)
+#   - We assume 50% of call duration is active speech (conservative estimate)
+#   - We split usage 50/50 between input (user speech) and output (assistant)
+#   - We use gpt-4@openai pricing which OVERESTIMATES actual Realtime API costs
+#
+# This approach intentionally OVERCHARGES users slightly to ensure we always
+# cover our actual costs from OpenAI.
+#
+# TODO: Replace this heuristic with proper Realtime API usage tracking once
+# Unify supports audio-minute billing or OpenAI Realtime pricing endpoints.
+# ---------------------------------------------------------------------------
+
+# Configuration for STS usage estimation
+_STS_BILLING_ENDPOINT = "gpt-4@openai"  # Use expensive model to overestimate
+_STS_TOKENS_PER_SECOND = 150  # Approximate audio tokenization rate
+_STS_SPEECH_RATIO = 0.5  # Assume 50% of call is active speech
+_STS_INPUT_OUTPUT_SPLIT = 0.5  # Assume roughly equal speaking time
+
+
+def log_sts_usage(
+    call_duration_seconds: float,
+    contact: Optional[dict] = None,
+    tags: Optional[list[str]] = None,
+) -> None:
+    """
+    Log estimated usage for an STS (Speech-to-Speech) call.
+
+    This is a ROUGH HEURISTIC - see module-level comments for details.
+    The billing is intentionally set to OVERESTIMATE actual costs.
+
+    Args:
+        call_duration_seconds: Total duration of the call in seconds.
+        contact: Optional contact dict for tagging/identification.
+        tags: Optional additional tags for the query log.
+    """
+    if call_duration_seconds <= 0:
+        logger.warning("Skipping STS usage logging: call duration <= 0")
+        return
+
+    # Estimate active speech time
+    speech_seconds = call_duration_seconds * _STS_SPEECH_RATIO
+
+    # Convert to estimated tokens
+    total_tokens = int(speech_seconds * _STS_TOKENS_PER_SECOND)
+
+    # Split between input (user) and output (assistant)
+    input_tokens = int(total_tokens * _STS_INPUT_OUTPUT_SPLIT)
+    output_tokens = total_tokens - input_tokens
+
+    # Build query body for logging
+    query_body = {
+        "model": _STS_BILLING_ENDPOINT,
+        "messages": [
+            {"role": "system", "content": "[STS call - usage estimate]"},
+            {"role": "user", "content": f"[Audio input: {speech_seconds:.1f}s]"},
+        ],
+    }
+
+    # Build response body with usage stats
+    response_body = {
+        "model": _STS_BILLING_ENDPOINT,
+        "object": "chat.completion",
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        },
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": f"[Audio output: {speech_seconds:.1f}s]",
+                },
+                "finish_reason": "stop",
+            },
+        ],
+        # Include metadata for debugging/auditing
+        "_sts_metadata": {
+            "call_duration_seconds": call_duration_seconds,
+            "estimated_speech_seconds": speech_seconds,
+            "billing_heuristic_version": "v1",
+            "note": "ROUGH ESTIMATE - see code comments for details",
+        },
+    }
+
+    # Build tags
+    all_tags = ["voice", "sts", "realtime", "usage-estimate"]
+    if tags:
+        all_tags.extend(tags)
+    if contact:
+        contact_id = contact.get("contact_id") or contact.get("id")
+        if contact_id:
+            all_tags.append(f"contact:{contact_id}")
+
+    try:
+        unify.log_query(
+            endpoint=_STS_BILLING_ENDPOINT,
+            query_body=query_body,
+            response_body=response_body,
+            tags=all_tags,
+            consume_credits=True,
+        )
+        logger.info(
+            f"Logged STS usage: {call_duration_seconds:.1f}s call → "
+            f"{total_tokens} tokens ({input_tokens} in / {output_tokens} out)",
+        )
+    except Exception as e:
+        # Don't let billing failures crash the call cleanup
+        logger.error(f"Failed to log STS usage: {e}")
+
 
 # Default inactivity timeout used by both agents
 DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
@@ -44,15 +176,33 @@ async def publish_call_ended(contact: dict, channel: str) -> None:
     await event_broker.publish(f"app:comms:{channel}_call_ended", event.to_json())
 
 
-def create_end_call(contact: dict, channel: str) -> Callable[[], Awaitable[None]]:
+def create_end_call(
+    contact: dict,
+    channel: str,
+    pre_shutdown_callback: Optional[Callable[[], None]] = None,
+) -> Callable[[], Awaitable[None]]:
     """
     Returns an async function that:
+      - calls optional pre_shutdown_callback (e.g., for usage logging)
       - publishes the call ended event
       - cancels all other asyncio tasks
+
+    Args:
+        contact: Contact dictionary for the call.
+        channel: Channel type ("phone" or other).
+        pre_shutdown_callback: Optional sync callback to run before shutdown.
+            Useful for logging call usage/metrics before tasks are cancelled.
     """
 
     async def end_call() -> None:
         print("Initiating graceful shutdown...")
+
+        # Run pre-shutdown callback (e.g., usage logging) before cleanup
+        if pre_shutdown_callback is not None:
+            try:
+                pre_shutdown_callback()
+            except Exception as e:  # noqa: BLE001
+                print(f"Error in pre-shutdown callback: {e}")
 
         # Send end call event before cleaning tasks and closing connection
         await publish_call_ended(contact, channel)

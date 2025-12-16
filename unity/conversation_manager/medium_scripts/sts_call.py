@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import json
+import time
 from typing import AsyncIterable
 
 from dotenv import load_dotenv
@@ -43,6 +44,7 @@ from unity.conversation_manager.medium_scripts.common import (
     publish_call_started,
     configure_from_cli,
     should_dispatch_agent,
+    log_sts_usage,
 )
 
 logger = logging.getLogger("gpt-realtime-agent")
@@ -132,8 +134,26 @@ async def entrypoint(ctx: JobContext) -> None:
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
+    # Track call start time for usage logging
+    # See common.py for detailed comments on the STS billing heuristic
+    call_start_time = time.time()
+
+    def log_call_usage() -> None:
+        """Log STS usage when call ends (pre-shutdown callback)."""
+        call_duration = time.time() - call_start_time
+        log_sts_usage(
+            call_duration_seconds=call_duration,
+            contact=contact,
+            tags=[f"channel:{channel}"],
+        )
+
     # NEW: shared end_call + inactivity + participant disconnect handler
-    end_call = create_end_call(contact, channel)
+    # Pass usage logging callback to run before shutdown
+    end_call = create_end_call(
+        contact,
+        channel,
+        pre_shutdown_callback=log_call_usage,
+    )
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
