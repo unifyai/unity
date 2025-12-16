@@ -4,11 +4,11 @@ tests/test_conversation_manager/conftest.py
 
 Fixtures for conversation manager integration tests.
 
-Uses **in-process mode** for simple, fast testing:
-- No Redis server required
-- No subprocess spawning
-- Direct access to ConversationManager instance
-- Direct monkey-patching support
+Uses **direct handler testing** pattern (same as ContactManager tests):
+- No event-driven initialization (no background task dependencies)
+- Direct calls to event handlers
+- Direct state inspection
+- Works reliably with pytest-asyncio
 
 The tests use simulated implementations for all managers (ContactManager,
 TranscriptManager, TaskScheduler, etc.) to avoid connecting to real backends.
@@ -18,17 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
+import pytest
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Type
 
 import pytest_asyncio
 
-from unity.conversation_manager.events import (
-    Event,
-    GetContactsResponse,
-    StartupEvent,
-)
+from unity.conversation_manager.events import Event
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -37,6 +33,24 @@ if TYPE_CHECKING:
 
 # Fixed datetime for LLM cache consistency - must match tests/conftest.py
 _FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+# Test contacts used across all tests
+TEST_CONTACTS = [
+    {
+        "contact_id": 0,
+        "first_name": "Test",
+        "surname": "Assistant",
+        "email_address": "assistant@test.com",
+        "phone_number": "+15555551234",
+    },
+    {
+        "contact_id": 1,
+        "first_name": "Test",
+        "surname": "Contact",
+        "email_address": "test@contact.com",
+        "phone_number": "+15555551111",
+    },
+]
 
 
 # =============================================================================
@@ -74,7 +88,70 @@ def pytest_configure(config):
 
 
 # =============================================================================
-# Event Capture Helper
+# ConversationManager Fixtures (Direct Handler Testing)
+# =============================================================================
+
+
+@pytest_asyncio.fixture(scope="module")
+async def conversation_manager() -> "ConversationManager":
+    """
+    Start and initialize ConversationManager in-process for the test module.
+
+    Uses DIRECT initialization (not event-driven) to avoid background task
+    issues with pytest-asyncio. This follows the same pattern as ContactManager
+    tests - direct method calls, not event publishing.
+    """
+    from unity.conversation_manager.event_broker import reset_event_broker
+    from unity.conversation_manager import start_async, stop_async
+    from unity.conversation_manager.domains import managers_utils
+
+    # Reset any existing event broker state
+    reset_event_broker()
+
+    print("\n✓ Starting ConversationManager in-process...")
+    cm = await start_async(
+        project_name="TestProject",
+        enable_comms_manager=False,  # Don't start CommsManager (requires GCP)
+        apply_test_mocks=True,
+    )
+    print("✓ ConversationManager started (in-process mode)")
+    print("  Using simulated implementations for all managers")
+
+    # Initialize managers DIRECTLY (not via event handler)
+    # This avoids the background task / event loop interleaving issues
+    print("⏳ Initializing managers directly...")
+    await managers_utils.init_conv_manager(cm)
+    print("✅ Managers initialized")
+
+    # Set test contacts directly on contact_index
+    cm.contact_index.set_contacts(TEST_CONTACTS)
+    print(f"✅ Test contacts set: {len(TEST_CONTACTS)}")
+
+    yield cm
+
+    # Cleanup
+    print("\n✓ Stopping ConversationManager...")
+    await stop_async()
+    reset_event_broker()
+
+
+@pytest.fixture
+def initialized_cm(
+    conversation_manager: "ConversationManager",
+) -> "ConversationManager":
+    """
+    Per-test fixture that provides a clean ConversationManager.
+
+    Clears conversation state between tests for isolation while reusing
+    the expensive module-scoped CM instance.
+    """
+    # Clear any conversation state from previous tests
+    conversation_manager.contact_index.clear_conversations()
+    return conversation_manager
+
+
+# =============================================================================
+# Event Capture Helper (for tests that need event inspection)
 # =============================================================================
 
 
@@ -82,7 +159,7 @@ class EventCapture:
     """
     Captures events from the in-memory event broker for test assertions.
 
-    Much simpler than the Redis-based version since we're in the same process.
+    Used by tests that need to verify specific events were published.
     """
 
     def __init__(self, event_broker: "InMemoryEventBroker"):
@@ -121,43 +198,6 @@ class EventCapture:
                 if self._running:
                     break
 
-    async def wait_for_event(
-        self,
-        event_type: Type[Event],
-        timeout: float = 30.0,
-        **attributes,
-    ) -> Event:
-        """Wait for a specific event type with optional attribute matching."""
-        start = time.perf_counter()
-        while time.perf_counter() - start < timeout:
-            for event in self._captured_events:
-                if isinstance(event, event_type):
-                    if all(getattr(event, k, None) == v for k, v in attributes.items()):
-                        return event
-            await asyncio.sleep(0.05)
-
-        raise TimeoutError(
-            f"Timeout waiting for {event_type.__name__} with {attributes}",
-        )
-
-    async def wait_for_event_with_matcher(
-        self,
-        event_type: Type[Event],
-        matcher: callable,
-        timeout: float = 30.0,
-    ) -> Event:
-        """Wait for a specific event type that matches a custom matcher function."""
-        start = time.perf_counter()
-        while time.perf_counter() - start < timeout:
-            for event in self._captured_events:
-                if isinstance(event, event_type) and matcher(event):
-                    return event
-            await asyncio.sleep(0.05)
-
-        raise TimeoutError(
-            f"Timeout waiting for {event_type.__name__} matching custom criteria",
-        )
-
     def get_events(
         self,
         event_type: Type[Event] | None = None,
@@ -192,147 +232,14 @@ class EventCapture:
             await self._pubsub.aclose()
 
 
-# =============================================================================
-# ConversationManager Fixtures (In-Process Mode)
-# =============================================================================
-
-
-@pytest_asyncio.fixture(scope="module")
-async def conversation_manager() -> "ConversationManager":
-    """
-    Start ConversationManager in-process for the test module.
-
-    This is much simpler than the subprocess approach:
-    - No Redis server needed
-    - No subprocess spawning
-    - Direct access to the CM instance
-    - Direct monkey-patching support
-    """
-    # Reset any existing event broker state
-    from unity.conversation_manager.event_broker import reset_event_broker
-
-    reset_event_broker()
-
-    # Import and start CM in-process
-    from unity.conversation_manager import start_async, stop_async
-
-    print("\n✓ Starting ConversationManager in-process...")
-    cm = await start_async(
-        project_name="TestProject",
-        enable_comms_manager=False,  # Don't start CommsManager (requires GCP)
-        apply_test_mocks=True,
-    )
-    print(f"✓ ConversationManager started (in-process mode)")
-    print("  Using simulated implementations for all managers")
-
-    yield cm
-
-    # Cleanup
-    print("\n✓ Stopping ConversationManager...")
-    await stop_async()
-    reset_event_broker()
-
-
-@pytest_asyncio.fixture(scope="module")
-async def initialized_conversation_manager(
-    conversation_manager: "ConversationManager",
-) -> "ConversationManager":
-    """
-    Initialize the ConversationManager with startup and contacts events.
-
-    Publishes the startup event and contacts, then waits for initialization
-    to complete. Much faster than subprocess mode since we're in-process.
-    """
-    cm = conversation_manager
-    event_broker = cm.event_broker
-
-    # Create startup event
-    startup = StartupEvent(
-        api_key=os.getenv("UNIFY_KEY", "test_key"),
-        medium="test",
-        assistant_id="test_assistant_1",
-        user_id="test_user_1",
-        assistant_name="Test Assistant",
-        assistant_age="25",
-        assistant_nationality="US",
-        assistant_about="A helpful test assistant",
-        assistant_number="+15555551234",
-        assistant_email="assistant@test.com",
-        user_name="Test User",
-        user_number="+15555555678",
-        user_email="user@test.com",
-        voice_provider="cartesia",
-        voice_id="test_voice",
-    )
-
-    # Subscribe to initialization_complete before sending startup
-    async with event_broker.pubsub() as pubsub:
-        await pubsub.subscribe("app:comms:initialization_complete")
-
-        # Send startup event
-        print("📤 Publishing startup event...")
-        await event_broker.publish("app:comms:startup", startup.to_json())
-
-        # Send contacts
-        print("📤 Publishing contacts...")
-        contacts_event = GetContactsResponse(
-            contacts=[
-                {
-                    "contact_id": 0,
-                    "first_name": "Test",
-                    "surname": "Assistant",
-                    "email_address": "assistant@test.com",
-                    "phone_number": "+15555551234",
-                },
-                {
-                    "contact_id": 1,
-                    "first_name": "Test",
-                    "surname": "Contact",
-                    "email_address": "test@contact.com",
-                    "phone_number": "+15555551111",
-                },
-            ],
-        )
-        await event_broker.publish("app:comms:contacts", contacts_event.to_json())
-
-        # Wait for initialization (with timeout)
-        print("⏳ Waiting for initialization...")
-        init_timeout = 60  # Much shorter than subprocess mode
-        start_time = time.perf_counter()
-
-        while time.perf_counter() - start_time < init_timeout:
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            if msg and msg["type"] == "message":
-                try:
-                    from unity.conversation_manager.events import InitializationComplete
-
-                    event = Event.from_json(msg["data"])
-                    if isinstance(event, InitializationComplete):
-                        elapsed = time.perf_counter() - start_time
-                        print(f"✅ Initialization complete after {elapsed:.1f}s")
-                        break
-                except Exception:
-                    pass
-        else:
-            raise RuntimeError(
-                f"Timeout ({init_timeout}s) waiting for InitializationComplete",
-            )
-
-    print("✅ System initialized and ready")
-    return cm
-
-
 @pytest_asyncio.fixture
-async def event_capture(
-    initialized_conversation_manager: "ConversationManager",
-) -> EventCapture:
+async def event_capture(initialized_cm: "ConversationManager") -> EventCapture:
     """
     EventCapture instance that listens to all conversation manager events.
 
     Uses the in-memory event broker directly - no Redis needed.
     """
-    cm = initialized_conversation_manager
-    capture = EventCapture(cm.event_broker)
+    capture = EventCapture(initialized_cm.event_broker)
     await capture.start_capturing(["app:comms:*", "app:conductor:*", "app:managers:*"])
     yield capture
     await capture.stop()
@@ -343,13 +250,11 @@ async def event_capture(
 # =============================================================================
 
 
-@pytest_asyncio.fixture
-async def event_broker(
-    initialized_conversation_manager: "ConversationManager",
-) -> "InMemoryEventBroker":
+@pytest.fixture
+def event_broker(initialized_cm: "ConversationManager") -> "InMemoryEventBroker":
     """
     Direct access to the in-memory event broker.
 
     Useful for tests that need to publish/subscribe directly.
     """
-    return initialized_conversation_manager.event_broker
+    return initialized_cm.event_broker
