@@ -2,16 +2,14 @@
 Prompt builders for the Task Scheduler.
 
 This module constructs system prompts for the scheduler's ask and update
-methods, plus a helper for the simulated scheduler. Each builder
-derives tool names dynamically from the provided tool dictionary, validates the
-required tools, and composes guidance and examples that reflect current
-behavior.
+methods using the schema-first approach. The Task schema is rendered once
+early in prompts and referenced throughout.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Dict, Callable
+from typing import Dict, Callable, Union, List
 
 from .types.task import Task
 from ..common.prompt_helpers import (
@@ -20,6 +18,7 @@ from ..common.prompt_helpers import (
     now,
     tool_name,
     require_tools,
+    get_custom_columns,
     images_policy_block,
     images_forwarding_block,
     # New standardized composer utilities
@@ -41,16 +40,18 @@ from ..common.prompt_helpers import (
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_tasks: int,
-    columns: Dict[str, str] | list[dict] | list[str],
+    columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
 ) -> str:
     """
     Build the **system** prompt for the `ask` method using the shared composer.
 
-    *Never* hard-codes the number, names or argument-specs of tools – those are
-    injected live from the supplied *tools* dict.
+    Uses schema-first approach: Task schema is rendered once early and
+    referenced in table info.
     """
+    # Extract custom columns (not in Task model)
+    custom_cols = get_custom_columns(Task, columns)
 
     # Resolve canonical tool names dynamically
     filter_tasks_fname = tool_name(tools, "filter_tasks")
@@ -177,8 +178,9 @@ def build_ask_prompt(
         positioning_lines=positioning_lines,
         counts_entity_plural="tasks",
         counts_value=num_tasks,
-        columns_payload=columns,
-        columns_heading="columns",
+        # Schema-based table info (avoids duplication)
+        table_schema_name="Task",
+        custom_columns=custom_cols if custom_cols else None,
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
@@ -186,7 +188,7 @@ def build_ask_prompt(
         include_images_forwarding=True,
         images_extras_block=images_extras,
         include_parallelism=True,
-        schemas=[("Task schema", Task.model_json_schema())],
+        schemas=[("Task", Task)],  # Full schema defines table columns
         special_blocks=[],
         include_clarification_footer=True,
         include_time_footer=True,
@@ -198,14 +200,15 @@ def build_ask_prompt(
 def build_update_prompt(
     tools: Dict[str, Callable],
     num_tasks: int,
-    columns: Dict[str, str] | list[dict] | list[str],
+    columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
 ) -> str:
     """
-    Build the **system** prompt for the `update` method.
+    Build the **system** prompt for the `update` method using schema-first approach.
     """
-    sig_json = json.dumps(sig_dict(tools), indent=4)
+    # Extract custom columns (not in Task model)
+    custom_cols = get_custom_columns(Task, columns)
 
     # Resolve canonical tool names dynamically (required)
     ask_fname = tool_name(tools, "ask")
@@ -419,7 +422,7 @@ def build_update_prompt(
 
     usage_examples = "\n".join(usage_examples_lines)
 
-    # Compose using standardized spec
+    # Compose using standardized spec with schema-based table info
     spec = PromptSpec(
         manager="TaskScheduler",
         method="update",
@@ -438,8 +441,9 @@ def build_update_prompt(
         positioning_lines=[],
         counts_entity_plural="tasks",
         counts_value=num_tasks,
-        columns_payload=columns,
-        columns_heading="columns",
+        # Schema-based table info (avoids duplication)
+        table_schema_name="Task",
+        custom_columns=custom_cols if custom_cols else None,
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
@@ -447,7 +451,7 @@ def build_update_prompt(
         include_images_forwarding=True,
         images_extras_block=None,
         include_parallelism=True,
-        schemas=[("Task schema", Task.model_json_schema())],
+        schemas=[("Task", Task)],  # Full schema defines table columns
         special_blocks=[],
         include_clarification_footer=True,
         include_time_footer=True,
