@@ -16,7 +16,135 @@ from unity.task_scheduler.prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
 )
-from unity.task_scheduler.task_scheduler import TaskScheduler
+
+
+def _make_mock_ask_tools():
+    """Create mock tools for ask prompt testing (avoids TaskScheduler instantiation)."""
+
+    def filter_tasks(**kwargs):
+        return []
+
+    def search_tasks(**kwargs):
+        return []
+
+    def reduce(**kwargs):
+        return {}
+
+    def list_queues():
+        return []
+
+    def get_queue(**kwargs):
+        return {}
+
+    def get_queue_for_task(**kwargs):
+        return {}
+
+    def ContactManager_ask(**kwargs):
+        return ""
+
+    return {
+        "filter_tasks": filter_tasks,
+        "search_tasks": search_tasks,
+        "reduce": reduce,
+        "list_queues": list_queues,
+        "get_queue": get_queue,
+        "get_queue_for_task": get_queue_for_task,
+        "ContactManager_ask": ContactManager_ask,
+    }
+
+
+def _make_mock_update_tools():
+    """Create mock tools for update prompt testing (avoids TaskScheduler instantiation)."""
+
+    def ask(**kwargs):
+        return ""
+
+    def create_task(**kwargs):
+        return {}
+
+    def create_tasks(**kwargs):
+        return []
+
+    def delete_task(**kwargs):
+        return {}
+
+    def cancel_tasks(**kwargs):
+        return []
+
+    def update_task(**kwargs):
+        return {}
+
+    def list_queues():
+        return []
+
+    def get_queue(**kwargs):
+        return {}
+
+    def get_queue_for_task(**kwargs):
+        return {}
+
+    def set_queue(**kwargs):
+        return {}
+
+    def reorder_queue(**kwargs):
+        return {}
+
+    def move_tasks_to_queue(**kwargs):
+        return {}
+
+    def partition_queue(**kwargs):
+        return {}
+
+    def set_schedules_atomic(**kwargs):
+        return {}
+
+    def reinstate_task_to_previous_queue(**kwargs):
+        return {}
+
+    def ContactManager_ask(**kwargs):
+        return ""
+
+    return {
+        "ask": ask,
+        "create_task": create_task,
+        "create_tasks": create_tasks,
+        "delete_task": delete_task,
+        "cancel_tasks": cancel_tasks,
+        "update_task": update_task,
+        "list_queues": list_queues,
+        "get_queue": get_queue,
+        "get_queue_for_task": get_queue_for_task,
+        "set_queue": set_queue,
+        "reorder_queue": reorder_queue,
+        "move_tasks_to_queue": move_tasks_to_queue,
+        "partition_queue": partition_queue,
+        "set_schedules_atomic": set_schedules_atomic,
+        "reinstate_task_to_previous_queue": reinstate_task_to_previous_queue,
+        "ContactManager_ask": ContactManager_ask,
+    }
+
+
+def _mock_columns():
+    """Return mock columns that include both built-in and custom columns."""
+    return {
+        "task_id": "int",
+        "instance_id": "int",
+        "queue_id": "int",
+        "name": "str",
+        "description": "str",
+        "status": "str",
+        "schedule": "dict",
+        "trigger": "dict",
+        "deadline": "datetime",
+        "repeat": "list",
+        "priority": "str",
+        "response_policy": "str",
+        "entrypoint": "int",
+        "activated_by": "dict",
+        "info": "str",
+        # Custom column
+        "custom_field": "str",
+    }
 
 
 def _build_prompt_in_subprocess(method: str) -> str:
@@ -75,29 +203,38 @@ def _build_prompt_in_subprocess(method: str) -> str:
 
 
 def test_ask_system_prompt_formatting():
-    ts = TaskScheduler()
-    tools = dict(ts.get_tools("ask"))
+    """Test ask prompt structure using mock tools (avoids database state issues)."""
+    tools = _make_mock_ask_tools()
+    num_tasks = 10
+    columns = _mock_columns()
+
     prompt = build_ask_prompt(
         tools=tools,
-        num_tasks=ts._num_tasks(),
-        columns=ts._list_columns(),
+        num_tasks=num_tasks,
+        columns=columns,
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
     assert set(tools_json.keys()) == set(tools.keys())
     assert "Tools (name" in prompt
-    m = re.search(
-        r"There are currently\s+(\d+)\s+tasks\s+stored in a table with the following columns:",
-        prompt,
-    )
-    assert m, "Missing counts/columns line"
-    assert int(m.group(1)) == ts._num_tasks()
+
+    # Schema-based table info: count line + schema reference
+    m = re.search(r"There are currently\s+(\d+)\s+tasks\.", prompt)
+    assert m, "Missing counts line"
+    assert int(m.group(1)) == num_tasks
+    assert "Columns are defined in the Task schema above." in prompt
+    assert "Schemas" in prompt
+    assert "Task = " in prompt  # Schema rendered early
+
+    # Custom columns should appear separately
+    assert "Additional custom columns:" in prompt
+    assert '"custom_field"' in prompt
+
     assert "Images-first workflow for ask()" in prompt
     assert "Images policy (when images are present)" in prompt
     assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
-    assert "Schemas" in prompt and "Task schema = " in prompt
     # Clarification top sentence (no clarification tool provided → else-policy)
     assert re.search(
         r"Do not ask the user questions in your final response\..*sensible defaults",
@@ -105,20 +242,22 @@ def test_ask_system_prompt_formatting():
         re.S,
     )
 
-    # Ordering checks
-    counts_line = f"There are currently {ts._num_tasks()} tasks stored in a table with the following columns:"
+    # Ordering checks - schemas now appear EARLY (before table info)
+    counts_line = f"There are currently {num_tasks} tasks."
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            counts_line,
+            "Schemas",  # Schemas appear early now
+            "Task = ",  # Schema definition
+            counts_line,  # Table info references schema
+            "Columns are defined in the Task schema above.",
             "Tools (name",
             "Examples",
             "Images policy (when images are present)",
             "Images forwarding to nested tools",
             "Images-first workflow for ask()",
             "Parallelism and single",
-            "Schemas",
             "Current UTC time is ",
         ],
     )
@@ -132,27 +271,36 @@ def test_ask_system_prompt_formatting():
 
 
 def test_update_system_prompt_formatting():
-    ts = TaskScheduler()
-    tools = dict(ts.get_tools("update"))
+    """Test update prompt structure using mock tools (avoids database state issues)."""
+    tools = _make_mock_update_tools()
+    num_tasks = 10
+    columns = _mock_columns()
+
     prompt = build_update_prompt(
         tools=tools,
-        num_tasks=ts._num_tasks(),
-        columns=ts._list_columns(),
+        num_tasks=num_tasks,
+        columns=columns,
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
     assert set(tools_json.keys()) == set(tools.keys())
-    m = re.search(
-        r"There are currently\s+(\d+)\s+tasks\s+stored in a table with the following columns:",
-        prompt,
-    )
-    assert m, "Missing counts/columns line"
-    assert int(m.group(1)) == ts._num_tasks()
+
+    # Schema-based table info: count line + schema reference
+    m = re.search(r"There are currently\s+(\d+)\s+tasks\.", prompt)
+    assert m, "Missing counts line"
+    assert int(m.group(1)) == num_tasks
+    assert "Columns are defined in the Task schema above." in prompt
+
+    # Custom columns should appear separately
+    assert "Additional custom columns:" in prompt
+    assert '"custom_field"' in prompt
+
+    assert "Schemas" in prompt
+    assert "Task = " in prompt  # Schema
     assert "Images policy (when images are present)" in prompt
     assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
-    assert "Schemas" in prompt and "Task schema = " in prompt
     # Clarification top sentence (no clarification tool provided → else-policy)
     assert re.search(
         r"Do not ask the user questions in your final response\..*sensible defaults",
@@ -160,19 +308,21 @@ def test_update_system_prompt_formatting():
         re.S,
     )
 
-    # Ordering checks
-    counts_line = f"There are currently {ts._num_tasks()} tasks stored in a table with the following columns:"
+    # Ordering checks - schemas now appear EARLY (before table info)
+    counts_line = f"There are currently {num_tasks} tasks."
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            counts_line,
+            "Schemas",  # Schemas appear early now
+            "Task = ",  # Schema definition
+            counts_line,  # Table info references schema
+            "Columns are defined in the Task schema above.",
             "Tools (name",
             "Tool selection",
             "Images policy (when images are present)",
             "Images forwarding to nested tools",
             "Parallelism and single",
-            "Schemas",
             "Current UTC time is ",
         ],
     )
