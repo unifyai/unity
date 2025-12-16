@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -16,14 +15,14 @@ ASSET_LOCAL = Path(__file__).parent / "assets" / "google.jpeg"
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_returns_text_only():
+async def test_ask_returns_text_only(static_now):
     im = ImageManager()
     raw = ASSET_LOCAL.read_bytes()
     img_b64 = base64.b64encode(raw).decode("utf-8")
     [img_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "a real photo (google.jpeg test asset)",
                 "data": img_b64,
             },
@@ -43,7 +42,7 @@ async def test_ask_returns_text_only():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_uses_parent_chat_context():
+async def test_ask_uses_parent_chat_context(static_now):
     """
     Verifies that ImageHandle.ask accepts an optional parent chat context and
     injects it as a single summarizing system message (not as many messages), and
@@ -60,7 +59,7 @@ async def test_ask_uses_parent_chat_context():
     [img_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "Google logo (test asset)",
                 "data": img_b64,
             },
