@@ -11,9 +11,10 @@ from livekit.plugins import (
     cartesia,
     deepgram,
     elevenlabs,
-    openai,
     silero,
 )
+
+from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
 
 if sys.platform == "darwin":
     from livekit.plugins import noise_cancellation
@@ -63,7 +64,9 @@ class Assistant(Agent):
     """
     TTS Fast Brain - handles real-time conversation independently.
 
-    Uses a lightweight LLM (gpt-4o-mini) for fast conversational responses.
+    Uses a lightweight LLM (gpt-5-nano via UnifyLLM adapter) for fast
+    conversational responses. Routes through unify.AsyncUnify for local
+    caching (CI) and usage tracking.
     Receives guidance from the Main CM Brain (slow brain) via Redis pub/sub.
     """
 
@@ -151,8 +154,9 @@ async def entrypoint(ctx: agents.JobContext):
         VAD = silero.VAD.load(min_speech_duration=0.15)
 
     # Fast brain LLM - lightweight model for responsive conversation
+    # Uses UnifyLLM adapter for local caching (CI) and usage tracking
     # gpt-5-nano with reasoning_effort="none" for maximum speed (disables reasoning)
-    llm_model = openai.LLM(model="gpt-5-nano", reasoning_effort="none")
+    llm_model = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="none")
 
     # Build Voice Agent prompt (used by both TTS and STS modes)
     system_prompt = build_voice_agent_prompt(
