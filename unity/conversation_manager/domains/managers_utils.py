@@ -11,7 +11,7 @@ from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
-from unity.conversation_manager.events import *
+from unity.conversation_manager.events import _get_now
 from unity.events.event_bus import EVENT_BUS
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.conductor.conductor import Conductor
