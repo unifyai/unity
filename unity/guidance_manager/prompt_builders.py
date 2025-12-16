@@ -1,16 +1,15 @@
 """
 Prompt builders for GuidanceManager.
 
-These builders parallel *contact_manager/prompt_builders.py*: they receive
-a **live** ``tools``-dict and construct the corresponding **system** messages
-*without ever hard-coding* tool counts, names or arg-signatures.
+Uses schema-first approach: Guidance schema is rendered once early
+and referenced in table info to avoid duplication.
 """
 
 from __future__ import annotations
 
 import json
 import textwrap
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 from .types.guidance import Guidance
 from ..common.prompt_helpers import (
@@ -19,6 +18,7 @@ from ..common.prompt_helpers import (
     now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    get_custom_columns,
     # Standardized composer utilities
     PromptSpec,
     compose_system_prompt,
@@ -130,11 +130,14 @@ def _images_extras_for_guidance(
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_items: int,
-    columns: List[Dict[str, str]] | List[str] | Dict[str, str],
+    columns: Union[List[Dict[str, str]], List[str], Dict[str, str]],
     *,
     include_activity: bool = True,
 ) -> str:
     """Return the system-prompt used by *ask* using the shared composer."""
+    # Extract custom columns (not in Guidance model)
+    custom_cols = get_custom_columns(Guidance, columns)
+
     # Resolve canonical tool names dynamically
     filter_fname = _tool_name(tools, "filter")
     search_fname = _tool_name(tools, "search")
@@ -237,7 +240,7 @@ Anti‑patterns to avoid
         attach_funcs_fname=attach_funcs_fname,
     )
 
-    # Build using standardized composer
+    # Build using standardized composer with schema-based table info
     spec = PromptSpec(
         manager="GuidanceManager",
         method="ask",
@@ -251,8 +254,9 @@ Anti‑patterns to avoid
         positioning_lines=positioning_lines,
         counts_entity_plural="guidance entries",
         counts_value=num_items,
-        columns_payload=columns,
-        columns_heading="columns",
+        # Schema-based table info (avoids duplication)
+        table_schema_name="Guidance",
+        custom_columns=custom_cols if custom_cols else None,
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
@@ -260,7 +264,7 @@ Anti‑patterns to avoid
         include_images_forwarding=True,
         images_extras_block=images_extras or None,
         include_parallelism=True,
-        schemas=[],
+        schemas=[("Guidance", Guidance)],  # Full schema defines table columns
         special_blocks=[],
         include_clarification_footer=True,
         include_time_footer=True,
@@ -272,11 +276,14 @@ Anti‑patterns to avoid
 def build_update_prompt(
     tools: Dict[str, Callable],
     num_items: int,
-    columns: List[Dict[str, str]] | List[str] | Dict[str, str],
+    columns: Union[List[Dict[str, str]], List[str], Dict[str, str]],
     *,
     include_activity: bool = True,
 ) -> str:
-    """Return the system-prompt used by *update* using the shared composer."""
+    """Return the system-prompt used by *update* using schema-first approach."""
+    # Extract custom columns (not in Guidance model)
+    custom_cols = get_custom_columns(Guidance, columns)
+
     # Resolve canonical tool names dynamically
     add_fname = _tool_name(tools, "add_guidance")
     upd_fname = _tool_name(tools, "update_guidance")
@@ -368,7 +375,7 @@ Anti‑patterns to avoid
             ],
         )
 
-    # Compose using standardized composer
+    # Compose using standardized composer with schema-based table info
     spec = PromptSpec(
         manager="GuidanceManager",
         method="update",
@@ -384,8 +391,9 @@ Anti‑patterns to avoid
         positioning_lines=[],
         counts_entity_plural="guidance entries",
         counts_value=num_items,
-        columns_payload=columns,
-        columns_heading="columns",
+        # Schema-based table info (avoids duplication)
+        table_schema_name="Guidance",
+        custom_columns=custom_cols if custom_cols else None,
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
@@ -393,7 +401,7 @@ Anti‑patterns to avoid
         include_images_forwarding=True,
         images_extras_block=None,
         include_parallelism=True,
-        schemas=[("Guidance schema", Guidance.model_json_schema())],
+        schemas=[("Guidance", Guidance)],  # Full schema defines table columns
         special_blocks=[],
         include_clarification_footer=True,
         include_time_footer=True,
