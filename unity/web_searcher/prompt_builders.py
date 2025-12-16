@@ -1,10 +1,56 @@
-from typing import Dict, Callable
-from ..common.prompt_helpers import clarification_guidance, now
-from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
+"""
+Prompt builders for WebSearcher.
+
+These builders parallel *contact_manager/prompt_builders.py*: they receive
+a **live** ``tools``-dict and construct the corresponding **system** messages
+*without ever hard-coding* tool counts, names or arg-signatures.
+"""
+
+from __future__ import annotations
+
+import json
+import textwrap
+from typing import Dict, Callable, List
+
+from ..common.prompt_helpers import (
+    clarification_guidance,
+    sig_dict,
+    now,
+    tool_name as _shared_tool_name,
+    require_tools as _shared_require_tools,
+    # Standardized composer utilities
+    PromptSpec,
+    compose_system_prompt,
+)
 
 
-def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
-    """Return the system prompt used by WebSearcher.ask formatted as sections."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
+    """Return {tool_name: '(<argspec>)', …} using shared helper."""
+    return sig_dict(tools)
+
+
+def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
+    """Delegate to shared tool name resolver."""
+    return _shared_tool_name(tools, needle)
+
+
+def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
+    """Delegate validation to shared helper for consistent errors."""
+    _shared_require_tools(pairs, tools)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dynamic tool documentation builders
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _build_ask_tools_documentation(tools: Dict[str, Callable]) -> str:
+    """Build dynamic tools documentation section for ask prompt."""
     have_search = "search" in tools
     have_extract = "extract" in tools
     have_crawl = "crawl" in tools
@@ -13,19 +59,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     have_search_websites = "_search_websites" in tools
     have_search_gated = "_gated_website_search" in tools
 
-    lines: list[str] = []
-    # Purpose
-    lines += [
-        "Purpose",
-        "-------",
-        "- You are a web research assistant.",
-        "- Use the available tools to answer the user's question.",
-        "- Produce concise, factual answers with optional inline citations (title or URL).",
-    ]
-
-    # Tools available
-    lines += [
-        "",
+    lines: List[str] = [
         "Tools Available",
         "---------------",
     ]
@@ -97,9 +131,12 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
             '    - _gated_website_search(queries=["AI trends", "LLM fine-tuning"], website={"host": "medium.com"})',
         ]
 
-    # General rules and guidance
-    lines += [
-        "",
+    return "\n".join(lines)
+
+
+def _build_ask_guidance_sections() -> str:
+    """Build static guidance sections for ask prompt."""
+    return "\n".join([
         "General Rules and Guidance",
         "--------------------------",
         "- Keep queries concise; if complex, split into smaller, focused searches.",
@@ -110,10 +147,6 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "  • Use `_filter_websites` for exact host/name filters; use `_search_websites` when only thematic notes are given.",
         "  • If a row exists and `gated=True`, use `_gated_website_search(queries=..., website=...)` to browse with login.",
         "  • Otherwise, use general tools (`search`, `extract`, `crawl`, `map`).",
-    ]
-
-    # Website-aware routing guidance
-    lines += [
         "",
         "Website-aware Routing",
         "----------------------",
@@ -124,38 +157,6 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "  2) If the site exists and `gated=True`, use `_gated_website_search(queries=..., website=...)` to login with saved credentials and browse.",
         "  3) If not gated or no matching Website entry exists, use general tools (`search`, then optionally `extract`/`crawl`/`map`).",
         "- Do NOT use `_search_websites` to read web content; it only searches the Websites catalog.",
-    ]
-
-    # Concrete examples for routing
-    lines += [
-        "",
-        "Examples",
-        "--------",
-        "- Login to my GitHub and summarize my profile:",
-        "  1) `_filter_websites(filter=\"host == 'github.com' or name == 'GitHub'\", limit=1)`",
-        "  2) If found and gated=True: `_gated_website_search(queries='summarize my GitHub profile', website=<row>)`",
-        "  3) Else: use `crawl`/`extract` as appropriate.",
-        "- Access my Towards Data Science subscription article and summarize:",
-        "  1) `_filter_websites(filter=\"host == 'towardsdatascience.com' or name == 'Towards Data Science'\", limit=1)`",
-        "  2) If found and gated=True: `_gated_website_search(queries='summarize the latest paywalled article on my reading list', website=<row>)`",
-        "- Search multiple gated sites for the same topic (call `_gated_website_search` ONCE per site):",
-        "  1) `_filter_websites(filter=\"host == 'medium.com' or host == 'towardsdatascience.com'\")` → returns rows for both",
-        "  2) `_gated_website_search(queries='LLM fine-tuning techniques', website=<medium_row>)`",
-        "  3) `_gated_website_search(queries='LLM fine-tuning techniques', website=<tds_row>)`",
-        "  4) Synthesize results from both sites into a unified answer with citations from each source.",
-        "- Search one site for multiple topics (pass multiple queries in ONE call):",
-        "  1) `_filter_websites(filter=\"host == 'medium.com'\", limit=1)`",
-        "  2) `_gated_website_search(queries=['AI trends', 'LLM fine-tuning', 'vector databases'], website=<row>)`",
-        "  3) Synthesize results for all topics into a unified answer.",
-        "- Summarize updates on docs.example.com:",
-        "  1) `_filter_websites(filter=\"host == 'docs.example.com'\")`",
-        "  2) If gated=False or absent: `crawl(start_url='https://docs.example.com', instructions='Find recent updates')`",
-        "- General web query (non-site specific):",
-        '  1) `search(query="how is the uk temperature in london tomorrow?", max_results=3)`',
-    ]
-
-    # Decision policy and when to stop
-    lines += [
         "",
         "Decision Policy and When to Stop",
         "---------------------------------",
@@ -169,9 +170,6 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "   For multi-site queries, call consecutively for each site, then synthesize all results together.",
         "7. **After gated search, STOP**: Once you have called `_gated_website_search` ONCE per site for all requested sites,",
         "   do NOT call `search`, `extract`, `crawl`, or `map` for additional content. Synthesize what you have and answer.",
-    ]
-
-    lines += [
         "",
         "Answer Requirements",
         "-------------------",
@@ -181,38 +179,17 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "  If multiple sites were searched, combine findings and note which source each fact came from.",
         "  Include inline citations (e.g., [Source Title](URL) or 'according to <title>') for each key fact.",
         "- After you write the final answer, do not call further tools.",
-    ]
-
-    # Clarification guidance (conditionally references request_clarification when available)
-    lines += ["", clarification_guidance(tools)]
-    # Early exit policy for mutation-intent requests reaching ask()
-    lines += ["", read_only_ask_mutation_exit_block()]
-    # Current time (for reproducibility and deterministic caching in tests)
-    lines += ["", f"Current UTC time is {now()}."]
-
-    return "\n".join(lines)
+    ])
 
 
-def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
-    """Return the system prompt used by WebSearcher.update formatted as sections."""
+def _build_update_tools_documentation(tools: Dict[str, Callable]) -> str:
+    """Build dynamic tools documentation section for update prompt."""
     have_create = "_create_website" in tools
     have_update = "_update_website" in tools
     have_delete = "_delete_website" in tools
     have_ask = "ask" in tools
 
-    lines: list[str] = []
-    # Purpose
-    lines += [
-        "Purpose",
-        "-------",
-        "- You manage mutations to the WebSearcher configuration.",
-        "- Specifically, you create and delete entries in the Websites table, and use `ask` to inspect/verify.",
-        "- Do not answer general web research questions here; use `ask` for read-only inspection when needed.",
-    ]
-
-    # Tools available (dynamic, like ask)
-    lines += [
-        "",
+    lines: List[str] = [
         "Tools Available",
         "---------------",
     ]
@@ -251,74 +228,227 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
             "    - ask(text='Which websites match ML news subscriptions?')  → should call _search_websites(notes='ML news subscription')",
         ]
 
-    # General rules
-    lines += [
-        "",
-        "General Rules",
-        "-------------",
-        "- Treat `host` as the natural unique key for a website entry.",
-        "- **Naming**: Use a human-friendly `name` (e.g., 'Medium', 'GitHub', 'Financial Times'), NOT the host address.",
-        "  Good: name='HealthInvestor', host='healthinvestor.co.uk'",
-        "  Bad: name='healthinvestor.co.uk', host='healthinvestor.co.uk'",
-        "- After any mutation (create/delete), verify results using `ask` (e.g., `_filter_websites` or `_search_websites`).",
-        "- Prefer minimal, targeted tool calls; handle multiple entries comprehensively when requested.",
-    ]
-
-    # Ask vs Mutation guidance
-    lines += [
-        "",
-        "Ask vs Mutations",
-        "-----------------",
-        "- Use `ask` strictly for read-only inspection of the Websites table (e.g., to check if a host exists).",
-        "- Use `_create_website` to add a new entry; use `_delete_website` to remove an entry.",
-        "- Do not try to browse the web from `update`; web research belongs in `ask`.",
-    ]
-
-    # Tool selection (aligned with ask routing, but for mutations)
-    lines += [
-        "",
-        "Tool selection (read carefully)",
-        "--------------------------------",
-        "- When the user describes target sites semantically (e.g., 'ML news subscriptions'), first call `ask` to identify candidates using `_search_websites(notes=...)`.",
-        "- When the user specifies exact columns (e.g., host or gated), first call `ask` with `_filter_websites(filter=...)` to confirm matches before mutating.",
-        "- Never call `_gated_website_search` from `update` (that is a browsing action in `ask`).",
-        "- Do not call `search`/`extract`/`crawl`/`map` from `update`.",
-    ]
-
-    # Security and data hygiene
-    lines += [
-        "",
-        "Security & Data Hygiene",
-        "------------------------",
-        "- Never include raw credential values in messages. Only reference `credentials` by their integer `secret_id`s.",
-        "- When creating a website entry, pass `credentials=[int, ...]` only; do not attempt to resolve secret values.",
-        "- Prefer `actor_entrypoint` ids when bespoke behaviour is available; otherwise the system default will be used at runtime.",
-    ]
-
-    # Examples
-    lines += [
-        "",
-        "Examples",
-        "--------",
-        "- Create a gated site with credentials and verify:",
-        "  1) _create_website(host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
-        "  2) ask(text='List gated websites')  → should call _filter_websites(filter=\"gated == True\")",
-        "- Find relevant sites by notes then delete one:",
-        "  1) ask(text='Which websites are for ML news subscriptions?') → should call _search_websites(notes='ML news subscription')",
-        "  2) _delete_website(host='example.com')",
-        "- Bulk creation from a list in one turn (handle ALL entries):",
-        "  • _create_website(host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
-        "  • _create_website(host='ft.com', gated=True, subscribed=True, credentials=[205, 206], notes='Finance and markets')",
-        '  Then verify via ask using _filter_websites(filter="gated == True").',
-    ]
-
-    # Clarification guidance (conditionally references request_clarification when available)
-    lines += ["", clarification_guidance(tools)]
-
-    # Time for deterministic caching in tests
-    lines += ["", f"Current UTC time is {now()}."]
-
     return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public builders
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
+    """Return the system prompt used by WebSearcher.ask using the shared composer."""
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    # Build clarification block
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+            ─ Clarification ─
+            • If the query is ambiguous, ask the user to specify
+              `{request_clar_fname}(question="Which website or topic did you mean?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
+    )
+
+    # Build dynamic tools documentation
+    tools_doc = _build_ask_tools_documentation(tools)
+
+    # Build usage examples
+    usage_examples = textwrap.dedent("""
+Examples
+--------
+- Login to my GitHub and summarize my profile:
+  1) `_filter_websites(filter="host == 'github.com' or name == 'GitHub'", limit=1)`
+  2) If found and gated=True: `_gated_website_search(queries='summarize my GitHub profile', website=<row>)`
+  3) Else: use `crawl`/`extract` as appropriate.
+- Access my Towards Data Science subscription article and summarize:
+  1) `_filter_websites(filter="host == 'towardsdatascience.com' or name == 'Towards Data Science'", limit=1)`
+  2) If found and gated=True: `_gated_website_search(queries='summarize the latest paywalled article on my reading list', website=<row>)`
+- Search multiple gated sites for the same topic (call `_gated_website_search` ONCE per site):
+  1) `_filter_websites(filter="host == 'medium.com' or host == 'towardsdatascience.com'")` → returns rows for both
+  2) `_gated_website_search(queries='LLM fine-tuning techniques', website=<medium_row>)`
+  3) `_gated_website_search(queries='LLM fine-tuning techniques', website=<tds_row>)`
+  4) Synthesize results from both sites into a unified answer with citations from each source.
+- Search one site for multiple topics (pass multiple queries in ONE call):
+  1) `_filter_websites(filter="host == 'medium.com'", limit=1)`
+  2) `_gated_website_search(queries=['AI trends', 'LLM fine-tuning', 'vector databases'], website=<row>)`
+  3) Synthesize results for all topics into a unified answer.
+- Summarize updates on docs.example.com:
+  1) `_filter_websites(filter="host == 'docs.example.com'")`
+  2) If gated=False or absent: `crawl(start_url='https://docs.example.com', instructions='Find recent updates')`
+- General web query (non-site specific):
+  1) `search(query="how is the uk temperature in london tomorrow?", max_results=3)`
+
+Anti‑patterns to avoid
+---------------------
+• Do not loop through many tools or repeat equivalent steps.
+• Do not retry `_gated_website_search` on the same site – call ONCE per site.
+• After gated search completes for all requested sites, do NOT call additional search/extract/crawl/map.
+    """).strip()
+
+    if clarification_block:
+        usage_examples = f"{usage_examples}\n{clarification_block}"
+    else:
+        usage_examples = "\n".join(
+            [
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+            ],
+        )
+
+    # Build guidance sections
+    guidance_block = _build_ask_guidance_sections()
+
+    # Compose using standardized composer
+    spec = PromptSpec(
+        manager="WebSearcher",
+        method="ask",
+        tools=tools,
+        role_line="You are a **web research assistant**.",
+        global_directives=[
+            "Use the available tools to answer the user's question.",
+            "Produce concise, factual answers with optional inline citations (title or URL).",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+        ],
+        include_read_only_guard=True,
+        positioning_lines=[tools_doc, guidance_block],
+        counts_entity_plural=None,
+        counts_value=None,
+        columns_payload=None,
+        columns_heading="columns",
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=False,  # WebSearcher has its own image handling
+        include_images_forwarding=False,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=[],
+        special_blocks=[],
+        include_clarification_footer=True,
+        include_time_footer=True,
+    )
+
+    return compose_system_prompt(spec)
+
+
+def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
+    """Return the system prompt used by WebSearcher.update using the shared composer."""
+    ask_fname = _tool_name(tools, "ask")
+    request_clar_fname = _tool_name(tools, "request_clarification")
+
+    # Build clarification block
+    clarification_block = (
+        textwrap.dedent(
+            f"""
+Clarification
+-------------
+• If any request is ambiguous, ask the user to disambiguate before changing data
+  `{request_clar_fname}(question="There are several possible matches. Which website did you mean?")`
+            """,
+        ).strip()
+        if request_clar_fname
+        else ""
+    )
+
+    # Build dynamic tools documentation
+    tools_doc = _build_update_tools_documentation(tools)
+
+    # Build usage examples
+    usage_examples_base = f"""
+Tool selection
+--------------
+• Use `{ask_fname or 'ask'}` strictly for read-only inspection of the Websites table (e.g., to check if a host exists).
+• Use `_create_website` to add a new entry; use `_update_website` to modify; use `_delete_website` to remove.
+• Do not try to browse the web from `update`; web research belongs in `ask`.
+• When the user describes target sites semantically (e.g., 'ML news subscriptions'), first call `{ask_fname or 'ask'}` to identify candidates.
+• When the user specifies exact columns (e.g., host or gated), first call `{ask_fname or 'ask'}` with `_filter_websites(filter=...)` to confirm matches before mutating.
+
+General Rules
+-------------
+• Treat `host` as the natural unique key for a website entry.
+• **Naming**: Use a human-friendly `name` (e.g., 'Medium', 'GitHub', 'Financial Times'), NOT the host address.
+  Good: name='HealthInvestor', host='healthinvestor.co.uk'
+  Bad: name='healthinvestor.co.uk', host='healthinvestor.co.uk'
+• After any mutation (create/update/delete), verify results using `{ask_fname or 'ask'}`.
+• Prefer minimal, targeted tool calls; handle multiple entries comprehensively when requested.
+
+Security & Data Hygiene
+------------------------
+• Never include raw credential values in messages. Only reference `credentials` by their integer `secret_id`s.
+• When creating a website entry, pass `credentials=[int, ...]` only; do not attempt to resolve secret values.
+• Prefer `actor_entrypoint` ids when bespoke behaviour is available; otherwise the system default will be used at runtime.
+
+Examples
+--------
+• Create a gated site with credentials and verify:
+  1) `_create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')`
+  2) `{ask_fname or 'ask'}(text='List gated websites')` → should call `_filter_websites(filter="gated == True")`
+• Find relevant sites by notes then delete one:
+  1) `{ask_fname or 'ask'}(text='Which websites are for ML news subscriptions?')` → should call `_search_websites(notes='ML news subscription')`
+  2) `_delete_website(host='example.com')`
+• Bulk creation from a list in one turn (handle ALL entries):
+  - `_create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')`
+  - `_create_website(name='Financial Times', host='ft.com', gated=True, subscribed=True, credentials=[205, 206], notes='Finance and markets')`
+  Then verify via `{ask_fname or 'ask'}` using `_filter_websites(filter="gated == True")`.
+
+Anti‑patterns to avoid
+---------------------
+• Never call `_gated_website_search` from `update` (that is a browsing action in `ask`).
+• Do not call `search`/`extract`/`crawl`/`map` from `update`.
+• Repeating the exact same tool call with the same arguments as a means to 'make sure it has completed' – just call `{ask_fname or 'ask'}` to verify.
+    """
+    usage_examples = textwrap.dedent(usage_examples_base).strip()
+    if clarification_block:
+        usage_examples = f"{usage_examples}\n{clarification_block}"
+    else:
+        usage_examples = "\n".join(
+            [
+                usage_examples,
+                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
+            ],
+        )
+
+    # Compose using standardized composer
+    spec = PromptSpec(
+        manager="WebSearcher",
+        method="update",
+        tools=tools,
+        role_line="You are an assistant that **manages the WebSearcher configuration** (Websites catalog).",
+        global_directives=[
+            "Create, update, and delete entries in the Websites table, and use `ask` to inspect/verify.",
+            "Do not answer general web research questions here; use `ask` for read-only inspection when needed.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
+            f"Important: `{ask_fname or 'ask'}` is read‑only and must only be used to locate/inspect websites that already exist.",
+        ],
+        include_read_only_guard=False,
+        positioning_lines=[tools_doc],
+        counts_entity_plural=None,
+        counts_value=None,
+        columns_payload=None,
+        columns_heading="columns",
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=False,  # WebSearcher doesn't use images policy
+        include_images_forwarding=False,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=[],
+        special_blocks=[],
+        include_clarification_footer=True,
+        include_time_footer=True,
+    )
+
+    return compose_system_prompt(spec)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulated helper
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def build_simulated_method_prompt(
@@ -326,8 +456,12 @@ def build_simulated_method_prompt(
     user_request: str,
     parent_chat_context: list[dict] | None = None,
 ) -> str:
-    """Return instruction prompt for the simulated WebSearcher."""
-    import json
+    """Return instruction prompt for the simulated WebSearcher.
+
+    Ensures the LLM replies **as if** the requested operation has already
+    finished, avoiding responses like "I'll process that now".
+    """
+    import json  # local import
 
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() == "ask":
