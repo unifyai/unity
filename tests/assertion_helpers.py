@@ -9,7 +9,7 @@ as well as reusable prompt formatting assertions for system messages.
 
 import json
 import re
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Callable, Type
 from itertools import zip_longest
 
 
@@ -202,3 +202,94 @@ def first_diff_block(
             )
 
     return "No differing line found (contents are identical)."
+
+
+# ---------------------------------------------------------------------------
+# Dynamic mock tool and column generation for system message tests
+# ---------------------------------------------------------------------------
+
+
+def get_tools_from_manager(
+    manager_class: Type,
+    method: str,
+) -> Dict[str, Callable]:
+    """Get real tools from a manager instance.
+
+    This creates a manager instance and extracts the actual tools dictionary.
+    This ensures test tools have the exact same signatures as production code.
+
+    Note: This may hit the database. If database state causes issues, the test
+    should use subprocess-based extraction instead.
+
+    Parameters
+    ----------
+    manager_class : Type
+        The manager class (e.g., ContactManager, TaskScheduler).
+    method : str
+        The method name ("ask" or "update").
+
+    Returns
+    -------
+    Dict[str, Callable]
+        Dictionary of real tools from the manager.
+    """
+    manager = manager_class()
+    return dict(manager.get_tools(method))
+
+
+def mock_columns_from_model(model_class: Type) -> Dict[str, str]:
+    """Generate mock columns dictionary from a Pydantic model.
+
+    This extracts field names and types from the model, ensuring
+    test columns match the actual schema.
+
+    Parameters
+    ----------
+    model_class : Type
+        A Pydantic model class.
+
+    Returns
+    -------
+    Dict[str, str]
+        Dictionary of {column_name: type_string}.
+    """
+    columns = {}
+    for field_name, field_info in model_class.model_fields.items():
+        # Get a simplified type string
+        annotation = field_info.annotation
+        if annotation is None:
+            type_str = "Any"
+        elif hasattr(annotation, "__name__"):
+            type_str = annotation.__name__
+        elif hasattr(annotation, "__origin__"):
+            # Handle generic types like Optional[str], List[int]
+            origin = annotation.__origin__
+            type_str = getattr(origin, "__name__", str(origin))
+        else:
+            type_str = str(annotation)
+        columns[field_name] = type_str.lower()
+    return columns
+
+
+def mock_columns_with_custom(
+    model_class: Type,
+    custom_columns: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Generate mock columns from a model plus optional custom columns.
+
+    Parameters
+    ----------
+    model_class : Type
+        A Pydantic model class.
+    custom_columns : Optional[Dict[str, str]]
+        Additional custom columns to add.
+
+    Returns
+    -------
+    Dict[str, str]
+        Combined columns dictionary.
+    """
+    columns = mock_columns_from_model(model_class)
+    if custom_columns:
+        columns.update(custom_columns)
+    return columns
