@@ -771,17 +771,21 @@ class TestStage3TTSFastBrain:
     """
 
     def test_tts_call_has_fast_brain_model(self):
-        """TTS call.py uses openai.LLM for fast conversational responses."""
+        """TTS call.py uses UnifyLLM adapter for fast conversational responses."""
         import inspect
         from unity.conversation_manager.medium_scripts import call as call_module
 
-        # Check that openai plugin is imported
-        assert hasattr(call_module, "openai"), "openai plugin should be imported"
+        # Check that UnifyLLM adapter is imported
+        assert hasattr(call_module, "UnifyLLM"), "UnifyLLM adapter should be imported"
 
-        # Check that entrypoint uses openai.LLM with gpt-5-nano
+        # Check that entrypoint uses UnifyLLM with gpt-5-nano
         source = inspect.getsource(call_module.entrypoint)
-        assert "openai.LLM" in source, "entrypoint should use openai.LLM for fast brain"
-        assert "gpt-5-nano" in source, "fast brain should use gpt-5-nano model"
+        assert (
+            "UnifyLLM" in source
+        ), "entrypoint should use UnifyLLM adapter for fast brain"
+        assert (
+            "gpt-5-nano@openai" in source
+        ), "fast brain should use gpt-5-nano@openai model"
         assert (
             'reasoning_effort="none"' in source
         ), "fast brain should disable reasoning for max speed"
@@ -851,3 +855,139 @@ class TestStage3TTSFastBrain:
             "boss should be added to args before the uses_realtime_api conditional "
             "(should not be conditionally added)"
         )
+
+
+# =============================================================================
+# Stage 4: UnifyLLM Adapter Tests
+# =============================================================================
+
+
+class TestUnifyLLMAdapter:
+    """
+    Tests for the UnifyLLM adapter that wraps unify.AsyncUnify for LiveKit.
+
+    The adapter provides:
+    - Local caching for CI (via Unify's cache system)
+    - Usage tracking through the Unify platform
+    - Consistent routing through our standard LLM client
+    """
+
+    def test_unify_llm_adapter_exists(self):
+        """UnifyLLM adapter is importable from conversation_manager."""
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
+
+        assert UnifyLLM is not None
+
+    def test_unify_llm_extends_livekit_llm(self):
+        """UnifyLLM extends the LiveKit llm.LLM base class."""
+        from livekit.agents import llm
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
+
+        assert issubclass(UnifyLLM, llm.LLM)
+
+    def test_unify_llm_has_chat_method(self):
+        """UnifyLLM implements the required chat() method."""
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
+
+        llm_instance = UnifyLLM(model="gpt-5-nano@openai")
+        assert hasattr(llm_instance, "chat")
+        assert callable(llm_instance.chat)
+
+    def test_unify_llm_model_property(self):
+        """UnifyLLM.model returns the configured model name."""
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
+
+        llm_instance = UnifyLLM(model="gpt-5-nano@openai")
+        assert llm_instance.model == "gpt-5-nano@openai"
+
+    def test_unify_llm_default_model(self):
+        """UnifyLLM has a sensible default model."""
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
+
+        llm_instance = UnifyLLM()
+        assert llm_instance.model == "gpt-5-nano@openai"
+
+    def test_unify_llm_accepts_reasoning_effort(self):
+        """UnifyLLM accepts reasoning_effort parameter."""
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
+
+        # Should not raise
+        llm_instance = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="none")
+        assert llm_instance._reasoning_effort == "none"
+
+    def test_unify_llm_accepts_temperature(self):
+        """UnifyLLM accepts temperature parameter."""
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
+
+        llm_instance = UnifyLLM(model="gpt-5-nano@openai", temperature=0.7)
+        assert llm_instance._temperature == 0.7
+
+    def test_unify_llm_stream_extends_livekit_llm_stream(self):
+        """UnifyLLMStream extends the LiveKit llm.LLMStream base class."""
+        from livekit.agents import llm
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLMStream
+
+        assert issubclass(UnifyLLMStream, llm.LLMStream)
+
+    def test_unify_llm_stream_implements_run(self):
+        """UnifyLLMStream implements the abstract _run() method."""
+        from unity.conversation_manager.livekit_unify_adapter import UnifyLLMStream
+        import inspect
+
+        # _run should be an async method (not abstract)
+        assert hasattr(UnifyLLMStream, "_run")
+        assert inspect.iscoroutinefunction(UnifyLLMStream._run)
+
+    def test_unify_llm_uses_new_llm_client(self):
+        """UnifyLLMStream uses new_llm_client from unity.common.llm_client."""
+        import inspect
+        from unity.conversation_manager import livekit_unify_adapter
+
+        source = inspect.getsource(livekit_unify_adapter)
+        assert (
+            "from unity.common.llm_client import new_llm_client" in source
+        ), "Should import new_llm_client"
+        assert "new_llm_client" in inspect.getsource(
+            livekit_unify_adapter.UnifyLLMStream._run,
+        ), "Should use new_llm_client in _run()"
+
+    def test_call_py_uses_unify_llm_adapter(self):
+        """call.py imports and uses UnifyLLM instead of openai.LLM."""
+        import inspect
+        from unity.conversation_manager.medium_scripts import call as call_module
+
+        source = inspect.getsource(call_module)
+
+        # Should import UnifyLLM
+        assert (
+            "from unity.conversation_manager.livekit_unify_adapter import UnifyLLM"
+            in source
+        ), "call.py should import UnifyLLM"
+
+        # Should NOT import openai.LLM directly for the main LLM
+        # (openai plugin may still be imported but not used for the fast brain LLM)
+        entrypoint_source = inspect.getsource(call_module.entrypoint)
+        assert (
+            "openai.LLM" not in entrypoint_source
+        ), "entrypoint should not use openai.LLM directly"
+
+    @pytest.mark.asyncio
+    async def test_unify_llm_chat_returns_stream(self):
+        """UnifyLLM.chat() returns a UnifyLLMStream instance."""
+        from livekit.agents import llm
+        from unity.conversation_manager.livekit_unify_adapter import (
+            UnifyLLM,
+            UnifyLLMStream,
+        )
+
+        llm_instance = UnifyLLM(model="gpt-5-nano@openai")
+
+        # Create a minimal chat context
+        chat_ctx = llm.ChatContext()
+        chat_ctx.add_message(role="user", content="Hello")
+
+        stream = llm_instance.chat(chat_ctx=chat_ctx)
+        assert isinstance(stream, UnifyLLMStream)
+
+        # Clean up the stream to avoid task warnings
+        await stream.aclose()
