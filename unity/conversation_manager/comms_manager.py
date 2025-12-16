@@ -1,17 +1,51 @@
+"""
+CommsManager: External communications handler for ConversationManager.
+
+This module bridges external communication channels (GCP PubSub for SMS, email,
+calls, etc.) to the internal event broker (Redis or in-memory).
+
+Threading Model:
+----------------
+GCP PubSub uses a thread pool for message callbacks. The `handle_message` method
+is called from these background threads, NOT from the asyncio event loop. Therefore:
+
+- `handle_message` uses `asyncio.run_coroutine_threadsafe()` to safely publish
+  events to the async event broker from a sync callback context.
+- `send_pings` and `start` are async methods that run on the event loop and can
+  use direct `await` for async operations.
+
+In-Process Mode:
+----------------
+When running ConversationManager in-process with UNITY_EVENT_BROKER=in_memory,
+CommsManager is typically disabled (enable_comms_manager=False) since there are
+no real external events to receive. Tests can publish events directly to the
+in-memory broker instead.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
 import time
+from typing import TYPE_CHECKING, Union
+
 from dotenv import load_dotenv
+from google.cloud import pubsub_v1
+
+from unity.constants import ASYNCIO_DEBUG
+from unity.conversation_manager.domains.comms_utils import add_email_attachments
+from unity.conversation_manager.events import *
+from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 
 load_dotenv()
 
-import asyncio
-from google.cloud import pubsub_v1
-import json
-import os
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
-from unity.conversation_manager.events import *
-from unity.constants import ASYNCIO_DEBUG
-import redis.asyncio as redis
-from unity.conversation_manager.domains.comms_utils import add_email_attachments
+if TYPE_CHECKING:
+    import redis.asyncio as redis
+
+    from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
+
+    EventBroker = Union[redis.Redis, InMemoryEventBroker]
 
 
 # Subscription IDs
@@ -52,18 +86,45 @@ events_map: dict[str, Event] = {
 
 
 class CommsManager:
-    def __init__(self, event_broker):
-        self.subscribers = {}
+    """
+    Handles external communications via GCP PubSub.
+
+    Receives events from external channels (SMS, email, calls) and publishes
+    them to the internal event broker for ConversationManager to process.
+    """
+
+    def __init__(self, event_broker: "EventBroker"):
+        self.subscribers: dict = {}
         self.call_proc = None
         self.credentials = None
+        # Store reference to event loop for thread-safe publishing from callbacks
         self.loop = asyncio.get_event_loop()
-        self.message_queue: redis.Redis = event_broker
+        self.event_broker: "EventBroker" = event_broker
+
+    def _publish_from_callback(self, channel: str, message: str) -> None:
+        """
+        Publish to event broker from a sync callback (thread-safe).
+
+        This method is called from GCP PubSub callbacks which run in a thread pool,
+        NOT from the asyncio event loop. We use run_coroutine_threadsafe to safely
+        schedule the async publish on the main event loop.
+        """
+        asyncio.run_coroutine_threadsafe(
+            self.event_broker.publish(channel, message),
+            self.loop,
+        )
 
     def handle_message(
         self,
         message: pubsub_v1.types.PubsubMessage,
     ):
-        """Handle incoming messages from PubSub subscriptions."""
+        """
+        Handle incoming messages from PubSub subscriptions.
+
+        NOTE: This method is called from a GCP PubSub thread pool thread,
+        NOT from the asyncio event loop. All async operations must use
+        `_publish_from_callback` or `asyncio.run_coroutine_threadsafe`.
+        """
         try:
             data = json.loads(message.data.decode("utf-8"))
             thread = data["thread"]
@@ -120,16 +181,13 @@ class CommsManager:
                     "voice_id": event["voice_id"],
                     "voice_mode": event["voice_mode"],
                 }
-                task = asyncio.run_coroutine_threadsafe(
-                    self.message_queue.publish(
-                        f"app:comms:{thread}",
-                        (
-                            StartupEvent(**details)
-                            if thread == "startup"
-                            else AssistantUpdateEvent(**details)
-                        ).to_json(),
-                    ),
-                    self.loop,
+                self._publish_from_callback(
+                    f"app:comms:{thread}",
+                    (
+                        StartupEvent(**details)
+                        if thread == "startup"
+                        else AssistantUpdateEvent(**details)
+                    ).to_json(),
                 )
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
@@ -152,23 +210,17 @@ class CommsManager:
                             ),
                         )
                     )
-                    asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(
-                            f"app:conductor:{system_event_type}",
-                            evt.to_json(),
-                        ),
-                        self.loop,
+                    self._publish_from_callback(
+                        f"app:conductor:{system_event_type}",
+                        evt.to_json(),
                     )
                 message.ack()
             elif thread in events_map:
                 # Publish contacts
                 contacts = [*event.get("contacts", []), _get_local_contact()]
-                asyncio.run_coroutine_threadsafe(
-                    self.message_queue.publish(
-                        f"app:comms:contacts",
-                        GetContactsResponse(contacts=contacts).to_json(),
-                    ),
-                    self.loop,
+                self._publish_from_callback(
+                    "app:comms:contacts",
+                    GetContactsResponse(contacts=contacts).to_json(),
                 )
 
                 content = event["body"]
@@ -177,17 +229,14 @@ class CommsManager:
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
                     contact = next(c for c in contacts if c["email"] == topic)
-                    task = asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(
-                            f"app:comms:{thread}_message",
-                            events_map[thread](
-                                subject=event["subject"],
-                                body=event["body"],
-                                contact=contact,
-                                email_id=event["email_id"],
-                            ).to_json(),
-                        ),
-                        self.loop,
+                    self._publish_from_callback(
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
+                            subject=event["subject"],
+                            body=event["body"],
+                            contact=contact,
+                            email_id=event["email_id"],
+                        ).to_json(),
                     )
 
                     # add attachments (if any) to Downloads using async helper
@@ -208,41 +257,32 @@ class CommsManager:
                 elif thread == "unify_message":
                     # No phone/email; boss contact id is always "1"
                     contact = next(c for c in contacts if c["contact_id"] == 1)
-                    task = asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(
-                            f"app:comms:{thread}_message",
-                            events_map[thread](
-                                content=content,
-                                contact=contact,
-                            ).to_json(),
-                        ),
-                        self.loop,
+                    self._publish_from_callback(
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
+                            content=content,
+                            contact=contact,
+                        ).to_json(),
                     )
 
                 else:
                     topic = event["from_number"].strip()
                     # Put the message in the queue instead of creating a task
                     contact = next(c for c in contacts if c["phone_number"] == topic)
-                    task = asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(
-                            f"app:comms:{thread}_message",
-                            events_map[thread](
-                                content=content,
-                                contact=contact,
-                            ).to_json(),
-                        ),
-                        self.loop,
+                    self._publish_from_callback(
+                        f"app:comms:{thread}_message",
+                        events_map[thread](
+                            content=content,
+                            contact=contact,
+                        ).to_json(),
                     )
                 message.ack()
             elif thread == "log_pre_hire_chats":
                 try:
                     contacts = [*event.get("contacts", []), _get_local_contact()]
-                    asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(
-                            f"app:comms:contacts",
-                            GetContactsResponse(contacts=contacts).to_json(),
-                        ),
-                        self.loop,
+                    self._publish_from_callback(
+                        "app:comms:contacts",
+                        GetContactsResponse(contacts=contacts).to_json(),
                     )
                     assistant_id = event.get("assistant_id", "")
                     body = event.get("body", []) or []
@@ -265,12 +305,9 @@ class CommsManager:
                                 },
                             )
 
-                            asyncio.run_coroutine_threadsafe(
-                                self.message_queue.publish(
-                                    "app:managers:input",
-                                    payload.to_json(),
-                                ),
-                                self.loop,
+                            self._publish_from_callback(
+                                "app:managers:input",
+                                payload.to_json(),
                             )
                             published += 1
                         except Exception as inner_e:
@@ -287,12 +324,9 @@ class CommsManager:
                 try:
                     # Publish contacts
                     contacts = [*event.get("contacts", []), _get_local_contact()]
-                    asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(
-                            f"app:comms:contacts",
-                            GetContactsResponse(contacts=contacts).to_json(),
-                        ),
-                        self.loop,
+                    self._publish_from_callback(
+                        "app:comms:contacts",
+                        GetContactsResponse(contacts=contacts).to_json(),
                     )
 
                     # Create the event based on the thread
@@ -321,13 +355,13 @@ class CommsManager:
                         event = PhoneCallAnswered(contact=contact)
                         topic = "app:comms:call_answered"
 
-                    # Publish the event
-                    task = asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(topic, event.to_json()),
+                    # Publish the event (blocking wait for call events)
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.event_broker.publish(topic, event.to_json()),
                         self.loop,
                     )
                     message.ack()
-                    task.result()
+                    future.result()  # Wait for publish to complete
                 except json.JSONDecodeError:
                     print(f"Invalid message format for {thread} event")
                     message.ack()
@@ -393,13 +427,10 @@ class CommsManager:
         print("Starting ping mechanism for idle container...")
         while True:
             try:
-                # Send ping to event manager
-                asyncio.run_coroutine_threadsafe(
-                    self.message_queue.publish(
-                        f"app:comms:ping",
-                        Ping(kind="keepalive").to_json(),
-                    ),
-                    self.loop,
+                # Send ping to event manager (direct await since we're in async context)
+                await self.event_broker.publish(
+                    "app:comms:ping",
+                    Ping(kind="keepalive").to_json(),
                 )
 
                 # Wait 30 seconds before next ping (half the inactivity timeout)
@@ -417,7 +448,10 @@ class CommsManager:
 
 async def main():
     """Main entry point for the communication manager application."""
-    manager = CommsManager()
+    from unity.conversation_manager.event_broker import get_event_broker
+
+    event_broker = get_event_broker()
+    manager = CommsManager(event_broker)
     await manager.start()
 
 
