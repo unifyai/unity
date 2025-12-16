@@ -1,24 +1,21 @@
 """
 Prompt builders for WebSearcher.
 
-These builders parallel *contact_manager/prompt_builders.py*: they receive
-a **live** ``tools``-dict and construct the corresponding **system** messages
-*without ever hard-coding* tool counts, names or arg-signatures.
+These builders use the centralized `PromptSpec` and `compose_system_prompt`
+utilities from common/prompt_helpers.py to ensure consistent prompt structure
+across all state managers.
 """
 
 from __future__ import annotations
 
-import json
 import textwrap
 from typing import Dict, Callable, List
 
 from ..common.prompt_helpers import (
-    clarification_guidance,
     sig_dict,
     now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
-    # Standardized composer utilities
     PromptSpec,
     compose_system_prompt,
 )
@@ -55,9 +52,10 @@ def _build_ask_tools_documentation(tools: Dict[str, Callable]) -> str:
     have_extract = "extract" in tools
     have_crawl = "crawl" in tools
     have_map = "map" in tools
-    have_filter_websites = "_filter_websites" in tools
-    have_search_websites = "_search_websites" in tools
-    have_search_gated = "_gated_website_search" in tools
+    # Tool names are stripped of leading underscores by methods_to_tool_dict
+    have_filter_websites = "filter_websites" in tools
+    have_search_websites = "search_websites" in tools
+    have_search_gated = "gated_website_search" in tools
 
     lines: List[str] = [
         "Tools Available",
@@ -96,22 +94,22 @@ def _build_ask_tools_documentation(tools: Dict[str, Callable]) -> str:
         ]
     if have_filter_websites:
         lines += [
-            "- _filter_websites: list websites matching a boolean filter over columns.",
+            "- filter_websites: list websites matching a boolean filter over columns.",
             "  • Parameters: filter, offset, limit",
             "  • Examples:",
-            '    - _filter_websites(filter="gated == True")',
-            "    - _filter_websites(filter=\"host == 'medium.com'\", limit=1)",
+            '    - filter_websites(filter="gated == True")',
+            "    - filter_websites(filter=\"host == 'medium.com'\", limit=1)",
         ]
     if have_search_websites:
         lines += [
-            "- _search_websites: semantic search over the Websites catalog using notes similarity.",
+            "- search_websites: semantic search over the Websites catalog using notes similarity.",
             "  • Parameters: notes, k",
             "  • Example:",
-            '    - _search_websites(notes="subscription sources for ML news", k=5)',
+            '    - search_websites(notes="subscription sources for ML news", k=5)',
         ]
     if have_search_gated:
         lines += [
-            "- _gated_website_search: search a specific website via the Actor (handles login if gated).",
+            "- gated_website_search: search a specific website via the Actor (handles login if gated).",
             "  • Parameters: queries (str or list[str]), website",
             "  • **IMPORTANT**: Spawns an expensive browser session. Call exactly ONCE per site — never retry the same site.",
             "  • **Multi-query support**: Pass multiple queries for DIFFERENT purposes (not variations of the same search).",
@@ -127,8 +125,8 @@ def _build_ask_tools_documentation(tools: Dict[str, Callable]) -> str:
             "  • **Returns raw content**: The tool returns ALL raw page content found (not pre-summarized).",
             "    After receiving ALL results, synthesize and summarize into a coherent answer with inline citations.",
             "  • Examples:",
-            '    - _gated_website_search(queries="latest AI trends", website={"host": "medium.com"})',
-            '    - _gated_website_search(queries=["AI trends", "LLM fine-tuning"], website={"host": "medium.com"})',
+            '    - gated_website_search(queries="latest AI trends", website={"host": "medium.com"})',
+            '    - gated_website_search(queries=["AI trends", "LLM fine-tuning"], website={"host": "medium.com"})',
         ]
 
     return "\n".join(lines)
@@ -144,19 +142,19 @@ def _build_ask_guidance_sections() -> str:
         "- Only fetch page content when you need details beyond snippets.",
         "- Do not claim inability to log into personal accounts. When a Website entry exists and credentials are available, the Actor can attempt sign-in securely. If credentials are missing or login fails, proceed with public content and clearly state assumptions.",
         "- If the request mentions a specific website (host like 'medium.com' or a human-friendly name like 'Medium'), first consult the Websites catalog:",
-        "  • Use `_filter_websites` for exact host/name filters; use `_search_websites` when only thematic notes are given.",
-        "  • If a row exists and `gated=True`, use `_gated_website_search(queries=..., website=...)` to browse with login.",
+        "  • Use `filter_websites` for exact host/name filters; use `search_websites` when only thematic notes are given.",
+        "  • If a row exists and `gated=True`, use `gated_website_search(queries=..., website=...)` to browse with login.",
         "  • Otherwise, use general tools (`search`, `extract`, `crawl`, `map`).",
         "",
         "Website-aware Routing",
         "----------------------",
-        "- Use `_search_websites` to find relevant Website entries by notes similarity (catalog lookup only; does not browse).",
-        "- Use `_filter_websites` for exact/boolean matches over columns (including host like 'medium.com' or name like 'Medium').",
+        "- Use `search_websites` to find relevant Website entries by notes similarity (catalog lookup only; does not browse).",
+        "- Use `filter_websites` for exact/boolean matches over columns (including host like 'medium.com' or name like 'Medium').",
         "- When answering a question that targets a specific site:",
-        "  1) Look up the site using `_filter_websites` or `_search_websites`.",
-        "  2) If the site exists and `gated=True`, use `_gated_website_search(queries=..., website=...)` to login with saved credentials and browse.",
+        "  1) Look up the site using `filter_websites` or `search_websites`.",
+        "  2) If the site exists and `gated=True`, use `gated_website_search(queries=..., website=...)` to login with saved credentials and browse.",
         "  3) If not gated or no matching Website entry exists, use general tools (`search`, then optionally `extract`/`crawl`/`map`).",
-        "- Do NOT use `_search_websites` to read web content; it only searches the Websites catalog.",
+        "- Do NOT use `search_websites` to read web content; it only searches the Websites catalog.",
         "",
         "Decision Policy and When to Stop",
         "---------------------------------",
@@ -165,10 +163,10 @@ def _build_ask_guidance_sections() -> str:
         "3. Otherwise, extract at most one highly relevant URL.",
         "4. If still insufficient, do one more targeted step (search OR extract), then STOP and answer.",
         "5. Do not loop through many tools or repeat equivalent steps.",
-        "6. **Gated websites**: Call `_gated_website_search` ONCE per site. Do NOT retry the same site.",
+        "6. **Gated websites**: Call `gated_website_search` ONCE per site. Do NOT retry the same site.",
         "   Pass multiple queries as a list to search different topics on the same site in one call.",
         "   For multi-site queries, call consecutively for each site, then synthesize all results together.",
-        "7. **After gated search, STOP**: Once you have called `_gated_website_search` ONCE per site for all requested sites,",
+        "7. **After gated search, STOP**: Once you have called `gated_website_search` ONCE per site for all requested sites,",
         "   do NOT call `search`, `extract`, `crawl`, or `map` for additional content. Synthesize what you have and answer.",
         "",
         "Answer Requirements",
@@ -184,9 +182,10 @@ def _build_ask_guidance_sections() -> str:
 
 def _build_update_tools_documentation(tools: Dict[str, Callable]) -> str:
     """Build dynamic tools documentation section for update prompt."""
-    have_create = "_create_website" in tools
-    have_update = "_update_website" in tools
-    have_delete = "_delete_website" in tools
+    # Tool names are stripped of leading underscores by methods_to_tool_dict
+    have_create = "create_website" in tools
+    have_update = "update_website" in tools
+    have_delete = "delete_website" in tools
     have_ask = "ask" in tools
 
     lines: List[str] = [
@@ -195,37 +194,37 @@ def _build_update_tools_documentation(tools: Dict[str, Callable]) -> str:
     ]
     if have_create:
         lines += [
-            "- _create_website: create a new Website row (unique by host).",
+            "- create_website: create a new Website row (unique by host).",
             "  • Parameters: name, host, gated, subscribed, credentials, actor_entrypoint, notes",
             "  • Examples:",
-            "    - _create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
-            "    - _create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
+            "    - create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
+            "    - create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
         ]
     if have_update:
         lines += [
-            "- _update_website: update fields of an existing Website.",
+            "- update_website: update fields of an existing Website.",
             "  • Identify by one of: website_id, match_host, match_name",
             "  • Updatable fields: name, host, gated, subscribed, credentials, actor_entrypoint, notes",
             "  • Examples:",
-            "    - _update_website(match_host='medium.com', subscribed=False)",
-            "    - _update_website(website_id=3, name='NYTimes', host='nytimes.com')",
+            "    - update_website(match_host='medium.com', subscribed=False)",
+            "    - update_website(website_id=3, name='NYTimes', host='nytimes.com')",
         ]
     if have_delete:
         lines += [
-            "- _delete_website: delete a Website row by host or website_id (exact match).",
+            "- delete_website: delete a Website row by host or website_id (exact match).",
             "  • Parameters: name, host, website_id",
             "  • Examples:",
-            "    - _delete_website(name='Financial Times')",
-            "    - _delete_website(host='example.com')",
-            "    - _delete_website(website_id=42)",
+            "    - delete_website(name='Financial Times')",
+            "    - delete_website(host='example.com')",
+            "    - delete_website(website_id=42)",
         ]
     if have_ask:
         lines += [
-            "- ask: read-only inspection helper (calls catalog tools like _filter_websites/_search_websites).",
+            "- ask: read-only inspection helper (calls catalog tools like filter_websites/search_websites).",
             "  • Parameters: text",
             "  • Examples:",
-            "    - ask(text='List gated websites')  → should call _filter_websites(filter=\"gated == True\")",
-            "    - ask(text='Which websites match ML news subscriptions?')  → should call _search_websites(notes='ML news subscription')",
+            "    - ask(text='List gated websites')  → should call filter_websites(filter=\"gated == True\")",
+            "    - ask(text='Which websites match ML news subscriptions?')  → should call search_websites(notes='ML news subscription')",
         ]
 
     return "\n".join(lines)
@@ -261,23 +260,23 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
 Examples
 --------
 - Login to my GitHub and summarize my profile:
-  1) `_filter_websites(filter="host == 'github.com' or name == 'GitHub'", limit=1)`
-  2) If found and gated=True: `_gated_website_search(queries='summarize my GitHub profile', website=<row>)`
+  1) `filter_websites(filter="host == 'github.com' or name == 'GitHub'", limit=1)`
+  2) If found and gated=True: `gated_website_search(queries='summarize my GitHub profile', website=<row>)`
   3) Else: use `crawl`/`extract` as appropriate.
 - Access my Towards Data Science subscription article and summarize:
-  1) `_filter_websites(filter="host == 'towardsdatascience.com' or name == 'Towards Data Science'", limit=1)`
-  2) If found and gated=True: `_gated_website_search(queries='summarize the latest paywalled article on my reading list', website=<row>)`
-- Search multiple gated sites for the same topic (call `_gated_website_search` ONCE per site):
-  1) `_filter_websites(filter="host == 'medium.com' or host == 'towardsdatascience.com'")` → returns rows for both
-  2) `_gated_website_search(queries='LLM fine-tuning techniques', website=<medium_row>)`
-  3) `_gated_website_search(queries='LLM fine-tuning techniques', website=<tds_row>)`
+  1) `filter_websites(filter="host == 'towardsdatascience.com' or name == 'Towards Data Science'", limit=1)`
+  2) If found and gated=True: `gated_website_search(queries='summarize the latest paywalled article on my reading list', website=<row>)`
+- Search multiple gated sites for the same topic (call `gated_website_search` ONCE per site):
+  1) `filter_websites(filter="host == 'medium.com' or host == 'towardsdatascience.com'")` → returns rows for both
+  2) `gated_website_search(queries='LLM fine-tuning techniques', website=<medium_row>)`
+  3) `gated_website_search(queries='LLM fine-tuning techniques', website=<tds_row>)`
   4) Synthesize results from both sites into a unified answer with citations from each source.
 - Search one site for multiple topics (pass multiple queries in ONE call):
-  1) `_filter_websites(filter="host == 'medium.com'", limit=1)`
-  2) `_gated_website_search(queries=['AI trends', 'LLM fine-tuning', 'vector databases'], website=<row>)`
+  1) `filter_websites(filter="host == 'medium.com'", limit=1)`
+  2) `gated_website_search(queries=['AI trends', 'LLM fine-tuning', 'vector databases'], website=<row>)`
   3) Synthesize results for all topics into a unified answer.
 - Summarize updates on docs.example.com:
-  1) `_filter_websites(filter="host == 'docs.example.com'")`
+  1) `filter_websites(filter="host == 'docs.example.com'")`
   2) If gated=False or absent: `crawl(start_url='https://docs.example.com', instructions='Find recent updates')`
 - General web query (non-site specific):
   1) `search(query="how is the uk temperature in london tomorrow?", max_results=3)`
@@ -285,19 +284,12 @@ Examples
 Anti‑patterns to avoid
 ---------------------
 • Do not loop through many tools or repeat equivalent steps.
-• Do not retry `_gated_website_search` on the same site – call ONCE per site.
+• Do not retry `gated_website_search` on the same site – call ONCE per site.
 • After gated search completes for all requested sites, do NOT call additional search/extract/crawl/map.
     """).strip()
 
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
-    else:
-        usage_examples = "\n".join(
-            [
-                usage_examples,
-                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
-            ],
-        )
 
     # Build guidance sections
     guidance_block = _build_ask_guidance_sections()
@@ -362,10 +354,10 @@ Clarification
 Tool selection
 --------------
 • Use `{ask_fname or 'ask'}` strictly for read-only inspection of the Websites table (e.g., to check if a host exists).
-• Use `_create_website` to add a new entry; use `_update_website` to modify; use `_delete_website` to remove.
+• Use `create_website` to add a new entry; use `update_website` to modify; use `delete_website` to remove.
 • Do not try to browse the web from `update`; web research belongs in `ask`.
 • When the user describes target sites semantically (e.g., 'ML news subscriptions'), first call `{ask_fname or 'ask'}` to identify candidates.
-• When the user specifies exact columns (e.g., host or gated), first call `{ask_fname or 'ask'}` with `_filter_websites(filter=...)` to confirm matches before mutating.
+• When the user specifies exact columns (e.g., host or gated), first call `{ask_fname or 'ask'}` with `filter_websites(filter=...)` to confirm matches before mutating.
 
 General Rules
 -------------
@@ -385,32 +377,25 @@ Security & Data Hygiene
 Examples
 --------
 • Create a gated site with credentials and verify:
-  1) `_create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')`
-  2) `{ask_fname or 'ask'}(text='List gated websites')` → should call `_filter_websites(filter="gated == True")`
+  1) `create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')`
+  2) `{ask_fname or 'ask'}(text='List gated websites')` → should call `filter_websites(filter="gated == True")`
 • Find relevant sites by notes then delete one:
-  1) `{ask_fname or 'ask'}(text='Which websites are for ML news subscriptions?')` → should call `_search_websites(notes='ML news subscription')`
-  2) `_delete_website(host='example.com')`
+  1) `{ask_fname or 'ask'}(text='Which websites are for ML news subscriptions?')` → should call `search_websites(notes='ML news subscription')`
+  2) `delete_website(host='example.com')`
 • Bulk creation from a list in one turn (handle ALL entries):
-  - `_create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')`
-  - `_create_website(name='Financial Times', host='ft.com', gated=True, subscribed=True, credentials=[205, 206], notes='Finance and markets')`
-  Then verify via `{ask_fname or 'ask'}` using `_filter_websites(filter="gated == True")`.
+  - `create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')`
+  - `create_website(name='Financial Times', host='ft.com', gated=True, subscribed=True, credentials=[205, 206], notes='Finance and markets')`
+  Then verify via `{ask_fname or 'ask'}` using `filter_websites(filter="gated == True")`.
 
 Anti‑patterns to avoid
 ---------------------
-• Never call `_gated_website_search` from `update` (that is a browsing action in `ask`).
+• Never call `gated_website_search` from `update` (that is a browsing action in `ask`).
 • Do not call `search`/`extract`/`crawl`/`map` from `update`.
 • Repeating the exact same tool call with the same arguments as a means to 'make sure it has completed' – just call `{ask_fname or 'ask'}` to verify.
     """
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
-    else:
-        usage_examples = "\n".join(
-            [
-                usage_examples,
-                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
-            ],
-        )
 
     # Compose using standardized composer
     spec = PromptSpec(
