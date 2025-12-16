@@ -95,10 +95,10 @@ class ProductionSettings(BaseSettings):
     #     WebSearcher, GlobalFileManager
 
     # -- Event Broker Configuration --
-    # Event broker backend: redis | in_memory
-    # - redis: Uses Redis pub/sub (default, required for multi-process deployment)
-    # - in_memory: Uses in-memory event passing (for testing and in-process operation)
-    UNITY_EVENT_BROKER: str = "redis"
+    # Event broker backend: in_memory | redis
+    # - in_memory: Uses in-memory event passing (default, for in-process operation)
+    # - redis: Uses Redis pub/sub (for distributed deployments)
+    UNITY_EVENT_BROKER: str = "in_memory"
 
     # -- Foundational managers (implementation only) --
     # Actor: hierarchical | single_function | code_act | simulated
