@@ -110,8 +110,12 @@ def redis_server():
 
 
 @pytest_asyncio.fixture
-async def test_redis_client(redis_server):
-    """Redis client for publishing events in tests."""
+async def test_redis_client(redis_server, initialized_conversation_manager):
+    """Redis client for publishing events in tests.
+
+    Depends on initialized_conversation_manager to ensure the CM subprocess
+    is running before tests interact with Redis.
+    """
     client = redis.Redis(port=redis_server)
     yield client
     await client.aclose()
@@ -228,12 +232,15 @@ class EventCapture:
 
 
 @pytest_asyncio.fixture
-async def event_capture(redis_server):
+async def event_capture(redis_server, initialized_conversation_manager):
     """
     EventCapture instance that listens to all conversation manager events.
 
     Creates its own Redis client to avoid event loop conflicts with
     module-scoped fixtures.
+
+    Depends on initialized_conversation_manager to ensure the CM subprocess
+    is running and initialized before tests start capturing events.
     """
     client = redis.Redis(port=redis_server)
     capture = EventCapture(client)
@@ -320,13 +327,14 @@ async def conversation_manager_process(redis_server):
 # ============================================================================
 
 
-@pytest_asyncio.fixture(scope="module", autouse=True)
+@pytest_asyncio.fixture(scope="module")
 async def initialized_conversation_manager(conversation_manager_process, redis_server):
     """
     Initialize the conversation manager with startup and contacts events.
 
-    This fixture is module-scoped and runs automatically (autouse=True) for all
-    tests in this module, so tests don't need to explicitly request it.
+    This fixture is module-scoped and used by tests that need the CM subprocess.
+    Tests that use `event_capture` automatically get this fixture since
+    `event_capture` depends on it.
 
     Waits for the CM to subscribe to Redis channels, publishes startup and
     contacts events, then waits for the InitializationComplete event to ensure
