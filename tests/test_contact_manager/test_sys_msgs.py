@@ -19,13 +19,12 @@ from tests.assertion_helpers import (
     first_diff_block,
 )
 
-from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.prompt_builders import build_ask_prompt, build_update_prompt
 
 
-def test_ask_system_prompt_formatting():
+def test_ask_system_prompt_formatting(contact_manager_scenario):
     """Test ask prompt structure with dynamically extracted tools."""
-    cm = ContactManager()
+    cm, _ = contact_manager_scenario
     tools = dict(cm.get_tools("ask"))
     num_contacts = cm._num_contacts()
 
@@ -96,9 +95,9 @@ def test_ask_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
 
 
-def test_update_system_prompt_formatting():
+def test_update_system_prompt_formatting(contact_manager_scenario):
     """Test update prompt structure with dynamically extracted tools."""
-    cm = ContactManager()
+    cm, _ = contact_manager_scenario
     tools = dict(cm.get_tools("update"))
     num_contacts = cm._num_contacts()
 
@@ -169,7 +168,7 @@ def test_update_system_prompt_formatting():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stability tests (these use subprocess to catch cross-session drift)
+# Stability tests (subprocess for cross-session comparison)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
