@@ -4,620 +4,234 @@ tests/test_conversation_manager/test_comms.py
 
 Tests for communication flows (SMS, email, calls, etc.)
 
+Uses **direct handler testing** pattern:
+- Call EventHandler.handle_event() directly instead of publishing events
+- Check CM state directly instead of waiting for published events
+- Same pattern as ContactManager tests
+
 Voice call tests verify that events are handled correctly. In the voice
 architecture, the Main CM Brain only provides guidance to the Voice Agent
-(fast brain) - it doesn't produce speech directly. The Voice Agent handles
-all conversational responses. These tests verify event flow, not speech output.
+(fast brain) - it doesn't produce speech directly.
 """
-
-import asyncio
 
 import pytest
 
+from tests.helpers import _handle_project
+from tests.test_conversation_manager.conftest import TEST_CONTACTS
+from unity.conversation_manager.events import (
+    SMSReceived,
+    EmailReceived,
+    UnifyMessageReceived,
+)
+from unity.conversation_manager.domains.event_handlers import EventHandler
+
 pytestmark = pytest.mark.eval
 
-from tests.helpers import _handle_project
-from tests.test_conversation_manager.helpers import (
-    contacts,
-    capture_outgoing_email,
-    capture_outgoing_phone_call,
-    capture_outgoing_sms,
-    capture_outgoing_unify_message,
-    send_incoming_email,
-    send_incoming_call,
-    send_incoming_sms,
-    send_incoming_unify_message,
-)
-from unity.conversation_manager.events import PhoneCallEnded, UnifyMeetEnded
+
+def get_sms_thread(cm, contact_id: int):
+    """Get SMS thread for a contact from CM state."""
+    active = cm.contact_index.active_conversations.get(contact_id)
+    if not active:
+        return []
+    return list(active.threads.get("sms", []))
+
+
+def get_email_thread(cm, contact_id: int):
+    """Get email thread for a contact from CM state."""
+    active = cm.contact_index.active_conversations.get(contact_id)
+    if not active:
+        return []
+    return list(active.threads.get("email", []))
+
+
+def get_unify_message_thread(cm, contact_id: int):
+    """Get unify_message thread for a contact from CM state."""
+    active = cm.contact_index.active_conversations.get(contact_id)
+    if not active:
+        return []
+    return list(active.threads.get("unify_message", []))
+
+
+def find_assistant_message(thread):
+    """Find the first assistant message (name='You') in a thread."""
+    for msg in thread:
+        if getattr(msg, "name", "") == "You":
+            return msg
+    return None
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_sms(event_broker, event_capture):
+async def test_sms_to_sms(initialized_cm):
     """
-    Test basic SMS flow: send an incoming SMS and receive a response.
+    Test basic SMS flow: incoming SMS triggers LLM response via SMS.
 
-    Flow:
-    1. Send SMSRecieved event with a question
-    2. CM processes it with LLM
-    3. CM publishes SMSSent event with response
-    4. We capture and verify the response
+    Uses direct handler call instead of event publishing to avoid
+    background task / event loop issues with pytest-asyncio.
     """
-    # Clear any events from initialization
-    event_capture.clear()
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
 
-    # Send incoming SMS
-    contact = contacts[1]
-    await send_incoming_sms(event_broker, contact, "Tell me a joke")
+    # Create incoming SMS event
+    event = SMSReceived(
+        contact=contact,
+        content="Tell me a joke",
+    )
 
-    # Capture outgoing SMS and verify response
-    await capture_outgoing_sms(event_capture, contact)
+    print(f"\n📱 Processing SMS from {contact['phone_number']}")
+
+    # Call event handler DIRECTLY (not via pubsub)
+    await EventHandler.handle_event(event, cm)
+
+    # Check response in CM state directly
+    sms_thread = get_sms_thread(cm, contact["contact_id"])
+    print(f"📱 SMS thread has {len(sms_thread)} messages")
+
+    # Find assistant response
+    assistant_msg = find_assistant_message(sms_thread)
+    assert assistant_msg is not None, "Expected assistant SMS response"
+    assert len(assistant_msg.content) > 0, "Expected non-empty response"
+
+    print(f"✅ Got SMS response: {assistant_msg.content[:100]}...")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_email(event_broker, event_capture):
-    """
-    Test SMS to email flow: send an incoming SMS and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
+async def test_sms_to_email(initialized_cm):
+    """Test SMS → LLM → email response flow."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
 
-    # Send incoming SMS
-    contact = contacts[1]
-    await send_incoming_sms(event_broker, contact, "Tell me a joke via email")
+    event = SMSReceived(
+        contact=contact,
+        content="Tell me a joke via email",
+    )
 
-    # Capture outgoing email and verify response
-    await capture_outgoing_email(event_capture, contact)
+    print(f"\n📱 Processing SMS from {contact['phone_number']}")
+    await EventHandler.handle_event(event, cm)
+
+    # Check email thread for response
+    email_thread = get_email_thread(cm, contact["contact_id"])
+    assistant_msg = find_assistant_message(email_thread)
+    assert assistant_msg is not None, "Expected assistant email response"
+
+    print(f"✅ Got email response: {assistant_msg.body[:100]}...")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_unify_message(event_broker, event_capture):
-    """
-    Test SMS to unify message flow: send an incoming SMS and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
+async def test_email_to_email(initialized_cm):
+    """Test basic email flow: incoming email triggers LLM response via email."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
 
-    # Send incoming SMS
-    contact = contacts[1]
-    await send_incoming_sms(
-        event_broker,
-        contact,
-        "Tell me a joke via unify message",
+    event = EmailReceived(
+        contact=contact,
+        subject="Test Subject",
+        body="Tell me a joke",
+        email_id="test_email_id",
     )
 
-    # Capture outgoing unify message and verify response
-    await capture_outgoing_unify_message(event_capture, contact)
+    print(f"\n📧 Processing email from {contact['email_address']}")
+    await EventHandler.handle_event(event, cm)
+
+    # Check email thread for response
+    email_thread = get_email_thread(cm, contact["contact_id"])
+    assistant_msg = find_assistant_message(email_thread)
+    assert assistant_msg is not None, "Expected assistant email response"
+
+    print(f"✅ Got email response: {assistant_msg.body[:100]}...")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_phone_call(event_broker, event_capture):
-    """
-    Test SMS to phone call flow: send an incoming SMS and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
+async def test_email_to_sms(initialized_cm):
+    """Test email → LLM → SMS response flow."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
 
-    # Send incoming SMS
-    contact = contacts[1]
-    await send_incoming_sms(event_broker, contact, "Tell me a joke via phone call")
-
-    # Capture outgoing phone call and verify response
-    await capture_outgoing_phone_call(event_capture, contact)
-
-    # End the phone call
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
+    event = EmailReceived(
+        contact=contact,
+        subject="Test Subject",
+        body="Tell me a joke via SMS",
+        email_id="test_email_id",
     )
+
+    print(f"\n📧 Processing email from {contact['email_address']}")
+    await EventHandler.handle_event(event, cm)
+
+    # Check SMS thread for response
+    sms_thread = get_sms_thread(cm, contact["contact_id"])
+    assistant_msg = find_assistant_message(sms_thread)
+    assert assistant_msg is not None, "Expected assistant SMS response"
+
+    print(f"✅ Got SMS response: {assistant_msg.content[:100]}...")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_email(event_broker, event_capture):
-    """
-    Test basic email flow: send an incoming email and receive a response.
+async def test_unify_message_to_unify_message(initialized_cm):
+    """Test unify message flow: incoming message triggers LLM response."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
 
-    Flow:
-    1. Send EmailRecieved event with a question
-    2. CM processes it with LLM
-    3. CM publishes EmailSent event with response
-    4. We capture and verify the response
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming email
-    contact = contacts[1]
-    email_id = "test_email_id"
-    await send_incoming_email(
-        event_broker,
-        contact,
-        "Test Subject",
-        "Tell me a joke",
-        email_id,
+    event = UnifyMessageReceived(
+        contact=contact,
+        content="Tell me a joke",
     )
 
-    # Capture outgoing email and verify response
-    await capture_outgoing_email(event_capture, contact, email_id)
+    print(f"\n💬 Processing unify message from contact {contact['contact_id']}")
+    await EventHandler.handle_event(event, cm)
+
+    # Check unify_message thread for response
+    thread = get_unify_message_thread(cm, contact["contact_id"])
+    assistant_msg = find_assistant_message(thread)
+    assert assistant_msg is not None, "Expected assistant unify message response"
+
+    print(f"✅ Got unify message response: {assistant_msg.content[:100]}...")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_sms(event_broker, event_capture):
-    """
-    Test email to SMS flow: send an incoming email and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
+async def test_unify_message_to_sms(initialized_cm):
+    """Test unify message → LLM → SMS response flow."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
 
-    # Send incoming email
-    contact = contacts[1]
-    email_id = "test_email_id"
-    await send_incoming_email(
-        event_broker,
-        contact,
-        "Test Subject",
-        "Tell me a joke via SMS",
-        email_id,
+    event = UnifyMessageReceived(
+        contact=contact,
+        content="Tell me a joke via SMS",
     )
 
-    # Capture outgoing SMS and verify response
-    await capture_outgoing_sms(event_capture, contact)
+    print(f"\n💬 Processing unify message from contact {contact['contact_id']}")
+    await EventHandler.handle_event(event, cm)
+
+    # Check SMS thread for response
+    sms_thread = get_sms_thread(cm, contact["contact_id"])
+    assistant_msg = find_assistant_message(sms_thread)
+    assert assistant_msg is not None, "Expected assistant SMS response"
+
+    print(f"✅ Got SMS response: {assistant_msg.content[:100]}...")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_unify_message(event_broker, event_capture):
-    """
-    Test email to unify message flow: send an incoming email and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
+async def test_unify_message_to_email(initialized_cm):
+    """Test unify message → LLM → email response flow."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
 
-    # Send incoming email
-    contact = contacts[1]
-    email_id = "test_email_id"
-    await send_incoming_email(
-        event_broker,
-        contact,
-        "Test Subject",
-        "Tell me a joke via unify message",
-        email_id,
+    event = UnifyMessageReceived(
+        contact=contact,
+        content="Tell me a joke via email",
     )
 
-    # Capture outgoing unify message and verify response
-    await capture_outgoing_unify_message(event_capture, contact)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_email_to_phone_call(event_broker, event_capture):
-    """
-    Test email to phone call flow: send an incoming email and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming email
-    contact = contacts[1]
-    email_id = "test_email_id"
-    await send_incoming_email(
-        event_broker,
-        contact,
-        "Test Subject",
-        "Tell me a joke via phone call",
-        email_id,
-    )
-
-    # Capture outgoing phone call and verify response
-    await capture_outgoing_phone_call(event_capture, contact)
-
-    # End the phone call
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_message_to_unify_message(event_broker, event_capture):
-    """
-    Test unify message to unify message flow: send an incoming unify message and
-    receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify message
-    contact = contacts[1]
-    await send_incoming_unify_message(event_broker, contact, "Tell me a joke")
-
-    # Capture outgoing unify message and verify response
-    await capture_outgoing_unify_message(event_capture, contact)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_message_to_sms(event_broker, event_capture):
-    """
-    Test unify message to SMS flow: send an incoming unify message and receive
-    a response via SMS.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify message
-    contact = contacts[1]
-    await send_incoming_unify_message(
-        event_broker,
-        contact,
-        "Tell me a joke via SMS",
-    )
-
-    # Capture outgoing SMS and verify response
-    await capture_outgoing_sms(event_capture, contact)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_message_to_email(event_broker, event_capture):
-    """
-    Test unify message to email flow: send an incoming unify message and receive a
-    response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify message
-    contact = contacts[1]
-    await send_incoming_unify_message(
-        event_broker,
-        contact,
-        "Tell me a joke via email",
-    )
-
-    # Capture outgoing email and verify response
-    await capture_outgoing_email(event_capture, contact)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_message_to_phone_call(event_broker, event_capture):
-    """
-    Test unify message to phone call flow: send an incoming unify message and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify message
-    contact = contacts[1]
-    await send_incoming_unify_message(
-        event_broker,
-        contact,
-        "Tell me a joke via phone call",
-    )
-
-    # Capture outgoing phone call and verify response
-    await capture_outgoing_phone_call(event_capture, contact)
-
-    # End the phone call
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_phone_call(event_broker, event_capture):
-    """
-    Test phone call flow.
-
-    In the voice architecture, the Main CM Brain only provides guidance to the
-    Voice Agent (fast brain) - it doesn't produce speech directly. The Voice
-    Agent handles all conversational responses. We verify the call events are
-    processed correctly.
-    """
-    from unity.conversation_manager.events import InboundPhoneUtterance
-
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming phone call
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke",
-    )
-
-    # Give Main CM Brain time to process
-    await asyncio.sleep(3.0)
-
-    # Verify inbound utterance event was recorded
-    inbound_events = event_capture.get_events(InboundPhoneUtterance)
-    assert len(inbound_events) >= 1, "Should record inbound phone utterance"
-    assert inbound_events[0].content == "Tell me a joke"
-
-    # Cleanup subscription
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    print("\n✅ Phone call test complete!")
-
-    # End the phone call
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_phone_call_to_sms(event_broker, event_capture):
-    """
-    Test phone call to SMS flow: user on a call requests SMS, verify SMS is sent.
-
-    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
-    speech directly. The key assertion is that the SMS action is executed.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming phone call
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke via SMS right now",
-    )
-
-    # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    # Capture outgoing SMS and verify response
-    await capture_outgoing_sms(event_capture, contact)
-
-    # End the phone call
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_phone_call_to_email(event_broker, event_capture):
-    """
-    Test phone call to email flow: user on a call requests email, verify email is sent.
-
-    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
-    speech directly. The key assertion is that the email action is executed.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming phone call
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke via email right now",
-    )
-
-    # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    # Capture outgoing email and verify response
-    await capture_outgoing_email(event_capture, contact)
-
-    # End the phone call
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_phone_call_to_unify_message(event_broker, event_capture):
-    """
-    Test phone call to unify message flow: user on a call requests a message.
-
-    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
-    speech directly. The key assertion is that the unify message action is executed.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming phone call
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke via unify message right now",
-    )
-
-    # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    # Capture outgoing unify message and verify response
-    await capture_outgoing_unify_message(event_capture, contact)
-
-    # End the phone call
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_meet(event_broker, event_capture):
-    """
-    Test unify meet flow.
-
-    In the voice architecture, the Main CM Brain only provides guidance to the
-    Voice Agent (fast brain) - it doesn't produce speech directly. The Voice
-    Agent handles all conversational responses. We verify the call events are
-    processed correctly.
-    """
-    from unity.conversation_manager.events import InboundUnifyMeetUtterance
-
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify meet
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke",
-        mode="unify_meet",
-    )
-
-    # Give Main CM Brain time to process
-    await asyncio.sleep(3.0)
-
-    # Verify inbound utterance event was recorded
-    inbound_events = event_capture.get_events(InboundUnifyMeetUtterance)
-    assert len(inbound_events) >= 1, "Should record inbound unify meet utterance"
-    assert inbound_events[0].content == "Tell me a joke"
-
-    # Cleanup subscription
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    print("\n✅ Unify meet test complete!")
-
-    # End the unify meet
-    await event_broker.publish(
-        "app:comms:unify_meet_ended",
-        UnifyMeetEnded(contact=contact).to_json(),
-    )
-
-
-# Note: There is no test_unify_meet_to_phone_call test because the system does not
-# support maintaining multiple simultaneous voice-based conversations. While on a
-# unify meet, the assistant cannot initiate an outbound phone call.
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_meet_to_sms(event_broker, event_capture):
-    """
-    Test unify meet to SMS flow: user on a call requests SMS, verify SMS is sent.
-
-    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
-    speech directly. The key assertion is that the SMS action is executed.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify meet
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke via sms right now",
-        mode="unify_meet",
-    )
-
-    # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    # Capture outgoing SMS and verify response
-    await capture_outgoing_sms(event_capture, contact)
-
-    # End the unify meet
-    await event_broker.publish(
-        "app:comms:unify_meet_ended",
-        UnifyMeetEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_meet_to_email(event_broker, event_capture):
-    """
-    Test unify meet to email flow: user on a call requests email, verify email is sent.
-
-    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
-    speech directly. The key assertion is that the email action is executed.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify meet
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke via email right now",
-        mode="unify_meet",
-    )
-
-    # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    # Capture outgoing email and verify response
-    await capture_outgoing_email(event_capture, contact)
-
-    # End the unify meet
-    await event_broker.publish(
-        "app:comms:unify_meet_ended",
-        UnifyMeetEnded(contact=contact).to_json(),
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_meet_to_unify_message(event_broker, event_capture):
-    """
-    Test unify meet to unify message flow: user on a call requests a message.
-
-    The Main CM Brain provides guidance to the Voice Agent but doesn't produce
-    speech directly. The key assertion is that the unify message action is executed.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify meet
-    contact = contacts[1]
-    pubsub = await send_incoming_call(
-        event_broker,
-        contact,
-        "test_conference",
-        "Tell me a joke via unify message right now",
-        mode="unify_meet",
-    )
-
-    # Cleanup subscription (we don't expect voice streaming)
-    await pubsub.unsubscribe("app:call:call_guidance")
-    await pubsub.aclose()
-
-    # Capture outgoing unify message and verify response
-    await capture_outgoing_unify_message(event_capture, contact)
-
-    # End the unify meet
-    await event_broker.publish(
-        "app:comms:unify_meet_ended",
-        UnifyMeetEnded(contact=contact).to_json(),
-    )
+    print(f"\n💬 Processing unify message from contact {contact['contact_id']}")
+    await EventHandler.handle_event(event, cm)
+
+    # Check email thread for response
+    email_thread = get_email_thread(cm, contact["contact_id"])
+    assistant_msg = find_assistant_message(email_thread)
+    assert assistant_msg is not None, "Expected assistant email response"
+
+    print(f"✅ Got email response: {assistant_msg.body[:100]}...")

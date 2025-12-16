@@ -18,13 +18,12 @@ from tests.assertion_helpers import (
     first_diff_block,
 )
 
-from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.prompt_builders import build_ask_prompt, build_update_prompt
 
 
-def test_ask_system_prompt_formatting():
+def test_ask_system_prompt_formatting(basic_task_scenario):
     """Test ask prompt structure with dynamically extracted tools."""
-    ts = TaskScheduler()
+    ts, _ = basic_task_scenario
     tools = dict(ts.get_tools("ask"))
     num_tasks = ts._num_tasks()
 
@@ -83,9 +82,9 @@ def test_ask_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
 
 
-def test_update_system_prompt_formatting():
+def test_update_system_prompt_formatting(basic_task_scenario):
     """Test update prompt structure with dynamically extracted tools."""
-    ts = TaskScheduler()
+    ts, _ = basic_task_scenario
     tools = dict(ts.get_tools("update"))
     num_tasks = ts._num_tasks()
 
