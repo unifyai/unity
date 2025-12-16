@@ -1,21 +1,61 @@
+"""
+ConversationManager service management.
+
+Supports two modes of operation:
+
+1. **Subprocess mode** (default for production):
+   - Call `start()` to launch ConversationManager in a subprocess
+   - Uses Redis for inter-process communication
+   - Full process isolation for voice/call handling
+
+2. **In-process mode** (for testing and local development):
+   - Call `start_async()` to run ConversationManager in the current process
+   - Uses in-memory event broker (no Redis required)
+   - Direct access to ConversationManager instance
+   - Simpler testing with direct monkey-patching
+
+The mode is selected automatically based on UNITY_EVENT_BROKER setting:
+- "redis" (default): Subprocess mode
+- "in_memory": In-process mode
+"""
+
+from __future__ import annotations
+
+import asyncio
 import os
-import subprocess
-import sys
-import time
-import threading
 import signal
 import socket
-from typing import Optional, Dict, Any
+import subprocess
+import sys
+import threading
+import time
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from unity.session_details import SESSION_DETAILS
 
+if TYPE_CHECKING:
+    from unity.conversation_manager.conversation_manager import ConversationManager
 
-# Global state for the service manager
+
+# =============================================================================
+# Global state for subprocess mode
+# =============================================================================
 _process: Optional[subprocess.Popen] = None
 _start_time: Optional[float] = None
 _shutdown_reason: Optional[str] = None
 _monitor_thread: Optional[threading.Thread] = None
 _monitoring: bool = False
+
+# =============================================================================
+# Global state for in-process mode
+# =============================================================================
+_in_process_cm: Optional["ConversationManager"] = None
+_in_process_task: Optional[asyncio.Task] = None
+
+
+# =============================================================================
+# Subprocess mode functions
+# =============================================================================
 
 
 def terminate_process(proc: subprocess.Popen) -> Optional[int]:
@@ -31,7 +71,7 @@ def terminate_process(proc: subprocess.Popen) -> Optional[int]:
         or None if no process was provided
     """
     if proc is None:
-        return
+        return None
 
     try:
         # Send SIGTERM to the process group
@@ -139,6 +179,9 @@ def start(
     """
     Start the Unity service as a subprocess and wait for it to be ready.
 
+    This is the subprocess mode entry point, used for production deployments
+    where ConversationManager runs in isolation with Redis communication.
+
     Returns:
         bool: True if service started and is ready, False otherwise
     """
@@ -215,15 +258,118 @@ def stop(reason: str = "manual_stop") -> Optional[int]:
     return None
 
 
+# =============================================================================
+# In-process mode functions
+# =============================================================================
+
+
+async def start_async(
+    *,
+    project_name: str = "Assistants",
+    enable_comms_manager: bool | None = None,
+    apply_test_mocks: bool | None = None,
+) -> "ConversationManager":
+    """
+    Start ConversationManager in-process (async entry point).
+
+    This is the in-process mode entry point, ideal for testing and local
+    development. The ConversationManager runs in the same process using
+    asyncio, with in-memory event passing (no Redis required).
+
+    Args:
+        project_name: Project name for logging
+        enable_comms_manager: Whether to start CommsManager for external
+            communications. If None, defaults to True unless TEST env is set.
+        apply_test_mocks: Whether to apply test mocks. If None, defaults to
+            True if TEST env var is set.
+
+    Returns:
+        The running ConversationManager instance.
+
+    Example:
+        async def test_something():
+            cm = await start_async()
+            try:
+                # Interact with cm directly
+                await cm.event_broker.publish("app:comms:test", "hello")
+            finally:
+                await stop_async()
+    """
+    global _in_process_cm
+
+    if _in_process_cm is not None:
+        print("ConversationManager is already running in-process")
+        return _in_process_cm
+
+    # Import here to avoid circular imports
+    from unity.conversation_manager.main import run_conversation_manager
+
+    _in_process_cm = await run_conversation_manager(
+        project_name=project_name,
+        enable_comms_manager=enable_comms_manager,
+        apply_test_mocks=apply_test_mocks,
+    )
+
+    return _in_process_cm
+
+
+async def stop_async(reason: str = "manual_stop") -> None:
+    """
+    Stop the in-process ConversationManager.
+
+    Args:
+        reason: Reason for stopping (for logging)
+    """
+    global _in_process_cm, _in_process_task, _shutdown_reason
+
+    if _in_process_cm is None:
+        return
+
+    print(f"Stopping ConversationManager in-process (reason: {reason})...")
+
+    try:
+        # Signal shutdown
+        _in_process_cm.stop.set()
+
+        # Clean up
+        await _in_process_cm.cleanup()
+        print("ConversationManager stopped")
+        _shutdown_reason = reason
+    except Exception as e:
+        print(f"Error stopping ConversationManager: {e}")
+        _shutdown_reason = f"stop_error: {e}"
+    finally:
+        _in_process_cm = None
+
+
+def get_in_process_cm() -> Optional["ConversationManager"]:
+    """
+    Get the in-process ConversationManager instance, if running.
+
+    Returns:
+        The ConversationManager instance or None if not running in-process.
+    """
+    return _in_process_cm
+
+
+# =============================================================================
+# Common functions (work for both modes)
+# =============================================================================
+
+
 def is_running() -> bool:
     """
-    Check if the Unity service is currently running.
+    Check if the Unity service is currently running (either mode).
 
     Returns:
         bool: True if service is running, False otherwise
     """
-    global _process
-    return _process and _process.poll() is None
+    # Check in-process mode first
+    if _in_process_cm is not None:
+        return True
+
+    # Check subprocess mode
+    return _process is not None and _process.poll() is None
 
 
 def get_status() -> Dict[str, Any]:
@@ -235,16 +381,28 @@ def get_status() -> Dict[str, Any]:
     """
     global _process, _start_time, _shutdown_reason
 
-    running = is_running()
+    # Check in-process mode
+    if _in_process_cm is not None:
+        return {
+            "running": True,
+            "mode": "in_process",
+            "assistant_id": SESSION_DETAILS.assistant.id,
+            "shutdown_reason": _shutdown_reason,
+            "message": "Running in-process (no subprocess)",
+        }
+
+    # Subprocess mode status
+    running = _process is not None and _process.poll() is None
     uptime = time.time() - _start_time if _start_time and running else 0
 
     status = {
         "running": running,
+        "mode": "subprocess",
         "uptime_seconds": uptime,
         "process_id": _process.pid if _process else None,
         "assistant_id": SESSION_DETAILS.assistant.id,
         "shutdown_reason": _shutdown_reason,
-        "inactivity_timeout_minutes": 6,  # Document the timeout setting
+        "inactivity_timeout_minutes": 6,
     }
 
     # Add additional context based on shutdown reason
@@ -260,19 +418,20 @@ def get_status() -> Dict[str, Any]:
 
 def get_process() -> Optional[subprocess.Popen]:
     """
-    Get the current process object (for advanced usage).
+    Get the current subprocess object (for advanced usage).
 
     Returns:
         Optional[subprocess.Popen]: The current process object or None
     """
-    global _process
     return _process
 
 
 def cleanup() -> None:
     """
-    Clean up the service manager state.
+    Clean up the service manager state (subprocess mode only).
     Useful for testing or when you want to reset the global state.
+
+    For in-process mode, use `await stop_async()` instead.
     """
     global _process, _start_time, _shutdown_reason, _monitor_thread, _monitoring
 
