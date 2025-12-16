@@ -4,133 +4,92 @@ tests/test_conversation_manager/conftest.py
 
 Fixtures for conversation manager integration tests.
 
-Sets up:
-- Redis server (dynamic port to support parallel test runs)
-- Conversation manager process (using simulated implementations)
-- Event capture utilities
-
-IMPORTANT: These tests are compatible with `-t` per-test parallelism because
-each test gets its own Redis server on a unique port.
+Uses **in-process mode** for simple, fast testing:
+- No Redis server required
+- No subprocess spawning
+- Direct access to ConversationManager instance
+- Direct monkey-patching support
 
 The tests use simulated implementations for all managers (ContactManager,
 TranscriptManager, TaskScheduler, etc.) to avoid connecting to real backends.
-This is controlled via UNITY_*_IMPL environment variables.
 """
+
+from __future__ import annotations
 
 import asyncio
 import os
-import pytest
-import pytest_asyncio
-import socket
-import subprocess
 import time
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import List, Type
-import redis.asyncio as redis
+from typing import TYPE_CHECKING, List, Type
 
-# Fixed datetime for LLM cache consistency - must match tests/conftest.py
-_FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+import pytest_asyncio
 
 from unity.conversation_manager.events import (
     Event,
     GetContactsResponse,
-    InitializationComplete,
     StartupEvent,
 )
 
-
-def _find_free_port() -> int:
-    """Find an available port by binding to port 0 and reading the assigned port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+if TYPE_CHECKING:
+    from unity.conversation_manager.conversation_manager import ConversationManager
+    from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
 
-# ============================================================================
-# Redis Server Management
-# ============================================================================
+# Fixed datetime for LLM cache consistency - must match tests/conftest.py
+_FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
 
 
-@pytest.fixture(scope="module")
-def redis_server():
-    """
-    Start a Redis server on a dynamically allocated port.
-
-    This enables parallel test execution with `-t` flag since each test
-    module gets its own Redis instance on a unique port.
-    """
-    redis_port = _find_free_port()
-    redis_proc = subprocess.Popen(
-        [
-            "redis-server",
-            "--port",
-            str(redis_port),
-            "--save",
-            "",
-            "--appendonly",
-            "no",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    # Wait for Redis to be ready
-    for i in range(50):
-        try:
-            # Use sync Redis client for the health check
-            import redis as redis_sync
-
-            test_client = redis_sync.Redis(port=redis_port, decode_responses=False)
-            test_client.ping()
-            test_client.close()
-            print(f"✓ Redis server started on port {redis_port}")
-            break
-        except (redis_sync.ConnectionError, redis_sync.ResponseError):
-            if i == 49:
-                redis_proc.kill()
-                raise RuntimeError(f"Redis failed to start on port {redis_port}")
-            time.sleep(0.1)
-
-    yield redis_port
-
-    # Cleanup: Stop Redis
-    print(f"\n✓ Stopping Redis server (port {redis_port})")
-    redis_proc.terminate()
-    try:
-        redis_proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        redis_proc.kill()
-        redis_proc.wait()
+# =============================================================================
+# Module-level setup: Configure environment for in-process mode
+# =============================================================================
 
 
-# ============================================================================
-# Test Redis Client
-# ============================================================================
+def pytest_configure(config):
+    """Configure environment variables before any tests run."""
+    # Use in-memory event broker (no Redis required)
+    os.environ["UNITY_EVENT_BROKER"] = "in_memory"
+
+    # Use simulated implementations for all managers
+    os.environ["UNITY_ACTOR_IMPL"] = "simulated"
+    os.environ["UNITY_CONTACTS_IMPL"] = "simulated"
+    os.environ["UNITY_TRANSCRIPTS_IMPL"] = "simulated"
+    os.environ["UNITY_TASKS_IMPL"] = "simulated"
+    os.environ["UNITY_CONVERSATION_IMPL"] = "simulated"
+    os.environ["UNITY_CONDUCTOR_IMPL"] = "simulated"
+
+    # Steps for SimulatedActor - 3 allows for pause+resume interactions
+    os.environ["UNITY_SIMULATED_ACTOR_STEPS"] = "3"
+
+    # Disable optional managers that might connect to real backends
+    os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
+    os.environ["UNITY_GUIDANCE_ENABLED"] = "false"
+    os.environ["UNITY_SECRETS_ENABLED"] = "false"
+    os.environ["UNITY_SKILLS_ENABLED"] = "false"
+    os.environ["UNITY_WEB_SEARCH_ENABLED"] = "false"
+    os.environ["UNITY_FILES_ENABLED"] = "false"
+
+    # Fixed datetime for LLM cache consistency
+    os.environ["UNITY_FIXED_DATETIME"] = _FIXED_DATETIME.isoformat()
+
+    # Mark as test mode
+    os.environ["TEST"] = "true"
+    os.environ["JOB_NAME"] = "test_job"
 
 
-@pytest_asyncio.fixture
-async def test_redis_client(redis_server, initialized_conversation_manager):
-    """Redis client for publishing events in tests.
-
-    Depends on initialized_conversation_manager to ensure the CM subprocess
-    is running before tests interact with Redis.
-    """
-    client = redis.Redis(port=redis_server)
-    yield client
-    await client.aclose()
-
-
-# ============================================================================
+# =============================================================================
 # Event Capture Helper
-# ============================================================================
+# =============================================================================
 
 
 class EventCapture:
-    """Captures events published to Redis for test assertions."""
+    """
+    Captures events from the in-memory event broker for test assertions.
 
-    def __init__(self, redis_client: redis.Redis):
-        self._client = redis_client
+    Much simpler than the Redis-based version since we're in the same process.
+    """
+
+    def __init__(self, event_broker: "InMemoryEventBroker"):
+        self._broker = event_broker
         self._captured_events: List[Event] = []
         self._pubsub = None
         self._capture_task = None
@@ -138,7 +97,7 @@ class EventCapture:
 
     async def start_capturing(self, patterns: List[str]):
         """Start capturing events matching the given patterns."""
-        self._pubsub = self._client.pubsub()
+        self._pubsub = await self._broker.pubsub().__aenter__()
         await self._pubsub.psubscribe(*patterns)
         self._running = True
         self._capture_task = asyncio.create_task(self._capture_loop())
@@ -159,6 +118,8 @@ class EventCapture:
                         pass  # Skip unparseable events
             except asyncio.TimeoutError:
                 continue
+            except asyncio.CancelledError:
+                break
             except Exception:
                 if self._running:
                     break
@@ -200,7 +161,11 @@ class EventCapture:
             f"Timeout waiting for {event_type.__name__} matching custom criteria",
         )
 
-    def get_events(self, event_type: Type[Event] = None, **attributes) -> List[Event]:
+    def get_events(
+        self,
+        event_type: Type[Event] | None = None,
+        **attributes,
+    ) -> List[Event]:
         """Get all captured events, optionally filtered."""
         events = self._captured_events
         if event_type:
@@ -227,123 +192,64 @@ class EventCapture:
             except asyncio.CancelledError:
                 pass
         if self._pubsub:
-            await self._pubsub.unsubscribe()
             await self._pubsub.aclose()
 
 
-@pytest_asyncio.fixture
-async def event_capture(redis_server, initialized_conversation_manager):
-    """
-    EventCapture instance that listens to all conversation manager events.
-
-    Creates its own Redis client to avoid event loop conflicts with
-    module-scoped fixtures.
-
-    Depends on initialized_conversation_manager to ensure the CM subprocess
-    is running and initialized before tests start capturing events.
-    """
-    client = redis.Redis(port=redis_server)
-    capture = EventCapture(client)
-    await capture.start_capturing(["app:comms:*", "app:conductor:*", "app:managers:*"])
-    yield capture
-    await capture.stop()
-    await client.aclose()
-
-
-# ============================================================================
-# Conversation Manager Process
-# ============================================================================
+# =============================================================================
+# ConversationManager Fixtures (In-Process Mode)
+# =============================================================================
 
 
 @pytest_asyncio.fixture(scope="module")
-async def conversation_manager_process(redis_server):
-    """Start the conversation manager as a background process with simulated managers."""
-    import sys
+async def conversation_manager() -> "ConversationManager":
+    """
+    Start ConversationManager in-process for the test module.
 
-    test_env = os.environ.copy()
-    test_env.update(
-        {
-            "JOB_NAME": "test_job",
-            "UNIFY_CACHE": "true",
-            "TEST": "true",
-            "REDIS_PORT": str(redis_server),
-            # Fixed datetime for LLM cache consistency
-            "UNITY_FIXED_DATETIME": _FIXED_DATETIME.isoformat(),
-            # Use simulated implementations for all managers
-            "UNITY_ACTOR_IMPL": "simulated",
-            "UNITY_CONTACTS_IMPL": "simulated",
-            "UNITY_TRANSCRIPTS_IMPL": "simulated",
-            "UNITY_TASKS_IMPL": "simulated",
-            "UNITY_CONVERSATION_IMPL": "simulated",
-            "UNITY_CONDUCTOR_IMPL": "simulated",
-            # Steps for SimulatedActor - 3 allows for pause+resume interactions
-            "UNITY_SIMULATED_ACTOR_STEPS": "3",
-            # Disable optional managers that might connect to real backends
-            "UNITY_KNOWLEDGE_ENABLED": "false",
-            "UNITY_GUIDANCE_ENABLED": "false",
-            "UNITY_SECRETS_ENABLED": "false",
-            "UNITY_SKILLS_ENABLED": "false",
-            "UNITY_WEB_SEARCH_ENABLED": "false",
-            "UNITY_FILES_ENABLED": "false",
-        },
+    This is much simpler than the subprocess approach:
+    - No Redis server needed
+    - No subprocess spawning
+    - Direct access to the CM instance
+    - Direct monkey-patching support
+    """
+    # Reset any existing event broker state
+    from unity.conversation_manager.event_broker import reset_event_broker
+
+    reset_event_broker()
+
+    # Import and start CM in-process
+    from unity.conversation_manager import start_async, stop_async
+
+    print("\n✓ Starting ConversationManager in-process...")
+    cm = await start_async(
+        project_name="TestProject",
+        enable_comms_manager=False,  # Don't start CommsManager (requires GCP)
+        apply_test_mocks=True,
     )
-
-    # Start conversation manager (logs go to terminal)
-    repo_root = Path(__file__).parent.parent.parent
-    cm_proc = subprocess.Popen(
-        [sys.executable, "start.py"],
-        cwd=repo_root,
-        env=test_env,
-    )
-
-    # Wait for it to start (simple wait)
-    start_time = time.time()
-    while time.time() - start_time < 10:
-        if cm_proc.poll() is not None:
-            raise RuntimeError("CM process died during startup")
-        if time.time() - start_time > 3:
-            break
-        time.sleep(0.5)
-
-    print(
-        f"✓ Conversation manager started (PID: {cm_proc.pid}, Redis port: {redis_server})",
-    )
+    print(f"✓ ConversationManager started (in-process mode)")
     print("  Using simulated implementations for all managers")
 
-    yield cm_proc
+    yield cm
 
     # Cleanup
-    print(f"\n✓ Stopping conversation manager (PID: {cm_proc.pid})")
-    cm_proc.terminate()
-    try:
-        cm_proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        cm_proc.kill()
-        cm_proc.wait()
-
-
-# ============================================================================
-# Initialized System (Convenience)
-# ============================================================================
+    print("\n✓ Stopping ConversationManager...")
+    await stop_async()
+    reset_event_broker()
 
 
 @pytest_asyncio.fixture(scope="module")
-async def initialized_conversation_manager(conversation_manager_process, redis_server):
+async def initialized_conversation_manager(
+    conversation_manager: "ConversationManager",
+) -> "ConversationManager":
     """
-    Initialize the conversation manager with startup and contacts events.
+    Initialize the ConversationManager with startup and contacts events.
 
-    This fixture is module-scoped and used by tests that need the CM subprocess.
-    Tests that use `event_capture` automatically get this fixture since
-    `event_capture` depends on it.
-
-    Waits for the CM to subscribe to Redis channels, publishes startup and
-    contacts events, then waits for the InitializationComplete event to ensure
-    all managers are fully initialized before tests run.
-
-    Returns: cm_process
+    Publishes the startup event and contacts, then waits for initialization
+    to complete. Much faster than subprocess mode since we're in-process.
     """
-    temp_client = redis.Redis(port=redis_server)
+    cm = conversation_manager
+    event_broker = cm.event_broker
 
+    # Create startup event
     startup = StartupEvent(
         api_key=os.getenv("UNIFY_KEY", "test_key"),
         medium="test",
@@ -362,88 +268,91 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
         voice_id="test_voice",
     )
 
-    # Wait for CM to subscribe to channels by checking for active pattern subscriptions
-    print("⏳ Waiting for conversation manager to subscribe to Redis channels...")
-    max_wait = 30
-    wait_interval = 0.5
-    waited = 0
-    num_patterns = 0
-    while waited < max_wait:
-        # Check if there are at least 1 active pattern subscription from CM's wait_for_events()
-        num_patterns = await temp_client.execute_command("PUBSUB", "NUMPAT")
-        if num_patterns >= 1:
-            print(
-                f"✅ Found {num_patterns} active pattern subscription(s) after {waited:.1f}s",
+    # Subscribe to initialization_complete before sending startup
+    async with event_broker.pubsub() as pubsub:
+        await pubsub.subscribe("app:comms:initialization_complete")
+
+        # Send startup event
+        print("📤 Publishing startup event...")
+        await event_broker.publish("app:comms:startup", startup.to_json())
+
+        # Send contacts
+        print("📤 Publishing contacts...")
+        contacts_event = GetContactsResponse(
+            contacts=[
+                {
+                    "contact_id": 0,
+                    "first_name": "Test",
+                    "surname": "Assistant",
+                    "email_address": "assistant@test.com",
+                    "phone_number": "+15555551234",
+                },
+                {
+                    "contact_id": 1,
+                    "first_name": "Test",
+                    "surname": "Contact",
+                    "email_address": "test@contact.com",
+                    "phone_number": "+15555551111",
+                },
+            ],
+        )
+        await event_broker.publish("app:comms:contacts", contacts_event.to_json())
+
+        # Wait for initialization (with timeout)
+        print("⏳ Waiting for initialization...")
+        init_timeout = 60  # Much shorter than subprocess mode
+        start_time = time.perf_counter()
+
+        while time.perf_counter() - start_time < init_timeout:
+            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            if msg and msg["type"] == "message":
+                try:
+                    from unity.conversation_manager.events import InitializationComplete
+
+                    event = Event.from_json(msg["data"])
+                    if isinstance(event, InitializationComplete):
+                        elapsed = time.perf_counter() - start_time
+                        print(f"✅ Initialization complete after {elapsed:.1f}s")
+                        break
+                except Exception:
+                    pass
+        else:
+            raise RuntimeError(
+                f"Timeout ({init_timeout}s) waiting for InitializationComplete",
             )
-            break
-        await asyncio.sleep(wait_interval)
-        waited += wait_interval
-    else:
-        print(
-            f"⚠️  Expected pattern subscriptions after {max_wait}s, found {num_patterns}",
-        )
-        raise RuntimeError("Conversation manager did not subscribe to Redis channels")
-
-    # Brief additional wait to ensure CM's get_message() loop is actively polling
-    await asyncio.sleep(1)
-
-    # Subscribe to initialization_complete channel BEFORE sending startup event
-    # so we don't miss the event if init is fast
-    pubsub = temp_client.pubsub()
-    await pubsub.subscribe("app:comms:initialization_complete")
-
-    # Send startup event (triggers init_conv_manager in CM)
-    print("📤 Publishing startup event...")
-    await temp_client.publish("app:comms:startup", startup.to_json())
-
-    # Send contacts list
-    print("📤 Publishing contacts...")
-    contacts_event = GetContactsResponse(
-        contacts=[
-            {
-                "contact_id": 0,
-                "first_name": "Test",
-                "surname": "Assistant",
-                "email_address": "assistant@test.com",
-                "phone_number": "+15555551234",
-            },
-            {
-                "contact_id": 1,
-                "first_name": "Test",
-                "surname": "Contact",
-                "email_address": "test@contact.com",
-                "phone_number": "+15555551111",
-            },
-        ],
-    )
-    await temp_client.publish("app:comms:contacts", contacts_event.to_json())
-
-    # Wait for InitializationComplete event (symbolic synchronization)
-    print("⏳ Waiting for InitializationComplete event...")
-    init_timeout = 300  # 5 minutes for slow initialization under high concurrency
-    start_time = time.perf_counter()
-    while time.perf_counter() - start_time < init_timeout:
-        msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-        if msg and msg["type"] == "message":
-            try:
-                event = Event.from_json(msg["data"])
-                if isinstance(event, InitializationComplete):
-                    elapsed = time.perf_counter() - start_time
-                    print(f"✅ CM initialization complete after {elapsed:.1f}s")
-                    break
-            except Exception:
-                pass
-    else:
-        await pubsub.unsubscribe()
-        await pubsub.aclose()
-        await temp_client.aclose()
-        raise RuntimeError(
-            f"Timeout ({init_timeout}s) waiting for InitializationComplete event",
-        )
-
-    await pubsub.unsubscribe()
-    await pubsub.aclose()
-    await temp_client.aclose()
 
     print("✅ System initialized and ready")
-    return conversation_manager_process
+    return cm
+
+
+@pytest_asyncio.fixture
+async def event_capture(
+    initialized_conversation_manager: "ConversationManager",
+) -> EventCapture:
+    """
+    EventCapture instance that listens to all conversation manager events.
+
+    Uses the in-memory event broker directly - no Redis needed.
+    """
+    cm = initialized_conversation_manager
+    capture = EventCapture(cm.event_broker)
+    await capture.start_capturing(["app:comms:*", "app:conductor:*", "app:managers:*"])
+    yield capture
+    await capture.stop()
+
+
+# =============================================================================
+# Convenience Fixtures
+# =============================================================================
+
+
+@pytest_asyncio.fixture
+async def event_broker(
+    initialized_conversation_manager: "ConversationManager",
+) -> "InMemoryEventBroker":
+    """
+    Direct access to the in-memory event broker.
+
+    Useful for tests that need to publish/subscribe directly.
+    """
+    return initialized_conversation_manager.event_broker
