@@ -27,6 +27,7 @@ alias kill_failed="$UNITY_TESTS_DIR/kill_failed.sh"
 alias kill_server="$UNITY_TESTS_DIR/kill_server.sh"
 alias list_runs="$UNITY_TESTS_DIR/list_runs.sh"
 alias monitor_resources="$UNITY_TESTS_DIR/monitor_resources.sh"
+alias project_cleanup="$UNITY_TESTS_DIR/project_cleanup.sh"
 
 # ---- Completion: attach ----
 _unity_attach_complete() {
@@ -77,3 +78,21 @@ _unity_kill_failed_complete() {
         '--help[Show help]'
 }
 compdef _unity_kill_failed_complete kill_failed
+
+# ---- Completion: project_cleanup ----
+_unity_project_cleanup_complete() {
+    _arguments \
+        '--dry-run[Show matching projects without deleting]' \
+        '-y[Skip confirmation prompt]' \
+        '--yes[Skip confirmation prompt]' \
+        '--shared-only[Only delete the shared UnityTests project]' \
+        '--random-only[Only delete random UnityTests_* projects]' \
+        '--prefix[Override prefix for random projects]:prefix:' \
+        '-s[Use staging environment]' \
+        '--staging[Use staging environment]' \
+        '-p[Use production environment]' \
+        '--production[Use production environment]' \
+        '-h[Show help]' \
+        '--help[Show help]'
+}
+compdef _unity_project_cleanup_complete project_cleanup
