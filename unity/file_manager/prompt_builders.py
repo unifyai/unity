@@ -9,6 +9,9 @@ from ..common.prompt_helpers import (
     now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    render_tools_block,
+    render_counts_and_columns,
+    clarification_top_sentence,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 from ..common.business_context import BusinessContextPayload
@@ -309,12 +312,10 @@ def build_file_manager_ask_prompt(
     5. Response guidelines (from payload or generic)
     6. Clarification guidance + timestamp
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
     columns = columns or {}
 
     exists_fname = _tool_name(tools, "exists")
     list_fname = _tool_name(tools, "list")
-    request_clar_fname = _tool_name(tools, "request_clarification")
 
     # Require only the core read tools (no ingest_files - this is read-only)
     _require_tools(
@@ -323,15 +324,6 @@ def build_file_manager_ask_prompt(
             "list": list_fname,
         },
         tools,
-    )
-
-    # Build clarification sentence
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly state assumptions."
-        )
     )
 
     # Tables overview (runtime injection)
@@ -348,7 +340,7 @@ def build_file_manager_ask_prompt(
             "You are an assistant specializing in retrieving file information and analyzing file contents.",
         )
     parts.append("")
-    parts.append(clar_sentence)
+    parts.append(clarification_top_sentence(tools))
     parts.append("")
 
     # LAYER 2: Generic capabilities block
@@ -366,13 +358,15 @@ def build_file_manager_ask_prompt(
     parts.append("")
 
     parts.append(
-        f"There are currently {num_files} files stored in a table with the following columns:",
+        render_counts_and_columns(
+            entity_plural="files",
+            count=num_files,
+            columns_payload=columns,
+        ),
     )
-    parts.append(json.dumps(columns, indent=4))
     parts.append("")
 
-    parts.append("Tools (name → argspec):")
-    parts.append(sig_json)
+    parts.append(render_tools_block(tools))
     parts.append("")
 
     # LAYER 4: Domain rules + retrieval hints (from payload)
@@ -415,17 +409,7 @@ def build_file_manager_ask_about_file_prompt(
     Uses slot-filling pattern with file-scoped focus. Retains structured
     extraction support (response_format handling).
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
-    request_clar_fname = _tool_name(tools, "request_clarification")
     stat_fname = _tool_name(tools, "stat")
-
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly state assumptions."
-        )
-    )
 
     overview_block = table_schemas_json or "{}"
 
@@ -440,7 +424,7 @@ def build_file_manager_ask_about_file_prompt(
             "You are an assistant specializing in analyzing the content of a specific file.",
         )
     parts.append("")
-    parts.append(clar_sentence)
+    parts.append(clarification_top_sentence(tools))
     parts.append("")
 
     # File-scoped focus guidance
@@ -477,8 +461,7 @@ def build_file_manager_ask_about_file_prompt(
     parts.append(build_shared_retrieval_usage(tools))
     parts.append("")
 
-    parts.append("Tools (name → argspec):")
-    parts.append(sig_json)
+    parts.append(render_tools_block(tools))
     parts.append("")
 
     # LAYER 4: Domain rules + retrieval hints (from payload)
@@ -522,21 +505,10 @@ def build_file_manager_organize_prompt(
 
     Uses slot-filling pattern for mutation operations.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
-
     ask_fname = _tool_name(tools, "ask")
-    request_clar_fname = _tool_name(tools, "request_clarification")
 
     # Only require ask for discovery; organize is mutation-focused
     _require_tools({"ask": ask_fname}, tools)
-
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly state assumptions."
-        )
-    )
 
     overview_block = table_schemas_json or "{}"
 
@@ -551,7 +523,7 @@ def build_file_manager_organize_prompt(
             "You are an assistant specializing in organizing files and folders in the filesystem.",
         )
     parts.append("")
-    parts.append(clar_sentence)
+    parts.append(clarification_top_sentence(tools))
     parts.append("")
 
     # LAYER 2: Generic organize block
@@ -567,8 +539,7 @@ def build_file_manager_organize_prompt(
     parts.append(overview_block)
     parts.append("")
 
-    parts.append("Tools (name → argspec):")
-    parts.append(sig_json)
+    parts.append(render_tools_block(tools))
     parts.append("")
 
     # LAYER 4: Domain rules (from payload)
@@ -603,17 +574,6 @@ def build_global_file_manager_ask_prompt(
 
     Uses slot-filling pattern for multi-filesystem queries.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
-    request_clar_fname = _tool_name(tools, "request_clarification")
-
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly state assumptions."
-        )
-    )
-
     # Assemble prompt using slot-filling pattern
     parts: list[str] = []
 
@@ -625,7 +585,7 @@ def build_global_file_manager_ask_prompt(
             "You are an assistant specializing in managing and querying multiple filesystems.",
         )
     parts.append("")
-    parts.append(clar_sentence)
+    parts.append(clarification_top_sentence(tools))
     parts.append("")
 
     # LAYER 2: Generic capabilities (trimmed for global context)
@@ -639,8 +599,7 @@ def build_global_file_manager_ask_prompt(
     )
     parts.append("")
 
-    parts.append("Tools (name → argspec):")
-    parts.append(sig_json)
+    parts.append(render_tools_block(tools))
     parts.append("")
 
     # LAYER 4: Domain rules (from payload)
@@ -670,17 +629,6 @@ def build_global_file_manager_organize_prompt(
 
     Uses slot-filling pattern for multi-filesystem mutations.
     """
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
-    request_clar_fname = _tool_name(tools, "request_clarification")
-
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly state assumptions."
-        )
-    )
-
     # Assemble prompt using slot-filling pattern
     parts: list[str] = []
 
@@ -692,7 +640,7 @@ def build_global_file_manager_organize_prompt(
             "You are an assistant specializing in organizing files across multiple filesystems.",
         )
     parts.append("")
-    parts.append(clar_sentence)
+    parts.append(clarification_top_sentence(tools))
     parts.append("")
 
     # LAYER 2: Generic organize block
@@ -706,8 +654,7 @@ def build_global_file_manager_organize_prompt(
     )
     parts.append("")
 
-    parts.append("Tools (name → argspec):")
-    parts.append(sig_json)
+    parts.append(render_tools_block(tools))
     parts.append("")
 
     # LAYER 4: Domain rules (from payload)
