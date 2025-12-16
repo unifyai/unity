@@ -17,7 +17,78 @@ from unity.guidance_manager.prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
 )
-from unity.guidance_manager.guidance_manager import GuidanceManager
+
+
+def _make_mock_ask_tools():
+    """Create mock tools for ask prompt testing (avoids GuidanceManager instantiation)."""
+
+    def filter(**kwargs):
+        return []
+
+    def search(**kwargs):
+        return []
+
+    def list_columns(**kwargs):
+        return {}
+
+    def reduce(**kwargs):
+        return {}
+
+    return {
+        "filter": filter,
+        "search": search,
+        "list_columns": list_columns,
+        "reduce": reduce,
+    }
+
+
+def _make_mock_update_tools():
+    """Create mock tools for update prompt testing (avoids GuidanceManager instantiation)."""
+
+    def ask(**kwargs):
+        return ""
+
+    def add_guidance(**kwargs):
+        return {}
+
+    def update_guidance(**kwargs):
+        return {}
+
+    def remove_guidance(**kwargs):
+        return {}
+
+    def delete_guidance(**kwargs):
+        return {}
+
+    def create_custom_column(**kwargs):
+        return {}
+
+    def delete_custom_column(**kwargs):
+        return {}
+
+    return {
+        "ask": ask,
+        "add_guidance": add_guidance,
+        "update_guidance": update_guidance,
+        "remove_guidance": remove_guidance,
+        "delete_guidance": delete_guidance,
+        "create_custom_column": create_custom_column,
+        "delete_custom_column": delete_custom_column,
+    }
+
+
+def _mock_columns():
+    """Return mock columns that include both built-in and custom columns."""
+    return {
+        "guidance_id": "int",
+        "topic": "str",
+        "instruction": "str",
+        "category": "str",
+        "priority": "str",
+        "active": "bool",
+        # Custom column
+        "custom_field": "str",
+    }
 
 
 def _build_prompt_in_subprocess(method: str) -> str:
@@ -75,24 +146,34 @@ def _build_prompt_in_subprocess(method: str) -> str:
 
 
 def test_ask_system_prompt_formatting():
-    gm = GuidanceManager()
-    tools = dict(gm.get_tools("ask"))
+    """Test ask prompt structure using mock tools (avoids database state issues)."""
+    tools = _make_mock_ask_tools()
+    num_items = 10
+    columns = _mock_columns()
+
     prompt = build_ask_prompt(
         tools=tools,
-        num_items=gm._num_items(),
-        columns=gm._list_columns(),
+        num_items=num_items,
+        columns=columns,
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
     assert set(tools_json.keys()) == set(tools.keys())
     assert "Tools (name" in prompt
-    m = re.search(
-        r"There are currently\s+(\d+)\s+guidance entries\s+stored in a table with the following columns:",
-        prompt,
-    )
-    assert m, "Missing counts/columns line"
-    assert int(m.group(1)) == gm._num_items()
+
+    # Schema-based table info: count line + schema reference
+    m = re.search(r"There are currently\s+(\d+)\s+guidance entries\.", prompt)
+    assert m, "Missing counts line"
+    assert int(m.group(1)) == num_items
+    assert "Columns are defined in the Guidance schema above." in prompt
+    assert "Schemas" in prompt
+    assert "Guidance = " in prompt  # Schema rendered early
+
+    # Custom columns should appear separately
+    assert "Additional custom columns:" in prompt
+    assert '"custom_field"' in prompt
+
     assert "Images policy (when images are present)" in prompt
     assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt  # header starts with this substring
@@ -103,13 +184,16 @@ def test_ask_system_prompt_formatting():
         re.S,
     )
 
-    # Ordering checks
-    counts_line = f"There are currently {gm._num_items()} guidance entries stored in a table with the following columns:"
+    # Ordering checks - schemas now appear EARLY (before table info)
+    counts_line = f"There are currently {num_items} guidance entries."
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            counts_line,
+            "Schemas",  # Schemas appear early now
+            "Guidance = ",  # Schema definition
+            counts_line,  # Table info references schema
+            "Columns are defined in the Guidance schema above.",
             "Tools (name",
             "Examples",
             "Images policy (when images are present)",
@@ -136,25 +220,33 @@ def test_ask_system_prompt_formatting():
 
 
 def test_update_system_prompt_formatting():
-    gm = GuidanceManager()
-    tools = dict(gm.get_tools("update"))
+    """Test update prompt structure using mock tools (avoids database state issues)."""
+    tools = _make_mock_update_tools()
+    num_items = 10
+    columns = _mock_columns()
+
     prompt = build_update_prompt(
         tools=tools,
-        num_items=gm._num_items(),
-        columns=gm._list_columns(),
+        num_items=num_items,
+        columns=columns,
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
     assert set(tools_json.keys()) == set(tools.keys())
-    m = re.search(
-        r"There are currently\s+(\d+)\s+guidance entries\s+stored in a table with the following columns:",
-        prompt,
-    )
-    assert m, "Missing counts/columns line"
-    assert int(m.group(1)) == gm._num_items()
+
+    # Schema-based table info: count line + schema reference
+    m = re.search(r"There are currently\s+(\d+)\s+guidance entries\.", prompt)
+    assert m, "Missing counts line"
+    assert int(m.group(1)) == num_items
+    assert "Columns are defined in the Guidance schema above." in prompt
+
+    # Custom columns should appear separately
+    assert "Additional custom columns:" in prompt
+    assert '"custom_field"' in prompt
+
     assert "Schemas" in prompt
-    assert "Guidance schema = " in prompt
+    assert "Guidance = " in prompt  # Schema
     assert "Images policy (when images are present)" in prompt
     assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
@@ -165,19 +257,21 @@ def test_update_system_prompt_formatting():
         re.S,
     )
 
-    # Ordering checks
-    counts_line = f"There are currently {gm._num_items()} guidance entries stored in a table with the following columns:"
+    # Ordering checks - schemas now appear EARLY (before table info)
+    counts_line = f"There are currently {num_items} guidance entries."
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            counts_line,
+            "Schemas",  # Schemas appear early now
+            "Guidance = ",  # Schema definition
+            counts_line,  # Table info references schema
+            "Columns are defined in the Guidance schema above.",
             "Tools (name",
             "Tool selection",
             "Images policy (when images are present)",
             "Images forwarding to nested tools",
             "Parallelism and single",
-            "Schemas",
             "Current UTC time is ",
         ],
     )
