@@ -175,7 +175,7 @@ async def test_ask_uses_images_for_color(static_now):
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_ask_boot_option():
+async def test_ask_boot_option(static_now):
     tm = TranscriptManager()
     im = ImageManager()
 
@@ -194,12 +194,12 @@ async def test_ask_boot_option():
     [grub_id, wizard_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "GRUB boot menu screenshot",
                 "data": grub_bytes,
             },
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "Ubuntu installer wizard screenshot",
                 "data": wizard_bytes,
             },
@@ -219,7 +219,7 @@ async def test_ask_boot_option():
             "medium": "unify_message",
             "sender_id": Contact(first_name="Jamie"),
             "receiver_ids": [Contact(first_name="Taylor")],
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": static_now,
             "content": user_message,
             "exchange_id": 88001,
             "images": AnnotatedImageRefs.model_validate(
@@ -265,7 +265,7 @@ async def test_ask_boot_option():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_compare_screens_raw_context():
+async def test_compare_screens_raw_context(static_now):
     tm = TranscriptManager()
     im = ImageManager()
 
@@ -284,12 +284,12 @@ async def test_compare_screens_raw_context():
     [grub_id, wizard_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "GRUB boot menu screenshot",
                 "data": grub_bytes,
             },
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "Ubuntu installer wizard screenshot",
                 "data": wizard_bytes,
             },
@@ -309,7 +309,7 @@ async def test_compare_screens_raw_context():
             "medium": "unify_message",
             "sender_id": Contact(first_name="Jamie"),
             "receiver_ids": [Contact(first_name="Taylor")],
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": static_now,
             "content": user_message,
             "exchange_id": 99001,
             "images": AnnotatedImageRefs.model_validate(
