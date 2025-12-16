@@ -156,9 +156,11 @@ If you use Cursor's worktree mode for agent windows, install [direnv](https://di
 
 ```bash
 brew install direnv
-echo 'eval "$(direnv hook zsh)"' >> ~/.zshenv
+echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
 direnv allow  # run once in the repo
 ```
+
+Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available when the hook runs.
 
 The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
 
