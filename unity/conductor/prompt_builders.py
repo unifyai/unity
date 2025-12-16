@@ -9,6 +9,7 @@ from ..common.prompt_helpers import (
     now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    render_tools_block,
 )
 
 # ───────────────────────────────────── helpers ─────────────────────────────────────
@@ -40,7 +41,6 @@ def build_request_prompt(
     include_activity: bool = True,
 ) -> str:
     """Dynamic system message for Conductor.request (read-write across domains)."""
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Resolve canonical tool names (class-qualified; include_class_name=True)
     contact_ask_fname = _tool_name(tools, "contactmanager_ask")
@@ -259,8 +259,7 @@ def build_request_prompt(
             *decomposition_concurrency_request_lines,
             *update_philosophy_lines,
             "",
-            "Tools (name → argspec):",
-            sig_json,
+            render_tools_block(tools),
             "",
             usage_examples,
             "",
