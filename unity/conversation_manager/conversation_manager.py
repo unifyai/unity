@@ -37,8 +37,6 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conductor.conductor import Conductor
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
-import redis.asyncio as redis
-
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +59,7 @@ MAX_CONV_MANAGER_MSGS = 50
 class ConversationManager(metaclass=SingletonABCMeta):
     def __init__(
         self,
-        event_broker: redis.Redis,
+        event_broker,
         job_name: str,
         user_id: str,
         assistant_id: str,

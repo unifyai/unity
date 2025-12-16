@@ -1,12 +1,11 @@
 """
-In-memory event broker with the same interface as Redis pub/sub.
+In-memory event broker for async pub/sub communication.
 
-This replaces Redis for intra-process event passing, providing:
-- Same API as redis.asyncio.Redis for publish/subscribe
-- Pattern-based subscriptions (psubscribe)
+Provides:
+- Async publish/subscribe API
+- Pattern-based subscriptions (psubscribe with glob patterns)
 - No serialization overhead (messages passed by reference)
 - No external dependencies
-- Easier testing (no Redis server required)
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from typing import Any, AsyncIterator
 
 @dataclass
 class _Message:
-    """Internal message structure matching Redis pubsub message format."""
+    """Internal message structure for pub/sub."""
 
     type: str  # "message", "pmessage", "subscribe", "psubscribe"
     channel: str
@@ -39,7 +38,7 @@ class _Subscription:
 
 class InMemoryPubSub:
     """
-    In-memory pub/sub implementation matching Redis pubsub interface.
+    In-memory pub/sub subscription context.
 
     Usage:
         async with broker.pubsub() as pubsub:
@@ -162,7 +161,7 @@ class InMemoryPubSub:
                 ):
                     continue
 
-                # Return in Redis-compatible dict format
+                # Return message as dict
                 result = {
                     "type": msg.type,
                     "channel": msg.channel,
@@ -187,9 +186,8 @@ class InMemoryPubSub:
 
 class InMemoryEventBroker:
     """
-    In-memory event broker matching Redis interface for publish/subscribe.
+    In-memory event broker for async publish/subscribe.
 
-    This is a drop-in replacement for redis.asyncio.Redis for pub/sub operations.
     Messages are passed by reference (no serialization) for efficiency.
 
     Usage:
@@ -293,7 +291,7 @@ class InMemoryEventBroker:
 
     async def execute_command(self, *args) -> Any:
         """
-        Execute a Redis command (limited support for compatibility).
+        Execute a command (limited support for test compatibility).
 
         Currently supports:
             PUBSUB NUMPAT - returns number of pattern subscriptions

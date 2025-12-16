@@ -94,12 +94,6 @@ class ProductionSettings(BaseSettings):
     #   - KnowledgeManager, GuidanceManager, SecretManager, SkillManager,
     #     WebSearcher, GlobalFileManager
 
-    # -- Event Broker Configuration --
-    # Event broker backend: in_memory | redis
-    # - in_memory: Uses in-memory event passing (default, for in-process operation)
-    # - redis: Uses Redis pub/sub (for distributed deployments)
-    UNITY_EVENT_BROKER: str = "in_memory"
-
     # -- Foundational managers (implementation only) --
     # Actor: hierarchical | single_function | code_act | simulated
     UNITY_ACTOR_IMPL: str = "hierarchical"
