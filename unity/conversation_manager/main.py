@@ -1,6 +1,22 @@
+"""
+ConversationManager main entry point.
+
+Supports two modes:
+1. Subprocess mode (default): Run via `python -m unity.conversation_manager.main`
+2. In-process mode: Call `run_conversation_manager()` directly from async code
+
+The mode is determined by how this module is invoked:
+- As __main__: Subprocess mode with signal handling and sys.exit
+- Via run_conversation_manager(): In-process mode, returns ConversationManager instance
+"""
+
+from __future__ import annotations
+
 from datetime import datetime
 import signal
 import sys
+from typing import TYPE_CHECKING
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,15 +34,19 @@ from unity.conversation_manager.conversation_manager import ConversationManager
 from unity.conversation_manager.events import SummarizeContext
 from unity.helpers import cleanup_dangling_call_processes
 
-
-stop = None
-conversation_manager = None
-signal_shutdown = False  # Track if shutdown was triggered by external signal
+if TYPE_CHECKING:
+    from unity.conversation_manager.event_broker import EventBroker
 
 
-def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully"""
-    global conversation_manager, managers_worker, stop, signal_shutdown
+# Global state for subprocess mode
+_stop: asyncio.Event | None = None
+_conversation_manager: ConversationManager | None = None
+_signal_shutdown: bool = False
+
+
+def _signal_handler(signum, frame):
+    """Handle shutdown signals gracefully (subprocess mode only)"""
+    global _signal_shutdown
 
     print(
         datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -34,28 +54,36 @@ def signal_handler(signum, frame):
         + str(signum)
         + ", shutting down gracefully...",
     )
-    # Mark that this shutdown was triggered by an external signal
-    signal_shutdown = True
-    # Set the stop event to trigger graceful shutdown in main()
-    # This ensures cleanup happens only once, in the main async function
-    if stop:
-        stop.set()
+    _signal_shutdown = True
+    if _stop:
+        _stop.set()
 
 
-async def main(project_name: str = "Assistants"):
-    global conversation_manager, managers_worker, stop
+def _apply_test_mocks(cm: ConversationManager) -> None:
+    """Apply test mocks when TEST env var is set."""
 
-    # Set up signal handlers
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
+    def _sync_mock_success(*args, **kwargs):
+        return {"success": True}
 
-    # Clean up any dangling call processes from previous runs
-    # This prevents conflicts when multiple call processes can't run simultaneously
-    print("Checking for dangling call processes from previous runs...")
-    cleanup_dangling_call_processes()
+    async def _async_mock_success(*args, **kwargs):
+        return {"success": True}
 
-    # populate SESSION_DETAILS from environment variables
-    # this is needed for local dev because the env vars are already there from the start
+    comms_utils.send_sms_message_via_number = _async_mock_success
+    comms_utils.send_unify_message = _async_mock_success
+    comms_utils.send_email_via_address = _async_mock_success
+    comms_utils.start_call = _async_mock_success
+    cm.call_manager.start_call = _sync_mock_success
+    cm.call_manager.start_unify_meet = _sync_mock_success
+    cm.schedule_proactive_speech = _async_mock_success
+    debug_logger.log_job_startup = _sync_mock_success
+    debug_logger.mark_job_done = _sync_mock_success
+    managers_utils.log_message = _async_mock_success
+    managers_utils.publish_bus_events = _async_mock_success
+    EventHandler._registry[SummarizeContext] = _async_mock_success
+
+
+def _populate_session_details_from_env() -> None:
+    """Populate SESSION_DETAILS from environment variables."""
     SESSION_DETAILS.populate(
         assistant_id=os.getenv("ASSISTANT_ID", DEFAULT_ASSISTANT_ID),
         assistant_name=os.getenv("ASSISTANT_NAME"),
@@ -73,14 +101,28 @@ async def main(project_name: str = "Assistants"):
         voice_mode=os.getenv("VOICE_MODE"),
     )
 
-    stop = asyncio.Event()
 
-    # passes events around, uses redis
-    event_broker = get_event_broker()
+def create_conversation_manager(
+    event_broker: "EventBroker",
+    stop_event: asyncio.Event,
+    project_name: str = "Assistants",
+) -> ConversationManager:
+    """
+    Create a ConversationManager instance.
 
-    # directly talks with the user
-    # Use values from SESSION_DETAILS if already populated, otherwise defaults
-    conversation_manager = ConversationManager(
+    This is the factory function for creating a ConversationManager with
+    the current session details. Can be used in both subprocess and
+    in-process modes.
+
+    Args:
+        event_broker: The event broker (Redis or in-memory)
+        stop_event: Event to signal shutdown
+        project_name: Project name for logging
+
+    Returns:
+        Configured ConversationManager instance
+    """
+    return ConversationManager(
         event_broker,
         os.getenv("JOB_NAME", ""),
         SESSION_DETAILS.user.id,
@@ -98,46 +140,119 @@ async def main(project_name: str = "Assistants"):
         SESSION_DETAILS.voice.id or None,
         SESSION_DETAILS.voice.mode,
         project_name=project_name,
-        stop=stop,
+        stop=stop_event,
     )
 
-    # Monkeypatch functions/methods for testing
-    if os.getenv("TEST"):
 
-        def _sync_mock_success(*args, **kwargs):
-            return {"success": True}
+async def run_conversation_manager(
+    *,
+    project_name: str = "Assistants",
+    event_broker: "EventBroker | None" = None,
+    stop_event: asyncio.Event | None = None,
+    enable_comms_manager: bool | None = None,
+    apply_test_mocks: bool | None = None,
+    cleanup_call_processes: bool = True,
+) -> ConversationManager:
+    """
+    Run ConversationManager in-process (async entry point).
 
-        async def _async_mock_success(*args, **kwargs):
-            return {"success": True}
+    This is the preferred way to run ConversationManager when you want it
+    to share the same process as other components. It sets up all the
+    background tasks and returns the ConversationManager instance.
 
-        comms_utils.send_sms_message_via_number = _async_mock_success
-        comms_utils.send_unify_message = _async_mock_success
-        comms_utils.send_email_via_address = _async_mock_success
-        comms_utils.start_call = _async_mock_success
-        conversation_manager.call_manager.start_call = _sync_mock_success
-        conversation_manager.call_manager.start_unify_meet = _sync_mock_success
-        conversation_manager.schedule_proactive_speech = _async_mock_success
-        debug_logger.log_job_startup = _sync_mock_success
-        debug_logger.mark_job_done = _sync_mock_success
-        managers_utils.log_message = _async_mock_success
-        managers_utils.publish_bus_events = _async_mock_success
-        EventHandler._registry[SummarizeContext] = _async_mock_success
+    Args:
+        project_name: Project name for logging
+        event_broker: Optional event broker. If None, uses get_event_broker()
+        stop_event: Optional stop event. If None, creates a new one
+        enable_comms_manager: Whether to start CommsManager. If None, defaults
+            to True unless TEST env var is set
+        apply_test_mocks: Whether to apply test mocks. If None, defaults to
+            True if TEST env var is set
+        cleanup_call_processes: Whether to clean up dangling call processes
 
-    # listens for events coming from calls and other media and passes it to the event_broker
-    comms_manager = CommsManager(event_broker=event_broker)
+    Returns:
+        The running ConversationManager instance. Call cm.stop.set() to
+        trigger shutdown, or await cm.cleanup() when done.
 
-    asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(
-        log_task_exc,
+    Example:
+        async def my_app():
+            cm = await run_conversation_manager()
+            try:
+                # Do stuff with cm
+                await some_task()
+            finally:
+                cm.stop.set()
+                await cm.cleanup()
+    """
+    # Populate session details from environment
+    _populate_session_details_from_env()
+
+    # Clean up dangling call processes
+    if cleanup_call_processes:
+        print("Checking for dangling call processes from previous runs...")
+        cleanup_dangling_call_processes()
+
+    # Create event broker and stop event
+    if event_broker is None:
+        event_broker = get_event_broker()
+    if stop_event is None:
+        stop_event = asyncio.Event()
+
+    # Create conversation manager
+    cm = create_conversation_manager(event_broker, stop_event, project_name)
+
+    # Apply test mocks if requested
+    should_apply_mocks = (
+        apply_test_mocks if apply_test_mocks is not None else bool(os.getenv("TEST"))
     )
-    asyncio.create_task(conversation_manager.check_inactivity())
-    if not os.getenv("TEST"):
+    if should_apply_mocks:
+        _apply_test_mocks(cm)
+
+    # Start background tasks
+    asyncio.create_task(cm.wait_for_events()).add_done_callback(log_task_exc)
+    asyncio.create_task(cm.check_inactivity())
+
+    # Start CommsManager if enabled
+    should_enable_comms = (
+        enable_comms_manager
+        if enable_comms_manager is not None
+        else not bool(os.getenv("TEST"))
+    )
+    if should_enable_comms:
+        comms_manager = CommsManager(event_broker=event_broker)
         asyncio.create_task(comms_manager.start())
 
+    print("ConversationManager is running...")
+    return cm
+
+
+async def main(project_name: str = "Assistants"):
+    """
+    Main entry point for subprocess mode.
+
+    Sets up signal handlers, runs the ConversationManager, and handles
+    graceful shutdown with appropriate exit codes.
+    """
+    global _conversation_manager, _stop, _signal_shutdown
+
+    # Set up signal handlers (subprocess mode only)
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    # Create stop event
+    _stop = asyncio.Event()
+
+    # Run conversation manager
+    _conversation_manager = await run_conversation_manager(
+        project_name=project_name,
+        stop_event=_stop,
+    )
+
     print("Server is Running...")
-    await stop.wait()
+    await _stop.wait()
 
     print("Cleaning up conversation manager...")
-    await conversation_manager.cleanup()
+    await _conversation_manager.cleanup()
     print("Cleanup finished")
 
     print("Shutdown finished")
@@ -147,7 +262,7 @@ async def main(project_name: str = "Assistants"):
     # - AND assistant_id is the default (i.e. it's an idle container)
     # This signals to start.py to exit immediately to trigger restart
     # within the backoff limit
-    if signal_shutdown and conversation_manager.assistant_id == DEFAULT_ASSISTANT_ID:
+    if _signal_shutdown and _conversation_manager.assistant_id == DEFAULT_ASSISTANT_ID:
         sys.exit(42)
 
 
