@@ -5,6 +5,7 @@
 __pycache__/
 implementations.py
 .cache.ndjson
+.cache_write.ndjson
 .log.txt
 log.txt
 .logs.txt
