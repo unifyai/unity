@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unity.image_manager.utils import make_solid_png_base64
 
 import pytest
@@ -17,7 +16,7 @@ PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_persistent_image_context_then_reason():
+async def test_persistent_image_context_then_reason(static_now):
     """
     Flow:
     1) Create an image and a guidance row that references it.
@@ -31,7 +30,7 @@ async def test_persistent_image_context_then_reason():
     [img_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "blue pixel art icon",
                 "data": PNG_BLUE_B64,
             },
@@ -75,7 +74,7 @@ async def test_persistent_image_context_then_reason():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_boot_option_and_fourth_item():
+async def test_boot_option_and_fourth_item(static_now):
     gm = GuidanceManager()
     im = ImageManager()
 
@@ -94,12 +93,12 @@ async def test_boot_option_and_fourth_item():
     [grub_id, wizard_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "GRUB boot menu screenshot",
                 "data": grub_bytes,
             },
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "Ubuntu installer wizard screenshot",
                 "data": wizard_bytes,
             },
@@ -160,7 +159,7 @@ async def test_boot_option_and_fourth_item():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_compare_two_screens_requires_raw_context():
+async def test_compare_two_screens_requires_raw_context(static_now):
     gm = GuidanceManager()
     im = ImageManager()
 
@@ -179,12 +178,12 @@ async def test_compare_two_screens_requires_raw_context():
     [grub_id, wizard_id] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "GRUB boot menu screenshot",
                 "data": grub_bytes,
             },
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "Ubuntu installer wizard screenshot",
                 "data": wizard_bytes,
             },
