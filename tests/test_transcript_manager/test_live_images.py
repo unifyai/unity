@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from datetime import datetime, UTC
 import base64
 import os
 
@@ -24,7 +23,7 @@ def _load_contact_card_png_b64() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_lookup_via_image() -> None:
+async def test_lookup_via_image(static_now) -> None:
     tm = TranscriptManager()
 
     # Seed transcripts with noise and one message from David Smith
@@ -44,7 +43,7 @@ async def test_lookup_via_image() -> None:
                 "medium": "email",
                 "sender_id": alice,
                 "receiver_ids": [david],
-                "timestamp": datetime.now(UTC),
+                "timestamp": static_now,
                 "content": "Noise: unrelated update",
                 "exchange_id": 3001,
             },
@@ -52,7 +51,7 @@ async def test_lookup_via_image() -> None:
                 "medium": "email",
                 "sender_id": david,
                 "receiver_ids": [alice],
-                "timestamp": datetime.now(UTC),
+                "timestamp": static_now,
                 "content": f"Please schedule the {unique_phrase}.",
                 "exchange_id": 3002,
             },
@@ -60,7 +59,7 @@ async def test_lookup_via_image() -> None:
                 "medium": "sms_message",
                 "sender_id": alice,
                 "receiver_ids": [david],
-                "timestamp": datetime.now(UTC),
+                "timestamp": static_now,
                 "content": "Noise: FYI only",
                 "exchange_id": 3003,
             },
@@ -76,6 +75,7 @@ async def test_lookup_via_image() -> None:
             {
                 "caption": "contact card",
                 "data": b64,
+                "timestamp": static_now,
             },
         ],
     )
