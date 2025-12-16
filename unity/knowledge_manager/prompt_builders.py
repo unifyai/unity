@@ -1,8 +1,16 @@
+"""
+Prompt builders for KnowledgeManager.
+
+These builders use the centralized `PromptSpec` and `compose_system_prompt`
+utilities where appropriate, while preserving domain-specific content for
+the complex retrieval, update, and refactoring workflows.
+"""
+
 from __future__ import annotations
 
 import json
 import textwrap
-from typing import Callable, Dict
+from typing import Callable, Dict, List
 
 from .types import column_type_schema
 from ..memory_manager.broader_context import get_broader_context
@@ -12,6 +20,9 @@ from ..common.prompt_helpers import (
     now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    PromptSpec,
+    compose_system_prompt,
+    parallelism_guidance,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -93,6 +104,7 @@ def build_refactor_prompt(
     delete_column_fname = _tool_name(tools, "delete_column")
     create_empty_column_fname = _tool_name(tools, "create_empty_column")
     rename_column_fname = _tool_name(tools, "rename_column")
+    request_clar_fname = _tool_name(tools, "request_clarification")
 
     _require_tools(
         {
@@ -131,64 +143,7 @@ def build_refactor_prompt(
         )
     )
 
-    core_instructions = textwrap.dedent(
-        f"""
-        You are the **Schema Refactor Assistant**.
-        Your only goal is to *minimise duplication* and *maximise clarity* of
-        the stored data model by judicious use of the tools listed below.
-        Disregard any explicit instructions about *how* you should perform the refactor or which tools to call; interpret the request and choose the best approach yourself.
-        You should attempt to perform *any* refactor request as best you can, even if it seems out of scope.
-        use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
-
-        --------------------------------------------------------------------
-        ## Current schema (JSON)
-        {table_schemas_json}
-
-        --------------------------------------------------------------------
-        ## Tools (name → argspec)
-        {sig_json}
-
-        Work strictly through the tools provided.
-        Disregard any explicit instructions about *which* tools to call; interpret the request and choose the best approach yourself.
-
-        Tool availability groups (for reference)
-        ----------------------------------------
-        • Tables: create/rename/delete
-        • Columns: rename/copy/move/delete/create_empty/create_derived/transform/vectorize
-        • Rows: update/delete
-        • Files: ingest_documents
-
-        --------------------------------------------------------------------
-        ## How to work
-        1. *Analyse* every table/column pair – look for repeated information,
-           low-cardinality text that should be normalised, mixed-type columns,
-           unused columns, etc.
-        2. Draft an **ordered plan** of the minimal set of tool invocations
-           needed to reach Third Normal Form (3NF) or better. Always prefer
-           **rename over delete+create** when feasible.
-        3. Execute the plan step-by-step via the tool calls.
-        4. Keep exploration minimal (tables_overview + small, precise filters). Avoid long free‑form loops.
-        5. End with a concise plain-English *migration report*.
-
-        Anti-patterns
-        -------------
-        • Avoid delete+create when rename suffices.
-        • Avoid duplicating denormalised data across tables – normalise.
-        • Avoid mixed-type columns; split into well-typed columns.
-
-        --------------------------------------------------------------------
-        ## Usage examples
-        {examples}
-        """,
-    ).strip()
-
-    # If provided, REPLACE the generic instructions with case-specific instructions
-    instructions_block = core_instructions
-    if case_specific_instructions:
-        instructions_block += "\n\n" + case_specific_instructions.strip()
-
-    # Additional tool-selection guidance & examples (mirrors CM/TM tone; refactor-specific)
-    # Resolve more tool names dynamically if present
+    # Additional tool-selection guidance & examples
     create_derived_column_fname = _tool_name(tools, "create_derived_column")
     transform_column_fname = _tool_name(tools, "transform_column")
     copy_column_fname = _tool_name(tools, "copy_column")
@@ -203,91 +158,146 @@ def build_refactor_prompt(
 
     usage_guidance = textwrap.dedent(
         f"""
-        Tool selection (read carefully)
-        --------------------------------
-        • Prefer **`{rename_column_fname}`** over delete+create when re-labelling an existing field.
-        • Use **`{create_empty_column_fname}`** for genuinely new attributes that don’t yet exist.
-        • Use **`{create_derived_column_fname}`** when a column can be computed deterministically from others.
-        • Use **`{transform_column_fname}`** for in-place transformations (implemented as derive → swap).
-        • Use **`{copy_column_fname}`** to project a column into another table; **`{move_column_fname}`** to copy then remove from the source table.
-        • Use **`{vectorize_column_fname}`** only when you need a semantic vector for downstream search—don’t vectorise everything.
+Tool selection (read carefully)
+--------------------------------
+• Prefer **`{rename_column_fname}`** over delete+create when re-labelling an existing field.
+• Use **`{create_empty_column_fname}`** for genuinely new attributes that don't yet exist.
+• Use **`{create_derived_column_fname}`** when a column can be computed deterministically from others.
+• Use **`{transform_column_fname}`** for in-place transformations (implemented as derive → swap).
+• Use **`{copy_column_fname}`** to project a column into another table; **`{move_column_fname}`** to copy then remove from the source table.
+• Use **`{vectorize_column_fname}`** only when you need a semantic vector for downstream search—don't vectorise everything.
 
-        Examples
-        --------
-        • Split a mixed-type column
-          1. Detect that `purchase_info` mixes dicts/strings.
-          2. Create `purchase_details: dict` and `purchase_note: str` with `{create_empty_column_fname}`.
-          3. Move/transform values with `{transform_column_fname}` or a pair of derive+rename steps.
-          4. Remove the legacy column with `{delete_column_fname}` once migration is complete.
+Examples
+--------
+• Split a mixed-type column
+  1. Detect that `purchase_info` mixes dicts/strings.
+  2. Create `purchase_details: dict` and `purchase_note: str` with `{create_empty_column_fname}`.
+  3. Move/transform values with `{transform_column_fname}` or a pair of derive+rename steps.
+  4. Remove the legacy column with `{delete_column_fname}` once migration is complete.
 
-        • Normalise a denormalised reference
-          1. Create a surrogate key on the parent table with `{create_empty_column_fname}` (e.g., `company_id: int`).
-          2. `{rename_column_fname}` verbose labels to clearer names.
-          3. `{copy_column_fname}` or `{move_column_fname}` columns into the correct tables.
-          4. Update rows to reference the surrogate key instead of duplicating text blobs.
+• Normalise a denormalised reference
+  1. Create a surrogate key on the parent table with `{create_empty_column_fname}` (e.g., `company_id: int`).
+  2. `{rename_column_fname}` verbose labels to clearer names.
+  3. `{copy_column_fname}` or `{move_column_fname}` columns into the correct tables.
+  4. Update rows to reference the surrogate key instead of duplicating text blobs.
 
-        Tables (examples)
-        -----------------
-        • `{create_table_fname}(name="Benchmarks", columns={{"name":"str","domain":"str"}}, unique_key_name="benchmark_id")`
-        • `{rename_table_fname}(old_name="TmpResults", new_name="Results_v2")`
-        • `{delete_tables_fname}(tables=["Scratch"], startswith="tmp_")`
+Tables (examples)
+-----------------
+• `{create_table_fname}(name="Benchmarks", columns={{"name":"str","domain":"str"}}, unique_key_name="benchmark_id")`
+• `{rename_table_fname}(old_name="TmpResults", new_name="Results_v2")`
+• `{delete_tables_fname}(tables=["Scratch"], startswith="tmp_")`
 
-        Rows (examples)
-        ---------------
-        • `{update_rows_fname}(table="Models", updates={{3: {{"efficiency_km_per_kwh": 6.1}}}})`
-        • `{delete_rows_fname}(tables=["Sales"], filter="year < 2021", limit=1000)`
+Rows (examples)
+---------------
+• `{update_rows_fname}(table="Models", updates={{3: {{"efficiency_km_per_kwh": 6.1}}}})`
+• `{delete_rows_fname}(tables=["Sales"], filter="year < 2021", limit=1000)`
 
-        Files (example)
-        ---------------
-        • `{ingest_documents_fname}(filenames=["catalog.pdf"], table="content", replace_existing=True)`
+Files (example)
+---------------
+• `{ingest_documents_fname}(filenames=["catalog.pdf"], table="content", replace_existing=True)`
 
-        Anti-patterns to avoid
-        ----------------------
-        • Avoid delete+create when a simple rename will do.
-        • Avoid duplicated denormalised strings across tables—introduce a key and normalise.
-        • Avoid mixed-type columns—split into well-typed columns.
-        • Don't vectorise columns unless semantic search requires it.
+Anti-patterns to avoid
+----------------------
+• Avoid delete+create when a simple rename will do.
+• Avoid duplicated denormalised strings across tables—introduce a key and normalise.
+• Avoid mixed-type columns—split into well-typed columns.
+• Don't vectorise columns unless semantic search requires it.
         """,
     ).strip()
 
-    clar_section = clarification_guidance(tools)
-
-    # Conditional guidance about asking questions in final responses
-    request_clar_fname = _tool_name(tools, "request_clarification")
-    clar_sentence = (
-        f"Do not ask the user questions in your final response; only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
-    )
-
+    # Build clarification block if tool available
     clarification_block = (
         textwrap.dedent(
             f"""
-            Clarification
-            -------------
-            • Ask for clarification when the user's request is underspecified
-              `{request_clar_fname}(question="Which specific items should be refactored?")`
+Clarification
+-------------
+• Ask for clarification when the user's request is underspecified
+  `{request_clar_fname}(question="Which specific items should be refactored?")`
             """,
         ).strip()
         if request_clar_fname
         else ""
     )
 
-    return "\n".join(
+    # Build usage examples with clarification appended
+    full_usage = f"{usage_guidance}\n\n{examples}"
+    if clarification_block:
+        full_usage = f"{full_usage}\n\n{clarification_block}"
+
+    # Build positioning content
+    how_to_work = textwrap.dedent(
+        """
+How to work
+-----------
+1. *Analyse* every table/column pair – look for repeated information,
+   low-cardinality text that should be normalised, mixed-type columns,
+   unused columns, etc.
+2. Draft an **ordered plan** of the minimal set of tool invocations
+   needed to reach Third Normal Form (3NF) or better. Always prefer
+   **rename over delete+create** when feasible.
+3. Execute the plan step-by-step via the tool calls.
+4. Keep exploration minimal (tables_overview + small, precise filters). Avoid long free‑form loops.
+5. End with a concise plain-English *migration report*.
+
+Anti-patterns
+-------------
+• Avoid delete+create when rename suffices.
+• Avoid duplicating denormalised data across tables – normalise.
+• Avoid mixed-type columns; split into well-typed columns.
+        """,
+    ).strip()
+
+    tool_groups = textwrap.dedent(
+        """
+Tool availability groups (for reference)
+----------------------------------------
+• Tables: create/rename/delete
+• Columns: rename/copy/move/delete/create_empty/create_derived/transform/vectorize
+• Rows: update/delete
+• Files: ingest_documents
+        """,
+    ).strip()
+
+    # Build positioning lines including schema
+    schema_block = "\n".join(
         [
-            instructions_block,
-            "",
-            usage_guidance,
-            "",
-            f"Current UTC time: {now()}.",
-            clar_sentence,
-            clar_section,
-            clarification_block,
-            "",
+            "Current schema (JSON)",
+            "---------------------",
+            table_schemas_json,
         ],
     )
+
+    spec = PromptSpec(
+        manager="KnowledgeManager",
+        method="refactor",
+        tools=tools,
+        role_line="You are the **Schema Refactor Assistant**.",
+        global_directives=[
+            "Your only goal is to *minimise duplication* and *maximise clarity* of the stored data model by judicious use of the tools listed below.",
+            "Disregard any explicit instructions about *how* you should perform the refactor or which tools to call; interpret the request and choose the best approach yourself.",
+            "You should attempt to perform *any* refactor request as best you can, even if it seems out of scope.",
+            "Use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
+        ],
+        include_read_only_guard=False,
+        positioning_lines=[schema_block, how_to_work, tool_groups],
+        counts_entity_plural=None,
+        counts_value=None,
+        columns_payload=None,
+        include_tools_block=True,
+        usage_examples=full_usage,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=False,
+        include_images_forwarding=False,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=[],
+        special_blocks=([case_specific_instructions.strip()] if case_specific_instructions else []),
+        include_clarification_footer=True,
+        include_time_footer=True,
+        time_footer_prefix="Current UTC time: ",
+    )
+
+    return compose_system_prompt(spec)
 
 
 def build_update_prompt(
@@ -309,14 +319,10 @@ def build_update_prompt(
         ``json.dumps`` of the existing table-schema dictionary.
     """
 
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
-
     # Resolve canonical names dynamically (required)
     add_rows_fname = _tool_name(tools, "add_rows")
     update_rows_fname = _tool_name(tools, "update_rows")
     ask_fname = _tool_name(tools, "ask")
-
-    # Optional clarification helper
     request_clar_fname = _tool_name(tools, "request_clarification")
 
     _require_tools(
@@ -328,7 +334,7 @@ def build_update_prompt(
         tools,
     )
 
-    # Tool canonical names for examples (mirrors ContactManager structure; adapted to Knowledge)
+    # Tool canonical names for examples
     create_empty_column_fname = _tool_name(tools, "create_empty_column")
     rename_column_fname = _tool_name(tools, "rename_column")
     delete_column_fname = _tool_name(tools, "delete_column")
@@ -338,42 +344,7 @@ def build_update_prompt(
     rename_table_fname = _tool_name(tools, "rename_table")
     delete_tables_fname = _tool_name(tools, "delete_tables")
 
-    core_instructions = (
-        textwrap.dedent(
-            """
-Your task is to **store** new knowledge or **update** existing knowledge provided by the user.
-Keep the schema clean and future-proof – feel free to create tables / columns before inserting data.
-Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.
-You should attempt to perform *any* storage request as best you can, even if it seems out of scope.
-
-Important: `{ask_fname}` is read‑only and must only be used to locate/inspect knowledge that already exist.
-
-Follow this workflow strictly:
-1. Extract every fact (subject → attribute → value) from the message.
-2. Use the `{ask_fname}` tool to search for any existing records that need to be updated.
-3. Use this info to decide whether each fact updates an *existing* row / column / table or inserts a *new* row / column / table.
-4. Add missing tables if necessary (should be quite rare)
-5. Add missing columns with the correct data-type if necessary (should be quite rare)
-5. Use `{add_rows}` to insert and `{update_rows}` to modify existing rows.
-6. Use the `{ask_fname}` method again to verify everything was stored or updated correctly.
-7. Reply with a short natural-language confirmation of what was stored or updated.
-
-Do **not** hallucinate data.
-        """,
-        )
-        .strip()
-        .format(
-            ask_fname=ask_fname,
-            add_rows=add_rows_fname,
-            update_rows=update_rows_fname,
-        )
-    )
-
-    # If provided, APPEND the generic instructions with case-specific instructions
-    instructions_block = core_instructions
-    if case_specific_instructions:
-        instructions_block += "\n\n" + case_specific_instructions.strip()
-
+    # Build clarification block if tool available
     clarification_block = (
         textwrap.dedent(
             f"""
@@ -387,15 +358,6 @@ Clarification
         else ""
     )
 
-    # Conditional guidance about asking questions in final responses (local to update prompt)
-    clar_sentence_upd = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
-    )
-
     usage_examples_base = f"""
 Tool selection
 --------------
@@ -407,7 +369,7 @@ Ask vs Clarification
 • `{ask_fname}` is ONLY for inspecting/locating records that already exist (e.g., to find row ids, verify fields).
 • Do NOT use `{ask_fname}` to ask the human about NEW content to be created/changed in this update.
 • For human clarifications about prospective/new knowledge (e.g., name spelling, missing numbers, preferred channel), call `{request_clar_fname}` when available.
-• If the schema lacks a field the user wans to set, create it with `{create_empty_column_fname}` (typically `column_type='str'`) before updating.
+• If the schema lacks a field the user wants to set, create it with `{create_empty_column_fname}` (typically `column_type='str'`) before updating.
 • Use `{delete_column_fname}`, `{delete_rows_fname}`, `{delete_tables_fname}` only on explicit deletion requests
 
 Schema evolution
@@ -481,7 +443,7 @@ Realistic find-then-update flows
 
 Asking Questions
 ----------------
-• If you’re unsure about your write coverage, just `{ask_fname}` to verify progress:
+• If you're unsure about your write coverage, just `{ask_fname}` to verify progress:
   `{ask_fname}(text="Which Models rows still have warranty_years == None after my update?")`
 
 Anti-patterns to avoid
@@ -495,59 +457,78 @@ Anti-patterns to avoid
     usage_examples = textwrap.dedent(usage_examples_base).strip()
     if clarification_block:
         usage_examples = f"{usage_examples}\n\n{clarification_block}"
-    else:
-        usage_examples = "\n".join(
-            [
-                usage_examples,
-                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best-guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
-                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best-guess values, clearly marked as assumptions.",
-            ],
-        )
 
-    clar_section = clarification_guidance(tools)
+    # Build workflow instructions
+    workflow = (
+        textwrap.dedent(
+            f"""
+Follow this workflow strictly:
+1. Extract every fact (subject → attribute → value) from the message.
+2. Use the `{ask_fname}` tool to search for any existing records that need to be updated.
+3. Use this info to decide whether each fact updates an *existing* row / column / table or inserts a *new* row / column / table.
+4. Add missing tables if necessary (should be quite rare)
+5. Add missing columns with the correct data-type if necessary (should be quite rare)
+5. Use `{add_rows_fname}` to insert and `{update_rows_fname}` to modify existing rows.
+6. Use the `{ask_fname}` method again to verify everything was stored or updated correctly.
+7. Reply with a short natural-language confirmation of what was stored or updated.
 
-    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
-    parallelism_block = textwrap.dedent(
-        """
-        Parallelism and single‑call preference
-        -------------------------------------
-        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
-        • When multiple independent reads or writes are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.
-        • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
-        """,
-    ).strip()
+Do **not** hallucinate data.
 
-    parts: list[str] = [
-        instructions_block,
-        clar_sentence_upd,
-        "Before adding new knowledge or making edits, briefly check whether similar records already exist (via `"
-        + ask_fname
-        + "`) to avoid duplicates.",
-        "When the user describes the update semantically, resolve the row identifier first by requesting the row identifier from the ask method, then perform the update via the row identifier.",
-        f"Use the `{ask_fname}` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
-        "",
-        "Tools (name → argspec):",
-        sig_json,
-        "",
-        parallelism_block,
-        "",
-        usage_examples,
-        "",
-        clar_section,
-        "",
-        "ColumnType Schema",
-        "-----------------",
-        json.dumps(column_type_schema, indent=4),
-        "",
-        "Current table schemas",
-        "---------------------",
-        table_schemas_json,
-        "",
-        f"Current UTC time: {now()}.",
-        "",
-    ]
+Before adding new knowledge or making edits, briefly check whether similar records already exist (via `{ask_fname}`) to avoid duplicates.
+When the user describes the update semantically, resolve the row identifier first by requesting the row identifier from the ask method, then perform the update via the row identifier.
+Use the `{ask_fname}` method to see if you can find any missing context *before* you consider asking the user for clarifications.
+            """,
+        ).strip()
+    )
 
-    return "\n".join(parts)
+    # Build schema blocks
+    column_schema_block = "\n".join(
+        [
+            "ColumnType Schema",
+            "-----------------",
+            json.dumps(column_type_schema, indent=4),
+        ],
+    )
+
+    table_schema_block = "\n".join(
+        [
+            "Current table schemas",
+            "---------------------",
+            table_schemas_json,
+        ],
+    )
+
+    spec = PromptSpec(
+        manager="KnowledgeManager",
+        method="update",
+        tools=tools,
+        role_line="Your task is to **store** new knowledge or **update** existing knowledge provided by the user.",
+        global_directives=[
+            "Keep the schema clean and future-proof – feel free to create tables / columns before inserting data.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
+            "You should attempt to perform *any* storage request as best you can, even if it seems out of scope.",
+            f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect knowledge that already exist.",
+        ],
+        include_read_only_guard=False,
+        positioning_lines=[workflow],
+        counts_entity_plural=None,
+        counts_value=None,
+        columns_payload=None,
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=False,
+        include_images_forwarding=False,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=[],
+        special_blocks=[column_schema_block, table_schema_block] + ([case_specific_instructions.strip()] if case_specific_instructions else []),
+        include_clarification_footer=True,
+        include_time_footer=True,
+        time_footer_prefix="Current UTC time: ",
+    )
+
+    return compose_system_prompt(spec)
 
 
 def build_ask_prompt(
@@ -561,8 +542,6 @@ def build_ask_prompt(
     """
     Build the **system message** for `KnowledgeManager.retrieve`.
     """
-
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Resolve canonical tool names dynamically
     tables_overview_fname = _tool_name(tools, "tables_overview")
@@ -584,9 +563,7 @@ def build_ask_prompt(
     )
 
     # Determine whether to include join-related guidance/examples.
-    # Priority: explicit flag → presence of join tools → number of tables parsed from schema.
     if include_join_info is None:
-        # Try detecting join tools in the provided tools dict first
         join_tools_present = any(
             _tool_name(tools, name)
             for name in (
@@ -598,7 +575,6 @@ def build_ask_prompt(
         )
         include_join_info = bool(join_tools_present)
         if not include_join_info:
-            # Fall back to counting tables from the schema JSON
             try:
                 schema_obj = (
                     json.loads(table_schemas_json) if table_schemas_json else {}
@@ -606,46 +582,32 @@ def build_ask_prompt(
                 if isinstance(schema_obj, dict):
                     include_join_info = len(schema_obj.keys()) > 1
             except Exception:
-                # If parsing fails, default to conservative (no-join info)
                 include_join_info = False
 
     join_hint = (
         """
-           **Avoid joins on the same table** (including self-joins). When all required fields live in a single table,
-           prefer using `{filter}` directly. Reserve join operations for combining **different** tables where a join
-           is actually necessary.
-        """
+   **Avoid joins on the same table** (including self-joins). When all required fields live in a single table,
+   prefer using `{filter}` directly. Reserve join operations for combining **different** tables where a join
+   is actually necessary.
+        """.format(filter=filter_fname)
         if include_join_info
         else ""
     )
 
-    core_instructions = (
-        textwrap.dedent(
-            f"""
-        Your task is to **retrieve** information requested by the user.
-        Use the provided tools to search the schemas and tables so that
-        every requested fact can be answered precisely.
-        Work strictly through the tools provided.
-        You should not attempt to refactor the schema, this is not your responsibility.
-        Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.
-        You should attempt to perform *any* retrieval request as best you can, even if it seems out of scope.
-        Use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
+    # Build mandatory steps
+    mandatory_steps = textwrap.dedent(
+        f"""
+Mandatory steps:
+1. List each distinct piece of information the question asks for.
+2. Identify which tables / columns can hold that info.
+3. Fetch *all* relevant rows (use `{search_fname}` for semantic search; use `{filter_fname}` for precise filters).{join_hint}
+4. Aggregate results into a concise answer covering every fact.
+5. Double-check nothing is missing; if so, repeat the search.
 
-        Mandatory steps:
-        1. List each distinct piece of information the question asks for.
-        2. Identify which tables / columns can hold that info.
-        3. Fetch *all* relevant rows (use `{{search}}` for semantic search; use `{{filter}}` for precise filters).{join_hint}
-        4. Aggregate results into a concise answer covering every fact.
-        5. Double-check nothing is missing; if so, repeat the search.
-
-        Do **not** hallucinate data.
+Do **not** hallucinate data.
         """,
-        )
-        .strip()
-        .format(search=search_fname, filter=filter_fname)
-    )
+    ).strip()
 
-    # Usage examples and anti-patterns (mirrors ContactManager style, adapted to Knowledge)
     # Build usage examples dynamically depending on whether we expose join tools
     selection_lines = [
         "─ Tool selection (read carefully) ─",
@@ -661,7 +623,7 @@ def build_ask_prompt(
             "• **MANDATORY**: For questions requiring data from multiple tables, you MUST use the dedicated join tools (`filter_join`, `search_join`, `filter_multi_join`, `search_multi_join`). Do NOT simulate joins by filtering each table separately and combining results manually.",
         )
 
-    parts_examples: list[str] = [
+    parts_examples: List[str] = [
         "Examples",
         "--------",
         "",
@@ -697,7 +659,7 @@ def build_ask_prompt(
                 '    {"tables":["$prev","Companies"], "join_expr":"_.company_id == Companies.company_id",',
                 '      "select":{"$prev.units":"units","$prev.model":"model","Companies.name":"company"}}',
                 '  ], references={"company":"Northwind","model":"Voyager"}, k=5)`',
-                "• When filtering the final result of a multi-join, ensure the last step’s `select` includes any columns you will reference in `result_where`.",
+                "• When filtering the final result of a multi-join, ensure the last step's `select` includes any columns you will reference in `result_where`.",
                 "",
             ],
         )
@@ -728,103 +690,63 @@ def build_ask_prompt(
     if request_clar_fname:
         clarification_usage = textwrap.dedent(
             f"""
-            ─ Clarification ─
-            • If needed, ask the user to disambiguate:
-              `{request_clar_fname}(question="There are several possible matches. Which one did you mean?")`
+─ Clarification ─
+• If needed, ask the user to disambiguate:
+  `{request_clar_fname}(question="There are several possible matches. Which one did you mean?")`
             """,
         ).strip()
         usage_examples = f"{usage_examples}\n\n{clarification_usage}"
-    else:
-        usage_examples = "\n".join(
-            [
-                usage_examples,
-                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best-guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
-                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best-guess values, clearly marked as assumptions.",
-            ],
-        )
 
-    # If provided, REPLACE the generic instructions with case-specific instructions
-    instructions_block = core_instructions
-    if case_specific_instructions:
-        instructions_block += "\n\n" + case_specific_instructions.strip()
-
-    clar_section = clarification_guidance(tools)
-
-    # Conditional guidance about asking questions in final responses
-    clar_sentence_ask = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
+    # Build schema blocks
+    column_schema_block = "\n".join(
+        [
+            "ColumnType Schema",
+            "-----------------",
+            json.dumps(column_type_schema, indent=4),
+        ],
     )
 
-    clarification_block = (
-        textwrap.dedent(
-            f"""
-            Clarification
-            -------------
-            • Ask for clarification when the user's request is underspecified
-              `{request_clar_fname}(question="Which specific records are you referring to?")`
-            """,
-        ).strip()
-        if request_clar_fname
-        else ""
+    table_schema_block = "\n".join(
+        [
+            "Current table schemas",
+            "---------------------",
+            table_schemas_json,
+        ],
     )
 
-    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
-    parallelism_block = textwrap.dedent(
-        """
-        Parallelism and single‑call preference
-        -------------------------------------
-        • Prefer a single comprehensive search call over several surgical calls when a tool can safely do the whole job.
-        • When multiple independent reads are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.
-        • Avoid confirmatory re‑queries unless new ambiguity arises.
-        """,
-    ).strip()
+    spec = PromptSpec(
+        manager="KnowledgeManager",
+        method="ask",
+        tools=tools,
+        role_line="Your task is to **retrieve** information requested by the user.",
+        global_directives=[
+            "Use the provided tools to search the schemas and tables so that every requested fact can be answered precisely.",
+            "Work strictly through the tools provided.",
+            "You should not attempt to refactor the schema, this is not your responsibility.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+            "You should attempt to perform *any* retrieval request as best you can, even if it seems out of scope.",
+            "Use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
+        ],
+        include_read_only_guard=True,
+        positioning_lines=[mandatory_steps],
+        counts_entity_plural=None,
+        counts_value=None,
+        columns_payload=None,
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=None,
+        include_images_policy=False,
+        include_images_forwarding=False,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=[],
+        special_blocks=[column_schema_block, table_schema_block] + ([case_specific_instructions.strip()] if case_specific_instructions else []),
+        include_clarification_footer=True,
+        include_time_footer=True,
+        time_footer_prefix="Current UTC time: ",
+    )
 
-    # Early exit policy for mutation-intent requests reaching ask()/retrieve
-    mutation_exit_block = read_only_ask_mutation_exit_block()
-
-    parts: list[str] = [
-        instructions_block,
-        clar_sentence_ask,
-        "",
-        mutation_exit_block,
-        "",
-        clar_section,
-        "",
-        usage_examples,
-        "",
-        "Tools (name → argspec):",
-        sig_json,
-        "",
-        parallelism_block,
-        "",
-        "ColumnType Schema",
-        "-----------------",
-        json.dumps(column_type_schema, indent=4),
-        "",
-        "Current table schemas",
-        "---------------------",
-        table_schemas_json,
-        "",
-        f"Current UTC time: {now()}.",
-    ]
-
-    if clarification_block:
-        parts.extend(["", clarification_block])
-    else:
-        parts.extend(
-            [
-                "• Do not ask the user questions in your final response; when needed, proceed with sensible defaults/best‑guess values and explicitly state to inner tools that these are assumptions/best guesses, not confirmed answers.",
-                "• If an inner tool requests clarification, explicitly say no clarification channel exists and pass down concrete sensible defaults/best‑guess values, clearly marked as assumptions.",
-            ],
-        )
-
-    parts.append("")
-
-    return "\n".join(parts)
+    return compose_system_prompt(spec)
 
 
 # ────────────────────────────────────────────────────────────────────────────
