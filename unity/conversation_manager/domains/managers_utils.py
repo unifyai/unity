@@ -183,7 +183,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         )
     )
     if timestamp:
-        delta = datetime.now() - timestamp
+        delta = _get_now() - timestamp
         if role == "Assistant":
             delta += timedelta(seconds=2)
         minutes, seconds = divmod(int(delta.total_seconds()), 60)
@@ -338,8 +338,8 @@ def _init_managers(
                 "email": SESSION_DETAILS.assistant.email or None,
                 "user_id": SESSION_DETAILS.user.id,
                 "user_phone": SESSION_DETAILS.user.number or None,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": _get_now().isoformat(),
+                "updated_at": _get_now().isoformat(),
                 "surname": "",
                 "weekly_limit": None,
                 "max_parallel": None,
