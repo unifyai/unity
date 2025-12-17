@@ -1,8 +1,12 @@
+from __future__ import annotations
+
+import asyncio
+import runpy
+import threading
 from pathlib import Path
-import sys
 
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.helpers import cleanup_dangling_call_processes, run_script, terminate_process
+from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 
 
@@ -24,7 +28,7 @@ class LivekitCallManager:
         self.call_start_timestamp = None
         self.unify_meet_start_timestamp = None
         self.call_contact = None
-        self.call_proc = None
+        self._call_thread: threading.Thread | None = None
         self.conference_name = ""
 
     def set_config(self, config: CallConfig):
@@ -34,6 +38,42 @@ class LivekitCallManager:
         self.voice_provider = config.voice_provider
         self.voice_id = config.voice_id
         self.uses_realtime_api = config.voice_mode == "sts"
+
+    def _start_script_thread(self, *, script_path: Path, argv: list[str]) -> None:
+        """
+        Run the LiveKit voice agent script *in-process* on a background thread.
+
+        This replaces the previous subprocess-based containment so the voice
+        agent can share the same in-memory event broker.
+        """
+
+        def _runner() -> None:
+            import sys as _sys
+
+            old_argv = list(_sys.argv)
+            try:
+                _sys.argv = [str(script_path), *argv]
+                runpy.run_path(str(script_path), run_name="__main__")
+            except SystemExit:
+                # Click-based CLIs use SystemExit for normal termination.
+                pass
+            except Exception as e:
+                print(f"[LivekitCallManager] Voice agent crashed: {e}")
+            finally:
+                _sys.argv = old_argv
+
+        # Best-effort: stop any previously running agent thread.
+        # (In normal operation there should only be one active call.)
+        if self._call_thread and self._call_thread.is_alive():
+            print("[LivekitCallManager] Warning: call thread already running")
+
+        t = threading.Thread(
+            target=_runner,
+            name="LivekitVoiceAgent",
+            daemon=True,
+        )
+        self._call_thread = t
+        t.start()
 
     def start_call(self, contact: dict, boss: dict, outbound: bool = False):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
@@ -55,7 +95,7 @@ class LivekitCallManager:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        self.call_proc = run_script(str(target_path), "dev", *args)
+        self._start_script_thread(script_path=target_path, argv=["dev", *args])
 
     def start_unify_meet(
         self,
@@ -101,16 +141,35 @@ class LivekitCallManager:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        self.call_proc = run_script(str(target_path), "dev", *args)
+        self._start_script_thread(script_path=target_path, argv=["dev", *args])
 
-    def cleanup_call_proc(self):
-        print(f"Terminating call process")
+    async def cleanup_call_proc(self, *, timeout: float = 10.0) -> None:
+        """
+        Stop any running in-process voice agent thread.
+
+        We signal the agent via the shared event broker (app:call:status) and
+        then join the thread with a timeout.
+        """
+        t = self._call_thread
+        self._call_thread = None
+        if t is None:
+            return
+
         try:
-            if sys.platform.startswith("win"):
-                terminate_process(self.call_proc, timeout=0.1)
-            else:
-                cleanup_dangling_call_processes()
-            self.call_proc = None
-            print(f"Call process terminated")
-        except Exception as e:
-            print(f"Error terminating call process: {e}")
+            # Notify the voice agent to stop (handled by both TTS and STS scripts).
+            await get_event_broker().publish(
+                "app:call:status",
+                json.dumps({"type": "stop"}),
+            )
+        except Exception:
+            pass
+
+        if t.is_alive():
+            try:
+                await asyncio.to_thread(t.join, timeout)
+            except Exception:
+                pass
+            if t.is_alive():
+                print(
+                    f"[LivekitCallManager] Warning: voice agent thread did not exit within {timeout}s",
+                )

@@ -559,7 +559,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def cleanup(self):
         """Clean up any running call processes"""
         await self.store_chat_history()
-        self.call_manager.cleanup_call_proc()
+        await self.call_manager.cleanup_call_proc()
         if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
             print(f"Marking job {self.job_name} done")
             debug_logger.mark_job_done(self.job_name)

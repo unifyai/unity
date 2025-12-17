@@ -65,6 +65,9 @@ class Assistant(Agent):
 
         super().__init__(instructions=instructions)
 
+    def set_call_received(self) -> None:
+        self.call_received = True
+
     async def on_user_turn_completed(self, turn_ctx, new_message):
         print(turn_ctx)
         print(new_message)
@@ -211,7 +214,7 @@ async def entrypoint(ctx: JobContext) -> None:
         print("waiting")
         rt = agent.realtime_llm_session  # underlying OpenAI RealtimeSession
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance")
+            await pubsub.subscribe("app:call:call_guidance", "app:call:status")
             while True:
                 msg = await pubsub.get_message(
                     ignore_subscribe_messages=True,
@@ -219,7 +222,21 @@ async def entrypoint(ctx: JobContext) -> None:
                 )
                 if msg is not None:
                     print("got notif", msg)
-                    msg = json.loads(msg["data"])["payload"]
+                    data = json.loads(msg["data"])
+
+                    # Handle status messages (call answered, stop)
+                    if data.get("type") == "call_answered":
+                        print("call received")
+                        agent.set_call_received()
+                        continue
+                    elif data.get("type") == "stop":
+                        print("STOPPING CALL")
+                        await end_call()
+                        break
+
+                    # Handle guidance from Main CM Brain
+                    payload = data.get("payload") or data
+                    msg = payload
                     chat_ctx = rt.chat_ctx
                     chat_ctx.add_message(
                         role="user",
@@ -262,6 +279,8 @@ if __name__ == "__main__":
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
             agent_name=agent_name,
+            # Run jobs in-process to allow sharing the in-memory event broker.
+            job_executor_type=agents.JobExecutorType.THREAD,
             initialize_process_timeout=60,
         ),
     )
