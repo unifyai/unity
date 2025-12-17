@@ -105,7 +105,6 @@ def build_system_prompt(
     if email_address:
         comms_actions.append("send_email")
     if phone_number:
-        comms_actions.append("send_sms")
         comms_actions.append("make_call")
     comms_actions.append("send_unify_message")
     comms_actions_list = "\n        ".join(f"- {a}" for a in comms_actions)
@@ -243,6 +242,7 @@ def build_system_prompt(
         These are actions you can perform:
             <actions>
                 {comms_actions_list}
+                - send_sms (tool call; do NOT include as an entry in `actions`)
                 - start_task
                 - wait
 
