@@ -37,7 +37,7 @@ All test commands **automatically detect the current git repository** and use th
 
 ### Browsing All Worktree Logs from Main Repo
 
-When tests run from a worktree, **symlinks are automatically created** in the main repo's log directories pointing to each worktree's logs:
+When tests run from a worktree (via any method - `parallel_run`, direct `pytest`, etc.), **symlinks are automatically created** in the main repo's log directories pointing to each worktree's logs:
 
 ```
 /Users/you/unity/.pytest_logs/
@@ -52,7 +52,9 @@ When tests run from a worktree, **symlinks are automatically created** in the ma
 └── ...
 ```
 
-This lets you browse **all logs from all worktrees** in one place (the main repo), while each worktree still maintains its own isolated log directories
+This lets you browse **all logs from all worktrees** in one place (the main repo), while each worktree still maintains its own isolated log directories.
+
+**Note:** Symlinks are created by `conftest.py` during pytest session start, so they work regardless of how pytest was invoked
 
 ---
 
