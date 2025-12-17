@@ -50,9 +50,31 @@ class ConversationManagerBrainActionTools:
         )
         return {"status": "ok"}
 
+    async def send_unify_message(
+        self,
+        *,
+        content: str,
+        contact_id: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Send a Unify message to the boss chat.
+
+        Args:
+            content: Message content to send.
+            contact_id: Boss contact id (defaults to 1).
+        """
+        await cm_actions.send_unify_message(
+            self._cm,
+            "send_unify_message",
+            contact_id=contact_id,
+            content=content,
+        )
+        return {"status": "ok"}
+
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the tools dict for start_async_tool_loop."""
         return {
             # Keep the name aligned with existing action nomenclature for a smooth transition.
             "send_sms": self.send_sms,
+            "send_unify_message": self.send_unify_message,
         }
