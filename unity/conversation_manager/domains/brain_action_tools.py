@@ -71,10 +71,41 @@ class ConversationManagerBrainActionTools:
         )
         return {"status": "ok"}
 
+    async def send_email(
+        self,
+        *,
+        contact_id: int | None = None,
+        contact_details: dict[str, Any] | None = None,
+        subject: str,
+        body: str,
+        email_id_to_reply_to: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Send an email.
+
+        Args:
+            contact_id: Target contact_id when known (preferred).
+            contact_details: Target identity details when contact_id is unknown.
+            subject: Email subject.
+            body: Email body.
+            email_id_to_reply_to: Optional email id to reply to for threading.
+        """
+        await cm_actions.send_email(
+            self._cm,
+            "send_email",
+            contact_id=contact_id,
+            contact_details=contact_details,
+            subject=subject,
+            body=body,
+            email_id_to_reply_to=email_id_to_reply_to,
+        )
+        return {"status": "ok"}
+
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the tools dict for start_async_tool_loop."""
         return {
             # Keep the name aligned with existing action nomenclature for a smooth transition.
             "send_sms": self.send_sms,
             "send_unify_message": self.send_unify_message,
+            "send_email": self.send_email,
         }

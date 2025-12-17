@@ -201,7 +201,6 @@ def build_dynamic_response_models(active_tasks: dict = None):
     available_actions = [
         StartTaskAction,
         WaitForNextEvent,
-        SendEmail,
         MakeCall,
     ]
 
