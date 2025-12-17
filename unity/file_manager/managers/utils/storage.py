@@ -123,27 +123,14 @@ def ensure_file_context(
     self,
     *,
     file_path: str,
-    auto_counting_per_file: Optional[Dict[str, Optional[str]]] = None,
 ) -> None:
     """Ensure a per-file Content context exists (idempotent)."""
     ctx = ctx_for_file(self, file_path=file_path)
     fields = model_to_fields(_PerFileContent)
     store = TableStore(
         ctx,
-        unique_keys={
-            "row_id": "int",
-            **(
-                {
-                    k: "int"
-                    for k in (auto_counting_per_file or {}).keys()
-                    if (auto_counting_per_file or {}).get(k) is not None
-                }
-            ),
-        },
-        auto_counting={
-            "row_id": None,
-            **(auto_counting_per_file or {}),
-        },
+        unique_keys={"row_id": "int"},
+        auto_counting={"row_id": None},
         fields=fields,
         description=f"Per-file context for '{file_path}' using the File schema",
     )
