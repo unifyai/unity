@@ -1,13 +1,10 @@
-from .file import FileRecord, ParsedFile
+from .file import FileContentRow, FileRecord, FileRecordRow, FileTableRefRow
 from .filesystem import (
     FileSystemCapabilities,
     FileReference,
     FolderReference,
 )
-from unity.file_manager.parser.types.enums import (
-    FileFormat,
-    MimeType,
-)
+from unity.file_manager.file_parsers.types.formats import FileFormat, MimeType
 from .config import (
     FilePipelineConfig,
     ParseConfig,
@@ -18,7 +15,6 @@ from .config import (
     FileBusinessContextSpec,
     TableBusinessContextSpec,
     BusinessContextsConfig,
-    PluginsConfig,
     OutputConfig,
     DiagnosticsConfig,
 )
@@ -41,7 +37,9 @@ from .ingest import (
 
 __all__ = [
     "FileRecord",
-    "ParsedFile",
+    "FileRecordRow",
+    "FileContentRow",
+    "FileTableRefRow",
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",
@@ -56,7 +54,6 @@ __all__ = [
     "FileBusinessContextSpec",
     "TableBusinessContextSpec",
     "BusinessContextsConfig",
-    "PluginsConfig",
     "OutputConfig",
     "DiagnosticsConfig",
     # Ingested models

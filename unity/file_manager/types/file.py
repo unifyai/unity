@@ -2,210 +2,72 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal, Union
+from typing import Dict, List, Optional, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
-from unity.file_manager.parser.types.enums import FileFormat  # unified enums
+from unity.file_manager.file_parsers.types.enums import ContentType
+from unity.file_manager.file_parsers.types.formats import FileFormat
+
+if TYPE_CHECKING:
+    from unity.file_manager.file_parsers.types.contracts import FileParseResult
 
 UNASSIGNED = -1
 
 
-class ParsedFile(BaseModel):
-    """
-    Strictly typed output from file parsing.
-
-    This model captures the complete output from Document.to_parse_result() and
-    can be used to derive FileRecord entries and Content rows for ingestion.
-    It replaces the loosely typed Dict[str, Any] that was previously used.
-
-    Attributes
-    ----------
-    file_path : str
-        The file path or identifier.
-    status : Literal["success", "error"]
-        Processing status.
-    error : str | None
-        Error message if status is 'error'.
-    records : list[dict]
-        Parsed content records (flexible schema based on parser output).
-    full_text : str
-        Full text content extracted from the file.
-    summary : str
-        Document summary.
-    file_format : str | None
-        File format (e.g., 'pdf', 'docx').
-    file_size : int | None
-        File size in bytes.
-    total_records : int
-        Number of parsed content records.
-    processing_time : float | None
-        Parsing time in seconds.
-    created_at : str | None
-        File creation timestamp (ISO-8601).
-    modified_at : str | None
-        File modification timestamp (ISO-8601).
-    confidence_score : float | None
-        Parser confidence score.
-    key_topics : list[str]
-        Extracted key topics.
-    named_entities : dict
-        Named entities by type.
-    content_tags : list[str]
-        Content tags.
-    """
-
-    file_path: str = Field(
-        ...,
-        description="The file path or identifier.",
-    )
-    status: Literal["success", "error"] = Field(
-        default="success",
-        description="Processing status.",
-    )
-    error: Optional[str] = Field(
-        default=None,
-        description="Error message if status is 'error'.",
-    )
-    records: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description="Parsed content records (flexible schema).",
-    )
-    full_text: str = Field(
-        default="",
-        description="Full text content extracted from the file.",
-    )
-    summary: str = Field(
-        default="",
-        description="Document summary.",
-    )
-    file_format: Optional[Union[str, FileFormat]] = Field(
-        default=None,
-        description="File format (e.g., 'pdf', 'docx').",
-    )
-    file_size: Optional[int] = Field(
-        default=None,
-        description="File size in bytes.",
-    )
-    total_records: int = Field(
-        default=0,
-        description="Number of parsed content records.",
-    )
-    processing_time: Optional[float] = Field(
-        default=None,
-        description="Parsing time in seconds.",
-    )
-    created_at: Optional[str] = Field(
-        default=None,
-        description="File creation timestamp (ISO-8601).",
-    )
-    modified_at: Optional[str] = Field(
-        default=None,
-        description="File modification timestamp (ISO-8601).",
-    )
-    confidence_score: Optional[float] = Field(
-        default=None,
-        description="Parser confidence score.",
-    )
-    key_topics: List[str] = Field(
-        default_factory=list,
-        description="Extracted key topics.",
-    )
-    named_entities: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Named entities by type.",
-    )
-    content_tags: List[str] = Field(
-        default_factory=list,
-        description="Content tags.",
-    )
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict for backwards compatibility with code expecting dicts."""
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ParsedFile":
-        """Create from dict for backwards compatibility."""
-        return cls(**data)
-
-    @classmethod
-    def error_result(cls, file_path: str, error: str) -> "ParsedFile":
-        """Create an error result."""
-        return cls(
-            file_path=file_path,
-            status="error",
-            error=error,
-        )
-
-
-class FileRecord(BaseModel):
-    """
-    Lightweight index row for a file in FileRecords/<alias>.
-
-    This schema mirrors the FileManager table schema and should remain lean; the
-    heavy parsed content lives under per-file contexts.
-    """
-
-    file_id: int = Field(
-        default=UNASSIGNED,
-        description="Unique identifier for the file",
-        ge=UNASSIGNED,
-    )
+class FileRecordFields(BaseModel):
+    """Common fields for FileRecords index rows (shared by row payload + stored rows)."""
 
     # Core identification
     file_path: str = Field(
         ...,
         description="Filesystem path or display name of the file (adapter-specific).",
     )
-    source_uri: str | None = Field(
+    source_uri: Optional[str] = Field(
         default=None,
         description="Canonical provider URI for the file (e.g., local:///abs/path, gdrive://fileId).",
     )
-    source_provider: str | None = Field(
+    source_provider: Optional[str] = Field(
         default=None,
         description="Provider/adapter name (e.g., Local, GoogleDrive, CodeSandbox).",
     )
 
     # Processing status
-    status: str = Field(
+    status: Literal["success", "error"] = Field(
         default="success",
-        description="Processing status: 'success' or 'error'.",
+        description="Processing status.",
     )
-
-    # Error handling
     error: Optional[str] = Field(
         default=None,
-        description="Error message if status is 'error'.",
+        description="Error message when status == 'error'.",
     )
 
-    # Parsed content is no longer stored in the top-level File row. Records
-    # are logged under per-file table contexts. Keep the schema lean here.
-
     # Flattened metadata fields
-    # Unified type/format fields
     file_format: Optional[FileFormat] = Field(
         default=None,
-        description="Canonical file format (e.g., pdf, docx, xlsx, csv)",
+        description="Canonical file format (e.g., pdf, docx, xlsx, csv).",
     )
     file_size: Optional[int] = Field(
         default=None,
-        description="Size of the file in bytes",
+        ge=0,
+        description="Size of the file in bytes.",
     )
     total_records: Optional[int] = Field(
         default=None,
-        description="Total parsed content rows for this file",
+        ge=0,
+        description="Total parsed content rows for this file.",
     )
     processing_time: Optional[float] = Field(
         default=None,
-        description="Parsing time in seconds",
+        ge=0,
+        description="Parsing time in seconds.",
     )
     created_at: Optional[str] = Field(
         default=None,
-        description="Creation timestamp (ISO-8601)",
+        description="Creation timestamp (ISO-8601).",
     )
     modified_at: Optional[str] = Field(
         default=None,
-        description="Last modified timestamp (ISO-8601)",
+        description="Last modified timestamp (ISO-8601).",
     )
 
     # Ingestion layout metadata
@@ -225,23 +87,48 @@ class FileRecord(BaseModel):
     # Summary and semantic annotations
     confidence_score: Optional[float] = Field(
         default=None,
-        description="Overall confidence score from the parser/LLM",
+        ge=0.0,
+        le=1.0,
+        description="Overall confidence score from the parser/LLM.",
     )
-    key_topics: List[str] = Field(
-        default_factory=list,
-        description="Key topics detected in the document",
+    key_topics: str = Field(
+        default="",
+        description="Comma-separated key topics detected in the file.",
     )
-    named_entities: Dict[str, List[str]] = Field(
-        default_factory=dict,
-        description="Named entities grouped by type",
+    named_entities: str = Field(
+        default="",
+        description="Comma-separated named entities detected in the file.",
     )
-    content_tags: List[str] = Field(
-        default_factory=list,
-        description="Freeform content tags",
+    content_tags: str = Field(
+        default="",
+        description="Comma-separated content tags for retrieval.",
     )
     summary: Optional[str] = Field(
         default="",
-        description="Short summary extracted from the document",
+        description="Short summary extracted from the document.",
+    )
+
+
+class FileRecordRow(FileRecordFields):
+    """
+    Client-side payload written to the `FileRecords/<alias>` index context.
+
+    The server is responsible for assigning `file_id` (auto-counting on the index).
+    """
+
+
+class FileRecord(FileRecordFields):
+    """
+    Lightweight index row for a file in FileRecords/<alias>.
+
+    This schema mirrors the FileManager table schema and should remain lean; the
+    heavy parsed content lives under per-file contexts.
+    """
+
+    file_id: int = Field(
+        default=UNASSIGNED,
+        description="Server-assigned unique identifier for the file.",
+        ge=UNASSIGNED,
     )
 
     @staticmethod
@@ -250,11 +137,16 @@ class FileRecord(BaseModel):
         file_path: str,
         source_uri: Optional[str],
         source_provider: Optional[str],
-        result: Union["ParsedFile", Dict[str, Any]],
+        parse_result: "FileParseResult",
         ingest_mode: Literal["per_file", "unified"],
         unified_label: Optional[str],
         table_ingest: bool,
-    ) -> Dict[str, object]:
+        file_size: Optional[int] = None,
+        created_at: Optional[str] = None,
+        modified_at: Optional[str] = None,
+        total_records: Optional[int] = None,
+        document_summary: Optional[str] = None,
+    ) -> "FileRecordRow":
         """
         Build a storage entry for FileRecords/<alias> from parse result and identity.
 
@@ -266,8 +158,8 @@ class FileRecord(BaseModel):
             Canonical provider URI.
         source_provider : str | None
             Provider name.
-        result : ParsedFile | dict
-            Parse result (ParsedFile model or legacy dict).
+        parse_result : FileParseResult
+            Strict parse output produced by `unity.file_manager.file_parsers`.
         ingest_mode : Literal["per_file", "unified"]
             Ingestion mode.
         unified_label : str | None
@@ -277,36 +169,60 @@ class FileRecord(BaseModel):
 
         Returns
         -------
-        dict
-            Storage entry for FileRecords.
+        FileRecordRow
+            Typed row payload for insertion into FileRecords/<alias>.
         """
-        # Handle both ParsedFile and dict for backwards compatibility
-        if isinstance(result, ParsedFile):
-            data = result.to_dict()
-        else:
-            data = result
+        from unity.file_manager.file_parsers.types.contracts import FileParseResult
 
-        return {
-            "file_path": file_path,
-            "source_uri": source_uri,
-            "source_provider": source_provider,
-            "status": data.get("status"),
-            "error": data.get("error"),
-            "summary": data.get("summary"),
-            "file_format": data.get("file_format"),
-            "file_size": data.get("file_size"),
-            "total_records": data.get("total_records"),
-            "processing_time": data.get("processing_time"),
-            "created_at": data.get("created_at"),
-            "modified_at": data.get("modified_at"),
-            "confidence_score": data.get("confidence_score"),
-            "key_topics": data.get("key_topics"),
-            "named_entities": data.get("named_entities"),
-            "content_tags": data.get("content_tags"),
-            "ingest_mode": ingest_mode,
-            "unified_label": (unified_label if ingest_mode == "unified" else None),
-            "table_ingest": bool(table_ingest),
-        }
+        if not isinstance(parse_result, FileParseResult):
+            raise TypeError(
+                f"parse_result must be FileParseResult, got: {type(parse_result)!r}",
+            )
+
+        meta = getattr(parse_result, "metadata", None)
+
+        # Derive processing_time (seconds) from trace (ms)
+        processing_time: Optional[float] = None
+        try:
+            tr = getattr(parse_result, "trace", None)
+            dur_ms = getattr(tr, "duration_ms", None) if tr is not None else None
+            if dur_ms is not None:
+                processing_time = float(dur_ms) / 1000.0
+        except Exception:
+            processing_time = None
+
+        # Prefer explicit document_summary when the parse result does not carry one.
+        summary_val = (getattr(parse_result, "summary", "") or "").strip()
+        if not summary_val and document_summary:
+            summary_val = str(document_summary).strip()
+
+        return FileRecordRow(
+            file_path=file_path,
+            source_uri=source_uri,
+            source_provider=source_provider,
+            status=str(getattr(parse_result, "status", "error") or "error"),
+            error=getattr(parse_result, "error", None),
+            summary=summary_val,
+            file_format=getattr(parse_result, "file_format", None),
+            file_size=file_size,
+            total_records=total_records,
+            processing_time=processing_time,
+            created_at=created_at,
+            modified_at=modified_at,
+            confidence_score=(
+                getattr(meta, "confidence_score", None) if meta is not None else None
+            ),
+            key_topics=(getattr(meta, "key_topics", "") if meta is not None else ""),
+            named_entities=(
+                getattr(meta, "named_entities", "") if meta is not None else ""
+            ),
+            content_tags=(
+                getattr(meta, "content_tags", "") if meta is not None else ""
+            ),
+            ingest_mode=ingest_mode,
+            unified_label=(unified_label if ingest_mode == "unified" else None),
+            table_ingest=bool(table_ingest),
+        )
 
 
 class FileInfo(BaseModel):
@@ -372,22 +288,8 @@ class FileInfo(BaseModel):
     )
 
 
-class FileContent(BaseModel):
-    """
-    Per-file context row schema used for storing flattened, hierarchical
-    records extracted from a single file. The per-file context lives under
-    "<base>/Files/<alias>/<file_path>/Content/" and uses counters to represent the
-    document→section→paragraph→sentence hierarchy. Extracted tabular content
-    for a file is stored under separate per-table contexts (no predefined
-    fields) at "<base>/Files/<alias>/<file_path>/Tables/<table>".
-    """
-
-    # Unique id within the per-file content context (row identifier)
-    row_id: int = Field(
-        default=UNASSIGNED,
-        ge=UNASSIGNED,
-        description="Unique row id for Content context",
-    )
+class FileContentFields(BaseModel):
+    """Common fields for per-file `/Content/` rows (shared by row payload + stored rows)."""
 
     # Foreign keys / identifiers
     file_id: int = Field(
@@ -408,52 +310,63 @@ class FileContent(BaseModel):
         default=None,
         description="Consolidated hierarchical id map for this row",
     )
-
-    # Core fields
-    content_type: str = Field(
+    content_type: ContentType = Field(
         ...,
-        description="'document' | 'section' | 'paragraph' | 'sentence' | 'image' | 'table'",
+        description="Stable content type vocabulary for retrieval/navigation.",
     )
-    title: str | None = Field(default=None, description="Heading or inferred title")
-    content_text: str | None = Field(default=None, description="Original raw text")
-    summary: str | None = Field(
+    title: Optional[str] = Field(default=None, description="Heading or inferred title.")
+    content_text: Optional[str] = Field(default=None, description="Original raw text.")
+    summary: Optional[str] = Field(
         default=None,
-        description="Rich summary used for embeddings",
+        description="Rich summary used for embeddings.",
+    )
+
+
+class FileContentRow(FileContentFields):
+    """
+    Client-side payload written to a per-file `/Content/` context.
+
+    The server is responsible for assigning `row_id` (auto-counting on the context).
+    """
+
+
+class FileContent(FileContentFields):
+    """
+    Per-file context row schema used for storing flattened, hierarchical
+    records extracted from a single file. The per-file context lives under
+    "<base>/Files/<alias>/<file_path>/Content/" and uses counters to represent the
+    document→section→paragraph→sentence hierarchy. Extracted tabular content
+    for a file is stored under separate per-table contexts (no predefined
+    fields) at "<base>/Files/<alias>/<file_path>/Tables/<table>".
+    """
+
+    # Unique id within the per-file content context (row identifier)
+    row_id: int = Field(
+        default=UNASSIGNED,
+        ge=UNASSIGNED,
+        description="Unique row id for Content context",
     )
 
     @staticmethod
     def to_file_content_entries(
         *,
         file_id: int,
-        rows: List[Dict[str, object]],
-        id_layout: Literal["map", "columns", "string"] = "map",
-    ) -> List[Dict[str, object]]:
+        rows: List[FileContentRow],
+    ) -> List[FileContentRow]:
         """
         Build per-file Content entries from parser rows, attaching file_id and
         dropping fields not represented in the schema.
         """
-        out: List[Dict[str, object]] = []
-        allowed_core = {
-            "content_type",
-            "title",
-            "summary",
-            "content_text",
-            "content_id",
-        }
-        legacy_cols = {
-            "document_id",
-            "section_id",
-            "paragraph_id",
-            "sentence_id",
-            "image_id",
-            "table_id",
-        }
-        for rec in rows or []:
-            base = {k: v for k, v in rec.items() if k in allowed_core}
-            if id_layout == "columns":
-                for k in legacy_cols:
-                    if k in rec:
-                        base[k] = rec[k]
-            base["file_id"] = int(file_id)
-            out.append(base)
+        out: List[FileContentRow] = []
+        for r in list(rows or []):
+            out.append(r.model_copy(update={"file_id": int(file_id)}))
         return out
+
+
+class FileTableRefRow(BaseModel):
+    """Typed preview row for a per-file table reference."""
+
+    name: str
+    context: str
+    row_count: int = Field(default=0, ge=0)
+    columns: List[str] = Field(default_factory=list)
