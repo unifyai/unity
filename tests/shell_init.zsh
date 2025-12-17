@@ -2,7 +2,7 @@
 # Unity test helper shell initialization
 #
 # Add this single line to your ~/.zshrc:
-#   source ~/unity/tests/shell_init.zsh
+#   source /path/to/your/unity/clone/tests/shell_init.zsh
 #
 # This sets up aliases and tab completions for all test helper scripts.
 

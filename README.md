@@ -119,7 +119,7 @@ git clone git@github.com:unifyai/unity.git
 cd unity
 
 # Install dependencies using uv
-uv sync
+uv sync --all-groups
 
 # Activate the virtual environment
 source .venv/bin/activate
@@ -181,10 +181,10 @@ If you're developing features in the [unify](https://github.com/unifyai/unify) p
 uv pip install -e /path/to/local/unify
 
 # To revert to the upstream version
-uv sync
+uv sync --all-groups
 ```
 
-This is useful when debugging new features that haven't been pushed upstream. The default `uv sync` always pulls from the main branch of the GitHub repo.
+This is useful when debugging new features that haven't been pushed upstream. Running `uv sync --all-groups` restores the locked dependency set (including pulling `unify` from its configured Git source).
 
 ---
 
