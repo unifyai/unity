@@ -108,7 +108,7 @@ def generate_hierarchical_summaries(
             continue
         text = (p.text or "").strip()
         if not has_meaningful_text(text):
-            p.summary = ""
+            p.summary = text.strip()
             continue
         try:
             p.summary = _generate_embedding_safe_summary(
@@ -317,7 +317,12 @@ def extract_metadata(
     )
 
     if not has_meaningful_text(full_text):
-        return None
+        return FileParseMetadata(
+            key_topics="",
+            named_entities="",
+            content_tags="",
+            confidence_score=0.0,
+        )
 
     prompt = build_metadata_extraction_prompt(
         schema_json=DocumentMetadataExtraction.model_json_schema(),

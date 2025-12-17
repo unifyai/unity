@@ -813,6 +813,193 @@ class SimulatedFileManager(BaseFileManager):
 
         return files
 
+    def _file_info(self, *, identifier: Union[str, int]) -> Any:
+        """
+        Return comprehensive information about a file's status and ingest identity.
+
+        This is a simulated implementation that derives all fields from the
+        in-memory `_files` registry.
+        """
+        from pathlib import Path
+
+        from unity.file_manager.file_parsers.types.formats import (
+            FileFormat,
+            extension_to_format,
+        )
+        from unity.file_manager.types.file import FileInfo
+
+        file_data: Optional[Dict[str, Any]] = None
+        file_path: str = str(identifier)
+
+        # Resolve file_id -> file_path when possible.
+        if isinstance(identifier, int):
+            for fname, fdata in self._files.items():
+                try:
+                    if int(fdata.get("file_id", -1)) == int(identifier):
+                        file_path = fname
+                        file_data = fdata
+                        break
+                except Exception:
+                    continue
+        else:
+            # Normalize string identifiers to match simulated keys (no leading '/')
+            file_path = str(identifier)
+            if file_path.startswith("/"):
+                file_path = file_path.lstrip("/")
+            file_data = self._files.get(file_path)
+
+        filesystem_exists = file_data is not None
+        indexed_exists = file_data is not None
+        parsed_status = None
+        file_format: Optional[FileFormat] = None
+
+        if file_data is not None:
+            parsed_status = file_data.get("status")
+            meta = file_data.get("metadata") or {}
+
+            # Best-effort file format inference.
+            fmt = meta.get("file_format")
+            if isinstance(fmt, FileFormat):
+                file_format = fmt
+            elif isinstance(fmt, str) and fmt.strip():
+                try:
+                    file_format = FileFormat(fmt.strip().lower())
+                except Exception:
+                    file_format = extension_to_format(Path(file_path).suffix.lower())
+            else:
+                file_format = extension_to_format(Path(file_path).suffix.lower())
+
+        # Keep identity fields stable but clearly simulated.
+        source_provider = "Simulated"
+        source_uri = f"simulated:///{file_path}"
+
+        return FileInfo(
+            file_path=file_path,
+            filesystem_exists=filesystem_exists,
+            indexed_exists=indexed_exists,
+            parsed_status=parsed_status,
+            source_provider=source_provider,
+            source_uri=source_uri,
+            ingest_mode="per_file",
+            unified_label=None,
+            table_ingest=True,
+            file_format=file_format,
+        )
+
+    def _tables_overview(
+        self,
+        *,
+        include_column_info: bool = True,
+        file: Optional[str] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Return an overview of available tables/contexts managed by this FileManager.
+
+        This is a simulated implementation that provides stable, deterministic
+        context strings derived from the in-memory `_files` registry.
+        """
+        index = {
+            "context": "simulated/FileRecords",
+            "description": "Simulated FileRecords index (in-memory only).",
+        }
+        if include_column_info:
+            try:
+                index["columns"] = self._list_columns(include_types=True)
+            except Exception:
+                index["columns"] = {}
+
+        # Global-only view
+        if file is None:
+            return {"FileRecords": index}
+
+        file_key = str(file)
+        if file_key.startswith("/"):
+            file_key = file_key.lstrip("/")
+
+        out: Dict[str, Dict[str, Any]] = {"FileRecords": index}
+        out[file_key] = {
+            "Content": {
+                "context": f"simulated/{file_key}/Content",
+                "description": f"Simulated per-file Content context for '{file_key}'.",
+            },
+            # The simulated manager does not create per-table contexts, but we
+            # keep the shape consistent with the real manager.
+            "Tables": {},
+        }
+        return out
+
+    def _schema_explain(self, *, table: str) -> str:
+        """
+        Return a natural-language explanation of a table's structure and purpose.
+
+        The simulated manager does not have real Unify contexts; this returns a
+        compact explanation based on the requested logical table reference.
+        """
+        t = str(table or "").strip()
+        if not t:
+            return "No schema information available (empty table reference)."
+
+        if t.lower() == "filerecords":
+            return (
+                "FileRecords is the simulated file index (one row per file). "
+                "It includes identifiers, status/error fields, lightweight metadata, "
+                f"and a short description. Approximate row count: {len(self._files)}."
+            )
+
+        # Per-table context reference: "<file>.Tables.<label>"
+        if ".tables." in t.lower():
+            return (
+                f"{t} is a simulated per-file table context. In the real FileManager, "
+                "this would contain extracted tabular rows for the given label. "
+                "In simulated mode, table contexts are not materialized."
+            )
+
+        # Otherwise, treat as per-file Content table reference.
+        file_key = t.lstrip("/")
+        recs = (self._files.get(file_key) or {}).get("records") or []
+        # Infer "columns" from the union of keys in record dicts.
+        cols: list[str] = []
+        try:
+            seen = set()
+            for r in list(recs):
+                if isinstance(r, dict):
+                    for k in r.keys():
+                        if k not in seen:
+                            seen.add(k)
+                            cols.append(str(k))
+        except Exception:
+            cols = []
+
+        cols_str = ", ".join(cols[:10]) if cols else "unknown"
+        return (
+            f"{t} refers to the simulated per-file Content context for '{file_key}'. "
+            f"It stores flattened content rows derived from the file. "
+            f"Approximate row count: {len(recs)}. Example columns: {cols_str}."
+        )
+
+    def _reduce(
+        self,
+        *,
+        table: Optional[str] = None,
+        metric: str,
+        keys: str | List[str],
+        filter: Optional[str | Dict[str, str]] = None,
+        group_by: Optional[str | List[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over the simulated index or a resolved table.
+
+        This delegates to the public `reduce()` helper, which returns deterministic
+        placeholder values with the same return shapes as the real implementation.
+        """
+        return self.reduce(
+            table=table,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
+
     def _rename_file(
         self,
         *,

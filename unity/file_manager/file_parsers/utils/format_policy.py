@@ -296,7 +296,7 @@ def summarize_spreadsheet_profile_best_effort(
     Best-effort spreadsheet summary that is always embedding-safe and non-empty.
     """
     if not has_meaningful_text(profile_text):
-        return (fallback or "").strip()
+        return (fallback or profile_text).strip()
 
     prompt = build_spreadsheet_summary_prompt(
         embedding_budget_tokens=settings.EMBEDDING_MAX_INPUT_TOKENS,
