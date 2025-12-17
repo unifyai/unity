@@ -16,135 +16,24 @@ retries) is handled by the executor layer.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypeVar
 
 import unify
 
 from unity.common.log_utils import create_logs as unity_create_logs
 from unity.file_manager.types.file import FileContent
-from unity.file_manager.types.config import (
-    FilePipelineConfig,
-)
+from unity.file_manager.types.file import FileContentRow
 
 logger = logging.getLogger(__name__)
 
-
-def apply_content_ingest_policy(
-    records: List[Dict[str, Any]],
-    *,
-    config: FilePipelineConfig,
-    file_format: Optional[str],
-) -> List[Dict[str, Any]]:
-    """
-    Apply per-format content ingestion policy to parsed content rows before insertion.
-
-    - When no policy exists for the format → return rows unchanged.
-    - mode == "none" → return []
-    - mode == "document_only" → keep (or synthesize) a single document row
-      and drop fields listed in policy.omit_fields.
-    - mode == "default" → keep rows but drop fields listed in policy.omit_fields.
-
-    Parameters
-    ----------
-    records : list[dict]
-        Parsed content records.
-    config : FilePipelineConfig
-        Pipeline configuration.
-    file_format : str | None
-        File format (e.g., 'xlsx', 'csv') for policy lookup.
-
-    Returns
-    -------
-    list[dict]
-        Filtered/transformed records.
-    """
-    rows: List[Dict[str, Any]] = list(records or [])
-    fmt = (file_format or "").strip().lower()
-    if not fmt:
-        return rows
-
-    policy = (
-        getattr(getattr(config, "ingest", None), "content_policy_by_format", {}) or {}
-    ).get(fmt)
-    if policy is None:
-        return rows
-
-    mode = getattr(policy, "mode", "default")
-    omit_fields = list(getattr(policy, "omit_fields", []) or [])
-
-    if mode == "none":
-        return []
-
-    if mode == "document_only":
-        doc_rows = [
-            r for r in rows if str(r.get("content_type") or "").lower() == "document"
-        ]
-        if not doc_rows:
-            id_layout = getattr(getattr(config, "ingest", None), "id_layout", "map")
-            synthesized: Dict[str, Any] = {"content_type": "document"}
-            if id_layout == "columns":
-                synthesized["document_id"] = 0
-            else:
-                synthesized["content_id"] = {"document": 0}
-            doc_rows = [synthesized]
-        cleaned: List[Dict[str, Any]] = []
-        for r in doc_rows:
-            r2 = {k: v for k, v in r.items() if k not in omit_fields}
-            cleaned.append(r2)
-        return cleaned
-
-    # default: keep rows, drop omitted fields if any
-    if not omit_fields:
-        return rows
-    return [{k: v for k, v in r.items() if k not in omit_fields} for r in rows]
-
-
-def prepare_content_rows(
-    records: List[Dict[str, Any]],
-    *,
-    config: FilePipelineConfig,
-    file_format: Optional[str],
-) -> List[Dict[str, Any]]:
-    """
-    Prepare content rows for ingestion by applying policies and column filtering.
-
-    Parameters
-    ----------
-    records : list[dict]
-        Raw parsed content records.
-    config : FilePipelineConfig
-        Pipeline configuration.
-    file_format : str | None
-        File format for policy lookup.
-
-    Returns
-    -------
-    list[dict]
-        Prepared records ready for ingestion.
-    """
-    rows = apply_content_ingest_policy(
-        records,
-        config=config,
-        file_format=file_format,
-    )
-
-    # Filter allowed columns if specified
-    allowed = (
-        set(config.ingest.allowed_columns) if config.ingest.allowed_columns else None
-    )
-    if allowed:
-        rows = [{k: v for k, v in rec.items() if k in allowed} for rec in rows]
-
-    return rows
+T = TypeVar("T")
 
 
 def ingest_content_batch(
     *,
     context: str,
-    rows: List[Dict[str, Any]],
+    rows: List[FileContentRow],
     file_id: int,
-    id_layout: str = "map",
-    auto_counting: Optional[Dict[str, Optional[str]]] = None,
 ) -> List[int]:
     """
     Ingest a batch of content rows into a context.
@@ -157,11 +46,6 @@ def ingest_content_batch(
         Content rows to ingest.
     file_id : int
         The file ID to associate with these rows.
-    id_layout : str
-        ID layout mode ("map", "columns", "string").
-    auto_counting : dict | None
-        Auto-counting configuration for columns layout.
-
     Returns
     -------
     list[int]
@@ -170,12 +54,11 @@ def ingest_content_batch(
     if not rows:
         return []
 
-    # Transform rows to file content entries
-    file_content_entries: List[Dict[str, Any]] = FileContent.to_file_content_entries(
-        file_id=file_id,
-        rows=rows,
-        id_layout=id_layout,
-    )
+    # Transform rows to file content entries (attach file_id)
+    file_content_rows = FileContent.to_file_content_entries(file_id=file_id, rows=rows)
+    file_content_entries: List[Dict[str, Any]] = [
+        r.model_dump(mode="json", exclude_none=True) for r in file_content_rows
+    ]
 
     # Batch insert
     try:
@@ -335,9 +218,9 @@ def delete_table_rows(
 
 
 def chunk_records(
-    records: List[Dict[str, Any]],
+    records: List[T],
     batch_size: int,
-) -> List[List[Dict[str, Any]]]:
+) -> List[List[T]]:
     """
     Split records into chunks of the specified batch size.
 
