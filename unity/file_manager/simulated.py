@@ -357,13 +357,6 @@ class SimulatedFileManager(BaseFileManager):
         ask_msg = build_file_manager_ask_prompt(
             ask_tools,
             num_files=len(self._files),
-            columns={
-                "filename": "str",
-                "status": "str",
-                "full_text": "str",
-                "metadata": "dict",
-                "description": "str",
-            },
             include_activity=self._rolling_summary_in_prompts,
         )
         about_msg = build_file_manager_ask_about_file_prompt(
@@ -373,13 +366,6 @@ class SimulatedFileManager(BaseFileManager):
         org_msg = build_file_manager_organize_prompt(
             organize_tools,
             num_files=len(self._files),
-            columns={
-                "filename": "str",
-                "status": "str",
-                "full_text": "str",
-                "metadata": "dict",
-                "description": "str",
-            },
             include_activity=self._rolling_summary_in_prompts,
         )
 
