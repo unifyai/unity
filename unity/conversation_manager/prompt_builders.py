@@ -102,13 +102,10 @@ def build_system_prompt(
 
     # Build available comms actions list
     comms_actions = []
-    if email_address:
-        comms_actions.append("send_email")
+    # Comms are gradually migrating from JSON `actions` to tool calls.
     if phone_number:
         comms_actions.append("make_call")
-    # Comms are gradually migrating from JSON `actions` to tool calls.
     comms_actions_list = "\n        ".join(f"- {a}" for a in comms_actions)
-    comms_actions_names = ", ".join(comms_actions)
 
     # Build dynamic task action descriptions
     active_tasks_descriptions = _build_active_tasks_action_descriptions(
@@ -244,10 +241,11 @@ def build_system_prompt(
                 {comms_actions_list}
                 - send_sms (tool call; do NOT include as an entry in `actions`)
                 - send_unify_message (tool call; do NOT include as an entry in `actions`)
+                - send_email (tool call; do NOT include as an entry in `actions`)
                 - start_task
                 - wait
 
-                For each of the comms actions ({comms_actions_names}), you will have to provide the available contact data (infer them from the active conversation or <contact> tags available). Actions like sending SMS can be done while on a call but you shouldn't attempt making a call while on a call.
+                For comms tool calls and actions, you will have to provide the available contact data (infer them from the active conversation or <contact> tags available). Actions like sending SMS can be done while on a call but you shouldn't attempt making a call while on a call.
 
                 Use `start_task` for any task that is not related to comms, such as searching the web, doing research, answering questions, managing contacts, scheduling tasks, etc.
 
