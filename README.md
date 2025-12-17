@@ -157,16 +157,18 @@ If you use Cursor's worktree mode for agent windows, install [direnv](https://di
 ```bash
 brew install direnv
 
-# Add to ~/.zshrc (silent mode + hook)
-cat >> ~/.zshrc << 'EOF'
-export DIRENV_LOG_FORMAT=""
-eval "$(direnv hook zsh)"
-EOF
+# Add hook to ~/.zshrc
+echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
+
+# Silence verbose output (direnv 2.36+)
+mkdir -p ~/.config/direnv
+echo '[global]
+hide_env_diff = true' > ~/.config/direnv/direnv.toml
 
 direnv allow  # run once in the repo
 ```
 
-Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available when the hook runs. The `DIRENV_LOG_FORMAT=""` line suppresses verbose output when entering directories.
+Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available when the hook runs.
 
 The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
 
