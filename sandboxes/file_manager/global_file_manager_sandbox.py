@@ -42,7 +42,7 @@ if str(ROOT) not in sys.path:
 from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.managers.file_manager import FileManager
 from unity.file_manager.managers.local import LocalFileManager
-from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+from unity.file_manager.filesystem_adapters.local_adapter import LocalFileSystemAdapter
 from unity.file_manager.types.config import FilePipelineConfig
 from unity.common.async_tool_loop import SteerableToolHandle
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
