@@ -7,6 +7,8 @@ import unify
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from typing import List, Dict, Any
 from unity.task_scheduler.types.status import Status
+from unity.singleton_registry import SingletonRegistry
+from unity.common.context_registry import ContextRegistry
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -113,6 +115,9 @@ def task_scenario(request: pytest.FixtureRequest):
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data. Build scenario once and reuse across tests.
     """
+    SingletonRegistry.clear()
+    ContextRegistry.clear()
+
     os.environ["TQDM_DISABLE"] = "1"
     ctx = "tests/test_task_scheduler/Scenario"
     unify.set_context(ctx, relative=False)
