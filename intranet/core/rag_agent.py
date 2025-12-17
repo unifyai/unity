@@ -248,17 +248,8 @@ class IntranetRAGAgent:
         self.conversations = {}  # Store conversation history
         self.sandbox_mode = sandbox_mode
 
-        # FileManager for session-scoped files with document parser
-        from unity.file_manager.parser import DoclingParser
-
-        parser = DoclingParser(
-            use_llm_enrichment=True,  # Enable enrichment for RAG use case
-            extract_images=True,
-            extract_tables=True,
-            use_hybrid_chunking=True,
-        )
-        # Create a new FileManager instance with custom parser for this agent
-        self.file_manager = FileManager(parser=parser)
+        # FileManager for session-scoped files.
+        self.file_manager = FileManager()
 
         # Initialize KnowledgeManager with custom FileManager
         from unity.knowledge_manager.knowledge_manager import KnowledgeManager
