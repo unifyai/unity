@@ -1192,7 +1192,7 @@ class FileManager(BaseFileManager):
 
             import tempfile as _tempfile
 
-            temp_dir = _tempfile.mkdtemp(prefix="filemanager_parse_")
+            temp_dir = _tempfile.mkdtemp(prefix="filemanager_ingest_files_")
 
             # Resolve parse inputs: prefer in-place local path; otherwise export via adapter
             from pathlib import Path as _P

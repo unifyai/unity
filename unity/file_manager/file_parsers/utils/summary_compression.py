@@ -75,7 +75,7 @@ def generate_summary_with_compression(
     """
 
     if not has_meaningful_text(source_text):
-        return ""
+        return source_text
 
     enc = embedding_encoding or os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
     max_tokens = (
