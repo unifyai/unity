@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # Optionally source environment from the repo root's .env
-# This allows storing secrets/config like UNIFY_KEY in ~/unity/.env
+# This allows storing secrets/config like UNIFY_KEY in the repo root `.env` (not committed).
 _ENV_FILE="$SCRIPT_DIR/../.env"
 if [ -f "$_ENV_FILE" ]; then
   # shellcheck disable=SC1090
@@ -404,6 +404,82 @@ set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 cd "$REPO_ROOT"
 
 # ---------------------------------------------------------------------------
+# Python environment (uv + repo-local .venv)
+# ---------------------------------------------------------------------------
+# This script is used in local dev, CI, and Cursor Cloud Agents.
+# For portability, avoid hardcoding paths like ~/unity/.venv or relying on `python`
+# being present on PATH. Instead, bootstrap and use the repo-local `.venv`.
+VENV_DIR="$REPO_ROOT/.venv"
+VENV_PY="$VENV_DIR/bin/python"
+UV_BIN=""
+
+ensure_uv() {
+  # Prefer an existing uv on PATH.
+  if command -v uv >/dev/null 2>&1; then
+    UV_BIN="$(command -v uv)"
+    return 0
+  fi
+  # Common pip --user install location.
+  if [[ -x "${HOME}/.local/bin/uv" ]]; then
+    UV_BIN="${HOME}/.local/bin/uv"
+    return 0
+  fi
+
+  echo "uv not found; installing via pip (user install)..." >&2
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: python3 not found; cannot install uv." >&2
+    return 1
+  fi
+  if ! python3 -m pip install --user uv; then
+    echo "Error: failed to install uv via pip." >&2
+    return 1
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    UV_BIN="$(command -v uv)"
+    return 0
+  fi
+  if [[ -x "${HOME}/.local/bin/uv" ]]; then
+    UV_BIN="${HOME}/.local/bin/uv"
+    return 0
+  fi
+
+  echo "Error: uv was installed but is not discoverable (PATH may be missing ~/.local/bin)." >&2
+  echo "Try adding ~/.local/bin to PATH, or install uv manually: https://github.com/astral-sh/uv" >&2
+  return 1
+}
+
+ensure_project_venv() {
+  # Fast path: venv exists and can run pytest.
+  if [[ -x "$VENV_PY" ]]; then
+    if "$VENV_PY" -m pytest --version >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  ensure_uv || return 1
+
+  echo "Bootstrapping project virtualenv with uv (uv sync --all-groups)..." >&2
+  if ! UV_PROJECT_ENVIRONMENT="$VENV_DIR" "$UV_BIN" sync --all-groups; then
+    echo "Error: 'uv sync --all-groups' failed." >&2
+    return 1
+  fi
+
+  if [[ ! -x "$VENV_PY" ]]; then
+    echo "Error: expected venv python at '$VENV_PY' after uv sync." >&2
+    return 1
+  fi
+  if ! "$VENV_PY" -m pytest --version >/dev/null 2>&1; then
+    echo "Error: pytest is not available in the project venv after uv sync." >&2
+    return 1
+  fi
+}
+
+if ! ensure_project_venv; then
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Prepare the shared project (unless using random projects mode or skipped)
 # ---------------------------------------------------------------------------
 # UNITY_SKIP_SHARED_PROJECT_PREP: When set, skip the heavyweight project
@@ -416,13 +492,8 @@ elif is_random_projects_mode; then
   echo "Random projects mode detected; skipping shared project preparation..."
 else
   echo "Preparing shared UnityTests project..."
-  # Activate virtualenv if available, then run the prepare script
-  if [[ -f "$REPO_ROOT/.venv/bin/activate" ]]; then
-    # shellcheck disable=SC1091
-    source "$REPO_ROOT/.venv/bin/activate"
-  fi
   if [[ -f "$SCRIPT_DIR/_prepare_shared_project.py" ]]; then
-    python "$SCRIPT_DIR/_prepare_shared_project.py"
+    "$VENV_PY" "$SCRIPT_DIR/_prepare_shared_project.py"
   else
     echo "Warning: _prepare_shared_project.py not found." >&2
     echo "Falling back to random projects mode." >&2
@@ -455,15 +526,15 @@ run_cmd() {
   # Build pytest command with optional marker filter
   local pytest_cmd
   if [[ -n "$marker_arg" ]]; then
-    pytest_cmd=$(printf 'pytest %s %q' "$marker_arg" "$target")
+    pytest_cmd=$(printf '%q -m pytest %s %q' "$VENV_PY" "$marker_arg" "$target")
   else
-    pytest_cmd=$(printf 'pytest %q' "$target")
+    pytest_cmd=$(printf '%q -m pytest %q' "$VENV_PY" "$target")
   fi
   # Build inner command with socket name directly interpolated (not via env var)
   # This ensures tmux commands target the correct isolated server
   # Note: LC_ALL=en_US.UTF-8 is required for Unicode emoji support in tmux session names
   # Note: Log paths are now auto-derived by conftest.py using UNITY_TEST_SOCKET + semantic naming
-  inner=$(printf '%s; source ~/unity/.venv/bin/activate && cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
+  inner=$(printf '%s; cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -712,9 +783,9 @@ collect_nodes_batch() {
 
   # Build collection command with optional marker filter
   if [[ -n "$marker_arg" ]]; then
-    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s %s' "$env_exports" "$marker_arg" "$quoted_targets")
+    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$marker_arg" "$quoted_targets")
   else
-    cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s' "$env_exports" "$quoted_targets")
+    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$quoted_targets")
   fi
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   # Redirect stdin from /dev/null to prevent hangs when multiple processes compete for stdin

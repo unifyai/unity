@@ -333,7 +333,9 @@ parallel_run --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
   - Install tmux: `brew install tmux` (macOS) or `apt-get install tmux` (Linux)
 
 - **Virtualenv not found / wrong Python**
-  - Update the activation line in the script: `source /path/to/your/venv/bin/activate`
+  - `parallel_run.sh` uses the repo-local `.venv/` (created by `uv sync --all-groups`).
+  - If `.venv/` is missing, ensure `python3` + `pip` are available, then run: `pip install uv && uv sync --all-groups`
+  - If `uv` was installed with `pip --user`, ensure `~/.local/bin` is on your `PATH`.
 
 - **No sessions created**
   - Ensure there are `.py` files under the provided paths and that excludes aren't hiding your files.
@@ -386,10 +388,10 @@ kill_server --global  # Kill ALL tmux servers + purge orphans
 
 ## Requirements
 
-- **tmux** and **pytest** must be installed (`brew install tmux`)
+- **tmux** must be installed (`brew install tmux`)
 - **coreutils** (recommended on macOS): Provides `timeout` command. Install with `brew install coreutils`.
-- **Virtualenv** is assumed at `~/unity/.venv/`
-- Optional: `.env` file at repo root (`~/unity/.env`) for `UNIFY_KEY`, etc.
+- **Python environment**: `parallel_run.sh` uses the repo-local `.venv/` and will bootstrap it via `uv sync --all-groups` if needed.
+- Optional: `.env` file at repo root (`.env`) for `UNIFY_KEY`, etc.
 
 ---
 
