@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 import json
+from dataclasses import dataclass
 import traceback
 from typing import Optional
 import contextlib
@@ -55,6 +56,16 @@ if not logger.handlers:
 
 
 MAX_CONV_MANAGER_MSGS = 50
+
+
+@dataclass(frozen=True)
+class StepResult:
+    """Result of processing a single event step."""
+
+    input_event: "Event"
+    llm_requested: bool
+    llm_ran: bool
+    output_events: list["Event"]
 
 
 class ConversationManager(metaclass=SingletonABCMeta):
@@ -201,6 +212,84 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self._run_llm,
             delay=delay,
             cancel_running=cancel_running,
+        )
+
+    async def step(self, event: "Event", *, publish: bool = False) -> StepResult:
+        """Process one event deterministically and return produced output events.
+
+        This method is intended for synchronous-style testing and orchestration.
+        It avoids relying on background tasks by:
+        - recording any requested LLM runs during event handling
+        - running the LLM immediately (if requested)
+        - capturing and applying any published output events to local state
+
+        Args:
+            event: Input event to process.
+            publish: Whether to forward published events to the broker.
+
+        Returns:
+            StepResult with output events produced during this step.
+        """
+        published_events: list[Event] = []
+        output_events: list[Event] = []
+        llm_requested = False
+        llm_ran = False
+
+        original_publish = self.event_broker.publish
+        original_run_llm = self.run_llm
+
+        async def publish_wrapper(channel: str, message: str) -> int:
+            try:
+                evt = Event.from_json(message)
+            except Exception:
+                evt = None
+            if evt is not None:
+                published_events.append(evt)
+            if publish:
+                return await original_publish(channel, message)
+            return 0
+
+        async def run_llm_wrapper(delay=0, cancel_running=False):
+            nonlocal llm_requested
+            llm_requested = True
+            return None
+
+        try:
+            self.event_broker.publish = publish_wrapper
+            self.run_llm = run_llm_wrapper
+
+            await EventHandler.handle_event(
+                event,
+                self,
+                is_voice_call=self.call_manager.uses_realtime_api,
+            )
+
+            if llm_requested:
+                llm_ran = True
+                await self._run_llm()
+
+            # Apply any published events to local state so callers can inspect state
+            # without depending on background broker subscribers.
+            for evt in published_events:
+                if isinstance(
+                    evt,
+                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
+                ):
+                    output_events.append(evt)
+                await EventHandler.handle_event(
+                    evt,
+                    self,
+                    is_voice_call=self.call_manager.uses_realtime_api,
+                )
+        finally:
+            self.event_broker.publish = original_publish
+            self.run_llm = original_run_llm
+
+        return StepResult(
+            input_event=event,
+            llm_requested=llm_requested,
+            llm_ran=llm_ran,
+            output_events=output_events,
         )
 
     async def _run_llm(self):
