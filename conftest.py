@@ -4,6 +4,17 @@ import pytest
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Early Environment Setup (MUST be before any unity/unify imports)
+# ─────────────────────────────────────────────────────────────────────────────
+# Set UNIFY_CACHE_DIR based on this file's location to ensure the LLM cache
+# (.cache.ndjson) is written to the correct repo/worktree, not wherever
+# os.getcwd() happens to point. This must happen before unify is imported
+# because the cache directory is captured at class definition time.
+if "UNIFY_CACHE_DIR" not in os.environ:
+    os.environ["UNIFY_CACHE_DIR"] = str(Path(__file__).resolve().parent)
+
 from unity.constants import PYTEST_LOG_TO_FILE
 
 
