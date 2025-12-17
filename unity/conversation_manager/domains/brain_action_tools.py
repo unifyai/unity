@@ -101,6 +101,27 @@ class ConversationManagerBrainActionTools:
         )
         return {"status": "ok"}
 
+    async def make_call(
+        self,
+        *,
+        contact_id: int | None = None,
+        contact_details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Start an outbound phone call.
+
+        Args:
+            contact_id: Target contact_id when known (preferred).
+            contact_details: Target identity details when contact_id is unknown.
+        """
+        await cm_actions.make_call(
+            self._cm,
+            "make_call",
+            contact_id=contact_id,
+            contact_details=contact_details,
+        )
+        return {"status": "ok"}
+
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the tools dict for start_async_tool_loop."""
         return {
@@ -108,4 +129,5 @@ class ConversationManagerBrainActionTools:
             "send_sms": self.send_sms,
             "send_unify_message": self.send_unify_message,
             "send_email": self.send_email,
+            "make_call": self.make_call,
         }

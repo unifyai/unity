@@ -103,8 +103,6 @@ def build_system_prompt(
     # Build available comms actions list
     comms_actions = []
     # Comms are gradually migrating from JSON `actions` to tool calls.
-    if phone_number:
-        comms_actions.append("make_call")
     comms_actions_list = "\n        ".join(f"- {a}" for a in comms_actions)
 
     # Build dynamic task action descriptions
@@ -242,6 +240,7 @@ def build_system_prompt(
                 - send_sms (tool call; do NOT include as an entry in `actions`)
                 - send_unify_message (tool call; do NOT include as an entry in `actions`)
                 - send_email (tool call; do NOT include as an entry in `actions`)
+                - make_call (tool call; do NOT include as an entry in `actions`)
                 - start_task
                 - wait
 
