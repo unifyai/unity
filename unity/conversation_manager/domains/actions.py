@@ -203,7 +203,6 @@ def build_dynamic_response_models(active_tasks: dict = None):
         WaitForNextEvent,
         SendUnifyMessage,
         SendEmail,
-        SendSMS,
         MakeCall,
     ]
 
