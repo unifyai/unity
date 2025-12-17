@@ -17,7 +17,17 @@ from unity.memory_manager.memory_manager import MemoryManager
 from unity.conductor.conductor import Conductor
 from unity.conductor.simulated import SimulatedConductor
 from unity.conductor.manager_registry import get_class
-from unity.settings import SETTINGS
+
+
+def _get_impl(name: str, default: str = "real") -> str:
+    """Get implementation setting from environment, allowing test-time override.
+
+    We read directly from os.environ instead of SETTINGS because the SETTINGS
+    singleton is instantiated at import time, before test conftests can set
+    environment variables. This allows test_conversation_manager/conftest.py
+    to set UNITY_*_IMPL=simulated and have it take effect.
+    """
+    return os.environ.get(name, default)
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -370,8 +380,9 @@ def _init_managers(
     # 2. Initialize ContactManager (respects UNITY_CONTACTS_IMPL setting)
     print("[ManagersWorker] Initializing ContactManager...")
     local_start_time = perf_counter()
-    contacts_cls = get_class("contacts", SETTINGS.UNITY_CONTACTS_IMPL)
-    if SETTINGS.UNITY_CONTACTS_IMPL == "simulated":
+    contacts_impl = _get_impl("UNITY_CONTACTS_IMPL")
+    contacts_cls = get_class("contacts", contacts_impl)
+    if contacts_impl == "simulated":
         cm.contact_manager = contacts_cls(description="production deployment")
     else:
         cm.contact_manager = contacts_cls()
@@ -383,8 +394,9 @@ def _init_managers(
     # 3. Initialize TranscriptManager (respects UNITY_TRANSCRIPTS_IMPL setting)
     print("[ManagersWorker] Initializing TranscriptManager...")
     local_start_time = perf_counter()
-    transcripts_cls = get_class("transcripts", SETTINGS.UNITY_TRANSCRIPTS_IMPL)
-    if SETTINGS.UNITY_TRANSCRIPTS_IMPL == "simulated":
+    transcripts_impl = _get_impl("UNITY_TRANSCRIPTS_IMPL")
+    transcripts_cls = get_class("transcripts", transcripts_impl)
+    if transcripts_impl == "simulated":
         cm.transcript_manager = transcripts_cls(description="production deployment")
     else:
         cm.transcript_manager = transcripts_cls(contact_manager=cm.contact_manager)
@@ -394,7 +406,7 @@ def _init_managers(
     )
 
     # 4. Configure TranscriptManager logger (only for real implementation)
-    if api_key and SETTINGS.UNITY_TRANSCRIPTS_IMPL != "simulated":
+    if api_key and transcripts_impl != "simulated":
         cm.transcript_manager._get_logger().session.headers[
             "Authorization"
         ] = f"Bearer {api_key}"
@@ -415,8 +427,9 @@ def _init_managers(
     # 6. Initialize ConversationManagerHandle (respects UNITY_CONVERSATION_IMPL setting)
     print("[ManagersWorker] Initializing ConversationManagerHandle...")
     local_start_time = perf_counter()
-    conversation_cls = get_class("conversation", SETTINGS.UNITY_CONVERSATION_IMPL)
-    if SETTINGS.UNITY_CONVERSATION_IMPL == "simulated":
+    conversation_impl = _get_impl("UNITY_CONVERSATION_IMPL")
+    conversation_cls = get_class("conversation", conversation_impl)
+    if conversation_impl == "simulated":
         cm._conversation_manager_handle = conversation_cls(
             assistant_id=SESSION_DETAILS.assistant.id,
             contact_id="1",
@@ -439,7 +452,8 @@ def _init_managers(
     print("[ManagersWorker] Initializing Conductor...")
     try:
         local_start_time = perf_counter()
-        if SETTINGS.UNITY_CONDUCTOR_IMPL == "simulated":
+        conductor_impl = _get_impl("UNITY_CONDUCTOR_IMPL")
+        if conductor_impl == "simulated":
             cm.conductor = SimulatedConductor(
                 description="production deployment",
                 contact_manager=cm.contact_manager,
