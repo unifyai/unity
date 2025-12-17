@@ -18,11 +18,6 @@ unset _ENV_FILE
 # Source common utilities (socket derivation, locale, timeout handling)
 source "$SCRIPT_DIR/_shell_common.sh"
 
-# ---- Worktree log symlinks ----
-# If running from a worktree, create symlinks in the main repo's log directories
-# pointing to this worktree's logs. This lets you browse all logs from one place.
-_ensure_worktree_log_symlinks
-
 # ---- Increase file descriptor limit ----
 # Parallel tests open many network connections. Each connection uses a file
 # descriptor. macOS defaults to 256 per process, which is easily exceeded.

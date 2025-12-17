@@ -215,6 +215,98 @@ def _get_log_root(config_rootpath: Path) -> Path:
         return config_rootpath
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Worktree Log Symlink Management
+# ─────────────────────────────────────────────────────────────────────────────
+# When running tests from a git worktree, create symlinks in the main repo's
+# log directories pointing to this worktree's logs. This lets you browse all
+# worktree logs from a single location (the main repo).
+
+
+def _is_git_worktree(repo_root: Path) -> bool:
+    """Check if repo_root is a git worktree (not the main repo).
+
+    In a worktree, .git is a file containing 'gitdir: /path/to/main/.git/worktrees/name'.
+    In the main repo, .git is a directory.
+    """
+    git_path = repo_root / ".git"
+    return git_path.is_file()
+
+
+def _get_main_repo_path(repo_root: Path) -> Optional[Path]:
+    """Get the main (non-worktree) repo path from a worktree.
+
+    Reads the .git file to find the main repo's .git directory,
+    then returns its parent.
+    """
+    git_file = repo_root / ".git"
+    if not git_file.is_file():
+        return None
+
+    try:
+        content = git_file.read_text().strip()
+        # Format: "gitdir: /path/to/main/.git/worktrees/name"
+        if content.startswith("gitdir:"):
+            gitdir = content[7:].strip()
+            # gitdir is like /main/repo/.git/worktrees/worktree-name
+            # We want /main/repo (parent of .git, which is 3 levels up from gitdir)
+            gitdir_path = Path(gitdir)
+            # Go up: worktrees/name -> worktrees -> .git -> repo
+            main_git = gitdir_path.parent.parent
+            if main_git.name == ".git":
+                return main_git.parent
+    except Exception:
+        pass
+    return None
+
+
+def _get_worktree_name(repo_root: Path) -> str:
+    """Get a descriptive name for the worktree (used in symlink names)."""
+    return repo_root.name
+
+
+def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
+    """Create symlinks in main repo's log directories pointing to worktree's logs.
+
+    Creates symlinks like:
+        /main/repo/.pytest_logs/worktree-oty -> /path/to/worktree/oty/.pytest_logs
+        /main/repo/.llm_io_debug/worktree-oty -> /path/to/worktree/oty/.llm_io_debug
+
+    This lets you browse all worktree logs from the main repo.
+    """
+    if not _is_git_worktree(repo_root):
+        return
+
+    main_repo = _get_main_repo_path(repo_root)
+    if main_repo is None:
+        return
+
+    worktree_name = _get_worktree_name(repo_root)
+
+    for log_dir_name in (".pytest_logs", ".llm_io_debug"):
+        main_log_dir = main_repo / log_dir_name
+        worktree_log_dir = repo_root / log_dir_name
+        symlink_path = main_log_dir / f"worktree-{worktree_name}"
+
+        try:
+            # Ensure both directories exist
+            main_log_dir.mkdir(parents=True, exist_ok=True)
+            worktree_log_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create or update symlink
+            if symlink_path.is_symlink():
+                # Check if it points to the right place
+                if symlink_path.resolve() != worktree_log_dir.resolve():
+                    symlink_path.unlink()
+                    symlink_path.symlink_to(worktree_log_dir)
+            elif not symlink_path.exists():
+                symlink_path.symlink_to(worktree_log_dir)
+            # If something else exists at that path, leave it alone
+        except Exception:
+            # Symlink creation is best-effort; don't fail tests if it errors
+            pass
+
+
 class _TeeStream:
     def __init__(self, primary, mirror):
         self._primary = primary
@@ -260,6 +352,9 @@ def pytest_sessionstart(session):
 
     # Use worktree-aware log root instead of pytest's rootpath
     root_path = _get_log_root(Path(config.rootpath))
+
+    # If running from a worktree, create symlinks in main repo for easy log browsing
+    _ensure_worktree_log_symlinks(root_path)
 
     # Determine subdirectory based on terminal context
     # Directory names are datetime-prefixed for natural time-based ordering
