@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import traceback
 from typing import Optional
 import contextlib
+import contextvars
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
@@ -66,6 +67,11 @@ class StepResult:
     llm_requested: bool
     llm_ran: bool
     output_events: list["Event"]
+
+
+_step_llm_requests: contextvars.ContextVar[list[tuple[float, bool]] | None] = (
+    contextvars.ContextVar("_step_llm_requests", default=None)
+)
 
 
 class ConversationManager(metaclass=SingletonABCMeta):
@@ -203,7 +209,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "Triggering main CM brain",
                 icon_override="🔀",
             )
-            await self.run_llm(delay=0, cancel_running=True)
+            await self.request_llm_run(delay=0, cancel_running=True)
 
     # this is non-blocking, it will quickly submit the
     # coro and return
@@ -213,6 +219,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
             delay=delay,
             cancel_running=cancel_running,
         )
+
+    async def request_llm_run(self, delay=0, cancel_running=False) -> None:
+        """Request an LLM run.
+
+        In normal operation, this schedules an LLM run via the debouncer.
+        When executed inside ConversationManager.step(), the request is recorded
+        and executed immediately by step() instead of being scheduled.
+        """
+        requests = _step_llm_requests.get()
+        if requests is not None:
+            requests.append((delay, cancel_running))
+            return
+        await self.run_llm(delay=delay, cancel_running=cancel_running)
 
     async def step(self, event: "Event", *, publish: bool = False) -> StepResult:
         """Process one event deterministically and return produced output events.
@@ -236,7 +255,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         llm_ran = False
 
         original_publish = self.event_broker.publish
-        original_run_llm = self.run_llm
 
         async def publish_wrapper(channel: str, message: str) -> int:
             try:
@@ -249,20 +267,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 return await original_publish(channel, message)
             return 0
 
-        async def run_llm_wrapper(delay=0, cancel_running=False):
-            nonlocal llm_requested
-            llm_requested = True
-            return None
-
+        step_requests: list[tuple[float, bool]] = []
+        token = _step_llm_requests.set(step_requests)
         try:
             self.event_broker.publish = publish_wrapper
-            self.run_llm = run_llm_wrapper
 
             await EventHandler.handle_event(
                 event,
                 self,
                 is_voice_call=self.call_manager.uses_realtime_api,
             )
+
+            llm_requested = bool(step_requests)
+            step_requests.clear()
 
             if llm_requested:
                 llm_ran = True
@@ -283,7 +300,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
         finally:
             self.event_broker.publish = original_publish
-            self.run_llm = original_run_llm
+            _step_llm_requests.reset(token)
 
         return StepResult(
             input_event=event,
