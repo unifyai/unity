@@ -28,7 +28,13 @@ class BrainSpec:
     response_model: type["BaseModel"]
 
     def state_message(self) -> dict:
-        return {"role": "user", "content": self.state_prompt}
+        # Mark this as a state snapshot so the async tool loop can treat it as
+        # transient state (e.g., keep only the latest snapshot when generating).
+        return {
+            "role": "user",
+            "content": self.state_prompt,
+            "_cm_state_snapshot": True,
+        }
 
 
 def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
