@@ -20,7 +20,7 @@ from tests.test_async_tool_loop.async_helpers import (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_dynamic_helper_appends_images(model) -> None:
+async def test_interject_dynamic_helper_appends_images(model, static_now) -> None:
     async def do_work(
         *,
         _interject_queue: asyncio.Queue[str],
@@ -40,7 +40,7 @@ async def test_interject_dynamic_helper_appends_images(model) -> None:
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
     [img_id] = manager.add_images(
         [
-            {"caption": "blue square", "data": b64_blue},
+            {"caption": "blue square", "data": b64_blue, "timestamp": static_now},
         ],
     )
     images = [RawImageRef(image_id=img_id)]
@@ -70,7 +70,7 @@ async def test_interject_dynamic_helper_appends_images(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_dynamic_helper_appends_images(model) -> None:
+async def test_stop_dynamic_helper_appends_images(model, static_now) -> None:
     async def wait_forever(*, _notification_up_q: asyncio.Queue[dict]):
         await _notification_up_q.put({"message": "starting"})
         await asyncio.Event().wait()
@@ -86,7 +86,7 @@ async def test_stop_dynamic_helper_appends_images(model) -> None:
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
     [img_id] = manager.add_images(
         [
-            {"caption": "blue tile", "data": b64_blue},
+            {"caption": "blue tile", "data": b64_blue, "timestamp": static_now},
         ],
     )
     images = [RawImageRef(image_id=img_id)]
@@ -118,7 +118,10 @@ async def test_stop_dynamic_helper_appends_images(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_clarify_helpers_append_images_for_request_and_answer(model) -> None:
+async def test_clarify_helpers_append_images_for_request_and_answer(
+    model,
+    static_now,
+) -> None:
     async def need_clar(
         *,
         _clarification_up_q: asyncio.Queue[str],
@@ -143,7 +146,7 @@ async def test_clarify_helpers_append_images_for_request_and_answer(model) -> No
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
     [img_id] = manager.add_images(
         [
-            {"caption": "blue square", "data": b64_blue},
+            {"caption": "blue square", "data": b64_blue, "timestamp": static_now},
         ],
     )
     images = [RawImageRef(image_id=img_id)]
@@ -166,7 +169,7 @@ async def test_clarify_helpers_append_images_for_request_and_answer(model) -> No
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_notification_payload_appends_images(model) -> None:
+async def test_notification_payload_appends_images(model, static_now) -> None:
     async def notify(*, _notification_up_q: asyncio.Queue[dict]) -> dict:
         await _notification_up_q.put(
             {"message": "progress", "images": [RawImageRef(image_id=img_id)]},
@@ -182,7 +185,7 @@ async def test_notification_payload_appends_images(model) -> None:
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
     [img_id] = manager.add_images(
         [
-            {"caption": "blue tile", "data": b64_blue},
+            {"caption": "blue tile", "data": b64_blue, "timestamp": static_now},
         ],
     )
     images = [RawImageRef(image_id=img_id)]
@@ -214,7 +217,7 @@ async def test_notification_payload_appends_images(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_overview_reinjected_on_interjection_images(model, monkeypatch) -> None:
+async def test_overview_reinjected_on_interjection_images(model, static_now) -> None:
     """
     When an interjection brings new images, the overview should be reinjected
     automatically with the full updated AnnotatedImageRefs list.
@@ -229,7 +232,11 @@ async def test_overview_reinjected_on_interjection_images(model, monkeypatch) ->
     # First image at loop start
     [id1] = manager.add_images(
         [
-            {"caption": "first", "data": make_solid_png_base64(2, 2, (0, 0, 255))},
+            {
+                "caption": "first",
+                "data": make_solid_png_base64(2, 2, (0, 0, 255)),
+                "timestamp": static_now,
+            },
         ],
     )
 
@@ -264,7 +271,11 @@ async def test_overview_reinjected_on_interjection_images(model, monkeypatch) ->
     # Interject with a second image → expect reinjection containing both ids
     [id2] = manager.add_images(
         [
-            {"caption": "second", "data": make_solid_png_base64(2, 2, (255, 0, 0))},
+            {
+                "caption": "second",
+                "data": make_solid_png_base64(2, 2, (255, 0, 0)),
+                "timestamp": static_now,
+            },
         ],
     )
     await h.interject("new image", images=[RawImageRef(image_id=id2)])
@@ -287,7 +298,7 @@ async def test_overview_reinjected_on_interjection_images(model, monkeypatch) ->
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_image_with_images_param_appends_log(model) -> None:
+async def test_ask_image_with_images_param_appends_log(model, static_now) -> None:
     client = new_llm_client(model=model)
     client.set_system_message(
         "1️⃣ Use the `ask_image` tool once for the aligned image to identify its color. 2️⃣ Then answer with any single word.",
@@ -297,7 +308,7 @@ async def test_ask_image_with_images_param_appends_log(model) -> None:
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
     [img_id] = manager.add_images(
         [
-            {"caption": "blue square", "data": b64_blue},
+            {"caption": "blue square", "data": b64_blue, "timestamp": static_now},
         ],
     )
     images = [RawImageRef(image_id=img_id)]
@@ -323,7 +334,10 @@ async def test_ask_image_with_images_param_appends_log(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_two_images_then_interjection_three_asks_real_llm(model) -> None:
+async def test_two_images_then_interjection_three_asks_real_llm(
+    model,
+    static_now,
+) -> None:
     """
     Real-LLM flow:
     - Initial user message references two paints: "this paint" (John) and "that paint" (David)
@@ -353,9 +367,9 @@ async def test_two_images_then_interjection_three_asks_real_llm(model) -> None:
     b64_red = make_solid_png_base64(2, 2, (255, 0, 0))
     [john_id, david_id, jenny_id] = manager.add_images(
         [
-            {"data": b64_blue},
-            {"data": b64_yellow},
-            {"data": b64_red},
+            {"data": b64_blue, "timestamp": static_now},
+            {"data": b64_yellow, "timestamp": static_now},
+            {"data": b64_red, "timestamp": static_now},
         ],
     )
     # Provide annotated refs for each referenced person

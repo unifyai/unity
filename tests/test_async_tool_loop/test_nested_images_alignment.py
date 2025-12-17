@@ -101,7 +101,7 @@ async def test_live_images_overview_is_injected_synthetically(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_overview_after_clarification_images(model) -> None:
+async def test_overview_after_clarification_images(model, static_now) -> None:
     """
     When a child tool requests clarification and supplies images with the question,
     the overview should be reinjected including those images.
@@ -124,7 +124,13 @@ async def test_overview_after_clarification_images(model) -> None:
 
     manager = ImageManager()
     [rid] = manager.add_images(
-        [{"caption": "clar", "data": make_solid_png_base64(2, 2, (0, 0, 255))}],
+        [
+            {
+                "caption": "clar",
+                "data": make_solid_png_base64(2, 2, (0, 0, 255)),
+                "timestamp": static_now,
+            },
+        ],
     )
 
     h = start_async_tool_loop(

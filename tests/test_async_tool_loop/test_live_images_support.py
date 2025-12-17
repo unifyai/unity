@@ -205,7 +205,7 @@ async def test_ask_image_dynamic_helper_executes_and_returns(
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_image_uses_parent_chat_context(model, monkeypatch) -> None:
+async def test_ask_image_uses_parent_chat_context(model, static_now) -> None:
     """
     Analogue to the ImageHandle.ask parent-context test: verify that the dynamically
     generated `ask_image` helper automatically threads the parent chat context and
@@ -232,6 +232,7 @@ async def test_ask_image_uses_parent_chat_context(model, monkeypatch) -> None:
             {
                 "caption": "Google logo (ask_image parent-context test)",
                 "data": img_b64,
+                "timestamp": static_now,
             },
         ],
     )
@@ -344,7 +345,7 @@ async def test_attach_image_raw_appends_image_block(model, monkeypatch) -> None:
 @_handle_project
 async def test_live_images_accepts_annotated_and_raw_refs_variants(
     model,
-    monkeypatch,
+    static_now,
 ) -> None:
     """
     Regression test: The loop should accept AnnotatedImageRefs and RawImageRefs containers.
@@ -366,6 +367,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(
             {
                 "caption": "variant check",
                 "data": make_solid_png_base64(2, 2, (0, 255, 0)),
+                "timestamp": static_now,
             },
         ],
     )
