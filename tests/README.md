@@ -35,6 +35,25 @@ All test commands **automatically detect the current git repository** and use th
 
 **How it works:** When you run `parallel_run`, the shell function checks `git rev-parse --show-toplevel` to find the current repo root, then uses that repo's `tests/parallel_run.sh`. If you're not in a git repo, it falls back to the originally configured path.
 
+### Browsing All Worktree Logs from Main Repo
+
+When tests run from a worktree, **symlinks are automatically created** in the main repo's log directories pointing to each worktree's logs:
+
+```
+/Users/you/unity/.pytest_logs/
+├── 2025-12-05T14-30-45_unity_dev_ttys042/   # main repo's own logs
+├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/.pytest_logs/
+├── worktree-xyz/  →  ~/.cursor/worktrees/unity/xyz/.pytest_logs/
+└── ...
+
+/Users/you/unity/.llm_io_debug/
+├── standalone/                               # main repo's own debug logs
+├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/.llm_io_debug/
+└── ...
+```
+
+This lets you browse **all logs from all worktrees** in one place (the main repo), while each worktree still maintains its own isolated log directories
+
 ---
 
 ## Test Philosophy: Symbolic ↔ Eval Spectrum
