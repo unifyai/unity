@@ -173,6 +173,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # ask handles
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
 
+        # LLM run requests recorded during event handling (production path).
+        # In step() mode, requests are recorded via a contextvar instead.
+        self._pending_llm_requests: list[tuple[float, bool]] = []
+
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
         self._session_logger.info(
@@ -223,14 +227,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def request_llm_run(self, delay=0, cancel_running=False) -> None:
         """Request an LLM run.
 
-        In normal operation, this schedules an LLM run via the debouncer.
+        In normal operation, the request is recorded and later scheduled by
+        the event loop after the current event is handled.
         When executed inside ConversationManager.step(), the request is recorded
-        and executed immediately by step() instead of being scheduled.
+        and executed immediately by step().
         """
         requests = _step_llm_requests.get()
         if requests is not None:
             requests.append((delay, cancel_running))
             return
+        self._pending_llm_requests.append((delay, cancel_running))
+
+    async def flush_llm_requests(self) -> None:
+        """Schedule any pending LLM runs recorded during event handling."""
+        if _step_llm_requests.get() is not None:
+            return
+        if not self._pending_llm_requests:
+            return
+        delay, cancel_running = self._pending_llm_requests[-1]
+        self._pending_llm_requests.clear()
         await self.run_llm(delay=delay, cancel_running=cancel_running)
 
     async def step(self, event: "Event", *, publish: bool = False) -> StepResult:
@@ -451,6 +466,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     self,
                     is_voice_call=self.call_manager.uses_realtime_api,
                 )
+                await self.flush_llm_requests()
 
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""
