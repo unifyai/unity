@@ -24,6 +24,19 @@ kill_server        # Kill tmux server + orphaned processes
 
 ---
 
+## Worktree Support (Cursor Background Agents)
+
+All test commands **automatically detect the current git repository** and use that repo's scripts. This means:
+
+- ✅ Commands work correctly in **git worktrees** (e.g., Cursor Background Agents)
+- ✅ Tests run against the **current repo's code**, not a hardcoded path
+- ✅ Logs appear in the **current repo's** `.pytest_logs/` directory
+- ✅ No manual path adjustments needed
+
+**How it works:** When you run `parallel_run`, the shell function checks `git rev-parse --show-toplevel` to find the current repo root, then uses that repo's `tests/parallel_run.sh`. If you're not in a git repo, it falls back to the originally configured path.
+
+---
+
 ## Test Philosophy: Symbolic ↔ Eval Spectrum
 
 Tests fall on a spectrum between two paradigms:
