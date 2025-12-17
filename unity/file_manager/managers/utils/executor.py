@@ -39,7 +39,7 @@ from typing import (
     TypeVar,
 )
 
-from unity.file_manager.types.file import ParsedFile
+from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.file_manager.types.ingest import (
     BaseIngestedFile,
     IngestedMinimal,
@@ -961,7 +961,7 @@ def build_file_result(
     graph: TaskGraph,
     task_results: Dict[str, TaskResult[Any]],
     file_start_time: float,
-    parse_result: ParsedFile,
+    parse_result: FileParseResult,
 ) -> Dict[str, Any]:
     """
     Aggregate all task results into a comprehensive file-level summary.
@@ -979,8 +979,8 @@ def build_file_result(
         Results for each task by ID.
     file_start_time : float
         Timestamp when file processing started.
-    parse_result : ParsedFile
-        Original parse result from the document (Pydantic model).
+    parse_result : FileParseResult
+        Original parse result from the file parser (Pydantic model).
 
     Returns
     -------
@@ -1009,7 +1009,7 @@ def build_file_result(
                 "failed_task_ids": list[str],
             },
             "retries_used": int,
-            "parse_result": ParsedFile,
+            "parse_result": FileParseResult,
         }
     """
     total_duration_ms = (time.perf_counter() - file_start_time) * 1000
@@ -1165,7 +1165,7 @@ def report_file_complete(
 def process_single_file(
     file_manager: Any,
     *,
-    document: Any,
+    parse_result: FileParseResult,
     file_path: str,
     config: Any,
     reporter: Optional["ProgressReporter"] = None,
@@ -1190,8 +1190,8 @@ def process_single_file(
     ----------
     file_manager : FileManager
         The file manager instance (provides context and storage methods).
-    document : Document
-        The parsed document object.
+    parse_result : FileParseResult
+        The FileParseResult from the file parser (graph + tables + trace).
     file_path : str
         The original file path.
     config : FilePipelineConfig
@@ -1208,7 +1208,7 @@ def process_single_file(
     FileResultType
         Result depends on config.output.return_mode:
         - "compact" (default): IngestedFileUnion Pydantic model
-        - "full": ParsedFile Pydantic model (complete with records, full_text)
+        - "full": IngestedFullFile Pydantic model (parse artifacts + lowered rows + refs/metrics)
         - "none": IngestedMinimal Pydantic model (just status stub)
     """
     file_start_time = time.perf_counter()
@@ -1217,26 +1217,12 @@ def process_single_file(
     return_mode = getattr(getattr(config, "output", None), "return_mode", "compact")
 
     try:
-        # 1. Get parse result from document - returns ParsedFile Pydantic model
-        parse_result: ParsedFile = document.to_parse_result(
-            file_path,
-            auto_counting=(
-                config.ingest.auto_counting_per_file
-                if config.ingest.id_layout == "columns"
-                else None
-            ),
-            document_index=0,
-            id_layout=getattr(config.ingest, "id_layout", "map"),
-            id_string_format=getattr(config.ingest, "id_string_format", None),
-        )
-
-        # 2. Build task graph using the factory
+        # 1. Build task graph using the factory
         from .task_factory import build_file_task_graph
 
         graph = build_file_task_graph(
             file_manager,
             file_path=file_path,
-            document=document,
             parse_result=parse_result,
             config=config,
             file_start_time=file_start_time,
@@ -1280,15 +1266,64 @@ def process_single_file(
 
         # 7. Build result based on return mode - ALL returns are Pydantic models
         if return_mode == "full":
-            # Return ParsedFile Pydantic model directly (complete with records, full_text)
-            return parse_result
+            from unity.file_manager.parse_adapter import (
+                adapt_parse_result_for_file_manager,
+            )
+            from unity.file_manager.types.ingest import IngestedFullFile
+
+            adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
+
+            # Build compact refs/metrics for convenience (same as compact mode)
+            from .file_ops import build_compact_ingest_model
+
+            compact = build_compact_ingest_model(
+                file_manager,
+                file_path=file_path,
+                parse_result=parse_result,
+                config=config,
+            )
+
+            return IngestedFullFile(
+                file_path=file_path,
+                status=parse_result.status,
+                error=parse_result.error,
+                file_format=parse_result.file_format,
+                mime_type=parse_result.mime_type,
+                summary=getattr(parse_result, "summary", "") or "",
+                full_text=getattr(parse_result, "full_text", "") or "",
+                trace=getattr(parse_result, "trace", None),
+                metadata=(
+                    parse_result.metadata.model_dump(mode="json", exclude_none=True)
+                    if getattr(parse_result, "metadata", None) is not None
+                    else None
+                ),
+                graph=getattr(parse_result, "graph", None),
+                tables=list(getattr(parse_result, "tables", []) or []),
+                content_rows=list(adapted.content_rows or []),
+                content_ref=getattr(compact, "content_ref", None),
+                tables_ref=list(getattr(compact, "tables_ref", []) or []),
+                metrics=getattr(compact, "metrics", None),
+            )
         elif return_mode == "none":
             # Return IngestedMinimal Pydantic model (just status stub)
+            total_records = 0
+            try:
+                from unity.file_manager.parse_adapter import (
+                    adapt_parse_result_for_file_manager,
+                )
+
+                adapted = adapt_parse_result_for_file_manager(
+                    parse_result,
+                    config=config,
+                )
+                total_records = len(list(adapted.content_rows or []))
+            except Exception:
+                total_records = 0
             return IngestedMinimal(
                 file_path=file_path,
                 status=parse_result.status,
                 error=parse_result.error,
-                total_records=parse_result.total_records,
+                total_records=total_records,
                 file_format=(
                     str(parse_result.file_format) if parse_result.file_format else None
                 ),
@@ -1300,7 +1335,6 @@ def process_single_file(
             return build_compact_ingest_model(
                 file_manager,
                 file_path=file_path,
-                document=document,
                 parse_result=parse_result,
                 config=config,
             )
@@ -1329,10 +1363,14 @@ def process_single_file(
 
         # Return error based on return mode - ALL returns are Pydantic models
         if return_mode == "full":
-            return ParsedFile(
+            from unity.file_manager.types.ingest import IngestedFullFile
+
+            return IngestedFullFile(
                 file_path=file_path,
                 status="error",
                 error=str(e),
+                content_rows=[],
+                tables=[],
             )
         elif return_mode == "none":
             return IngestedMinimal(
@@ -1356,7 +1394,7 @@ def process_single_file(
 def run_pipeline(
     file_manager: Any,
     *,
-    documents: List[Any],
+    parse_results: List[FileParseResult],
     file_paths: List[str],
     config: Any,
     reporter: Optional["ProgressReporter"] = None,
@@ -1374,8 +1412,8 @@ def run_pipeline(
     ----------
     file_manager : FileManager
         The file manager instance.
-    documents : list[Document]
-        Parsed documents.
+    parse_results : list[FileParseResult]
+        Parsed file results (FileParseResult).
     file_paths : list[str]
         Corresponding file paths.
     config : FilePipelineConfig
@@ -1395,7 +1433,7 @@ def run_pipeline(
     """
     pipeline_start_time = time.perf_counter()
 
-    if not documents or not file_paths:
+    if not parse_results or not file_paths:
         return IngestPipelineResult()
 
     # Get return mode for error handling
@@ -1409,18 +1447,20 @@ def run_pipeline(
 
     if enable_progress:
         logger.info(
-            f"Processing {len(documents)} files "
+            f"Processing {len(parse_results)} files "
             f"({'parallel' if parallel else 'sequential'}, max_workers={max_workers})",
         )
 
-    if not parallel or len(documents) == 1:
+    if not parallel or len(parse_results) == 1:
         # Sequential processing
-        for idx, (doc, path) in enumerate(zip(documents, file_paths)):
+        for idx, (parse_result, path) in enumerate(zip(parse_results, file_paths)):
             if enable_progress:
-                logger.info(f"Processing file {idx + 1}/{len(documents)}: {path}")
+                logger.info(
+                    f"Processing file {idx + 1}/{len(parse_results)}: {path}",
+                )
             results[path] = process_single_file(
                 file_manager,
-                document=doc,
+                parse_result=parse_result,
                 file_path=path,
                 config=config,
                 reporter=reporter,
@@ -1430,20 +1470,20 @@ def run_pipeline(
     else:
         # Parallel processing
         with ThreadPoolExecutor(
-            max_workers=min(len(documents), max_workers),
+            max_workers=min(len(parse_results), max_workers),
         ) as executor:
             futures = {
                 executor.submit(
                     process_single_file,
                     file_manager,
-                    document=doc,
+                    parse_result=parse_result,
                     file_path=path,
                     config=config,
                     reporter=reporter,
                     enable_progress=enable_progress,
                     verbosity=verbosity,
                 ): path
-                for doc, path in zip(documents, file_paths)
+                for parse_result, path in zip(parse_results, file_paths)
             }
 
             for future in futures:
@@ -1455,10 +1495,14 @@ def run_pipeline(
                     logger.error(f"Error processing {path}: {e}\n{tb_str}")
                     # Return error based on return mode - ALL are Pydantic models
                     if return_mode == "full":
-                        results[path] = ParsedFile(
+                        from unity.file_manager.types.ingest import IngestedFullFile
+
+                        results[path] = IngestedFullFile(
                             file_path=path,
                             status="error",
                             error=str(e),
+                            content_rows=[],
+                            tables=[],
                         )
                     elif return_mode == "none":
                         results[path] = IngestedMinimal(
