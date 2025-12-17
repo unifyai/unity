@@ -6,7 +6,7 @@ This directory contains the test suite for Unity.
 
 ```bash
 # Shell setup (add to ~/.zshrc for permanent aliases)
-source ~/unity/tests/shell_init.zsh
+source /path/to/your/unity/clone/tests/shell_init.zsh
 
 # Run all tests in parallel
 parallel_run tests/

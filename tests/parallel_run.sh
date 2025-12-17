@@ -407,7 +407,7 @@ cd "$REPO_ROOT"
 # Python environment (uv + repo-local .venv)
 # ---------------------------------------------------------------------------
 # This script is used in local dev, CI, and Cursor Cloud Agents.
-# For portability, avoid hardcoding paths like ~/unity/.venv or relying on `python`
+# For portability, avoid hardcoding home-directory venv paths or relying on `python`
 # being present on PATH. Instead, bootstrap and use the repo-local `.venv`.
 VENV_DIR="$REPO_ROOT/.venv"
 VENV_PY="$VENV_DIR/bin/python"
