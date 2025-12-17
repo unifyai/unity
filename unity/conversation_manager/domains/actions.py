@@ -257,16 +257,14 @@ class Action:
             raise Exception(
                 f"unregistered action: {action_name}, make sure to register action",
             )
-        if inspect.iscoroutinefunction(f):
+        result = f(cm, action_name, *args, **kwargs)
+        if inspect.isawaitable(result):
             if _as_task:
-                t = asyncio.create_task(f(cm, action_name, *args, **kwargs))
+                t = asyncio.create_task(result)
                 t.add_done_callback(log_task_exc)
                 return t
-            else:
-                return f(*args, **kwargs)
-        else:
-            # could be awaitable
-            return f(*args, **kwargs)
+            return result
+        return result
 
     @classmethod
     def register(cls, action_name: str | list[str] = None):

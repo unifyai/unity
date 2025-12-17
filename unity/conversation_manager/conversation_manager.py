@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 import json
+import traceback
 from typing import Optional
 import contextlib
 
@@ -269,24 +270,27 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
         print(f"parsed_out {parsed_out}")
-        action_tasks = []
+        action_coros = []
         for action in actions:
             print("taking actions...")
-            task = Action.take_action(
+            coro = Action.take_action(
                 self,
                 action.pop("action_name"),
+                _as_task=False,
                 **action,
                 is_voice_call=self.call_manager.uses_realtime_api,
             )
-            if task is not None:
-                action_tasks.append(task)
+            if coro is not None:
+                action_coros.append(coro)
             print("done taking actions...")
 
-        # In test mode, wait for action tasks to complete synchronously
-        if getattr(self, "test_sync_actions", False) and action_tasks:
-            print("awaiting action tasks (test mode)...")
-            await asyncio.gather(*action_tasks, return_exceptions=True)
-            print("action tasks complete")
+        if action_coros:
+            results = await asyncio.gather(*action_coros, return_exceptions=True)
+            for r in results:
+                if isinstance(r, asyncio.CancelledError):
+                    continue
+                if isinstance(r, Exception):
+                    traceback.print_exception(type(r), r, r.__traceback__)
 
         self.commit()
         print("commiting...")

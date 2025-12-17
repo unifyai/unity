@@ -98,7 +98,6 @@ async def handle_message_and_respond(cm, event):
     This is the test-friendly pattern that avoids debouncer/background tasks:
     1. Call EventHandler.handle_event() - adds message to thread
     2. Call cm._run_llm() directly - runs LLM synchronously
-       (with test_sync_actions=True, actions are awaited synchronously)
     3. Capture and process response events to update thread state
     """
     # Capture events published by actions
