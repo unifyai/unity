@@ -24,27 +24,6 @@ kill_server        # Kill tmux server + orphaned processes
 
 ---
 
-## ⚠️ CRITICAL: Worktree & Agent Usage
-
-**If you are a Cursor agent running in a worktree** (your workspace path contains `.cursor/worktrees/`):
-
-| ❌ WRONG | ✅ CORRECT |
-|----------|------------|
-| `parallel_run tests/...` | `tests/parallel_run.sh tests/...` |
-
-**Why this matters:**
-- The `parallel_run` alias (from `~/.zshrc`) points to the **main repo's** script
-- Using the alias runs tests against main repo code, **NOT your worktree changes**
-- Your code modifications would not be tested!
-- Logs would appear in the main repo, not your worktree
-
-**Always use the relative path:**
-```bash
-tests/parallel_run.sh --wait tests/test_foo.py  # ✅ Tests YOUR worktree code
-```
-
----
-
 ## Test Philosophy: Symbolic ↔ Eval Spectrum
 
 Tests fall on a spectrum between two paradigms:
