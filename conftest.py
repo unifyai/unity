@@ -180,6 +180,30 @@ def _get_log_subdir() -> str:
     return "standalone"
 
 
+def _get_log_root(config_rootpath: Path) -> Path:
+    """Determine the root directory for pytest logs.
+
+    Prefers UNITY_LOG_ROOT env var if set, allowing explicit worktree targeting.
+    Otherwise derives from this file's location, which correctly resolves to
+    the worktree when running from one.
+
+    This fixes the issue where Cursor Background Agents (which use git worktrees)
+    would have logs written to the main repo instead of their worktree.
+    """
+    # Allow explicit override for flexibility
+    log_root = os.environ.get("UNITY_LOG_ROOT", "").strip()
+    if log_root:
+        return Path(log_root)
+
+    # Derive repo root from this file's location (works correctly in worktrees)
+    # __file__ is conftest.py at repo root
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        # Fallback to pytest's rootpath if __file__ resolution fails
+        return config_rootpath
+
+
 class _TeeStream:
     def __init__(self, primary, mirror):
         self._primary = primary
@@ -223,7 +247,8 @@ def pytest_sessionstart(session):
     if tr is None:
         return
 
-    root_path = Path(config.rootpath)
+    # Use worktree-aware log root instead of pytest's rootpath
+    root_path = _get_log_root(Path(config.rootpath))
 
     # Determine subdirectory based on terminal context
     # Directory names are datetime-prefixed for natural time-based ordering
@@ -289,10 +314,11 @@ def pytest_unconfigure(config):
     global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR, _TEE_LOG_PATH
     tr = config.pluginmanager.get_plugin("terminalreporter")
     if tr is not None and _TEE_FILE_HANDLE is not None:
+        # Use worktree-aware log root for consistent path display
+        root_path = _get_log_root(Path(config.rootpath))
         log_file = (
-            _TEE_LOG_PATH or (Path(config.rootpath) / ".pytest_logs" / "unknown.txt")
+            _TEE_LOG_PATH or (root_path / ".pytest_logs" / "unknown.txt")
         ).resolve()
-        root_path = Path(config.rootpath)
         subdir = _get_log_subdir()
 
         # Print a clear banner showing where logs are

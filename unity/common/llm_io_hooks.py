@@ -46,6 +46,30 @@ def _get_socket_subdir() -> str:
     return "standalone"
 
 
+def _get_repo_root() -> Path:
+    """Determine the repository root directory.
+
+    Prefers UNITY_LOG_ROOT env var if set, allowing explicit worktree targeting.
+    Otherwise falls back to detecting the repo root from this file's location,
+    which correctly resolves to the worktree when running from one.
+
+    This fixes the issue where Background Agents (which use git worktrees)
+    would have logs written to the main repo instead of their worktree.
+    """
+    # Allow explicit override for flexibility
+    log_root = os.environ.get("UNITY_LOG_ROOT", "").strip()
+    if log_root:
+        return Path(log_root)
+
+    # Derive repo root from this file's location (works correctly in worktrees)
+    # __file__ is unity/common/llm_io_hooks.py, so go up 2 levels to repo root
+    try:
+        return Path(__file__).resolve().parent.parent.parent
+    except Exception:
+        # Fallback to cwd if __file__ resolution fails
+        return Path(os.getcwd())
+
+
 def _ensure_io_dir() -> str | None:
     """Ensure the per-session LLM I/O debug directory exists.
 
@@ -64,7 +88,7 @@ def _ensure_io_dir() -> str | None:
     try:
         # Socket-scoped subdirectory for terminal isolation
         socket_subdir = _get_socket_subdir()
-        root = Path(os.getcwd()) / ".llm_io_debug" / socket_subdir
+        root = _get_repo_root() / ".llm_io_debug" / socket_subdir
         root.mkdir(parents=True, exist_ok=True)
         session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", str(SESSION_ID))
         session_dir = root / session_safe
