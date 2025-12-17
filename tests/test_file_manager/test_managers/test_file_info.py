@@ -201,7 +201,9 @@ async def test_root_vs_rootless_source_uri_consistency(tmp_path: Path):
     """Test source_uri consistency between rooted and rootless managers."""
     from unity.file_manager.managers.file_manager import FileManager
     from unity.file_manager.managers.local import LocalFileManager
-    from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+    from unity.file_manager.filesystem_adapters.local_adapter import (
+        LocalFileSystemAdapter,
+    )
 
     a = tmp_path / "rootless_a.txt"
     a.write_text("rootless")
@@ -270,7 +272,7 @@ async def test_rootless_local_manager_file_info(tmp_path, rootless_file_manager)
 @pytest.mark.asyncio
 async def test_gdrive_source_uri_stub():
     """Test file_info with a Google Drive stub adapter."""
-    from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
+    from unity.file_manager.filesystem_adapters.base import BaseFileSystemAdapter
     from unity.file_manager.types.filesystem import (
         FileSystemCapabilities,
         FileReference,
@@ -407,7 +409,9 @@ async def test_global_file_manager_identity(tmp_path: Path):
     """Test file_info consistency across GlobalFileManager with multiple adapters."""
     from unity.file_manager.managers.local import LocalFileManager
     from unity.file_manager.managers.file_manager import FileManager
-    from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+    from unity.file_manager.filesystem_adapters.local_adapter import (
+        LocalFileSystemAdapter,
+    )
     from unity.file_manager.global_file_manager import GlobalFileManager
 
     fm_rooted = LocalFileManager(str(tmp_path))

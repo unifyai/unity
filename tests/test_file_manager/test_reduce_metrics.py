@@ -1,55 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
 
 import pytest
 
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
 from unity.file_manager.managers.local import LocalFileManager
+from unity.file_manager.file_parsers.types.contracts import FileParseResult
+from unity.file_manager.file_parsers.types.enums import NodeKind
+from unity.file_manager.file_parsers.types.graph import (
+    ContentGraph,
+    ContentNode,
+    DocumentPayload,
+    ParagraphPayload,
+)
 from unity.file_manager.types.config import FilePipelineConfig
-from unity.file_manager.types.file import ParsedFile
-
-
-class _MetaStub:
-    def __init__(self, tables: List[Any] | None = None) -> None:
-        self.tables = tables or []
-        self.mime_type = "text/plain"
-        self.parser_name = "Stub"
-        self.processing_time = 0.0
-
-
-class _DocStub:
-    """Minimal document stub for testing."""
-
-    def __init__(
-        self,
-        records: List[Dict[str, Any]] | None = None,
-        file_size: int = 123,
-    ) -> None:
-        self.metadata = _MetaStub()
-        self.processing_status = "completed"
-        self._records = records or []
-        self._file_size = file_size
-
-    def to_parse_result(self, *a, **kw) -> ParsedFile:
-        return ParsedFile(
-            file_path=a[0] if a else "stub.txt",
-            status="success",
-            error=None,
-            summary="dummy summary",
-            file_format=None,
-            file_size=self._file_size,
-            total_records=len(self._records),
-            processing_time=0.0,
-            created_at="2025-01-01T00:00:00Z",
-            modified_at="2025-01-01T00:00:00Z",
-            confidence_score=1.0,
-            key_topics=[],
-            named_entities={},
-            content_tags=[],
-            records=self._records,
-        )
 
 
 @pytest.mark.unit
@@ -66,12 +31,35 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
 
     # Create a couple of dummy files in the FileRecords index
     for i in range(2):
-        doc = _DocStub(
-            records=[{"content_type": "text", "content_text": f"content_{i}"}],
+        doc_id = "document:0"
+        para_id = "paragraph:0"
+        parse_result = FileParseResult(
+            logical_path=f"dummy_{i}.txt",
+            status="success",
+            graph=ContentGraph(
+                root_id=doc_id,
+                nodes={
+                    doc_id: ContentNode(
+                        node_id=doc_id,
+                        kind=NodeKind.DOCUMENT,
+                        parent_id=None,
+                        children_ids=[para_id],
+                        payload=DocumentPayload(),
+                    ),
+                    para_id: ContentNode(
+                        node_id=para_id,
+                        kind=NodeKind.PARAGRAPH,
+                        parent_id=doc_id,
+                        children_ids=[],
+                        text=f"content_{i}",
+                        payload=ParagraphPayload(),
+                    ),
+                },
+            ),
         )
         process_single_file(
             file_manager,
-            document=doc,
+            parse_result=parse_result,
             file_path=f"dummy_{i}.txt",
             config=cfg,
         )
@@ -150,17 +138,42 @@ async def test_ask_uses_reduce_for_numeric_aggregation(
 
     cfg = FilePipelineConfig()
 
-    # Create a couple of dummy files in the FileRecords index with varying file sizes
+    # Create a couple of real files in the filesystem (so adapter metadata provides file_size)
     for i in range(3):
         file_size = 100 + i * 50  # Varying file sizes
-        doc = _DocStub(
-            records=[{"content_type": "text", "content_text": f"content_{i}"}],
-            file_size=file_size,
+        p = tmp_path / f"dummy_{i}.txt"
+        p.write_bytes(b"a" * file_size)
+        file_path = str(p)
+        doc_id = "document:0"
+        para_id = "paragraph:0"
+        parse_result = FileParseResult(
+            logical_path=file_path,
+            status="success",
+            graph=ContentGraph(
+                root_id=doc_id,
+                nodes={
+                    doc_id: ContentNode(
+                        node_id=doc_id,
+                        kind=NodeKind.DOCUMENT,
+                        parent_id=None,
+                        children_ids=[para_id],
+                        payload=DocumentPayload(),
+                    ),
+                    para_id: ContentNode(
+                        node_id=para_id,
+                        kind=NodeKind.PARAGRAPH,
+                        parent_id=doc_id,
+                        children_ids=[],
+                        text=f"content_{i}",
+                        payload=ParagraphPayload(),
+                    ),
+                },
+            ),
         )
         process_single_file(
             file_manager,
-            document=doc,
-            file_path=f"dummy_{i}.txt",
+            parse_result=parse_result,
+            file_path=file_path,
             config=cfg,
         )
 

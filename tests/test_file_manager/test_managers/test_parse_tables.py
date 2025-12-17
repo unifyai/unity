@@ -52,14 +52,52 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
         ],
     )
 
-    result = file_manager.ingest_files(display_name, config=cfg)
+    # Avoid LLM calls during table catalog summarization; we validate business-context
+    # enrichment by patching the summarizer and asserting the built profile text contains
+    # the business-context fields. Note: `/Content/` table rows must NOT store `content_text`.
+    from unittest.mock import patch
+
+    def _stub_summary(*args, **kwargs) -> str:
+        profile_text = kwargs.get("profile_text") if isinstance(kwargs, dict) else None
+        if profile_text is None and args:
+            profile_text = args[0]
+        profile_text = str(profile_text or "")
+        assert "Table Label: people" in profile_text
+        assert (
+            "Table Description: People directory with basic contact information"
+            in profile_text
+        )
+        assert "- Name: Person's full name" in profile_text
+        assert "- Age: Person's age in years" in profile_text
+        assert "- City: City where the person lives" in profile_text
+        return "stub table summary"
+
+    with patch(
+        "unity.file_manager.parse_adapter.lowering.content_rows.summarize_table_profile",
+        side_effect=_stub_summary,
+    ):
+        result = file_manager.ingest_files(display_name, config=cfg)
     item = result[display_name]
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
 
-    # Verify a per-table context exists
+    # Verify `/Content/` contains sheet + table catalog rows (RAG navigation surface)
     import unify
 
+    content_rows = unify.get_logs(context=item.content_ref.context, limit=50)
+    assert content_rows, "Expected at least one /Content/ row"
+    entries = [r.entries for r in content_rows]
+    sheet_rows = [e for e in entries if e.get("content_type") == "sheet"]
+    table_rows = [e for e in entries if e.get("content_type") == "table"]
+    assert sheet_rows, "Expected at least one sheet catalog row in /Content/"
+    assert table_rows, "Expected at least one table catalog row in /Content/"
+
+    # Table rows are catalog-only; content_text is centralized to be None for sheet/table rows.
+    assert table_rows[0].get("content_text") is None
+    # Summary is stubbed (LLM patched)
+    assert table_rows[0].get("summary") == "stub table summary"
+
+    # Verify a per-table context exists
     ctxs = unify.get_contexts()
     table_ctx_candidates = [
         name for name in ctxs.keys() if "/Tables/" in name and "people" in name
@@ -79,12 +117,13 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
     assert len(rows[1].entries) == 4, "Columns not found"
     assert "row_id" in rows[0].entries
     assert "row_id" in rows[1].entries
-    assert rows[0].entries["Name"] == "Jane", "Name not found"
-    assert rows[0].entries["Age"] == "25", "Age not found"
-    assert rows[0].entries["City"] == "LDN", "City not found"
-    assert rows[1].entries["Name"] == "John", "Name not found"
-    assert rows[1].entries["Age"] == "30", "Age not found"
-    assert rows[1].entries["City"] == "NYC", "City not found"
+    # Order is backend-dependent; validate presence rather than position.
+    seen = {
+        (r.entries.get("Name"), str(r.entries.get("Age")), r.entries.get("City"))
+        for r in rows
+    }
+    assert ("Jane", "25", "LDN") in seen
+    assert ("John", "30", "NYC") in seen
 
 
 @pytest.mark.asyncio
@@ -140,11 +179,17 @@ async def test_xlsx_multi_tab_per_table_context(file_manager, tmp_path: Path):
 
     cfg = FilePipelineConfig.from_file(str(config_file))
 
+    from unittest.mock import patch
+
     for path in [retail, workforce]:
         if path.exists():
             display_name = str(path)
             # Use config with business context
-            res = file_manager.ingest_files(display_name, config=cfg)
+            with patch(
+                "unity.file_manager.parse_adapter.lowering.content_rows.summarize_table_profile",
+                return_value="stub table summary",
+            ):
+                res = file_manager.ingest_files(display_name, config=cfg)
             item = res[display_name]
             # All returns are now Pydantic models - use attribute access
             assert item.status == "success"
@@ -211,7 +256,13 @@ async def test_csv_with_business_context_from_file(file_manager, tmp_path: Path)
     cfg = FilePipelineConfig.from_file(str(config_file))
 
     # Parse with config
-    result = file_manager.ingest_files(display_name, config=cfg)
+    from unittest.mock import patch
+
+    with patch(
+        "unity.file_manager.parse_adapter.lowering.content_rows.summarize_table_profile",
+        return_value="stub table summary",
+    ):
+        result = file_manager.ingest_files(display_name, config=cfg)
     item = result[display_name]
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"

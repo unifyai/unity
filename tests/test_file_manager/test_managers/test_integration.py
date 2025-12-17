@@ -14,6 +14,40 @@ from tests.helpers import _handle_project
 from tests.test_file_manager.helpers import ask_judge
 
 
+def _text_for_assertions(file_result) -> str:
+    """
+    Return a best-effort text surface for assertions across formats.
+
+    Policy:
+    - For documents/text: use lowered `/Content/` row `content_text`.
+    - For spreadsheets: `/Content/` sheet/table rows intentionally have no `content_text`,
+      so use the bounded `full_text` profile + a small sample of extracted table values.
+    """
+    fmt = getattr(file_result, "file_format", None)
+    fmt_val = str(getattr(fmt, "value", fmt) or "").lower().strip()
+    if fmt_val in ("csv", "xlsx"):
+        parts: list[str] = [str(getattr(file_result, "full_text", "") or "")]
+        try:
+            values: list[str] = []
+            for t in list(getattr(file_result, "tables", []) or [])[:8]:
+                for r in list(getattr(t, "rows", []) or [])[:50]:
+                    for v in (r.values() if isinstance(r, dict) else []):
+                        if v is not None:
+                            values.append(str(v))
+                    if len(values) >= 500:
+                        break
+                if len(values) >= 500:
+                    break
+            if values:
+                parts.append(" ".join(values))
+        except Exception:
+            pass
+        return " ".join([p for p in parts if str(p).strip()]).strip()
+
+    rows = list(getattr(file_result, "content_rows", []) or [])
+    return " ".join(str(getattr(r, "content_text", "") or "") for r in rows).strip()
+
+
 @pytest.fixture()
 def temp_dir(tmp_path: Path) -> Path:
     """Legacy fixture for backward compatibility."""
@@ -67,6 +101,7 @@ async def test_parse_all_formats(file_manager, supported_file_examples: dict):
 
         # Parse the file
         from unity.file_manager.types import FilePipelineConfig
+        from unity.file_manager.types.ingest import IngestedFullFile
 
         result = fm.ingest_files(
             display_name,
@@ -77,16 +112,12 @@ async def test_parse_all_formats(file_manager, supported_file_examples: dict):
         assert display_name in result
         file_result = result[display_name]
         assert file_result.status == "success"
-        assert "records" in file_result
-        # flattened top-level file metadata
-        assert "file_format" in file_result
-        assert "file_size" in file_result
-        assert "file_format" in file_result
+        assert isinstance(file_result, IngestedFullFile)
+        # top-level file metadata
+        assert hasattr(file_result, "file_format")
 
         # Check content was parsed - combine all record content
-        all_content = " ".join(
-            str(record.get("content_text", "")) for record in file_result.records
-        )
+        all_content = _text_for_assertions(file_result)
 
         # Check that content was extracted
         assert (
@@ -120,8 +151,9 @@ async def test_parse_errors(file_manager, tmp_path: Path):
     # The file exists on disk; exists should reflect filesystem
     assert fm.exists(str(bad_file))
 
-    # Parsing should return a result (basic text parsing as fallback)
+    # Parsing should return a result (unknown extensions are treated as best-effort text)
     from unity.file_manager.types import FilePipelineConfig
+    from unity.file_manager.types.ingest import IngestedFullFile
 
     result = fm.ingest_files(
         str(bad_file),
@@ -132,11 +164,13 @@ async def test_parse_errors(file_manager, tmp_path: Path):
 
     # Should parse successfully as text
     assert file_result.status == "success"
-    assert len(file_result.records) > 0
+    assert isinstance(file_result, IngestedFullFile)
+    assert len(list(file_result.content_rows or [])) > 0
 
     # Content should be preserved
     all_content = " ".join(
-        str(record.get("content_text", "")) for record in file_result.records
+        str(getattr(r, "content_text", "") or "")
+        for r in (file_result.content_rows or [])
     )
     assert "unsupported content" in all_content
 
@@ -192,10 +226,7 @@ async def test_content_preservation(file_manager, supported_file_examples: dict)
         file_result = result[display_name]
         assert file_result.status == "success"
 
-        # Combine all content from records
-        all_content = " ".join(
-            str(record.get("content_text", "")) for record in file_result.records
-        )
+        all_content = _text_for_assertions(file_result)
 
         # Ensure content was preserved and extracted
         assert all_content.strip(), f"Expected content to be preserved in {filename}"
@@ -208,7 +239,7 @@ async def test_content_preservation(file_manager, supported_file_examples: dict)
                 ), f"Expected '{phrase}' in {filename}"
 
         # Ensure we have proper document structure
-        assert len(file_result.records) > 0
+        assert len(list(file_result.content_rows or [])) > 0
 
 
 @pytest.mark.asyncio
@@ -233,11 +264,25 @@ async def test_structure_integrity(
         file_result = result[display_name]
         assert file_result.status == "success"
 
-        records = file_result.records
-        assert len(records) > 0, f"Expected records for {filename}"
+        rows = list(file_result.content_rows or [])
+        assert len(rows) > 0, f"Expected content_rows for {filename}"
 
         # Check document structure integrity
-        doc_records = [r for r in records if r.get("content_type") == "document"]
+        def _ctype(r):
+            return (
+                str(
+                    (
+                        r.get("content_type")
+                        if isinstance(r, dict)
+                        else getattr(r, "content_type", "")
+                    )
+                    or "",
+                )
+                .lower()
+                .strip()
+            )
+
+        doc_records = [r for r in rows if _ctype(r) == "document"]
         assert (
             len(doc_records) == 1
         ), f"Should have exactly one document record for {filename}"
@@ -250,8 +295,8 @@ async def test_structure_integrity(
             # They may only have a document record without sections/paragraphs
             continue
 
-        section_records = [r for r in records if r.get("content_type") == "section"]
-        para_records = [r for r in records if r.get("content_type") == "paragraph"]
+        section_records = [r for r in rows if _ctype(r) == "section"]
+        para_records = [r for r in rows if _ctype(r) == "paragraph"]
 
         # Document should have sections and paragraphs (or at least one of them)
         assert (
