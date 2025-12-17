@@ -11,7 +11,6 @@ import contextvars
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
-from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.hierarchical_logger import SessionLogger
@@ -21,6 +20,7 @@ from unity.conversation_manager.domains.call_manager import (
     LivekitCallManager,
 )
 from unity.conversation_manager.domains.contact_index import ContactIndex
+from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import *
@@ -326,34 +326,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     async def _run_llm(self):
         self.snapshot()
-        prompt = self.prompt_renderer.render_state(
-            self.contact_index,
-            self.notifications_bar,
-            self.active_tasks,
-            self.last_snapshot,
-        )
-        print(prompt)
-        input_message = {"role": "user", "content": prompt}
-        boss_contact = self.contact_index.boss_contact
-        system_prompt = build_system_prompt(
-            bio=self.assistant_about,
-            contact_id=boss_contact.contact_id,
-            first_name=boss_contact.first_name,
-            surname=boss_contact.surname,
-            phone_number=boss_contact.phone_number,
-            email_address=boss_contact.email_address,
-            is_voice_call=self._uses_realtime_api,
-            active_tasks=self.active_tasks,
-        )
+        brain_spec = build_brain_spec(self)
+        print(brain_spec.state_prompt)
+        input_message = brain_spec.state_message()
+        system_prompt = brain_spec.system_prompt
 
         # Log LLM thinking start
         self._session_logger.log_llm_thinking(f"mode={self.mode}")
 
         # Build response model dynamically with current active tasks
-        response_models = build_dynamic_response_models(
-            active_tasks=self.active_tasks,
-        )
-        response_model = response_models[self.mode]
+        response_model = brain_spec.response_model
         out = await self.llm.run(
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
