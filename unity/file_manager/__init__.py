@@ -1,6 +1,5 @@
 from unity.file_manager.base import BaseFileManager
-from unity.file_manager.parser import BaseParser, DoclingParser
-from unity.file_manager.fs_adapters import (
+from unity.file_manager.filesystem_adapters import (
     BaseFileSystemAdapter,
     LocalFileSystemAdapter,
     CodeSandboxFileSystemAdapter,
@@ -22,8 +21,6 @@ from unity.file_manager.types import (
 
 __all__ = [
     "BaseFileManager",
-    "BaseParser",
-    "DoclingParser",
     # adapters
     "BaseFileSystemAdapter",
     "LocalFileSystemAdapter",
