@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, List
 
 from unity.file_manager.types.config import FilePipelineConfig as _FilePipelineConfig
-from unity.file_manager.types.file import ParsedFile
 from unity.file_manager.types.ingest import (
     BaseIngestedFile as _IngestedBase,
     IngestedPDF as _IngestedPDF,
@@ -16,15 +15,15 @@ from unity.file_manager.types.ingest import (
     FileMetrics as _FileMetrics,
     IngestedFileUnion,
 )
-from unity.file_manager.parser.types.enums import FileFormat as _FileFormat
+from unity.file_manager.file_parsers.types.formats import FileFormat as _FileFormat
+from unity.file_manager.file_parsers.types.contracts import FileParseResult
 
 
 def build_compact_ingest_model(
     manager: Any,
     *,
     file_path: str,
-    document: Any,
-    parse_result: ParsedFile,
+    parse_result: FileParseResult,
     config: _FilePipelineConfig,
 ) -> IngestedFileUnion:
     """Build a typed, reference-first ingest model without heavy fields.
@@ -38,10 +37,8 @@ def build_compact_ingest_model(
         The FileManager instance for context/helper methods.
     file_path : str
         The file path.
-    document : Document
-        The parsed document object.
-    parse_result : ParsedFile
-        The ParsedFile Pydantic model from Document.to_parse_result().
+    parse_result : FileParseResult
+        The FileParseResult from the file parser.
     config : FilePipelineConfig
         Pipeline configuration.
 
@@ -66,7 +63,10 @@ def build_compact_ingest_model(
 
     # Content reference
     content_ctx = manager._ctx_for_file(dest_path)
-    record_count = parse_result.total_records
+    from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
+
+    adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
+    record_count = len(list(adapted.content_rows or []))
     try:
         text_chars = len(parse_result.full_text)
     except Exception:
@@ -80,12 +80,10 @@ def build_compact_ingest_model(
     # Tables preview
     tables_meta: List[_TableRef] = []
     try:
-        tables = getattr(getattr(document, "metadata", None), "tables", []) or []
+        tables = list(getattr(parse_result, "tables", []) or [])
         for idx, tbl in enumerate(tables, start=1):
-            sheet_name = getattr(tbl, "sheet_name", None)
-            section_path = getattr(tbl, "section_path", None)
-            label = sheet_name or section_path or f"{idx:02d}"
-            label_safe = manager.safe(str(label))
+            label = str(getattr(tbl, "label", None) or f"{idx:02d}")
+            label_safe = manager.safe(label)
             columns = list(getattr(tbl, "columns", []) or [])[:16]
             row_count = len(getattr(tbl, "rows", []) or [])
             tables_meta.append(
@@ -99,11 +97,22 @@ def build_compact_ingest_model(
     except Exception:
         tables_meta = []
 
-    # Metrics
+    # Metrics (prefer adapter/FS info when available)
     metrics = _FileMetrics(
-        file_size=parse_result.file_size,
-        processing_time=parse_result.processing_time,
-        confidence_score=parse_result.confidence_score,
+        file_size=(
+            getattr(info, "file_size", None) if hasattr(info, "file_size") else None
+        ),
+        processing_time=(
+            (getattr(getattr(parse_result, "trace", None), "duration_ms", None) or 0.0)
+            / 1000.0
+            if getattr(parse_result, "trace", None) is not None
+            else None
+        ),
+        confidence_score=(
+            getattr(getattr(parse_result, "metadata", None), "confidence_score", None)
+            if getattr(parse_result, "metadata", None) is not None
+            else None
+        ),
     )
 
     # Summary excerpt (trim)
@@ -111,15 +120,11 @@ def build_compact_ingest_model(
 
     # Determine canonical file format/mime (handle enum or string)
     ffmt = parse_result.file_format or getattr(
-        getattr(document, "metadata", None),
-        "file_format",
+        getattr(parse_result, "file_format", None),
+        "value",
         None,
     )
-    mime = getattr(
-        getattr(document, "metadata", None),
-        "mime_type",
-        None,
-    )
+    mime = getattr(parse_result, "mime_type", None)
 
     if isinstance(ffmt, _FileFormat):
         fmt_key = ffmt.value.lower()
@@ -144,8 +149,8 @@ def build_compact_ingest_model(
         mime_type=mime,
         status=parse_result.status,
         error=parse_result.error,
-        created_at=parse_result.created_at,
-        modified_at=parse_result.modified_at,
+        created_at=getattr(info, "created_at", None),
+        modified_at=getattr(info, "modified_at", None),
         summary_excerpt=summary_excerpt,
         content_ref=content_ref,
         tables_ref=tables_meta,
@@ -153,44 +158,56 @@ def build_compact_ingest_model(
     )
 
     if Model is _IngestedPDF:
+        # Derive counts from lowered content rows and tables
+        rows = list(adapted.content_rows or [])
+
+        def _ctype(r: Any) -> str:
+            try:
+                return str((getattr(r, "content_type", "") or "")).lower()
+            except Exception:
+                return ""
+
         return Model(
             **base_kwargs,
-            page_count=getattr(
-                getattr(document, "metadata", None),
-                "total_pages",
-                None,
-            ),
-            total_sections=len(getattr(document, "sections", []) or []),
-            image_count=len(
-                getattr(getattr(document, "metadata", None), "images", []) or [],
-            ),
-            table_count=len(
-                getattr(getattr(document, "metadata", None), "tables", []) or [],
-            ),
-            total_records=record_count,
+            page_count=None,
+            total_sections=sum(1 for r in rows if _ctype(r) == "section") or None,
+            image_count=sum(1 for r in rows if _ctype(r) == "image") or None,
+            table_count=len(list(getattr(parse_result, "tables", []) or [])) or None,
+            total_records=len(rows),
         )
     if Model in (_IngestedDocx, _IngestedDoc):
+        rows = list(adapted.content_rows or [])
         return Model(
             **base_kwargs,
-            total_sections=len(getattr(document, "sections", []) or []),
-            image_count=len(
-                getattr(getattr(document, "metadata", None), "images", []) or [],
-            ),
-            table_count=len(
-                getattr(getattr(document, "metadata", None), "tables", []) or [],
-            ),
-            total_records=record_count,
+            total_sections=sum(
+                1
+                for r in rows
+                if str(getattr(r, "content_type", "") or "").lower() == "section"
+            )
+            or None,
+            image_count=sum(
+                1
+                for r in rows
+                if str(getattr(r, "content_type", "") or "").lower() == "image"
+            )
+            or None,
+            table_count=len(list(getattr(parse_result, "tables", []) or [])) or None,
+            total_records=len(rows),
         )
     if Model is _IngestedXlsx:
-        tables = list(getattr(getattr(document, "metadata", None), "tables", []) or [])
-        sheet_names = []
-        try:
-            for t in tables:
-                nm = getattr(t, "sheet_name", None)
-                if nm and nm not in sheet_names:
-                    sheet_names.append(nm)
-        except Exception:
-            sheet_names = sheet_names
+        rows = list(adapted.content_rows or [])
+        sheet_names: List[str] = []
+        for r in rows:
+            try:
+                ctype = str((getattr(r, "content_type", "") or "")).lower()
+                if ctype != "sheet":
+                    continue
+                title = getattr(r, "title", None) or None
+                if title and title not in sheet_names:
+                    sheet_names.append(str(title))
+            except Exception:
+                continue
+        tables = list(getattr(parse_result, "tables", []) or [])
         return Model(
             **base_kwargs,
             sheet_count=len(sheet_names) if sheet_names else (len(tables) or None),
@@ -198,7 +215,7 @@ def build_compact_ingest_model(
             table_count=len(tables) or None,
         )
     if Model is _IngestedCsv:
-        tables = list(getattr(getattr(document, "metadata", None), "tables", []) or [])
+        tables = list(getattr(parse_result, "tables", []) or [])
         return Model(
             **base_kwargs,
             table_count=len(tables) or 1,
