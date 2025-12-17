@@ -4,7 +4,11 @@
 # Add this single line to your ~/.zshrc:
 #   source /path/to/your/unity/clone/tests/shell_init.zsh
 #
-# This sets up aliases and tab completions for all test helper scripts.
+# This sets up shell functions and tab completions for all test helper scripts.
+#
+# WORKTREE SUPPORT: Commands automatically detect the current git repository
+# and use that repo's scripts. This means they work correctly in git worktrees
+# (e.g., Cursor Background Agents) without any extra configuration.
 
 # ---- Directory detection ----
 UNITY_TESTS_DIR="${0:A:h}"  # Absolute path to directory containing this script
@@ -19,15 +23,56 @@ else
 fi
 unset _unity_tty_id
 
-# ---- Aliases ----
-alias parallel_run="$UNITY_TESTS_DIR/parallel_run.sh"
-alias watch_tests="$UNITY_TESTS_DIR/watch_tests.sh"
-alias attach="$UNITY_TESTS_DIR/attach.sh"
-alias kill_failed="$UNITY_TESTS_DIR/kill_failed.sh"
-alias kill_server="$UNITY_TESTS_DIR/kill_server.sh"
-alias list_runs="$UNITY_TESTS_DIR/list_runs.sh"
-alias monitor_resources="$UNITY_TESTS_DIR/monitor_resources.sh"
-alias project_cleanup="$UNITY_TESTS_DIR/project_cleanup.sh"
+# ---- Dynamic script resolver ----
+# Returns the path to a test script, preferring the current git repo's version.
+# This enables worktree support: when you're in a worktree, commands use that
+# worktree's scripts (and thus test that worktree's code).
+_unity_resolve_script() {
+    local script_name="$1"
+    local git_root
+    git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+    if [[ -n "$git_root" && -x "$git_root/tests/$script_name" ]]; then
+        echo "$git_root/tests/$script_name"
+    else
+        echo "$UNITY_TESTS_DIR/$script_name"
+    fi
+}
+
+# ---- Shell functions (worktree-aware) ----
+# These functions dynamically resolve to the current repo's scripts, enabling
+# seamless operation in git worktrees without manual path adjustments.
+
+parallel_run() {
+    "$(_unity_resolve_script parallel_run.sh)" "$@"
+}
+
+watch_tests() {
+    "$(_unity_resolve_script watch_tests.sh)" "$@"
+}
+
+attach() {
+    "$(_unity_resolve_script attach.sh)" "$@"
+}
+
+kill_failed() {
+    "$(_unity_resolve_script kill_failed.sh)" "$@"
+}
+
+kill_server() {
+    "$(_unity_resolve_script kill_server.sh)" "$@"
+}
+
+list_runs() {
+    "$(_unity_resolve_script list_runs.sh)" "$@"
+}
+
+monitor_resources() {
+    "$(_unity_resolve_script monitor_resources.sh)" "$@"
+}
+
+project_cleanup() {
+    "$(_unity_resolve_script project_cleanup.sh)" "$@"
+}
 
 # ---- Completion: attach ----
 _unity_attach_complete() {
