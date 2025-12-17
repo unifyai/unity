@@ -16,7 +16,8 @@ from tests.helpers import _handle_project
 def test_create_basic(file_manager, tmp_path: Path):
     """Import and parse a file; verify ingestion succeeded."""
     fm = file_manager
-    p = tmp_path / "travel_notes.pdf"
+    # Use a real text file (avoid writing invalid binary formats like .pdf).
+    p = tmp_path / "travel_notes.txt"
     content = "This document contains notes about hiking trails in the Alps."
     p.write_text(content, encoding="utf-8")
     name = str(p)
@@ -53,16 +54,16 @@ def test_search_single_reference_basic(file_manager, tmp_path: Path):
     fm.clear()
     files_data = [
         (
-            "history_essay.pdf",
+            "history_essay.txt",
             "This document explores the causes of the French Revolution.",
         ),
         (
             "garden_guide.txt",
             "A step by step guide to planting roses and maintaining gardens.",
         ),
-        ("sports_report.docx", "Summary of the Olympic Games and medal counts."),
+        ("sports_report.txt", "Summary of the Olympic Games and medal counts."),
         (
-            "astronomy_notes.pdf",
+            "astronomy_notes.txt",
             "Observations of the Orion constellation and nearby nebulae.",
         ),
     ]
@@ -79,7 +80,7 @@ def test_search_single_reference_basic(file_manager, tmp_path: Path):
 
     assert len(results) >= 1
     # Should find sports report first
-    assert any(r.get("file_path", "").endswith("sports_report.docx") for r in results)
+    assert any(r.get("file_path", "").endswith("sports_report.txt") for r in results)
 
     # Verify columns were created
     cols = fm._list_columns()
@@ -92,7 +93,7 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
     """Test semantic search across multiple columns."""
     fm = file_manager
     fm.clear()
-    p1 = tmp_path / "wildlife_guide.pdf"
+    p1 = tmp_path / "wildlife_guide.txt"
     p1.write_text(
         "Information about African elephants and their migratory patterns.",
         encoding="utf-8",
@@ -100,7 +101,7 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
     n1 = str(p1)
     fm.ingest_files(n1)
 
-    p2 = tmp_path / "theatre_review.docx"
+    p2 = tmp_path / "theatre_review.txt"
     p2.write_text(
         "Critical analysis of Shakespeare's Hamlet performances.",
         encoding="utf-8",
@@ -113,7 +114,7 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
     results = fm._search_files(references=refs, k=2)
 
     assert len(results) >= 1
-    assert any(r.get("file_path", "").endswith("theatre_review.docx") for r in results)
+    assert any(r.get("file_path", "").endswith("theatre_review.txt") for r in results)
 
     # Verify columns were created
     cols = fm._list_columns()
@@ -135,7 +136,7 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
             "Artificial intelligence overview",
         ),
         (
-            "ml_research.pdf",
+            "ml_research.txt",
             "Machine learning and artificial intelligence research paper discussing deep neural networks, algorithms, and AI applications in detail.",
             "Machine learning research",
         ),
@@ -145,7 +146,7 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
             "Chocolate chip cookie recipe",
         ),
         (
-            "tech_news.docx",
+            "tech_news.txt",
             "Technology news mentions AI and machine learning in passing.",
             "Technology news",
         ),
@@ -156,12 +157,13 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
         name = str(p)
         fm.ingest_files(name)
 
-    # Search for AI/ML content - should rank ml_research.pdf highest
+    # Search for AI/ML content - should rank ml_research.txt highest
     query = "artificial intelligence machine learning research algorithms"
     results = fm._search_files(references={"summary": query}, k=1)
 
     assert len(results) == 1
-    assert any(r.get("file_path", "").endswith("ml_research.pdf") for r in results)
+    print(f"results: {[(f.get('file_id'), f.get('file_path')) for f in results]}")
+    assert any(r.get("file_path", "").endswith("ml_research.txt") for r in results)
 
     # Result should be present
     assert results
@@ -180,11 +182,11 @@ def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
             "This document is about gardening and has no technical content.",
         ),
         (
-            "somewhat_relevant.docx",
+            "somewhat_relevant.txt",
             "This business document mentions AI tools in one paragraph.",
         ),
         (
-            "highly_relevant.pdf",
+            "highly_relevant.txt",
             "Comprehensive artificial intelligence and machine learning guide with detailed algorithms, neural network architectures, and practical AI applications.",
         ),
         (
@@ -192,7 +194,7 @@ def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
             "Technical article about artificial intelligence applications in industry.",
         ),
         (
-            "unrelated.docx",
+            "unrelated.txt",
             "Financial report with quarterly earnings and budget forecasts.",
         ),
     ]
@@ -212,13 +214,13 @@ def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
     # First result should be the most comprehensive/relevant
     print(f"results: {[(f.get('file_id'), f.get('file_path')) for f in results]}")
     assert any(
-        r.get("file_path", "").endswith("highly_relevant.pdf") for r in results[:3]
+        r.get("file_path", "").endswith("highly_relevant.txt") for r in results[:3]
     )
 
     # Second and third should be more relevant than irrelevant docs
     top_3_filenames = [r.get("file_path") for r in results[:3]]
     assert "irrelevant.txt" not in top_3_filenames
-    assert "unrelated.docx" not in top_3_filenames
+    assert "unrelated.txt" not in top_3_filenames
 
 
 @pytest.mark.requires_real_unify
@@ -233,11 +235,11 @@ def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
             "This document discusses learning and intelligent systems in general terms.",
         ),
         (
-            "exact_match.pdf",
+            "exact_match.txt",
             "Machine learning artificial intelligence neural networks deep learning algorithms.",
         ),
         (
-            "weak_match.docx",
+            "weak_match.txt",
             "Brief mention of smart technology and automated learning processes.",
         ),
     ]
@@ -248,12 +250,12 @@ def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
         name = str(p)
         fm.ingest_files(name)
 
-    # Search for exact terms that appear in exact_match.pdf
+    # Search for exact terms that appear in exact_match.txt
     query = "machine learning artificial intelligence neural networks"
     results = fm._search_files(references={"summary": query}, k=1)
 
     assert len(results) == 1
-    assert any(r.get("file_path", "").endswith("exact_match.pdf") for r in results)
+    assert any(r.get("file_path", "").endswith("exact_match.txt") for r in results)
 
 
 @pytest.mark.requires_real_unify
@@ -264,8 +266,8 @@ def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
     fm = file_manager
     fm.clear()
     docs = {
-        "signal_in_text.pdf": "Deep learning neural networks for computer vision and natural language processing.",
-        "signal_in_both.docx": "Advanced machine learning techniques including neural networks and deep learning algorithms.",
+        "signal_in_text.txt": "Deep learning neural networks for computer vision and natural language processing.",
+        "signal_in_both.txt": "Advanced machine learning techniques including neural networks and deep learning algorithms.",
         "signal_in_metadata.txt": "This is a general technology document.",
     }
     for fname, text in docs.items():
@@ -283,7 +285,7 @@ def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
     results = fm._search_files(references=refs, k=1)
 
     assert len(results) == 1
-    assert any(r.get("file_path", "").endswith("signal_in_both.docx") for r in results)
+    assert any(r.get("file_path", "").endswith("signal_in_both.txt") for r in results)
 
     # Verify columns were created
     cols = fm._list_columns()
@@ -300,11 +302,11 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
     fm.clear()
     test_docs = [
         (
-            "medical_ai.pdf",
+            "medical_ai.txt",
             "Artificial intelligence applications in medical diagnosis, healthcare AI systems, and clinical machine learning for patient care.",
         ),
         (
-            "finance_ai.docx",
+            "finance_ai.txt",
             "AI applications in financial services, algorithmic trading, and machine learning for risk assessment in banking.",
         ),
         (
@@ -312,7 +314,7 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
             "General overview of artificial intelligence and machine learning concepts.",
         ),
         (
-            "automotive_ai.pdf",
+            "automotive_ai.txt",
             "Automotive AI systems, self-driving cars, machine learning for autonomous vehicles and transportation.",
         ),
     ]
@@ -323,7 +325,7 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
         name = str(p)
         fm.ingest_files(name)
 
-    # Search for medical AI - should rank medical_ai.pdf first
+    # Search for medical AI - should rank medical_ai.txt first
     medical_query = "artificial intelligence medical diagnosis healthcare clinical"
     medical_results = fm._search_files(
         references={"summary": medical_query},
@@ -332,16 +334,16 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
 
     assert len(medical_results) == 1
     assert any(
-        r.get("file_path", "").endswith("medical_ai.pdf") for r in medical_results
+        r.get("file_path", "").endswith("medical_ai.txt") for r in medical_results
     )
 
-    # Search for automotive AI - should rank automotive_ai.pdf first
+    # Search for automotive AI - should rank automotive_ai.txt first
     auto_query = "artificial intelligence automotive self-driving autonomous vehicles"
     auto_results = fm._search_files(references={"summary": auto_query}, k=1)
 
     assert len(auto_results) == 1
     assert any(
-        r.get("file_path", "").endswith("automotive_ai.pdf") for r in auto_results
+        r.get("file_path", "").endswith("automotive_ai.txt") for r in auto_results
     )
 
 
@@ -351,13 +353,13 @@ def test_filter_basic(file_manager, tmp_path: Path):
     """Test basic filtering of files."""
     # Create test files
     fm = file_manager
-    p_ok = tmp_path / "document.pdf"
-    p_ok.write_text("PDF content", encoding="utf-8")
+    p_ok = tmp_path / "document.txt"
+    p_ok.write_text("Simple text content", encoding="utf-8")
     n_ok = str(p_ok)
     fm.ingest_files(n_ok)
 
-    p_bad = tmp_path / "spreadsheet.xlsx"
-    p_bad.write_text("Parse failed", encoding="utf-8")
+    p_bad = tmp_path / "spreadsheet.txt"
+    p_bad.write_text("Another text file", encoding="utf-8")
     n_bad = str(p_bad)
     fm.ingest_files(n_bad)
 
@@ -367,9 +369,9 @@ def test_filter_basic(file_manager, tmp_path: Path):
     assert all(f.get("status", "") == "success" for f in success_files)
 
     # Filter by filename extension
-    pdf_files = fm._filter_files(filter="file_path.endswith('.pdf')")
+    pdf_files = fm._filter_files(filter="file_path.endswith('.txt')")
     assert len(pdf_files) >= 1
-    assert all(f.get("file_path", "").endswith(".pdf") for f in pdf_files)
+    assert all(f.get("file_path", "").endswith(".txt") for f in pdf_files)
 
 
 @pytest.mark.requires_real_unify
@@ -378,7 +380,7 @@ def test_filter_metadata(file_manager, tmp_path: Path):
     """Test filtering files by metadata fields."""
     fm = file_manager
     fm.clear()
-    p_large = tmp_path / "large_file.pdf"
+    p_large = tmp_path / "large_file.txt"
     p_large.write_text("Large document content", encoding="utf-8")
     n_large = str(p_large)
     fm.ingest_files(n_large)
@@ -389,9 +391,9 @@ def test_filter_metadata(file_manager, tmp_path: Path):
     fm.ingest_files(n_small)
 
     # Filter by file format
-    large_files = fm._filter_files(filter="file_format == 'pdf'")
+    large_files = fm._filter_files(filter="file_format == 'txt'")
     assert len(large_files) == 1
-    assert str(large_files[0].get("file_path", "")).endswith("large_file.pdf")
+    assert str(large_files[0].get("file_path", "")).endswith("large_file.txt")
 
 
 @pytest.mark.requires_real_unify

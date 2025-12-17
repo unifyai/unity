@@ -12,7 +12,6 @@ import textwrap
 from tests.assertion_helpers import (
     extract_tools_dict,
     assert_in_order,
-    assert_section_spacing,
     assert_time_footer,
     first_diff_block,
 )
@@ -27,6 +26,7 @@ from unity.file_manager.prompt_builders import (
 
 def _make_mock_tools() -> dict:
     """Create mock tool functions for testing."""
+
     def exists(path: str) -> bool:
         """Check if file exists."""
         return True
@@ -43,23 +43,63 @@ def _make_mock_tools() -> dict:
         """Get tables overview."""
         return {}
 
-    def filter_files(*, filter: str = None, tables: list = None, offset: int = 0, limit: int = 100) -> list:
+    def schema_explain(*, table: str) -> str:
+        """Explain a table schema."""
+        return ""
+
+    def filter_files(
+        *,
+        filter: str = None,
+        tables: list = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list:
         """Filter files."""
         return []
 
-    def search_files(*, references: dict, table: str = None, filter: str = None, k: int = 10) -> list:
+    def search_files(
+        *,
+        references: dict,
+        table: str = None,
+        filter: str = None,
+        k: int = 10,
+    ) -> list:
         """Search files semantically."""
         return []
 
-    def reduce(*, table: str, metric: str, keys: str, filter: str = None, group_by: str = None) -> dict:
+    def ask_about_file(file_path: str, question: str) -> str:
+        """Ask a question about a specific file."""
+        return ""
+
+    def reduce(
+        *,
+        table: str,
+        metric: str,
+        keys: str,
+        filter: str = None,
+        group_by: str = None,
+    ) -> dict:
         """Reduce/aggregate data."""
         return {}
 
-    def filter_join(*, tables: list, join_expr: str, select: dict, result_where: str = None) -> list:
+    def filter_join(
+        *,
+        tables: list,
+        join_expr: str,
+        select: dict,
+        result_where: str = None,
+    ) -> list:
         """Filter with join."""
         return []
 
-    def search_join(*, tables: list, join_expr: str, select: dict, references: dict, k: int = 10) -> list:
+    def search_join(
+        *,
+        tables: list,
+        join_expr: str,
+        select: dict,
+        references: dict,
+        k: int = 10,
+    ) -> list:
         """Search with join."""
         return []
 
@@ -100,6 +140,7 @@ def _make_mock_tools() -> dict:
         "list": list_dir,
         "list_columns": list_columns,
         "tables_overview": tables_overview,
+        "schema_explain": schema_explain,
         "filter_files": filter_files,
         "search_files": search_files,
         "reduce": reduce,
@@ -109,6 +150,7 @@ def _make_mock_tools() -> dict:
         "search_multi_join": search_multi_join,
         "stat": stat,
         "ask": ask,
+        "ask_about_file": ask_about_file,
         "rename_file": rename_file,
         "move_file": move_file,
         "delete_file": delete_file,
@@ -121,8 +163,6 @@ def test_file_manager_ask_system_prompt_formatting():
     prompt = build_file_manager_ask_prompt(
         tools=tools,
         num_files=10,
-        columns={"file_id": "int", "path": "str", "status": "str"},
-        table_schemas_json="{}",
     )
 
     # Check key structural elements
@@ -161,7 +201,8 @@ def test_file_manager_ask_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "FileManager ask system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n" + prompt[:2000],
+        "The following system message resulted in no assertion errors:\n\n\n"
+        + prompt[:2000],
     )
 
 
@@ -169,7 +210,6 @@ def test_file_manager_ask_about_file_system_prompt_formatting():
     tools = _make_mock_tools()
     prompt = build_file_manager_ask_about_file_prompt(
         tools=tools,
-        table_schemas_json="{}",
     )
 
     # Check key structural elements
@@ -192,7 +232,8 @@ def test_file_manager_ask_about_file_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "FileManager ask_about_file system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n" + prompt[:2000],
+        "The following system message resulted in no assertion errors:\n\n\n"
+        + prompt[:2000],
     )
 
 
@@ -201,8 +242,6 @@ def test_file_manager_organize_system_prompt_formatting():
     prompt = build_file_manager_organize_prompt(
         tools=tools,
         num_files=10,
-        columns={"file_id": "int", "path": "str"},
-        table_schemas_json="{}",
     )
 
     # Check key structural elements
@@ -240,7 +279,8 @@ def test_file_manager_organize_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "FileManager organize system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n" + prompt[:2000],
+        "The following system message resulted in no assertion errors:\n\n\n"
+        + prompt[:2000],
     )
 
 
@@ -283,8 +323,10 @@ def _build_prompt_in_subprocess(method: str) -> str:
         def list_dir(path: str = "/") -> list: return []
         def list_columns(table: str, *, include_types: bool = True) -> dict: return {{}}
         def tables_overview(*, file: str = None) -> dict: return {{}}
+        def schema_explain(*, table: str) -> str: return ""
         def filter_files(*, filter: str = None, tables: list = None, offset: int = 0, limit: int = 100) -> list: return []
         def search_files(*, references: dict, table: str = None, filter: str = None, k: int = 10) -> list: return []
+        def ask_about_file(file_path: str, question: str) -> str: return ""
         def reduce(*, table: str, metric: str, keys: str, filter: str = None, group_by: str = None) -> dict: return {{}}
         def filter_join(*, tables: list, join_expr: str, select: dict, result_where: str = None) -> list: return []
         def search_join(*, tables: list, join_expr: str, select: dict, references: dict, k: int = 10) -> list: return []
@@ -300,7 +342,8 @@ def _build_prompt_in_subprocess(method: str) -> str:
         tools = {{
             "exists": exists, "list": list_dir, "list_columns": list_columns,
             "tables_overview": tables_overview, "filter_files": filter_files,
-            "search_files": search_files, "reduce": reduce, "filter_join": filter_join,
+            "schema_explain": schema_explain, "search_files": search_files,
+            "ask_about_file": ask_about_file, "reduce": reduce, "filter_join": filter_join,
             "search_join": search_join, "filter_multi_join": filter_multi_join,
             "search_multi_join": search_multi_join, "stat": stat, "ask": ask,
             "rename_file": rename_file, "move_file": move_file,
@@ -310,18 +353,14 @@ def _build_prompt_in_subprocess(method: str) -> str:
         if "{method}" == "ask":
             prompt = build_file_manager_ask_prompt(
                 tools=tools, num_files=10,
-                columns={{"file_id": "int", "path": "str"}},
-                table_schemas_json="{{}}",
             )
         elif "{method}" == "ask_about_file":
             prompt = build_file_manager_ask_about_file_prompt(
-                tools=tools, table_schemas_json="{{}}",
+                tools=tools,
             )
         else:
             prompt = build_file_manager_organize_prompt(
                 tools=tools, num_files=10,
-                columns={{"file_id": "int", "path": "str"}},
-                table_schemas_json="{{}}",
             )
         sys.stdout.write(prompt)
         """,

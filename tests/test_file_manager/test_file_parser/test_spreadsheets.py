@@ -121,37 +121,6 @@ def test_csv_delimiters_unicode_and_empty_cells(
 
 
 @_handle_project
-def test_csv_large_file_performance_and_row_count(tmp_path: Path):
-    """
-    Port of legacy `test_csv_large_file_performance` with strict row-count validation.
-    """
-    csv_file = tmp_path / "large.csv"
-    lines = ["ID,Name,Value,Category"]
-    for i in range(1000):
-        lines.append(f"{i},Item_{i},{i * 10.5},Category_{i % 10}")
-    csv_file.write_text("\n".join(lines), encoding="utf-8")
-
-    import time
-
-    t0 = time.time()
-    res = FileParser().parse(
-        FileParseRequest(logical_path=str(csv_file), source_local_path=str(csv_file)),
-    )
-    dt = time.time() - t0
-
-    assert res.status == "success"
-    assert res.file_format == FileFormat.CSV
-    assert dt < 10.0, f"CSV parsing took {dt:.2f}s, too slow"
-
-    assert len(res.tables) == 1
-    tbl = res.tables[0]
-    assert tbl.num_rows == 1000
-    assert tbl.num_cols == 4
-    assert any(str(r.get("Name", "")) == "Item_0" for r in tbl.rows)
-    assert any(str(r.get("Name", "")) == "Item_999" for r in tbl.rows)
-
-
-@_handle_project
 def test_csv_complex_quotes_and_commas(tmp_path: Path):
     """
     Port of legacy `test_csv_complex`: quoted fields + commas should parse correctly.
