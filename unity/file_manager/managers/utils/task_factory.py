@@ -48,8 +48,9 @@ import re
 import uuid
 from typing import Any, List, Optional, Tuple, TYPE_CHECKING
 
-from unity.file_manager.types.file import ParsedFile
-from .ingest_ops import chunk_records, extract_table_metadata
+from unity.file_manager.file_parsers.types.contracts import FileParseResult
+from unity.file_manager.types.file import FileContentRow
+from .ingest_ops import chunk_records
 from .embed_ops import has_embedding_work
 
 if TYPE_CHECKING:
@@ -151,8 +152,7 @@ def build_file_task_graph(
     file_manager: Any,
     *,
     file_path: str,
-    document: Any,
-    parse_result: ParsedFile,
+    parse_result: FileParseResult,
     config: "FilePipelineConfig",
     file_start_time: float,
 ) -> "TaskGraph":
@@ -170,10 +170,8 @@ def build_file_task_graph(
         The file manager instance.
     file_path : str
         The logical file path/identifier.
-    document : Any
-        The parsed document object.
-    parse_result : ParsedFile
-        The ParsedFile Pydantic model from Document.to_parse_result().
+    parse_result : FileParseResult
+        The FileParseResult from the file parser (graph + tables + trace).
     config : FilePipelineConfig
         Pipeline configuration.
     file_start_time : float
@@ -193,6 +191,11 @@ def build_file_task_graph(
     logger.debug(f"[TaskFactory] Building task graph for: {file_path}")
 
     graph = TaskGraph(file_path)
+
+    # Derive ingestion-ready `/Content/` rows once per file.
+    from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
+
+    adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
 
     # Determine embed strategy
     strategy = getattr(config.embed, "strategy", "after")
@@ -214,6 +217,8 @@ def build_file_task_graph(
             "file_path": file_path,
             "parse_result": parse_result,
             "config": config,
+            "document_summary": adapted.document_summary,
+            "total_records": len(list(adapted.content_rows or [])),
         },
         dependencies=set(),  # No dependencies - root task
         chunk_index=None,
@@ -234,6 +239,7 @@ def build_file_task_graph(
         file_manager=file_manager,
         file_path=file_path,
         parse_result=parse_result,
+        content_rows=list(adapted.content_rows or []),
         config=config,
         file_record_task_id=file_record_task_id,
         file_start_time=file_start_time,
@@ -252,7 +258,7 @@ def build_file_task_graph(
             graph,
             file_manager=file_manager,
             file_path=file_path,
-            document=document,
+            parse_result=parse_result,
             config=config,
             content_ingest_ids=content_ingest_ids,
             file_record_task_id=file_record_task_id,
@@ -276,7 +282,8 @@ def _build_content_chunk_tasks(
     *,
     file_manager: Any,
     file_path: str,
-    parse_result: ParsedFile,
+    parse_result: FileParseResult,
+    content_rows: List[FileContentRow],
     config: "FilePipelineConfig",
     file_record_task_id: str,
     file_start_time: float,
@@ -294,7 +301,7 @@ def _build_content_chunk_tasks(
         execute_embed_content_chunk,
     )
 
-    records = list(parse_result.records or [])
+    records = list(content_rows or [])
     if not records:
         logger.debug(f"[TaskFactory] No content records for {file_path}")
         return [], []
@@ -329,7 +336,6 @@ def _build_content_chunk_tasks(
                 "chunk_index": idx,
                 "total_chunks": total_chunks,
                 "config": config,
-                "parse_result": parse_result,
             },
             dependencies={prev_ingest_id},  # Chain: N depends on N-1
             chunk_index=idx,
@@ -400,7 +406,7 @@ def _build_table_chunk_tasks(
     *,
     file_manager: Any,
     file_path: str,
-    document: Any,
+    parse_result: FileParseResult,
     config: "FilePipelineConfig",
     content_ingest_ids: List[str],
     file_record_task_id: str,
@@ -421,8 +427,8 @@ def _build_table_chunk_tasks(
         execute_embed_table_chunk,
     )
 
-    tables_meta = extract_table_metadata(document)
-    if not tables_meta:
+    tables = list(getattr(parse_result, "tables", []) or [])
+    if not tables:
         logger.debug(f"[TaskFactory] No tables for {file_path}")
         return [], []
 
@@ -431,10 +437,15 @@ def _build_table_chunk_tasks(
     all_ingest_ids: List[str] = []
     all_embed_ids: List[str] = []
 
-    for table_meta in tables_meta:
-        table_label = table_meta["label"]
-        columns = table_meta["columns"]
-        rows = table_meta["rows"]
+    for i, tbl in enumerate(tables, start=1):
+        table_label = str(getattr(tbl, "label", None) or f"{i:02d}")
+        columns = list(getattr(tbl, "columns", []) or [])
+        rows = list(getattr(tbl, "rows", []) or [])
+        if not columns and rows and isinstance(rows[0], dict):
+            try:
+                columns = [str(k) for k in rows[0].keys()]
+            except Exception:
+                columns = []
 
         if not rows:
             continue
