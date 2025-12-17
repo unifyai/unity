@@ -5,7 +5,8 @@ ingested into Unify contexts. They are compact, reference-first models that
 avoid heavy payloads (full_text, raw records) and instead provide pointers
 (content_ref, tables_ref) to query details via manager tools.
 
-The naming convention uses "Ingested*" to distinguish from "ParsedFile" which
+The naming convention uses "Ingested*" to distinguish from the raw parse output
+model (`FileParseResult`) returned by the file parser in "full" return mode.
 represents the full/raw parsing output with all heavy fields included.
 """
 
@@ -14,7 +15,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
-from unity.file_manager.parser.types.enums import FileFormat, MimeType
+from unity.file_manager.file_parsers.types.formats import FileFormat, MimeType
 
 
 class ContentRef(BaseModel):
@@ -200,14 +201,51 @@ IngestedFileUnion = Union[
     IngestedCsv,
 ]
 
-# Import ParsedFile for full mode - this is the raw parsing output
-from unity.file_manager.types.file import ParsedFile
+from unity.file_manager.file_parsers.types.contracts import FileParseTrace
+from unity.file_manager.file_parsers.types.graph import ContentGraph
+from unity.file_manager.file_parsers.types.table import ExtractedTable
+from unity.file_manager.types.file import FileContentRow
+
+
+class IngestedFullFile(BaseModel):
+    """Full return model for `return_mode='full'`.
+
+    This is FileManager-owned and includes:
+    - raw parse artifacts (graph/tables/metadata/trace)
+    - FileManager-derived `/Content/` rows (typed)
+    - ingest references/metrics
+    """
+
+    file_path: str
+    status: str = "success"
+    error: Optional[str] = None
+
+    file_format: Optional[FileFormat] = None
+    mime_type: Optional[MimeType] = None
+
+    summary: str = ""
+    full_text: str = ""
+
+    trace: Optional[FileParseTrace] = None
+    metadata: Optional[dict] = None
+
+    graph: Optional[ContentGraph] = None
+    tables: List[ExtractedTable] = Field(default_factory=list)
+    content_rows: List[FileContentRow] = Field(default_factory=list)
+
+    # Compact refs/metrics (same as compact mode)
+    content_ref: ContentRef = Field(
+        default_factory=lambda: ContentRef(context="", record_count=0, text_chars=0),
+    )
+    tables_ref: List[TableRef] = Field(default_factory=list)
+    metrics: FileMetrics = Field(default_factory=FileMetrics)
+
 
 # Type for individual file results depending on return mode
 # - compact: IngestedFileUnion (reference-first, no heavy fields)
-# - full: ParsedFile (complete parsing output with records, full_text, etc.)
+# - full: IngestedFullFile (parse artifacts + lowered rows + refs/metrics)
 # - none: IngestedMinimal (just status stub)
-FileResultType = Union[IngestedFileUnion, ParsedFile, IngestedMinimal]
+FileResultType = Union[IngestedFileUnion, IngestedFullFile, IngestedMinimal]
 
 
 class PipelineStatistics(BaseModel):
@@ -245,7 +283,7 @@ class IngestPipelineResult(BaseModel):
 
     Supports multiple return modes:
     - "compact" (default): IngestedFileUnion Pydantic models
-    - "full": ParsedFile Pydantic models (complete with records, full_text)
+    - "full": IngestedFullFile Pydantic models (parse artifacts + lowered rows + refs/metrics)
     - "none": IngestedMinimal Pydantic models (just status stub)
     """
 
@@ -311,7 +349,7 @@ class IngestPipelineResult(BaseModel):
         """Build an IngestPipelineResult from a dict of file results.
 
         Automatically computes statistics from the individual file results.
-        All results must be Pydantic models (IngestedFileUnion, ParsedFile, or IngestedMinimal).
+        All results must be Pydantic models (IngestedFileUnion, FileParseResult, or IngestedMinimal).
         """
 
         def _get_status(r: BaseModel) -> Optional[str]:
@@ -322,8 +360,11 @@ class IngestPipelineResult(BaseModel):
             cr = getattr(r, "content_ref", None)
             if cr:
                 return getattr(cr, "record_count", 0)
-            # For ParsedFile (full mode)
-            return getattr(r, "total_records", 0)
+            # For IngestedFullFile (full mode)
+            try:
+                return len(list(getattr(r, "content_rows", []) or []))
+            except Exception:
+                return getattr(r, "total_records", 0)
 
         def _get_table_rows(r: BaseModel) -> int:
             tr = getattr(r, "tables_ref", None)
