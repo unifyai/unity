@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+from unity.file_manager.filesystem_adapters.local_adapter import LocalFileSystemAdapter
 
 
 @pytest.mark.asyncio
