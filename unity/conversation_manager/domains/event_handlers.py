@@ -159,7 +159,7 @@ async def _(
         timestamp=event.timestamp,
     )
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = True
-    await cm.run_llm(delay=0)
+    await cm.request_llm_run(delay=0)
 
 
 @EventHandler.register(
@@ -223,7 +223,7 @@ async def _(
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
-    await cm.run_llm(delay=0, cancel_running=True)
+    await cm.request_llm_run(delay=0, cancel_running=True)
 
 
 @EventHandler.register(
@@ -254,7 +254,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 event.timestamp,
             )
             # Trigger LLM run so assistant can see and respond to the clarification
-            await cm.run_llm()
+            await cm.request_llm_run()
     else:
         ...
 
@@ -334,7 +334,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     if role == "user":
         await cm.cancel_proactive_speech()
 
-    await cm.run_llm(delay=2)
+    await cm.request_llm_run(delay=2)
 
 
 # TODO: put all managers in the cm and move start up logic from managers worker to here
@@ -389,7 +389,7 @@ async def _(event: ConductorHandleStarted, cm: "ConversationManager", *args, **k
         f"Task started: {event.query[:50]}{'...' if len(event.query) > 50 else ''}",
         event.timestamp,
     )
-    await cm.run_llm()
+    await cm.request_llm_run()
 
 
 @EventHandler.register(NotificationInjectedEvent)
@@ -414,7 +414,7 @@ async def _(
     await cm.cancel_proactive_speech()
 
     # Trigger LLM to react to the notification
-    await cm.run_llm(delay=0, cancel_running=True)
+    await cm.request_llm_run(delay=0, cancel_running=True)
 
 
 @EventHandler.register(NotificationUnpinnedEvent)
@@ -443,7 +443,7 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
         event.timestamp,
     )
     cm.active_tasks.pop(event.handle_id, None)
-    await cm.run_llm()
+    await cm.request_llm_run()
 
 
 @EventHandler.register((ConductorPauseActor, ConductorResumeActor))
