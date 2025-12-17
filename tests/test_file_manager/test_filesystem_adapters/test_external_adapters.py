@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from unity.file_manager.fs_adapters.codesandbox_adapter import (
+from unity.file_manager.filesystem_adapters.codesandbox_adapter import (
     CodeSandboxFileSystemAdapter,
 )
-from unity.file_manager.fs_adapters.interact_adapter import InteractFileSystemAdapter
+from unity.file_manager.filesystem_adapters.interact_adapter import (
+    InteractFileSystemAdapter,
+)
 
 
 @pytest.mark.asyncio

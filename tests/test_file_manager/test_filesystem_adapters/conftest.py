@@ -84,12 +84,12 @@ def csb_http(monkeypatch):
     monkeypatch.setattr("unify.utils.http.get", _get, raising=True)
     monkeypatch.setattr("unify.utils.http.post", _post, raising=True)
     monkeypatch.setattr(
-        "unity.file_manager.fs_adapters.codesandbox_adapter.http.get",
+        "unity.file_manager.filesystem_adapters.codesandbox_adapter.http.get",
         _get,
         raising=True,
     )
     monkeypatch.setattr(
-        "unity.file_manager.fs_adapters.codesandbox_adapter.http.post",
+        "unity.file_manager.filesystem_adapters.codesandbox_adapter.http.post",
         _post,
         raising=True,
     )
