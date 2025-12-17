@@ -11,9 +11,8 @@ import unify
 
 from unity.common.tool_spec import manager_tool, read_only
 from unity.file_manager.base import BaseFileManager
-from unity.file_manager.parser.base import BaseParser
-from unity.file_manager.parser.docling_parser import DoclingParser
-from unity.file_manager.types.file import FileRecord, ParsedFile
+from unity.file_manager.file_parsers import FileParser
+from unity.file_manager.types.file import FileRecord
 from unity.file_manager.types.config import (
     FilePipelineConfig as _FilePipelineConfig,
 )
@@ -25,7 +24,7 @@ from unity.file_manager.types.ingest import (
     FileMetrics,
     FileResultType,
 )
-from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
+from unity.file_manager.filesystem_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.prompt_builders import (
     build_file_manager_ask_prompt,
     build_file_manager_ask_about_file_prompt,
@@ -80,7 +79,7 @@ class FileManager(BaseFileManager):
         self,
         adapter: Optional[BaseFileSystemAdapter] = None,
         *,
-        parser: Optional[BaseParser] = None,
+        parser: Optional[FileParser] = None,
         rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
@@ -100,7 +99,7 @@ class FileManager(BaseFileManager):
         super().__init__()
         self.include_in_multi_assistant_table = False
         self._adapter = adapter
-        self.__parser: Optional[BaseParser] = parser
+        self.__parser: Optional[FileParser] = parser
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Derive a stable alias and context
@@ -224,11 +223,7 @@ class FileManager(BaseFileManager):
     @functools.cached_property
     def _parser(self):
         if self.__parser is None:
-            self.__parser = DoclingParser(
-                use_llm_enrichment=True,
-                extract_images=True,
-                extract_tables=True,
-            )
+            self.__parser = FileParser()
         return self.__parser
 
     def _provision_storage(self) -> None:
@@ -1165,9 +1160,9 @@ class FileManager(BaseFileManager):
         file_paths : str | list[str]
             One or more logical file paths to process.
         config : FilePipelineConfig | None
-            Pipeline configuration controlling parser kwargs, ingest layout,
-            table ingestion and embedding behavior. When None, defaults are used
-            (equivalent to ``FilePipelineConfig()``).
+            Pipeline configuration controlling parser routing/concurrency,
+            ingest layout, table ingestion and embedding behavior. When None,
+            defaults are used (equivalent to ``FilePipelineConfig()``).
 
         Returns
         -------
@@ -1220,7 +1215,9 @@ class FileManager(BaseFileManager):
                     # Per-file export failure → do not fail the entire tool call
                     # ALL returns are Pydantic models
                     if return_mode == "full":
-                        error_results[path] = ParsedFile(
+                        from unity.file_manager.types.ingest import IngestedFullFile
+
+                        error_results[path] = IngestedFullFile(
                             file_path=path,
                             status="error",
                             error=f"export failed: {e}",
@@ -1269,130 +1266,26 @@ class FileManager(BaseFileManager):
                 except Exception:
                     _reporter = None
 
-            # Parse files using parser's batch method (handles parallelization)
-            documents: List[Any] = []
-            if len(exported_paths) > 1 and hasattr(self._parser, "parse_batch"):
-                try:
-                    logger.debug(
-                        f"[FileManager] Parsing {len(exported_paths)} files in parallel (batch_size={cfg.parse.batch_size})",
-                    )
-                    # Track parse start time for timing
-                    import time as _time
+            # Parse files using the new FileParser facade.
+            # Note: we parse from the exported (local) path, but the FileParseResult logical_path
+            # is always the ORIGINAL logical path so contexts and business-context matching work.
+            from unity.file_manager.file_parsers.types.contracts import FileParseResult
 
-                    parse_start_time = _time.perf_counter()
+            parse_results: list[FileParseResult] = []
+            try:
+                import time as _time
 
-                    # Report parse started for all files
-                    if enable_progress and _reporter is not None:
-                        from .utils.progress import create_progress_event
+                parse_start_time = _time.perf_counter()
 
-                        for exp in exported_paths:
-                            orig = exported_paths_to_original_paths.get(exp, exp)
-                            _reporter.report(
-                                create_progress_event(
-                                    orig,
-                                    "parse",
-                                    "started",
-                                    duration_ms=0.0,
-                                    elapsed_ms=0.0,
-                                ),
-                            )
+                # Report parse started for all files
+                if enable_progress and _reporter is not None:
+                    from .utils.progress import create_progress_event
 
-                    documents = self._parser.parse_batch(
-                        exported_paths,
-                        batch_size=cfg.parse.batch_size,
-                        **cfg.parse.parser_kwargs,
-                    )
-
-                    # Calculate parse timing
-                    parse_duration_ms = (_time.perf_counter() - parse_start_time) * 1000
-
-                    # Report parse completion for all files with timing
-                    if enable_progress and _reporter is not None:
-                        from .utils.progress import create_progress_event
-
-                        for exp in exported_paths:
-                            orig = exported_paths_to_original_paths.get(exp, exp)
-                            _reporter.report(
-                                create_progress_event(
-                                    orig,
-                                    "parse",
-                                    "completed",
-                                    duration_ms=parse_duration_ms,
-                                    elapsed_ms=parse_duration_ms,
-                                ),
-                            )
-                except Exception as e:
-                    # Calculate timing for failure
-                    parse_duration_ms = (
-                        (_time.perf_counter() - parse_start_time) * 1000
-                        if "parse_start_time" in dir()
-                        else 0.0
-                    )
-                    # Batch failure → mark all remaining as errors
-                    # ALL returns are Pydantic models
-                    for fp in exported_paths:
-                        original_path = exported_paths_to_original_paths.get(fp)
-                        if original_path and original_path not in error_results:
-                            if return_mode == "full":
-                                error_results[original_path] = ParsedFile(
-                                    file_path=original_path,
-                                    status="error",
-                                    error=f"parse_batch failed: {e}",
-                                )
-                            elif return_mode == "none":
-                                error_results[original_path] = IngestedMinimal(
-                                    file_path=original_path,
-                                    status="error",
-                                    error=f"parse_batch failed: {e}",
-                                    total_records=0,
-                                    file_format=None,
-                                )
-                            else:
-                                error_results[original_path] = BaseIngestedFile(
-                                    file_path=original_path,
-                                    status="error",
-                                    error=f"parse_batch failed: {e}",
-                                    content_ref=ContentRef(
-                                        context="",
-                                        record_count=0,
-                                        text_chars=0,
-                                    ),
-                                    metrics=FileMetrics(
-                                        processing_time=parse_duration_ms / 1000.0,
-                                    ),
-                                )
-                            if enable_progress and _reporter is not None:
-                                from .utils.progress import create_progress_event
-
-                                _reporter.report(
-                                    create_progress_event(
-                                        original_path,
-                                        "parse",
-                                        "failed",
-                                        duration_ms=parse_duration_ms,
-                                        elapsed_ms=parse_duration_ms,
-                                        error=str(e),
-                                    ),
-                                )
-                    return IngestPipelineResult.from_results(error_results)
-            else:
-                try:
-                    # Track parse start time for timing
-                    import time as _time
-
-                    parse_start_time = _time.perf_counter()
-
-                    # Report parse started for single file
-                    if enable_progress and _reporter is not None:
-                        from .utils.progress import create_progress_event
-
-                        orig0 = exported_paths_to_original_paths.get(
-                            exported_paths[0],
-                            exported_paths[0],
-                        )
+                    for exp in exported_paths:
+                        orig = exported_paths_to_original_paths.get(exp, exp)
                         _reporter.report(
                             create_progress_event(
-                                orig0,
+                                orig,
                                 "parse",
                                 "started",
                                 duration_ms=0.0,
@@ -1400,55 +1293,86 @@ class FileManager(BaseFileManager):
                             ),
                         )
 
-                    documents = [
-                        self._parser.parse(
-                            exported_paths[0],
-                            **cfg.parse.parser_kwargs,
+                from unity.file_manager.file_parsers.types.contracts import (
+                    FileParseRequest,
+                )
+
+                parse_requests: list[FileParseRequest] = []
+                for exp in exported_paths:
+                    orig = exported_paths_to_original_paths.get(exp, exp)
+                    parse_requests.append(
+                        FileParseRequest(
+                            logical_path=orig,
+                            source_local_path=exp,
                         ),
-                    ]
-
-                    # Calculate parse timing
-                    parse_duration_ms = (_time.perf_counter() - parse_start_time) * 1000
-
-                    if enable_progress and _reporter is not None:
-                        from .utils.progress import create_progress_event
-
-                        orig0 = exported_paths_to_original_paths.get(
-                            exported_paths[0],
-                            exported_paths[0],
-                        )
-                        _reporter.report(
-                            create_progress_event(
-                                orig0,
-                                "parse",
-                                "completed",
-                                duration_ms=parse_duration_ms,
-                                elapsed_ms=parse_duration_ms,
-                            ),
-                        )
-                except Exception as e:
-                    # Calculate timing for failure
-                    parse_duration_ms = (
-                        (_time.perf_counter() - parse_start_time) * 1000
-                        if "parse_start_time" in dir()
-                        else 0.0
                     )
-                    original_path = exported_paths_to_original_paths.get(
-                        exported_paths[0],
-                        exported_paths[0],
-                    )
-                    # ALL returns are Pydantic models
+
+                parse_results = self._parser.parse_batch(
+                    parse_requests,
+                    raises_on_error=False,
+                    parse_config=cfg.parse,
+                )
+
+                parse_duration_ms = (_time.perf_counter() - parse_start_time) * 1000
+
+                # Report per-file parse completion/failure
+                if enable_progress and _reporter is not None:
+                    from .utils.progress import create_progress_event
+
+                    for pr in parse_results:
+                        try:
+                            orig = str(getattr(pr, "logical_path", "") or "")
+                            status = str(getattr(pr, "status", "error"))
+                            if status == "success":
+                                _reporter.report(
+                                    create_progress_event(
+                                        orig,
+                                        "parse",
+                                        "completed",
+                                        duration_ms=parse_duration_ms,
+                                        elapsed_ms=parse_duration_ms,
+                                    ),
+                                )
+                            else:
+                                _reporter.report(
+                                    create_progress_event(
+                                        orig,
+                                        "parse",
+                                        "failed",
+                                        duration_ms=parse_duration_ms,
+                                        elapsed_ms=parse_duration_ms,
+                                        error=str(getattr(pr, "error", "") or ""),
+                                    ),
+                                )
+                        except Exception:
+                            continue
+
+            except Exception as e:
+                parse_duration_ms = (
+                    (_time.perf_counter() - parse_start_time) * 1000
+                    if "parse_start_time" in dir()
+                    else 0.0
+                )
+                # Catastrophic parse failure → mark all remaining as errors
+                from unity.file_manager.file_parsers.types.contracts import (
+                    FileParseResult,
+                )
+
+                for exp in exported_paths:
+                    original_path = exported_paths_to_original_paths.get(exp, exp)
+                    if original_path in error_results:
+                        continue
                     if return_mode == "full":
-                        error_results[original_path] = ParsedFile(
-                            file_path=original_path,
+                        error_results[original_path] = FileParseResult(
+                            logical_path=original_path,
                             status="error",
-                            error=str(e),
+                            error=f"parse failed: {e}",
                         )
                     elif return_mode == "none":
                         error_results[original_path] = IngestedMinimal(
                             file_path=original_path,
                             status="error",
-                            error=str(e),
+                            error=f"parse failed: {e}",
                             total_records=0,
                             file_format=None,
                         )
@@ -1456,7 +1380,7 @@ class FileManager(BaseFileManager):
                         error_results[original_path] = BaseIngestedFile(
                             file_path=original_path,
                             status="error",
-                            error=str(e),
+                            error=f"parse failed: {e}",
                             content_ref=ContentRef(
                                 context="",
                                 record_count=0,
@@ -1466,36 +1390,57 @@ class FileManager(BaseFileManager):
                                 processing_time=parse_duration_ms / 1000.0,
                             ),
                         )
-                    if enable_progress and _reporter is not None:
-                        from .utils.progress import create_progress_event
+                return IngestPipelineResult.from_results(error_results)
 
-                        _reporter.report(
-                            create_progress_event(
-                                original_path,
-                                "parse",
-                                "failed",
-                                duration_ms=parse_duration_ms,
-                                elapsed_ms=parse_duration_ms,
-                                error=str(e),
-                            ),
-                        )
-                    return IngestPipelineResult.from_results(error_results)
+            # Split success vs parse errors (parse errors are handled like export errors)
+            successful_parse_results: List[Any] = []
+            successful_paths: List[str] = []
+            for pr in parse_results:
+                orig = str(getattr(pr, "logical_path", "") or "")
+                status = str(getattr(pr, "status", "error"))
+                if status != "success":
+                    if orig and orig not in error_results:
+                        if return_mode == "full":
+                            error_results[orig] = pr
+                        elif return_mode == "none":
+                            error_results[orig] = IngestedMinimal(
+                                file_path=orig,
+                                status="error",
+                                error=str(getattr(pr, "error", "") or ""),
+                                total_records=0,
+                                file_format=None,
+                            )
+                        else:
+                            error_results[orig] = BaseIngestedFile(
+                                file_path=orig,
+                                status="error",
+                                error=str(getattr(pr, "error", "") or ""),
+                                content_ref=ContentRef(
+                                    context="",
+                                    record_count=0,
+                                    text_chars=0,
+                                ),
+                                metrics=FileMetrics(
+                                    processing_time=(parse_duration_ms / 1000.0),
+                                ),
+                            )
+                    continue
+                successful_parse_results.append(pr)
+                successful_paths.append(orig)
+
+            if not successful_parse_results:
+                return IngestPipelineResult.from_results(error_results)
 
             # Build results and ingest per-file artifacts using the PipelineExecutor
             from .utils.executor import run_pipeline
-
-            # Map exported paths back to original paths for the pipeline
-            original_paths = [
-                exported_paths_to_original_paths.get(ep, ep) for ep in exported_paths
-            ]
 
             # run_pipeline handles parallel vs sequential execution based on
             # cfg.execution.parallel_files internally
             verbosity = getattr(cfg.diagnostics, "verbosity", "low")
             pipeline_result = run_pipeline(
                 self,
-                documents=documents,
-                file_paths=original_paths,
+                parse_results=successful_parse_results,
+                file_paths=successful_paths,
                 config=cfg,
                 reporter=_reporter,
                 enable_progress=enable_progress,
@@ -1554,6 +1499,18 @@ class FileManager(BaseFileManager):
 
         Use this for discovery when you need to understand what data is available.
         Returns logical table names that can be passed to other tools.
+
+        Spreadsheet retrieval flow (XLSX/CSV)
+        ------------------------------------
+        For spreadsheets, `/Content/` is not a document-section hierarchy. Instead:
+        - `content_type='sheet'` rows describe sheets.
+        - `content_type='table'` rows are *table catalog rows* (profile + bounded samples + summary)
+          that help you discover the right `/Tables/<label>` context to query.
+
+        Recommended pattern:
+        1) `tables_overview(file=...)` to see available `/Tables/<label>` contexts
+        2) `search_files(..., table='<file_path>', filter=\"content_type in ['sheet','table']\")`
+        3) Query the chosen table context: `...table='<file_path>.Tables.<label>'`
 
         Parameters
         ----------
