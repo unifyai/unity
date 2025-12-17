@@ -172,6 +172,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # ask handles
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
+        # Main CM Brain handle (async tool loop) while an LLM run is in-flight.
+        # This enables mid-flight interjections to interrupt/restart generation.
+        self.active_brain_handle: Optional["SteerableToolHandle"] = None
 
         # LLM run requests recorded during event handling (production path).
         # In step() mode, requests are recorded via a contextvar instead.
@@ -207,6 +210,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 icon_override="🔀",
             )
             await self.active_ask_handle.interject(content)
+        elif self.active_brain_handle and not self.active_brain_handle.done():
+            self._session_logger.info(
+                "event",
+                "Routing to active main brain handle",
+                icon_override="🔀",
+            )
+            await self.active_brain_handle.interject(content)
         else:
             self._session_logger.info(
                 "llm_thinking",
@@ -336,10 +346,27 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # Build response model dynamically with current active tasks
         response_model = brain_spec.response_model
+
+        def _set_brain_handle(h: object) -> None:
+            # Store as SteerableToolHandle (protocol-like) for interjection routing.
+            try:
+                self.active_brain_handle = h  # type: ignore[assignment]
+            except Exception:
+                pass
+
+        def _clear_brain_handle(h: object) -> None:
+            try:
+                if self.active_brain_handle is h:
+                    self.active_brain_handle = None
+            except Exception:
+                pass
+
         out = await self.llm.run(
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
             response_model=response_model,
+            _on_handle_created=_set_brain_handle,
+            _on_handle_finished=_clear_brain_handle,
         )
         parsed_out = json.loads(out)
         if self.mode in ["call", "unify_meet"]:
