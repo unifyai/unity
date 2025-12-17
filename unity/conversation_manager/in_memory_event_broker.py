@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
@@ -34,6 +35,7 @@ class _Subscription:
     is_pattern: bool
     value: str  # channel name or pattern
     queue: asyncio.Queue[_Message]
+    loop: asyncio.AbstractEventLoop
 
 
 class InMemoryPubSub:
@@ -50,6 +52,7 @@ class InMemoryPubSub:
         self._broker = broker
         self._subscriptions: list[_Subscription] = []
         self._message_queue: asyncio.Queue[_Message] = asyncio.Queue()
+        self._loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
         self._closed = False
 
     async def subscribe(self, *channels: str) -> None:
@@ -59,6 +62,7 @@ class InMemoryPubSub:
                 is_pattern=False,
                 value=channel,
                 queue=self._message_queue,
+                loop=self._loop,
             )
             self._subscriptions.append(sub)
             self._broker._add_subscription(sub)
@@ -80,6 +84,7 @@ class InMemoryPubSub:
                 is_pattern=True,
                 value=pattern,
                 queue=self._message_queue,
+                loop=self._loop,
             )
             self._subscriptions.append(sub)
             self._broker._add_subscription(sub)
@@ -207,17 +212,21 @@ class InMemoryEventBroker:
 
     def __init__(self):
         self._subscriptions: list[_Subscription] = []
-        self._lock = asyncio.Lock()
+        # Subscriptions may be created/removed from different event loops/threads
+        # (e.g., voice agent threads). Use a thread-safe lock for coordination.
+        self._subs_lock = threading.RLock()
         self._closed = False
 
     def _add_subscription(self, sub: _Subscription) -> None:
         """Register a subscription (called by InMemoryPubSub)."""
-        self._subscriptions.append(sub)
+        with self._subs_lock:
+            self._subscriptions.append(sub)
 
     def _remove_subscription(self, sub: _Subscription) -> None:
         """Unregister a subscription (called by InMemoryPubSub)."""
-        if sub in self._subscriptions:
-            self._subscriptions.remove(sub)
+        with self._subs_lock:
+            if sub in self._subscriptions:
+                self._subscriptions.remove(sub)
 
     async def publish(self, channel: str, message: str) -> int:
         """
@@ -234,8 +243,17 @@ class InMemoryEventBroker:
             return 0
 
         receivers = 0
+        try:
+            current_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
 
-        for sub in self._subscriptions[:]:  # Copy to avoid mutation during iteration
+        # Copy to avoid mutation during iteration (and avoid holding the lock
+        # while delivering to subscriber queues).
+        with self._subs_lock:
+            subs_snapshot = list(self._subscriptions)
+
+        for sub in subs_snapshot:
             matched = False
             msg_type = "message"
             pattern = None
@@ -253,14 +271,19 @@ class InMemoryEventBroker:
 
             if matched:
                 try:
-                    await sub.queue.put(
-                        _Message(
-                            type=msg_type,
-                            channel=channel,
-                            pattern=pattern,
-                            data=message,
-                        ),
+                    msg = _Message(
+                        type=msg_type,
+                        channel=channel,
+                        pattern=pattern,
+                        data=message,
                     )
+                    # Ensure delivery is safe across threads/event loops:
+                    # - If publisher is on the same loop, push directly.
+                    # - Otherwise, schedule the put on the subscriber loop.
+                    if current_loop is not None and sub.loop is current_loop:
+                        sub.queue.put_nowait(msg)
+                    else:
+                        sub.loop.call_soon_threadsafe(sub.queue.put_nowait, msg)
                     receivers += 1
                 except Exception:
                     # Queue might be closed/full - skip this subscriber
@@ -287,7 +310,8 @@ class InMemoryEventBroker:
     async def aclose(self) -> None:
         """Close the broker and all subscriptions."""
         self._closed = True
-        self._subscriptions.clear()
+        with self._subs_lock:
+            self._subscriptions.clear()
 
     async def execute_command(self, *args) -> Any:
         """
@@ -297,7 +321,8 @@ class InMemoryEventBroker:
             PUBSUB NUMPAT - returns number of pattern subscriptions
         """
         if len(args) >= 2 and args[0] == "PUBSUB" and args[1] == "NUMPAT":
-            return sum(1 for sub in self._subscriptions if sub.is_pattern)
+            with self._subs_lock:
+                return sum(1 for sub in self._subscriptions if sub.is_pattern)
         raise NotImplementedError(f"Command not supported: {args}")
 
 
@@ -324,5 +349,6 @@ def reset_in_memory_event_broker() -> None:
     if _broker is not None:
         # Don't await aclose since this might be called from sync context
         _broker._closed = True
-        _broker._subscriptions.clear()
+        with _broker._subs_lock:
+            _broker._subscriptions.clear()
     _broker = None

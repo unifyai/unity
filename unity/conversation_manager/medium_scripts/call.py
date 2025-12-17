@@ -275,7 +275,9 @@ async def entrypoint(ctx: agents.JobContext):
                         break
 
                     # Handle guidance from Main CM Brain
-                    payload = data.get("payload", {})
+                    # Support both Event.to_json() format ({event_name, payload})
+                    # and legacy direct payload dicts ({"content": ...}).
+                    payload = data.get("payload") or data
                     content = payload.get("content", "")
                     if content:
                         # Inject guidance into the conversation context
@@ -323,6 +325,8 @@ if __name__ == "__main__":
             entrypoint_fnc=entrypoint,
             agent_name=agent_name,
             prewarm_fnc=prewarm,
+            # Run jobs in-process to allow sharing the in-memory event broker.
+            job_executor_type=agents.JobExecutorType.THREAD,
             initialize_process_timeout=60,
         ),
     )

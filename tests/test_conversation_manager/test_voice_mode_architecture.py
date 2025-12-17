@@ -36,8 +36,29 @@ import asyncio
 import json
 
 import pytest
+import pytest_asyncio
 
 from unity.settings import SETTINGS
+
+
+# =============================================================================
+# Local Fixtures
+# =============================================================================
+
+
+@pytest_asyncio.fixture
+async def event_broker():
+    """
+    Local in-memory broker for this test module.
+
+    This avoids starting a full ConversationManager instance (slow, requires env),
+    while still exercising the same pub/sub API that voice mode uses.
+    """
+    from unity.conversation_manager.event_broker import create_event_broker
+
+    broker = create_event_broker()
+    yield broker
+    await broker.aclose()
 
 
 # =============================================================================
@@ -479,7 +500,7 @@ class TestConversationManagerHandleAsk:
 
 
 # =============================================================================
-# Integration Tests: Full Voice Call Flow (Requires Redis)
+# Integration Tests: Voice Call Flow (In-Memory Broker)
 # =============================================================================
 
 
@@ -488,8 +509,8 @@ class TestVoiceCallFlowIntegration:
     """
     Integration tests for voice call flows.
 
-    These tests require the Redis server fixture from conftest.py.
-    They validate the event flow for both TTS and Realtime modes.
+    These tests validate the event flow for both TTS and Realtime modes
+    using the in-memory event broker (no Redis required).
     """
 
     @pytest.fixture
@@ -506,58 +527,62 @@ class TestVoiceCallFlowIntegration:
     async def test_phone_call_started_event_flow(
         self,
         event_broker,
-        event_capture,
         boss_contact,
     ):
         """
         Verify phone call start event is properly published and captured.
         """
-        from unity.conversation_manager.events import PhoneCallStarted
+        from unity.conversation_manager.events import Event, PhoneCallStarted
 
-        # Publish a call started event
-        event = PhoneCallStarted(contact=boss_contact)
-        await event_broker.publish(
-            "app:comms:phone_call_started",
-            event.to_json(),
-        )
+        async with event_broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
 
-        # Wait briefly for event propagation
-        await asyncio.sleep(0.5)
+            # Publish a call started event
+            event = PhoneCallStarted(contact=boss_contact)
+            await event_broker.publish(
+                "app:comms:phone_call_started",
+                event.to_json(),
+            )
 
-        # Verify event was captured
-        events = event_capture.get_events(PhoneCallStarted)
-        assert len(events) >= 1
+            msg = await pubsub.get_message(
+                timeout=2.0,
+                ignore_subscribe_messages=True,
+            )
+            assert msg is not None
+            captured = Event.from_json(msg["data"])
+            assert isinstance(captured, PhoneCallStarted)
 
     async def test_call_guidance_event_flow(
         self,
         event_broker,
-        event_capture,
         boss_contact,
     ):
         """
         Verify call guidance events flow through the system.
         """
-        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.events import CallGuidance, Event
 
-        # Publish a guidance event
-        event = CallGuidance(
-            contact=boss_contact,
-            content="Please ask about their schedule",
-        )
-        await event_broker.publish("app:call:call_guidance", event.to_json())
+        async with event_broker.pubsub() as pubsub:
+            await pubsub.subscribe("app:call:call_guidance")
 
-        # Wait briefly for event propagation
-        await asyncio.sleep(0.5)
+            # Publish a guidance event
+            event = CallGuidance(
+                contact=boss_contact,
+                content="Please ask about their schedule",
+            )
+            await event_broker.publish("app:call:call_guidance", event.to_json())
 
-        # Note: The event capture listens to app:comms:* not app:call:*
-        # This test verifies the event is properly formed
-        assert event.content == "Please ask about their schedule"
+            msg = await pubsub.get_message(
+                timeout=2.0,
+                ignore_subscribe_messages=True,
+            )
+            assert msg is not None
+            captured = Event.from_json(msg["data"])
+            assert isinstance(captured, CallGuidance)
+            assert captured.content == "Please ask about their schedule"
 
     async def test_tts_mode_publishes_guidance_not_utterance(
         self,
-        event_broker,
-        event_capture,
-        boss_contact,
     ):
         """
         [Stage 2] TTS mode publishes call_guidance events.
@@ -604,22 +629,66 @@ class TestCallGuidanceChannel:
                 json.dumps({"content": "Please ask about their schedule"}),
             )
 
-            # Poll for message with retries
-            msg = None
-            for _ in range(20):
-                msg = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=0.1,
-                )
-                if msg and msg["type"] == "message":
-                    break
-                await asyncio.sleep(0.05)
+            msg = await pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=2.0,
+            )
 
             assert msg is not None, "Expected to receive published message"
             assert msg["type"] == "message"
             data = json.loads(msg["data"])
             assert "content" in data
             assert data["content"] == "Please ask about their schedule"
+
+
+# =============================================================================
+# Threading Tests: In-process Voice Agent Uses Shared Broker
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_event_broker_delivers_across_threads(event_broker):
+    """
+    Voice agents run in a background thread but must share the same in-memory broker.
+
+    This validates that a subscriber created on a different event loop/thread can
+    still receive published messages.
+    """
+    import queue
+    import threading
+
+    ready = threading.Event()
+    received: "queue.Queue[dict]" = queue.Queue()
+
+    def _subscriber_thread() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def _run() -> None:
+            async with event_broker.pubsub() as pubsub:
+                await pubsub.subscribe("app:call:status")
+                ready.set()
+                msg = await pubsub.get_message(
+                    timeout=2.0,
+                    ignore_subscribe_messages=True,
+                )
+                received.put(msg)
+
+        loop.run_until_complete(_run())
+        loop.close()
+
+    t = threading.Thread(target=_subscriber_thread, daemon=True)
+    t.start()
+
+    # Wait until the subscriber is ready (no sleeps for event alignment).
+    assert await asyncio.to_thread(ready.wait, 2.0)
+
+    await event_broker.publish("app:call:status", json.dumps({"type": "stop"}))
+
+    msg = await asyncio.to_thread(received.get, True, 2.0)
+    assert msg is not None
+    assert json.loads(msg["data"])["type"] == "stop"
+    t.join(timeout=2.0)
 
 
 # =============================================================================
