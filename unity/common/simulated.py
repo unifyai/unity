@@ -894,6 +894,11 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._filter_files,
             FileManager._search_files,
             FileManager._reduce,
+            # Join/multi-join tools (exposed via ask.multi_table and merged at call-time)
+            FileManager._filter_join,
+            FileManager._search_join,
+            FileManager._filter_multi_join,
+            FileManager._search_multi_join,
             # Inventory listing
             FileManager.list,
             # Delegate to file-scoped Q&A when needed
@@ -926,6 +931,8 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._rename_file,
             FileManager._move_file,
             FileManager._delete_file,
+            # Sync tool (exposed under organize)
+            FileManager.sync,
             include_class_name=False,
         )
     else:
@@ -938,6 +945,10 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._filter_files,
             FileManager._search_files,
             FileManager._reduce,
+            FileManager._filter_join,
+            FileManager._search_join,
+            FileManager._filter_multi_join,
+            FileManager._search_multi_join,
             FileManager.list,
             FileManager.ask_about_file,
             include_class_name=False,

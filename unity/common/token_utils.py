@@ -25,6 +25,10 @@ _AVG_CHARS_PER_TOKEN = 4.0
 _WARNED_ON_FALLBACK = False
 _TOKENS_PER_UTF8_BYTE = 0.25
 
+# If the input text is very short, summarization is unnecessary and can be lossy.
+# For these cases we treat the original text as the "summary" and skip LLM calls.
+MIN_SOURCE_TEXT_CHARS_FOR_SUMMARY = 200
+
 
 def _warn_once() -> None:
     global _WARNED_ON_FALLBACK
@@ -41,7 +45,10 @@ def _warn_once() -> None:
 
 def has_meaningful_text(s: str | None) -> bool:
     s = (s or "").strip()
-    return bool(s and any(ch.isalnum() for ch in s)) and len(s) > 50
+    return (
+        bool(s and any(ch.isalnum() for ch in s))
+        and len(s) > MIN_SOURCE_TEXT_CHARS_FOR_SUMMARY
+    )
 
 
 def get_encoding_for(model_or_encoding: Optional[str] = None):
