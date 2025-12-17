@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from unity.common.llm_client import new_llm_client
 from unity.common.async_tool_loop import start_async_tool_loop
 
@@ -12,6 +14,10 @@ class LLM:
         system_prompt: str,
         messages: str,
         response_model,
+        *,
+        _on_handle_created: Callable[[object], None] | None = None,
+        _on_handle_finished: Callable[[object], None] | None = None,
+        _interrupt_llm_with_interjections: bool = True,
     ):
         """Run the Main CM Brain and return structured output.
 
@@ -64,6 +70,19 @@ class LLM:
             loop_id="ConversationManager._run_llm",
             response_format=response_model,
             preprocess_msgs=_preprocess_msgs if isinstance(messages, list) else None,
+            interrupt_llm_with_interjections=_interrupt_llm_with_interjections,
             log_steps=False,
         )
-        return await handle.result()
+        try:
+            if _on_handle_created is not None:
+                _on_handle_created(handle)
+        except Exception:
+            pass
+        try:
+            return await handle.result()
+        finally:
+            try:
+                if _on_handle_finished is not None:
+                    _on_handle_finished(handle)
+            except Exception:
+                pass
