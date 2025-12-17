@@ -174,7 +174,7 @@ class InMemoryPubSub:
             except asyncio.TimeoutError:
                 return None
             except asyncio.CancelledError:
-                return None
+                raise
 
     async def aclose(self) -> None:
         """Close the pubsub connection and clean up subscriptions."""

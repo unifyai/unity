@@ -27,7 +27,6 @@ from unity.session_details import SESSION_DETAILS
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
-
 # =============================================================================
 # Global state
 # =============================================================================
@@ -110,6 +109,7 @@ async def stop_async(reason: str = "manual_stop") -> None:
 
         # Clean up
         await _conversation_manager.cleanup()
+
         print("ConversationManager stopped")
         _shutdown_reason = reason
     except Exception as e:
