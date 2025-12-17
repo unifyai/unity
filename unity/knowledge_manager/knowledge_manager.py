@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 import json
-
+from unity.common.tool_outcome import ToolOutcome
 from unity.common.token_utils import count_tokens_per_utf_byte
 from unity.common import token_utils as _tok
 from unity.common.grouping_helpers import build_grouped_dump_payload
@@ -1187,7 +1187,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         table: str,
         rows: List[Dict[str, Any]],
-    ) -> Dict[str, str]:
+    ) -> ToolOutcome:
         """
         **Insert** one or many rows into *table*.
 
@@ -1206,14 +1206,18 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend confirmation.
         """
-        return _op_add_rows(self, table=table, rows=rows)
+        try:
+            res = _op_add_rows(self, table=table, rows=rows)
+        except Exception as e:
+            return {"outcome": "error", "details": {"error": str(e)}}
+        return {"outcome": "rows added successfully", "details": {"length": len(res)}}
 
     def _update_rows(
         self,
         *,
         table: str,
         updates: Dict[int, Dict[str, Any]],
-    ) -> Dict[str, str]:
+    ) -> ToolOutcome:
         """
         Update existing rows identified by their table‑specific unique id.
 
@@ -1230,7 +1234,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend response from ``unify.update_logs``.
         """
-        return _op_update_rows(self, table=table, updates=updates)
+        try:
+            res = _op_update_rows(self, table=table, updates=updates)
+        except Exception as e:
+            return {"outcome": "error", "details": {"error": str(e)}}
+        return {"outcome": "rows updated successfully", "details": res}
 
     # File ingestion / deprecation
 
