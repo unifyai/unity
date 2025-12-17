@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Internal module to prepare the shared UnityTests project for parallel runs.
 
@@ -9,7 +9,7 @@ parallel pytest sessions race-free.
 The script is idempotent: calling it multiple times has no adverse effects.
 
 Usage (internal - typically invoked via parallel_run.sh):
-    python tests/_prepare_shared_project.py
+    python3 tests/_prepare_shared_project.py
 """
 
 # Suppress urllib3 connection pool warnings before any imports configure logging

@@ -9,6 +9,13 @@ globs: **/*.py, **/*.toml, .git/hooks/*
 - **ALWAYS** use the project's virtual environment interpreter: `.venv/bin/python`.
 - Do not use global python or other system interpreters.
 
+## Environment Bootstrap (fresh clone / Cloud Agents)
+- The repo virtualenv lives at **`.venv/`** and is intentionally not committed.
+- If `.venv/` is missing (common in fresh clones and Cursor Cloud Agents), bootstrap it with:
+  - `pip install uv && uv sync --all-groups`
+- `tests/parallel_run.sh` will also auto-bootstrap `.venv/` (and install `uv` via `pip --user` if needed).
+- Prefer `python3` over `python` in shell scripts; some environments don't provide a `python` shim.
+
 ## Running Tests
 
 ### Terminal Isolation (Automatic)

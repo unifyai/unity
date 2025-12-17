@@ -5,7 +5,7 @@ set -euo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # Optionally source environment from the repo root's .env
-# Useful to provide UNIFY_KEY, UNIFY_BASE_URL, etc. from ~/unity/.env
+# Useful to provide UNIFY_KEY, UNIFY_BASE_URL, etc. from the repo root `.env` (not committed).
 _ENV_FILE="$_SCRIPT_DIR/../.env"
 if [ -f "$_ENV_FILE" ]; then
   # shellcheck disable=SC1090

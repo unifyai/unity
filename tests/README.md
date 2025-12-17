@@ -209,5 +209,5 @@ project_cleanup.sh --random-only
 
 - **tmux**: `brew install tmux`
 - **coreutils** (macOS): `brew install coreutils` — provides `timeout` for helper scripts
-- **Python virtualenv**: Assumed at `~/unity/.venv/`
-- **Environment**: Optional `.env` file at `~/unity/.env` for `UNIFY_KEY`, etc.
+- **Python virtualenv**: Repo-local `.venv/` (create/sync via `uv sync --all-groups`)
+- **Environment**: Optional `.env` file at repo root (`.env`) for `UNIFY_KEY`, etc.
