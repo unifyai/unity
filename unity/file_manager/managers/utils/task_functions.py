@@ -23,11 +23,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from unity.file_manager.types.file import ParsedFile
+from unity.file_manager.file_parsers.types.contracts import FileParseResult
 from unity.file_manager.types.config import (
     FilePipelineConfig,
     TableBusinessContextSpec,
 )
+from unity.file_manager.types.file import FileContentRow
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +101,10 @@ def execute_create_file_record(
     *,
     file_manager: Any,
     file_path: str,
-    parse_result: ParsedFile,
+    parse_result: FileParseResult,
     config: FilePipelineConfig,
+    document_summary: str = "",
+    total_records: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Create the FileRecord entry in the index.
@@ -115,8 +118,8 @@ def execute_create_file_record(
         The file manager instance providing storage context and identity helpers.
     file_path : str
         The logical file path/identifier.
-    parse_result : ParsedFile
-        The ParsedFile Pydantic model from Document.to_parse_result().
+    parse_result : FileParseResult
+        The FileParseResult from the file parser (content_rows + tables + trace).
     config : FilePipelineConfig
         Pipeline configuration for ingest settings.
 
@@ -145,15 +148,33 @@ def execute_create_file_record(
     unified_label = config.ingest.unified_label if ingest_mode == "unified" else None
     table_ingest = config.ingest.table_ingest
 
+    # Best-effort: adapter-derived size/timestamps (never raises)
+    from .source_info import source_info_for_file
+
+    ref = None
+    try:
+        ref = file_manager._adapter.get_file(file_path)  # type: ignore[attr-defined]
+    except Exception:
+        ref = None
+    sinfo = source_info_for_file(
+        adapter_ref=ref,
+        trace=getattr(parse_result, "trace", None),
+    )
+
     # Create the file record entry
     entry = FileRecord.to_file_record_entry(
         file_path=file_path,
         source_uri=info.source_uri,
         source_provider=info.source_provider,
-        result=parse_result,
+        parse_result=parse_result,
         ingest_mode=ingest_mode,
         unified_label=unified_label,
         table_ingest=table_ingest,
+        file_size=sinfo.size_bytes,
+        created_at=sinfo.created_at,
+        modified_at=sinfo.modified_at,
+        total_records=total_records,
+        document_summary=document_summary,
     )
 
     _ops_create_file_record(file_manager, entry=entry)
@@ -183,11 +204,10 @@ def execute_ingest_content_chunk(
     *,
     file_manager: Any,
     file_path: str,
-    chunk_records: List[Dict[str, Any]],
+    chunk_records: List[FileContentRow],
     chunk_index: int,
     total_chunks: int,
     config: FilePipelineConfig,
-    parse_result: ParsedFile,
 ) -> Dict[str, Any]:
     """
     Ingest a single chunk of content rows.
@@ -198,7 +218,7 @@ def execute_ingest_content_chunk(
         The file manager instance.
     file_path : str
         The logical file path/identifier.
-    chunk_records : list[dict]
+    chunk_records : list[FileContentRow]
         The records for this chunk (already chunked by task_factory).
     chunk_index : int
         Zero-based index of this chunk.
@@ -206,8 +226,6 @@ def execute_ingest_content_chunk(
         Total number of content chunks for this file.
     config : FilePipelineConfig
         Pipeline configuration.
-    parse_result : ParsedFile
-        The ParsedFile Pydantic model (for file_format lookup).
 
     Returns
     -------
@@ -227,7 +245,6 @@ def execute_ingest_content_chunk(
     """
     from .ingest_ops import (
         get_file_id_from_path,
-        prepare_content_rows,
         ingest_content_batch,
     )
 
@@ -244,19 +261,7 @@ def execute_ingest_content_chunk(
     if file_id is None:
         raise ValueError(f"File ID not found for {file_path}")
 
-    # Determine file format for content policy
-    _fmt = parse_result.file_format
-    file_format = getattr(_fmt, "value", _fmt) if _fmt else None
-    file_format_str = str(file_format).lower().strip() if file_format else None
-
-    # Prepare rows (apply content policy, filter columns)
-    prepared_rows = prepare_content_rows(
-        chunk_records,
-        config=config,
-        file_format=file_format_str,
-    )
-
-    if not prepared_rows:
+    if not chunk_records:
         logger.debug(
             f"[TaskFn] No rows to ingest after preparation for chunk {chunk_index + 1}",
         )
@@ -295,9 +300,8 @@ def execute_ingest_content_chunk(
     # Ingest the batch
     inserted_ids = ingest_content_batch(
         context=context,
-        rows=prepared_rows,
+        rows=chunk_records,
         file_id=file_id,
-        id_layout=config.ingest.id_layout,
     )
 
     logger.debug(
@@ -308,7 +312,7 @@ def execute_ingest_content_chunk(
     return {
         "inserted_ids": inserted_ids,
         "chunk_index": chunk_index,
-        "row_count": len(prepared_rows),
+        "row_count": len(chunk_records),
         "context": context,
     }
 
