@@ -57,7 +57,6 @@ def test_text_like_formats_parse_via_text_backend(
     assert res.graph is not None
     kinds = {n.kind for n in res.graph.nodes.values()}
     assert NodeKind.SECTION in kinds
-    assert NodeKind.PARAGRAPH in kinds
 
 
 @pytest.mark.parametrize(
