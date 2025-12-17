@@ -13,7 +13,9 @@ from unity.common.business_context import BusinessContextPayload
 # Enhanced metadata extraction prompt for new parser
 def build_metadata_extraction_prompt() -> str:
     """Build prompt for LLM-based metadata extraction using Pydantic model validation."""
-    from unity.file_manager.parser.types.document import DocumentMetadataExtraction
+    from unity.file_manager.file_parsers.types.metadata_extraction import (
+        DocumentMetadataExtraction,
+    )
 
     # Get the Pydantic model schema
     schema = DocumentMetadataExtraction.model_json_schema()

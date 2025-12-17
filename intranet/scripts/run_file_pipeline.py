@@ -189,8 +189,13 @@ def main() -> int:
     # Print config summary so user can verify settings
     print("\n📊 Configuration Summary:")
     print(f"   Parse:")
-    print(f"      • batch_size: {cfg.parse.batch_size}")
-    print(f"      • parser_kwargs: {cfg.parse.parser_kwargs or '{}'}")
+    print(f"      • max_concurrent_parses: {cfg.parse.max_concurrent_parses}")
+    backend_overrides = {
+        k: v for k, v in cfg.parse.backend_class_paths_by_format.items()
+    }
+    print(
+        f"      • backend_class_paths_by_format: {len(backend_overrides)} format(s) configured",
+    )
     print(f"   Ingest:")
     print(f"      • mode: {cfg.ingest.mode}")
     print(f"      • table_ingest: {cfg.ingest.table_ingest}")
