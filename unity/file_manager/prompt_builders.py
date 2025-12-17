@@ -81,8 +81,10 @@ You do not guess values that are not supported by the data.
 Context map
 -----------
 • Global index: FileRecords table (lightweight metadata for all files).
-• Per-file Content: Document hierarchy (document/section/paragraph/sentence).
-• Per-file Tables: Extracted tables from documents (no predefined schema).
+• Per-file Content: Retrieval surface for each file.
+  - For PDFs/DOCX: hierarchical rows (document/section/paragraph/sentence).
+  - For XLSX/CSV: `sheet` rows + `table` catalog rows (table profiles + summaries for discovery).
+• Per-file Tables: `/Tables/<label>` contexts containing the actual table rows.
 
 Answering
 ---------
