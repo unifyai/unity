@@ -7,8 +7,7 @@ from __future__ import annotations
 import json
 import pytest
 from pathlib import Path
-from typing import Any, Dict, List
-from unity.file_manager.parser import DoclingParser
+from typing import Any, Dict
 from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.simulated import SimulatedFileManager
@@ -134,7 +133,9 @@ def rootless_file_manager():
     with the session-scoped LocalFileManager singleton.
     """
     from unity.file_manager.managers.file_manager import FileManager
-    from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+    from unity.file_manager.filesystem_adapters.local_adapter import (
+        LocalFileSystemAdapter,
+    )
 
     return FileManager(adapter=LocalFileSystemAdapter(None))
 
@@ -151,31 +152,6 @@ def global_file_manager(file_manager):
 def simulated_fm() -> SimulatedFileManager:
     """Provide a singleton-ish simulated file manager for this module."""
     return SimulatedFileManager("Demo file storage for unit-tests.")
-
-
-@pytest.fixture()
-def parser():
-    """Create a parser instance with LLM enrichment disabled for testing."""
-    return DoclingParser(use_llm_enrichment=False)
-
-
-@pytest.fixture()
-def parser_with_llm():
-    """Create a parser instance with LLM enrichment enabled."""
-    return DoclingParser(use_llm_enrichment=True)
-
-
-@pytest.fixture()
-def parser_with_options():
-    """Create a parser instance with custom options for advanced testing."""
-    return DoclingParser(
-        use_llm_enrichment=False,
-        max_chunk_size=256,
-        chunk_overlap=50,
-        use_hybrid_chunking=True,
-        extract_images=True,
-        extract_tables=True,
-    )
 
 
 def _get_format_content_generators() -> Dict[str, Dict[str, Any]]:
@@ -485,15 +461,12 @@ def sample_files(tmp_path: Path, fm_root: str) -> Path:
     d = tmp_path / "samples"
     d.mkdir(parents=True, exist_ok=True)
 
-    # Get supported formats from the current LocalFileManager/parser
-    fm = LocalFileManager(fm_root)
-    supported_formats = fm._parser.supported_formats
+    # Minimal set of formats we can synthesize in tests.
+    # Binary formats (pdf/docx/xlsx) are exercised via real sample files under `tests/test_file_manager/sample/`.
+    supported_formats = [".txt", ".csv"]
 
     # Create sample files for each supported format
     for i, fmt in enumerate(supported_formats):
-        if fmt in [".pdf", ".docx"]:
-            # Skip binary formats that need special handling
-            continue
         filename = f"sample_{i}{fmt}"
         file_path = d / filename
         _create_sample_file(file_path, fmt)
@@ -516,143 +489,43 @@ def sample_files(tmp_path: Path, fm_root: str) -> Path:
 @pytest.fixture()
 def supported_file_examples(tmp_path: Path, fm_root: str) -> dict:
     """Create examples of files in each supported format with expected content."""
-    fm = LocalFileManager(fm_root)
-    supported_formats = fm._parser.supported_formats
-
     examples = {}
 
     # Get the path to the actual sample files directory
     current_dir = Path(__file__).parent
     sample_dir = current_dir / "sample"
 
-    # For each supported format, find corresponding sample files or create test files
-    for fmt in supported_formats:
-        # First try to find existing sample files for this format
-        sample_files = list(sample_dir.glob(f"*{fmt}")) if sample_dir.exists() else []
-
-        if sample_files:
-            # Use the first available sample file for this format
-            sample_file = sample_files[0]
-            examples[sample_file.name] = {
-                "path": sample_file,
-                "format": fmt,
-                "expected_phrases": [],  # To be determined by test execution
+    # Prefer using real sample files when available.
+    if sample_dir.exists():
+        for p in sorted(sample_dir.iterdir()):
+            if not p.is_file():
+                continue
+            ext = p.suffix.lower()
+            if ext not in {".pdf", ".docx", ".xlsx", ".csv"}:
+                continue
+            examples[p.name] = {
+                "path": p,
+                "format": ext,
+                "expected_phrases": [],
                 "is_sample_file": True,
             }
-        else:
-            # Create a test file for this format if no samples exist
-            d = tmp_path / "examples"
-            d.mkdir(parents=True, exist_ok=True)
 
-            filename = f"test_file{fmt}"
-            file_path = d / filename
-
-            # Create appropriate content based on format
-            if fmt in [".txt", ".md", ".log"]:
-                content = f"Sample {fmt.upper()} Document\n\nThis contains test content for {fmt} format."
-                file_path.write_text(content, encoding="utf-8")
-                expected_phrases = [f"Sample {fmt.upper()} Document", "test content"]
-            else:
-                # For other text-based formats or fallback
-                content = f"Test content for {fmt} format."
-                file_path.write_text(content, encoding="utf-8")
-                expected_phrases = ["Test content", fmt]
-
-            examples[filename] = {
-                "path": file_path,
-                "format": fmt,
-                "expected_phrases": expected_phrases,
-                "is_sample_file": False,
-            }
+    # Always add a small synthetic text file (absolute path).
+    d = tmp_path / "examples"
+    d.mkdir(parents=True, exist_ok=True)
+    txt = d / "example.txt"
+    txt.write_text(
+        "Sample TXT Document\n\nThis contains test content for txt format.",
+        encoding="utf-8",
+    )
+    examples[txt.name] = {
+        "path": txt,
+        "format": ".txt",
+        "expected_phrases": ["Sample TXT Document", "test content"],
+        "is_sample_file": False,
+    }
 
     return examples
-
-
-@pytest.fixture()
-def supported_format_files(tmp_path: Path) -> Dict[str, Dict[str, Any]]:
-    """
-    Create comprehensive test files for all supported formats.
-
-    Returns:
-        Dict mapping format extensions to file information and validation data.
-    """
-    parser = DoclingParser()
-    supported_formats = parser.supported_formats
-    format_specs = _get_format_content_generators()
-
-    format_files = {}
-
-    # Get sample directory for binary files
-    current_dir = Path(__file__).parent
-    sample_dir = current_dir / "sample"
-
-    for fmt in supported_formats:
-        if fmt not in format_specs:
-            continue
-
-        spec = format_specs[fmt]
-
-        if spec["generator"] is None:
-            # Handle binary formats - use sample files if available
-            if sample_dir.exists():
-                sample_files = list(sample_dir.glob(f"*{fmt}"))
-                if sample_files:
-                    sample_file = sample_files[0]
-                    format_files[fmt] = {
-                        "files": {"sample": sample_file},
-                        "mime_type": spec["mime_type"],
-                        "validation_patterns": spec["validation_patterns"],
-                        "structure_expectations": spec["structure_expectations"],
-                        "is_binary": True,
-                        "variants": ["sample"],
-                    }
-            continue
-
-        # Create test files for text-based formats
-        format_dir = tmp_path / f"format_{fmt[1:]}"  # Remove the dot
-        format_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create multiple variants for thorough testing
-        variants = (
-            ["simple", "complex", "empty"]
-            if fmt != ".txt"
-            else [
-                "simple",
-                "multi_paragraph",
-                "special_chars",
-                "empty",
-                "large",
-                "long_lines",
-            ]
-        )
-
-        files = {}
-        for variant in variants:
-            if variant == "empty":
-                content = ""
-            else:
-                content = spec["generator"](variant)
-
-            filename = f"test_{variant}{fmt}"
-            file_path = format_dir / filename
-
-            if content:
-                file_path.write_text(content, encoding="utf-8")
-            else:
-                file_path.touch()  # Create empty file
-
-            files[variant] = file_path
-
-        format_files[fmt] = {
-            "files": files,
-            "mime_type": spec["mime_type"],
-            "validation_patterns": spec["validation_patterns"],
-            "structure_expectations": spec["structure_expectations"],
-            "is_binary": False,
-            "variants": variants,
-        }
-
-    return format_files
 
 
 @pytest.fixture()
@@ -697,103 +570,6 @@ def edge_case_files(tmp_path: Path) -> Dict[str, Path]:
     files["binary_in_text"].write_bytes(b"\x00\x01\x02\xff\xfe\xfd" + b"text content")
 
     return files
-
-
-@pytest.fixture()
-def parser_validation_suite() -> Dict[str, Any]:
-    """
-    Provide validation functions and expectations for parser testing.
-
-    Returns:
-        Dict containing validation functions and standard expectations.
-    """
-
-    def validate_document_structure(document, expectations: Dict[str, int]):
-        """Validate basic document structure meets expectations."""
-        assert len(document.sections) >= expectations.get("min_sections", 0)
-
-        total_paragraphs = sum(len(section.paragraphs) for section in document.sections)
-        assert total_paragraphs >= expectations.get("min_paragraphs", 0)
-
-        total_sentences = sum(
-            len(para.sentences)
-            for section in document.sections
-            for para in section.paragraphs
-        )
-        assert total_sentences >= expectations.get("min_sentences", 0)
-
-    def validate_metadata(document, expected_mime_type: str):
-        """Validate document metadata is properly set."""
-        assert document.metadata is not None
-        assert str(document.metadata.mime_type) == expected_mime_type
-        assert document.metadata.parser_name == "DoclingParser"
-        assert document.metadata.processing_time is not None
-        assert document.processing_status == "completed"
-
-    def validate_content_preservation(document, validation_patterns: List[str]):
-        """Validate that important content patterns are preserved."""
-        full_text = document.to_plain_text()
-
-        # Check if this is a CSV file (has tables but no paragraphs)
-        is_csv = str(document.metadata.mime_type) == "text/csv" or (
-            len(document.metadata.tables) > 0
-            and sum(len(s.paragraphs) for s in document.sections) == 0
-        )
-
-        for pattern in validation_patterns:
-            if is_csv and "," in pattern:
-                # For CSV files with comma-separated patterns (e.g., "Name,Age,City")
-                # Check that individual words exist since CSV transforms to table format
-                words = pattern.replace(",", " ").split()
-                assert all(
-                    word.lower() in full_text.lower() for word in words
-                ), f"CSV should contain all words from pattern '{pattern}' in parsed content"
-            else:
-                # For other formats or non-comma patterns, check exact pattern
-                assert (
-                    pattern.lower() in full_text.lower()
-                ), f"Pattern '{pattern}' not found in parsed content"
-
-    def validate_flat_records(records: List[Dict[str, Any]]):
-        """Validate flat record structure and content."""
-        assert len(records) > 0, "Should produce at least one record"
-
-        # Check for document record
-        doc_records = [r for r in records if r.get("content_type") == "document"]
-        assert len(doc_records) == 1, "Should have exactly one document record"
-
-        # Validate record structure
-        required_fields = [
-            "content_type",
-            "title",
-            "summary",
-            "content_text",
-        ]
-        for record in records:
-            for field in required_fields:
-                assert field in record, f"Required field '{field}' missing from record"
-
-            assert record["content_type"] in [
-                "document",
-                "section",
-                "paragraph",
-                "sentence",
-                "image",
-                "table",
-            ]
-
-    return {
-        "validate_structure": validate_document_structure,
-        "validate_metadata": validate_metadata,
-        "validate_content": validate_content_preservation,
-        "validate_records": validate_flat_records,
-        "standard_expectations": {
-            "min_processing_time": 0.0,
-            "max_processing_time": 30.0,  # seconds
-            "min_confidence": 0.0,
-            "max_confidence": 1.0,
-        },
-    }
 
 
 @pytest.fixture()

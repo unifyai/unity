@@ -20,8 +20,6 @@ from unity.file_manager.types import (
     BusinessContextsConfig,
     OutputConfig,
     DiagnosticsConfig,
-    PluginsConfig,
-    ParsedFile,
 )
 
 
@@ -82,7 +80,7 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
 @pytest.mark.unit
 @_handle_project
 def test_ingest_files_batching_and_kwargs(file_manager, tmp_path: Path):
-    """Test ingest_files with batch size and parser kwargs configuration."""
+    """Test ingest_files respects parse-stage concurrency configuration."""
     fm = file_manager
     fm.clear()
     paths = []
@@ -93,7 +91,7 @@ def test_ingest_files_batching_and_kwargs(file_manager, tmp_path: Path):
         paths.append(p)
         names.append(str(p))
 
-    cfg = FilePipelineConfig(parse=ParseConfig(batch_size=2, parser_kwargs={}))
+    cfg = FilePipelineConfig(parse=ParseConfig(max_concurrent_parses=2))
     results = fm.ingest_files(names, config=cfg)
 
     assert len(results) == 3
@@ -171,10 +169,11 @@ def test_file_pipeline_config_defaults():
     assert isinstance(cfg.parse, ParseConfig)
     assert isinstance(cfg.ingest, IngestConfig)
     assert isinstance(cfg.embed, EmbeddingsConfig)
-    assert isinstance(cfg.plugins, PluginsConfig)
     assert isinstance(cfg.output, OutputConfig)
     assert isinstance(cfg.diagnostics, DiagnosticsConfig)
-    assert cfg.parse.batch_size == 3
+    assert cfg.parse.max_concurrent_parses == 3
+    assert isinstance(cfg.parse.backend_class_paths_by_format, dict)
+    assert cfg.parse.backend_class_paths_by_format  # non-empty mapping
     assert cfg.ingest.mode == "per_file"
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "compact"
@@ -310,7 +309,7 @@ def test_config_from_file_empty(tmp_path: Path):
 
     cfg = FilePipelineConfig.from_file(str(config_file))
     assert isinstance(cfg, FilePipelineConfig)
-    assert cfg.parse.batch_size == 3
+    assert cfg.parse.max_concurrent_parses == 3
     assert cfg.ingest.mode == "per_file"
 
 
@@ -326,7 +325,7 @@ def test_config_from_file_partial(tmp_path: Path):
     config_file.write_text(json.dumps(config_data))
 
     cfg = FilePipelineConfig.from_file(str(config_file))
-    assert cfg.parse.batch_size == 10
+    assert cfg.parse.max_concurrent_parses == 10
     assert cfg.output.return_mode == "full"
     # Other sections should have defaults
     assert cfg.ingest.mode == "per_file"
@@ -532,6 +531,8 @@ def test_config_from_file_full(tmp_path: Path):
     import json
 
     config_data = {
+        # batch_size is supported as a back-compat alias for max_concurrent_parses.
+        # parser_kwargs/plugins are ignored (legacy/removed); this test ensures unknown keys don't break loading.
         "parse": {"batch_size": 5, "parser_kwargs": {"key": "value"}},
         "ingest": {
             "mode": "unified",
@@ -580,7 +581,7 @@ def test_config_from_file_full(tmp_path: Path):
     config_file.write_text(json.dumps(config_data))
 
     cfg = FilePipelineConfig.from_file(str(config_file))
-    assert cfg.parse.batch_size == 5
+    assert cfg.parse.max_concurrent_parses == 5
     assert cfg.ingest.mode == "unified"
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "full"
@@ -701,48 +702,8 @@ def test_embedding_specs_with_multiple_columns_per_table(file_manager, tmp_path:
         ),
     ]
 
-    # Create a table document
-    class _TableStub:
-        def __init__(self, rows, sheet_name=None):
-            self.rows = rows
-            self.columns = None
-            self.sheet_name = sheet_name
-            self.section_path = None
-
-    class _MetaStub:
-        def __init__(self, tables=None):
-            self.tables = tables or []
-            self.mime_type = "text/plain"
-            self.parser_name = "Stub"
-            self.processing_time = 0.0
-
-    class _DocStub:
-        def __init__(self, tables=None):
-            self.metadata = _MetaStub(tables=tables or [])
-            self.processing_status = "completed"
-
-        def to_parse_result(self, *a, **kw) -> ParsedFile:
-            return ParsedFile(
-                file_path=a[0] if a else "stub.xlsx",
-                status="success",
-                total_records=0,
-                file_format="xlsx",
-                records=[],
-            )
-
-    rows = [
-        ["Name", "Age", "City", "Country"],
-        ["Alice", "30", "London", "UK"],
-        ["Bob", "25", "Paris", "France"],
-    ]
-    tbl = _TableStub(rows=rows, sheet_name="Sheet1")
-    doc = _DocStub(tables=[tbl])
-    result = {
-        "status": "success",
-        "total_records": 0,
-        "file_format": "xlsx",
-        "records": [],
-    }
+    # This is a pure config validation test; the actual embedding/execution behavior
+    # is covered in the ingest + embed integration tests.
 
     # Verify config is valid
     assert len(cfg.embed.file_specs) == 1
@@ -889,8 +850,7 @@ def test_config_all_sections_populated(tmp_path: Path):
     cfg = FilePipelineConfig.from_file(str(config_file))
 
     # Verify parse
-    assert cfg.parse.batch_size == 10
-    assert cfg.parse.parser_kwargs == {"custom_option": "value", "another": 123}
+    assert cfg.parse.max_concurrent_parses == 10
 
     # Verify ingest
     assert cfg.ingest.mode == "unified"
@@ -906,18 +866,12 @@ def test_config_all_sections_populated(tmp_path: Path):
 
     # Verify embed
     assert cfg.embed.strategy == "after"
-    assert cfg.embed.hooks_per_chunk is True
     # The test config uses "file_specs" format (updated from legacy)
     assert len(cfg.embed.file_specs) == 1
     assert cfg.embed.file_specs[0].file_path == "*"
     assert cfg.embed.file_specs[0].context == "per_file_table"
     assert len(cfg.embed.file_specs[0].tables) == 1
     assert cfg.embed.file_specs[0].tables[0].table == "MainSheet"
-
-    # Verify plugins
-    assert len(cfg.plugins.pre_parse) == 1
-    assert len(cfg.plugins.post_embed) == 1
-    assert len(cfg.plugins.plugin_kwargs) == 2
 
     # Verify output
     assert cfg.output.return_mode == "full"

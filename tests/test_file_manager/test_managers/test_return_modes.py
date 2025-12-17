@@ -29,8 +29,8 @@ async def test_parse_return_modes(file_manager, tmp_path: Path):
         FilePipelineConfig,
         BaseIngestedFile,
         IngestedMinimal,
-        ParsedFile,
     )
+    from unity.file_manager.types.ingest import IngestedFullFile
 
     # compact (default) → typed BaseIngestedFile model
     res_compact = file_manager.ingest_files(str(p))
@@ -40,18 +40,21 @@ async def test_parse_return_modes(file_manager, tmp_path: Path):
     assert isinstance(compact_item, BaseIngestedFile)
     assert hasattr(compact_item, "content_ref")
     assert hasattr(compact_item, "metrics")
+    # Observability: compact metrics should include parser timing derived from FileParseTrace
+    assert compact_item.metrics.processing_time is not None
 
-    # full → ParsedFile Pydantic model (heavy fields present)
+    # full → IngestedFullFile Pydantic model (parse artifacts + lowered rows + refs/metrics)
     res_full = file_manager.ingest_files(
         str(p),
         config=FilePipelineConfig(output={"return_mode": "full"}),
     )
     full_item = res_full[str(p)]
-    assert isinstance(full_item, ParsedFile)
+    assert isinstance(full_item, IngestedFullFile)
     assert full_item.status == "success"
-    assert hasattr(full_item, "records")
+    assert hasattr(full_item, "content_rows")
     assert hasattr(full_item, "full_text")
     assert hasattr(full_item, "file_format")
+    assert full_item.trace is not None
 
     # none → IngestedMinimal Pydantic model (minimal stub)
     res_none = file_manager.ingest_files(
