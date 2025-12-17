@@ -100,24 +100,21 @@ class BaseFileManager(BaseStateManager):
         -------
         config : FilePipelineConfig | dict | None
             Complete pipeline configuration controlling parsing, ingestion, embeddings,
-            plugins, and output return mode. When a dict is provided, it will be coerced
+            and output return mode. When a dict is provided, it will be coerced
             to `FilePipelineConfig` (unknown keys are ignored).
 
             Key sub-models and fields:
-            - parse.batch_size: int (parallelism when available)
-            - parse.parser_kwargs: dict forwarded to parser.parse/parse_batch
+            - parse.max_concurrent_parses: int (parse-stage parallelism; capped conservatively)
+            - parse.backend_class_paths_by_format: dict[str, str] (format -> dotted backend class path)
             - ingest.mode: "per_file" | "unified" (destination layout)
-            - ingest.allowed_columns: list[str] (column filter)
             - ingest.table_ingest: bool (ingest extracted tables)
             - embed.strategy: "along" | "after" | "off" (when to embed)
             - embed.file_specs: list[FileEmbeddingSpec] (which columns to embed)
-            - plugins.pre/post_*: hook lists (dotted names or callables)
 
         Notes
         -----
         - Implementations SHOULD accept `config` in **options and default to a sensible
           `FilePipelineConfig()` when omitted.
-        - For legacy callers, ad-hoc kwargs MAY be mapped into `parse.parser_kwargs`.
         """
 
     # ------------------------------------------------------------------ #
