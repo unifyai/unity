@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import List
 
+from unity.file_manager.file_parsers import ContentType
 from unity.file_manager.types.config import FilePipelineConfig as _FilePipelineConfig
 from unity.file_manager.types.ingest import (
     BaseIngestedFile as _IngestedBase,
@@ -17,10 +18,12 @@ from unity.file_manager.types.ingest import (
 )
 from unity.file_manager.file_parsers.types.formats import FileFormat as _FileFormat
 from unity.file_manager.file_parsers.types.contracts import FileParseResult
+from unity.file_manager.types.file import FileContentRow
+from unity.file_manager.managers.file_manager import FileManager
 
 
 def build_compact_ingest_model(
-    manager: Any,
+    file_manager: FileManager,
     *,
     file_path: str,
     parse_result: FileParseResult,
@@ -33,7 +36,7 @@ def build_compact_ingest_model(
 
     Parameters
     ----------
-    manager : FileManager
+    file_manager : FileManager
         The FileManager instance for context/helper methods.
     file_path : str
         The file path.
@@ -49,8 +52,11 @@ def build_compact_ingest_model(
         reference-first data. Heavy artifacts (full_text, records) are NOT included.
     """
 
+    def _ctype(r: FileContentRow) -> ContentType:
+        return getattr(r, "content_type", None)
+
     # Identity via file_info (returns FileInfo Pydantic model)
-    info = manager._file_info(identifier=file_path)
+    info = file_manager._file_info(identifier=file_path)
     source_uri = info.source_uri
     display_path = file_path  # Use file_path as display_path
 
@@ -62,7 +68,7 @@ def build_compact_ingest_model(
     )
 
     # Content reference
-    content_ctx = manager._ctx_for_file(dest_path)
+    content_ctx = file_manager._ctx_for_file(dest_path)
     from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
 
     adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
@@ -83,13 +89,13 @@ def build_compact_ingest_model(
         tables = list(getattr(parse_result, "tables", []) or [])
         for idx, tbl in enumerate(tables, start=1):
             label = str(getattr(tbl, "label", None) or f"{idx:02d}")
-            label_safe = manager.safe(label)
+            label_safe = file_manager.safe(label)
             columns = list(getattr(tbl, "columns", []) or [])[:16]
             row_count = len(getattr(tbl, "rows", []) or [])
             tables_meta.append(
                 _TableRef(
                     name=label_safe,
-                    context=manager._ctx_for_file_table(dest_path, label_safe),
+                    context=file_manager._ctx_for_file_table(dest_path, label_safe),
                     row_count=row_count,
                     columns=columns,
                 ),
@@ -161,17 +167,12 @@ def build_compact_ingest_model(
         # Derive counts from lowered content rows and tables
         rows = list(adapted.content_rows or [])
 
-        def _ctype(r: Any) -> str:
-            try:
-                return str((getattr(r, "content_type", "") or "")).lower()
-            except Exception:
-                return ""
-
         return Model(
             **base_kwargs,
             page_count=None,
-            total_sections=sum(1 for r in rows if _ctype(r) == "section") or None,
-            image_count=sum(1 for r in rows if _ctype(r) == "image") or None,
+            total_sections=sum(1 for r in rows if _ctype(r) == ContentType.SECTION)
+            or None,
+            image_count=sum(1 for r in rows if _ctype(r) == ContentType.IMAGE) or None,
             table_count=len(list(getattr(parse_result, "tables", []) or [])) or None,
             total_records=len(rows),
         )
@@ -179,18 +180,9 @@ def build_compact_ingest_model(
         rows = list(adapted.content_rows or [])
         return Model(
             **base_kwargs,
-            total_sections=sum(
-                1
-                for r in rows
-                if str(getattr(r, "content_type", "") or "").lower() == "section"
-            )
+            total_sections=sum(1 for r in rows if _ctype(r) == ContentType.SECTION)
             or None,
-            image_count=sum(
-                1
-                for r in rows
-                if str(getattr(r, "content_type", "") or "").lower() == "image"
-            )
-            or None,
+            image_count=sum(1 for r in rows if _ctype(r) == ContentType.IMAGE) or None,
             table_count=len(list(getattr(parse_result, "tables", []) or [])) or None,
             total_records=len(rows),
         )
@@ -199,8 +191,8 @@ def build_compact_ingest_model(
         sheet_names: List[str] = []
         for r in rows:
             try:
-                ctype = str((getattr(r, "content_type", "") or "")).lower()
-                if ctype != "sheet":
+                ctype = _ctype(r)
+                if ctype != ContentType.SHEET:
                     continue
                 title = getattr(r, "title", None) or None
                 if title and title not in sheet_names:

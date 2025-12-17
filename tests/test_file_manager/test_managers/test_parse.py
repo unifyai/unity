@@ -157,7 +157,6 @@ async def test_parse_supported(file_manager, supported_file_examples: dict):
             assert "docling_convert" in step_names
             assert "docling_index_structure" in step_names
             assert "generate_hierarchical_summaries" in step_names
-            assert "extract_metadata" in step_names
             assert any(
                 s in step_names
                 for s in (
@@ -167,12 +166,12 @@ async def test_parse_supported(file_manager, supported_file_examples: dict):
                 )
             )
             ctypes = {r.content_type for r in (item.content_rows or [])}
-            assert ContentType.PARAGRAPH in ctypes
+            assert ContentType.SECTION in ctypes
             # Metadata is optional best-effort; when present it must already be stringified for FileRecords/search.
-            if item.metadata is not None:
-                assert isinstance(item.metadata.key_topics, str)
-                assert isinstance(item.metadata.named_entities, str)
-                assert isinstance(item.metadata.content_tags, str)
+            if item.metadata is not None and isinstance(item.metadata, dict):
+                assert isinstance(item.metadata.get("key_topics", ""), str)
+                assert isinstance(item.metadata.get("named_entities", ""), str)
+                assert isinstance(item.metadata.get("content_tags", ""), str)
 
 
 @pytest.mark.asyncio

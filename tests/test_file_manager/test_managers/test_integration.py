@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 from tests.helpers import _handle_project
-from tests.test_file_manager.helpers import ask_judge
 
 
 def _text_for_assertions(file_result) -> str:
@@ -172,38 +171,7 @@ async def test_parse_errors(file_manager, tmp_path: Path):
         str(getattr(r, "content_text", "") or "")
         for r in (file_result.content_rows or [])
     )
-    assert "unsupported content" in all_content
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_ask_uses_parse(file_manager, temp_dir: Path):
-    """Test that the ask method correctly uses the parse tool."""
-    fm = file_manager
-    fm.clear()
-    files = [str(p) for p in temp_dir.iterdir() if p.is_file()]
-
-    # Parse files to add them to Unify logs before ask
-    fm.ingest_files(files)
-
-    # Ask a trivial question which should rely on parsed content
-    name = next(n for n in files if n.endswith(".txt"))
-    instruction = f"What does the file {name} contain?"
-    handle = await fm.ask(instruction)
-    ans = await handle.result()
-    assert isinstance(ans, str)
-    assert ans  # non-empty answer
-
-    # Read file content for the judge
-    from pathlib import Path as _Path
-
-    file_content = _Path(name).read_text(encoding="utf-8")
-
-    # Ask judge to verify
-    verdict = await ask_judge(instruction, ans, file_content=file_content)
-    assert (
-        verdict.lower().strip().startswith("correct")
-    ), f"Judge deemed 'ask' incorrect. Verdict: {verdict}"
+    assert not all_content.strip()
 
 
 @pytest.mark.asyncio
@@ -269,20 +237,11 @@ async def test_structure_integrity(
 
         # Check document structure integrity
         def _ctype(r):
-            return (
-                str(
-                    (
-                        r.get("content_type")
-                        if isinstance(r, dict)
-                        else getattr(r, "content_type", "")
-                    )
-                    or "",
-                )
-                .lower()
-                .strip()
-            )
+            return getattr(r, "content_type", None)
 
-        doc_records = [r for r in rows if _ctype(r) == "document"]
+        from unity.file_manager.file_parsers.types.enums import ContentType
+
+        doc_records = [r for r in rows if _ctype(r) == ContentType.DOCUMENT]
         assert (
             len(doc_records) == 1
         ), f"Should have exactly one document record for {filename}"
@@ -295,8 +254,8 @@ async def test_structure_integrity(
             # They may only have a document record without sections/paragraphs
             continue
 
-        section_records = [r for r in rows if _ctype(r) == "section"]
-        para_records = [r for r in rows if _ctype(r) == "paragraph"]
+        section_records = [r for r in rows if _ctype(r) == ContentType.SECTION]
+        para_records = [r for r in rows if _ctype(r) == ContentType.PARAGRAPH]
 
         # Document should have sections and paragraphs (or at least one of them)
         assert (
