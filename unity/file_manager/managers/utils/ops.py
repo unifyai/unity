@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 import unify
 
 from unity.common.log_utils import log as unity_log, create_logs as unity_create_logs
+from unity.file_manager.types.file import FileRecordRow
+
+if TYPE_CHECKING:
+    from unity.file_manager.types.file import FileContentRow
 
 
 def safe(self):
@@ -65,7 +69,7 @@ def add_or_replace_file_row(
                 logs=[rows[0].id],
                 context=self._ctx,
                 entries=entry,
-                overwrite=True,
+                overwrite=False,
             )
             return {
                 "outcome": "file updated successfully",
@@ -192,7 +196,12 @@ def update_file_record_by_path(
     log_id = rows[0].id
     updates = {"file_path": new_file_path}
     updates.update(extra_updates or {})
-    unify.update_logs(logs=[log_id], context=self._ctx, entries=updates, overwrite=True)
+    unify.update_logs(
+        logs=[log_id],
+        context=self._ctx,
+        entries=updates,
+        overwrite=False,
+    )
     return {
         "outcome": "updated",
         "details": {
@@ -318,12 +327,11 @@ def ensure_per_file_context(
     self,
     *,
     file_path: str,
-    auto_counting_per_file: Optional[Dict[str, Optional[str]]] = None,
 ) -> None:
     """Compatibility wrapper → storage.ensure_file_context."""
     from .storage import ensure_file_context as _ensure
 
-    _ensure(self, file_path=file_path, auto_counting_per_file=auto_counting_per_file)
+    _ensure(self, file_path=file_path)
 
 
 def ensure_per_file_table_context(
@@ -442,26 +450,37 @@ def batch_insert_per_file_rows(
 def create_file_record(
     self,
     *,
-    entry: Dict[str, Any],
+    entry: FileRecordRow,
 ) -> Dict[str, Any]:
     """Create or update a FileRecord row in the global index (idempotent)."""
-    return add_or_replace_file_row(self, entry=entry)
+    return add_or_replace_file_row(
+        self,
+        entry=entry.model_dump(mode="json", exclude_none=True),
+    )
 
 
 def create_file_content(
     self,
     *,
     file_path: str,
-    auto_counting_per_file: Optional[Dict[str, Optional[str]]] = None,
-    rows: List[Dict[str, Any]],
+    rows: List["FileContentRow"],
 ) -> List[int]:
     """Ensure per-file context then insert rows (batched)."""
+    from unity.file_manager.types.file import FileContentRow
+
     ensure_per_file_context(
         self,
         file_path=file_path,
-        auto_counting_per_file=auto_counting_per_file,
     )
-    return batch_insert_per_file_rows(self, file_path=file_path, rows=rows)
+    entries: List[Dict[str, Any]] = [
+        (
+            r.model_dump(mode="json", exclude_none=True)
+            if isinstance(r, FileContentRow)
+            else dict(r)
+        )  # type: ignore[arg-type]
+        for r in list(rows or [])
+    ]
+    return batch_insert_per_file_rows(self, file_path=file_path, rows=entries)
 
 
 def create_file_table(
