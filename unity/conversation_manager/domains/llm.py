@@ -15,6 +15,8 @@ class LLM:
         messages: str,
         response_model,
         *,
+        _tools: dict[str, Callable] | None = None,
+        _tool_policy: Callable | None = None,
         _on_handle_created: Callable[[object], None] | None = None,
         _on_handle_finished: Callable[[object], None] | None = None,
         _interrupt_llm_with_interjections: bool = True,
@@ -66,11 +68,12 @@ class LLM:
         handle = start_async_tool_loop(
             client,
             messages,
-            {},
+            _tools or {},
             loop_id="ConversationManager._run_llm",
             response_format=response_model,
             preprocess_msgs=_preprocess_msgs if isinstance(messages, list) else None,
             interrupt_llm_with_interjections=_interrupt_llm_with_interjections,
+            tool_policy=_tool_policy,
             log_steps=False,
         )
         try:

@@ -21,6 +21,7 @@ from unity.conversation_manager.domains.call_manager import (
 )
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.brain import build_brain_spec
+from unity.conversation_manager.domains.brain_tools import ConversationManagerBrainTools
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import *
@@ -347,6 +348,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Build response model dynamically with current active tasks
         response_model = brain_spec.response_model
 
+        brain_tools = ConversationManagerBrainTools(self)
+
+        def _brain_tool_policy(step_index: int, tools: dict) -> tuple[str, dict]:
+            # Keep the tool surface conservative: allow inspection tools on the first turn
+            # only, then encourage immediate completion via final_answer.
+            if step_index > 0:
+                return "auto", {}
+            return "auto", tools
+
         def _set_brain_handle(h: object) -> None:
             # Store as SteerableToolHandle (protocol-like) for interjection routing.
             try:
@@ -365,6 +375,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
             response_model=response_model,
+            _tools=brain_tools.as_tools(),
+            _tool_policy=_brain_tool_policy,
             _on_handle_created=_set_brain_handle,
             _on_handle_finished=_clear_brain_handle,
         )
