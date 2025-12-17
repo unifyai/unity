@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from unity.file_manager.managers.file_manager import FileManager
-from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+from unity.file_manager.filesystem_adapters.local_adapter import LocalFileSystemAdapter
 from unity.singleton_registry import SingletonABCMeta
 
 
