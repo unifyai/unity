@@ -7,11 +7,9 @@ to remain approachable while still being extensible. The design goals are:
 
 - Single, obvious entry point (`FilePipelineConfig`) that callers provide.
 - Clear separation of concerns: parser knobs, ingest/storage layout, embeddings,
-  and optional plugin hooks for dependency injection.
-- Backward compatibility: existing ad-hoc kwargs in manager methods can be
-  coerced into this config without breaking callers.
+  and execution/retry behavior.
 - Extensibility: future features (e.g., images ingestion, custom schemas,
-  alternate layouts, pre/post step plugins) can be added with minimal churn.
+  alternate layouts) can be added with minimal churn.
 
 Tip for future contributors:
 - Prefer adding options to these grouped models rather than creating many small
@@ -19,11 +17,14 @@ Tip for future contributors:
   FileManager pipeline without configuration.
 """
 
-from typing import Any, Callable, Dict, Iterable, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 from pydantic import BaseModel, Field, model_validator
-import importlib
 import json
 from pathlib import Path
+
+from unity.file_manager.file_parsers.registry import (
+    DEFAULT_BACKEND_CLASS_PATHS_BY_FORMAT,
+)
 
 
 # ------------------------------ Parser ------------------------------------ #
@@ -32,32 +33,24 @@ from pathlib import Path
 class ParseConfig(BaseModel):
     """Options forwarded to the underlying parser.
 
-    - batch_size controls parse_batch_async parallelism when available.
-    - parser_kwargs are forwarded verbatim to the parser's parse/parse_batch
-      methods. Keep this small and declarative; the parser owns validation.
+    Hot-swapping
+    ------------
+    Backends can be overridden per file format by providing dotted class paths.
+    This enables swapping an entire implementation set OR a single format backend
+    (e.g., swap XLSX only) without changing FileParser code.
     """
 
-    batch_size: int = 3
-    parser_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    # Controls parse-stage parallelism (number of files processed concurrently).
+    # The FileParser enforces a conservative upper bound even if the config asks for more.
+    max_concurrent_parses: int = 3
+
+    # format -> dotted class path (e.g. "xlsx" -> "pkg.module.CustomExcelBackend")
+    backend_class_paths_by_format: Dict[str, str] = Field(
+        default_factory=lambda: dict(DEFAULT_BACKEND_CLASS_PATHS_BY_FORMAT),
+    )
 
 
 # --------------------------- Ingest / Storage ----------------------------- #
-
-
-class ContentIngestPolicy(BaseModel):
-    """Per-file-format policy controlling what goes into the per-file Content context.
-
-    mode:
-        - "default": keep rows as produced by the parser (current behavior)
-        - "none": do not create any per-file Content rows
-        - "document_only": keep only a single document-level row. If the parser
-          did not produce one, a synthetic minimal document row is created.
-    omit_fields:
-        Field names to drop from rows (e.g., ["content_text", "summary"]).
-    """
-
-    mode: Literal["default", "none", "document_only"] = "default"
-    omit_fields: List[str] = Field(default_factory=list)
 
 
 class IngestConfig(BaseModel):
@@ -81,72 +74,20 @@ class IngestConfig(BaseModel):
     #   (used by along/auto strategies to incrementally ingest+embed).
     content_rows_batch_size: int = 1000
 
-    # ID layout and hierarchy configuration
-    # - id_layout selects how hierarchical identifiers are represented in Content rows:
-    #   • "map" (default): a single dict field `content_id` like
-    #       {"document": 0, "section": 2, "paragraph": 1, "sentence": 3}
-    #   • "columns": legacy per-level id columns are included
-    #       (document_id, section_id, paragraph_id, sentence_id, image_id, table_id)
-    #     and auto_counting controls apply. Use this only when required.
-    #   • "string": future-friendly hook for a string encoding (e.g. "doc:0>sec:2>…").
-    id_layout: Literal["map", "columns", "string"] = "map"
-    # When id_layout == "columns", this hierarchy dictates parentage for auto-counting.
-    # Defaults mirror the previous behavior. Ignored for id_layout == "map".
-    id_hierarchy: Optional[Dict[str, Optional[str]]] = {
-        "document_id": None,
-        "section_id": "document_id",
-        "image_id": "section_id",
-        "table_id": "section_id",
-        "paragraph_id": "section_id",
-        "sentence_id": "paragraph_id",
-    }
-    # Optional string format template when id_layout == "string" (reserved for future use).
-    id_string_format: Optional[str] = None
-
     # Row management
     replace_existing: bool = True
-    allowed_columns: Optional[List[str]] = None
 
-    # Auto-counting configuration fed into Document.to_schema_rows when provided.
-    # When None, manager defaults are used. These only apply when id_layout == "columns".
-    auto_counting_per_file: Optional[Dict[str, Optional[str]]] = {
-        "document_id": None,
-        "section_id": "document_id",
-        "image_id": "section_id",
-        "table_id": "section_id",
-        "paragraph_id": "section_id",
-        "sentence_id": "paragraph_id",
-    }
-    auto_counting_unified: Optional[Dict[str, Optional[str]]] = {
-        "document_id": None,
-        "section_id": "document_id",
-        "image_id": "section_id",
-        "table_id": "section_id",
-        "paragraph_id": "section_id",
-        "sentence_id": "paragraph_id",
-    }
+    # Hierarchical identifiers are represented via a single dict field `content_id`
+    # on each `/Content/` row, e.g.:
+    #   {"document": 0, "section": 2, "paragraph": 1, "sentence": 3}
+    #
+    # Legacy column-based ID layouts and auto-counting configurations have been
+    # removed to keep the schema simple and robust.
 
     # Table ingestion control
     table_ingest: bool = True
     table_label_strategy: Literal["sheet_name", "section_path", "index"] = "sheet_name"
     table_rows_batch_size: int = 100
-
-    # Per-format policy for Content ingestion (document/section/paragraph rows)
-    # Keys are normalized file formats (e.g., "pdf", "docx", "xlsx", "csv").
-    # Defaults aim to avoid redundant full-text/summary storage for pure tables:
-    # - For spreadsheets (xlsx/csv), keep a single document row and drop text fields.
-    content_policy_by_format: Dict[str, ContentIngestPolicy] = Field(
-        default_factory=lambda: {
-            "xlsx": ContentIngestPolicy(
-                mode="document_only",
-                omit_fields=["content_text", "summary"],
-            ),
-            "csv": ContentIngestPolicy(
-                mode="document_only",
-                omit_fields=["content_text", "summary"],
-            ),
-        },
-    )
 
     # Business context specifications for enriching table contexts with descriptions
     # Uses BusinessContextsConfig with global_rules, file_contexts (with file_rules), and table_contexts (with table_rules)
@@ -257,38 +198,13 @@ class EmbeddingsConfig(BaseModel):
         - "off": disable embeddings
         - "after": run embeddings after ingest (classic flow)
         - "along": ingest and embed in chunks within a single file loop (non-blocking)
-    hooks_per_chunk:
-        When True, run pre/post embed hooks for each chunk in along mode.
     file_specs:
         File-level embedding specifications describing where and what to embed, organized by file_path.
         Each FileEmbeddingSpec can target multiple tables within a file.
     """
 
     strategy: Literal["off", "after", "along"] = "after"
-    hooks_per_chunk: bool = True
     file_specs: List[FileEmbeddingSpec] = Field(default_factory=list)
-
-
-# ------------------------------- Plugins ---------------------------------- #
-
-
-class PluginsConfig(BaseModel):
-    """Optional plugin hooks for dependency injection.
-
-    Hooks receive: (manager, file_path, result, document, config) and run at the
-    designated stage. List entries can be dotted paths (module.func) or direct
-    callables injected by the caller.
-    """
-
-    pre_parse: List[Any] = Field(default_factory=list)
-    post_parse: List[Any] = Field(default_factory=list)
-    pre_ingest: List[Any] = Field(default_factory=list)
-    post_ingest: List[Any] = Field(default_factory=list)
-    pre_embed: List[Any] = Field(default_factory=list)
-    post_embed: List[Any] = Field(default_factory=list)
-
-    # Optional kwargs per plugin name (key: dotted name or identifier)
-    plugin_kwargs: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 # ------------------------------ Output modes ------------------------------- #
@@ -356,31 +272,6 @@ class RetryConfig(BaseModel):
     fail_fast: bool = False
 
 
-def resolve_callables(names_or_callables: Iterable[Any]) -> List[Callable]:
-    """Resolve a sequence of dotted names or callables into callables.
-
-    - Callables are passed through.
-    - Strings are resolved by importing the module then attribute. Non-callables
-      are ignored silently to keep pipeline robust.
-    """
-
-    out: List[Callable] = []
-    for item in names_or_callables:
-        if callable(item):
-            out.append(item)  # type: ignore[arg-type]
-            continue
-        if isinstance(item, str) and item:
-            mod, _, attr = item.rpartition(".")
-            if mod and attr:
-                try:
-                    fn = getattr(importlib.import_module(mod), attr, None)
-                    if callable(fn):
-                        out.append(fn)  # type: ignore[arg-type]
-                except Exception:
-                    continue
-    return out
-
-
 # ------------------------------ Entry point ------------------------------- #
 
 
@@ -399,7 +290,6 @@ class FilePipelineConfig(BaseModel):
     parse: ParseConfig = ParseConfig()
     ingest: IngestConfig = IngestConfig()
     embed: EmbeddingsConfig = EmbeddingsConfig()
-    plugins: PluginsConfig = PluginsConfig()
     output: OutputConfig = OutputConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
     execution: ExecutionConfig = ExecutionConfig()
@@ -446,7 +336,6 @@ class FilePipelineConfig(BaseModel):
             parse: Optional[Dict[str, Any]] = None
             ingest: Optional[Dict[str, Any]] = None
             embed: Optional[Dict[str, Any]] = None
-            plugins: Optional[Dict[str, Any]] = None
             output: Optional[Dict[str, Any]] = None
             diagnostics: Optional[Dict[str, Any]] = None
             execution: Optional[Dict[str, Any]] = None
@@ -460,10 +349,19 @@ class FilePipelineConfig(BaseModel):
 
         # Parse config
         if config_file.parse:
-            if "batch_size" in config_file.parse:
-                cfg.parse.batch_size = config_file.parse["batch_size"]
-            if "parser_kwargs" in config_file.parse:
-                cfg.parse.parser_kwargs.update(config_file.parse["parser_kwargs"])
+            if "max_concurrent_parses" in config_file.parse:
+                cfg.parse.max_concurrent_parses = int(
+                    config_file.parse["max_concurrent_parses"],
+                )
+            elif "batch_size" in config_file.parse:
+                # Back-compat alias: batch_size historically controlled parse concurrency.
+                cfg.parse.max_concurrent_parses = int(config_file.parse["batch_size"])
+            if "backend_class_paths_by_format" in config_file.parse:
+                m = config_file.parse["backend_class_paths_by_format"]
+                if isinstance(m, dict):
+                    cfg.parse.backend_class_paths_by_format.update(
+                        {str(k): str(v) for k, v in m.items() if v},
+                    )
 
         # Ingest config
         if config_file.ingest:
@@ -528,8 +426,6 @@ class FilePipelineConfig(BaseModel):
             embed_data = config_file.embed
             if "strategy" in embed_data:
                 cfg.embed.strategy = embed_data["strategy"]
-            if "hooks_per_chunk" in embed_data:
-                cfg.embed.hooks_per_chunk = embed_data["hooks_per_chunk"]
             if "file_specs" in embed_data:
                 # Convert dicts to FileEmbeddingSpec instances with nested TableEmbeddingSpec
                 file_specs = []
@@ -548,22 +444,6 @@ class FilePipelineConfig(BaseModel):
                         ),
                     )
                 cfg.embed.file_specs = file_specs
-
-        # Plugins config
-        if config_file.plugins:
-            plugins_data = config_file.plugins
-            for key in [
-                "pre_parse",
-                "post_parse",
-                "pre_ingest",
-                "post_ingest",
-                "pre_embed",
-                "post_embed",
-            ]:
-                if key in plugins_data:
-                    setattr(cfg.plugins, key, plugins_data[key])
-            if "plugin_kwargs" in plugins_data:
-                cfg.plugins.plugin_kwargs.update(plugins_data["plugin_kwargs"])
 
         # Output config
         if config_file.output:
