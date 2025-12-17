@@ -69,7 +69,7 @@ def add_or_replace_file_row(
                 logs=[rows[0].id],
                 context=self._ctx,
                 entries=entry,
-                overwrite=False,
+                overwrite=True,
             )
             return {
                 "outcome": "file updated successfully",
@@ -200,7 +200,7 @@ def update_file_record_by_path(
         logs=[log_id],
         context=self._ctx,
         entries=updates,
-        overwrite=False,
+        overwrite=True,
     )
     return {
         "outcome": "updated",

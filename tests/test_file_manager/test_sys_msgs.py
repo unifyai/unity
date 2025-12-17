@@ -172,9 +172,7 @@ def test_file_manager_ask_system_prompt_formatting():
 
     # FileManager-specific sections
     assert "Context map" in prompt
-    assert "Path-first targeting" in prompt
-    assert "Retrieval & Joins" in prompt
-    assert "Tables overview" in prompt
+    assert "Discover schema" in prompt
 
     # Clarification sentence
     assert re.search(
@@ -190,9 +188,7 @@ def test_file_manager_ask_system_prompt_formatting():
             "retrieving file information",  # Role
             "Do not ask the user questions",  # Clarification
             "Context map",  # Generic block
-            "Path-first targeting",  # Generic block
-            "Tables overview",  # Runtime data
-            "Retrieval & Joins",  # Retrieval usage
+            "Discover schema",  # Retrieval usage
             "Tools (name",  # Tools
             "Current UTC time",  # Timestamp
         ],
@@ -270,7 +266,6 @@ def test_file_manager_organize_system_prompt_formatting():
             "organizing files",
             "Do not ask the user questions",
             "Context map",
-            "Tables overview",
             "Tools (name",
             "Current UTC time",
         ],
