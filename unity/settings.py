@@ -74,6 +74,13 @@ class ProductionSettings(BaseSettings):
     PYTEST_LOG_TO_FILE: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Test Infrastructure
+    # ─────────────────────────────────────────────────────────────────────────
+    # Fixed datetime for LLM cache consistency in tests (ISO format string)
+    # When set, _get_now() returns this fixed datetime instead of datetime.now()
+    UNITY_FIXED_DATETIME: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_SEMANTIC_CACHE: bool = False
