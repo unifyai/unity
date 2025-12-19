@@ -17,8 +17,9 @@ from .types.meta import FunctionsMeta
 from .types.venv import VirtualEnv
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
-from ..file_manager.managers.local import LocalFileManager as FileManager
-from ..image_manager.image_manager import ImageManager, ImageHandle
+from ..file_manager.managers.local import LocalFileManager
+from ..image_manager.image_manager import ImageHandle
+from ..manager_registry import ManagerRegistry
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
 from .primitives import collect_primitives, compute_primitives_hash
@@ -166,7 +167,7 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         daemon: bool = True,
-        file_manager: Optional[FileManager] = None,
+        file_manager: Optional[LocalFileManager] = None,
     ) -> None:
         # No thread behavior; keep parameter for backward compatibility
         self._daemon = daemon
@@ -214,9 +215,9 @@ class FunctionManager(BaseFunctionManager):
         #  File system mirroring (functions folder under FileManager root)    #
         # ------------------------------------------------------------------ #
         try:
-            # Resolve a FileManager instance (DI preferred)
-            self._fm: Optional[FileManager] = (
-                file_manager if file_manager is not None else FileManager()
+            # Resolve a LocalFileManager instance (DI preferred, else via registry)
+            self._fm: Optional[LocalFileManager] = (
+                file_manager if file_manager is not None else LocalFileManager()
             )
         except Exception:
             self._fm = None
@@ -1787,7 +1788,7 @@ class FunctionManager(BaseFunctionManager):
             if isinstance(limit, int) and limit >= 0:
                 image_ids = image_ids[:limit]
 
-        im = ImageManager()
+        im = ManagerRegistry.get("images")
         return im.get_images(image_ids)
 
     def _attach_guidance_images_for_function_to_context(
