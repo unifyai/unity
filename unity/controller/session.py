@@ -1,14 +1,15 @@
-import os
 from browserbase import Browserbase
 from browserbase.types import SessionCreateResponse
 from browserbase.types.sessions import LogListResponse, RecordingRetrieveResponse
 from dotenv import load_dotenv
 
+from unity.settings import SETTINGS
+
 load_dotenv()
 
 
 # initialize browserbase client
-bb = Browserbase(api_key=os.environ["BROWSERBASE_API_KEY"])
+bb = Browserbase(api_key=SETTINGS.BROWSERBASE_API_KEY or None)
 
 
 # session management
@@ -17,7 +18,7 @@ def create_session(
     stealth_mode: bool = False,
 ) -> SessionCreateResponse:
     session = bb.sessions.create(
-        project_id=os.environ["BROWSERBASE_PROJECT_ID"],
+        project_id=SETTINGS.BROWSERBASE_PROJECT_ID,
         browser_settings={
             "advanced_stealth": stealth_mode,
         },
@@ -28,7 +29,7 @@ def create_session(
 def close_session(session_id: str) -> bool:
     session_res = bb.sessions.update(
         session_id,
-        project_id=os.environ["BROWSERBASE_PROJECT_ID"],
+        project_id=SETTINGS.BROWSERBASE_PROJECT_ID,
         status="REQUEST_RELEASE",
     )
     return session_res.status in ("TIMED_OUT", "COMPLETED")

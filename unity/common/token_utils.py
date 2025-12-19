@@ -7,10 +7,11 @@ This module centralises functionality previously scattered in parser-level utils
 so other managers can reuse them directly.
 """
 
-import os
 import math
 import json
 from typing import Optional, Any, Dict, List, Tuple
+
+from unity.settings import SETTINGS
 from unity.common.grouping_helpers import iter_unique_values_via_groups
 
 
@@ -264,19 +265,7 @@ def clip_text_to_token_limit(
 
 
 def read_model_max_input_tokens() -> int:
-    env_keys = [
-        "KM_MAX_INPUT_TOKENS",
-        "UNIFY_MAX_INPUT_TOKENS",
-        "MODEL_MAX_INPUT_TOKENS",
-    ]
-    for k in env_keys:
-        val = os.environ.get(k)
-        if val:
-            try:
-                return int(val)
-            except Exception:
-                continue
-    return 128_000
+    return SETTINGS.MODEL_MAX_INPUT_TOKENS
 
 
 def safe_token_count(value: Any) -> int:

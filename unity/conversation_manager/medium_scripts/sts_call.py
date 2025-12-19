@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import json
 import time
 from typing import AsyncIterable
@@ -34,8 +33,9 @@ except ImportError:
 from unity.conversation_manager.utils import dispatch_agent
 from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.session_details import SESSION_DETAILS
 
-# NEW: shared helpers
+# Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
     create_end_call,
@@ -93,20 +93,23 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
     print("Connected to room")
 
-    # read static config
-    voice_provider = os.environ.get("VOICE_PROVIDER")
-    voice_id = os.environ.get("VOICE_ID")
-    outbound = os.environ.get("OUTBOUND") == "True"
-    channel = os.environ.get("CHANNEL")
-    assistant_bio = os.environ.get("ASSISTANT_ABOUT")
+    # Populate SESSION_DETAILS from environment (set by configure_from_cli)
+    SESSION_DETAILS.populate_from_env()
+
+    # Read config from SESSION_DETAILS
+    voice_provider = SESSION_DETAILS.voice.provider
+    voice_id = SESSION_DETAILS.voice.id
+    outbound = SESSION_DETAILS.voice_call.outbound
+    channel = SESSION_DETAILS.voice_call.channel
+    assistant_bio = SESSION_DETAILS.assistant.about
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)
     print("channel", channel)
 
-    # contact/boss payloads passed as json env vars
-    contact = json.loads(os.getenv("CONTACT", "{}"))
-    boss = json.loads(os.getenv("BOSS", "{}"))
+    # Contact/boss payloads from SESSION_DETAILS
+    contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
+    boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
 
     # Configure the OpenAI Realtime model.
     # This requires the livekit-plugins-openai package with OpenAI's Realtime API.

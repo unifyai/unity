@@ -1,6 +1,5 @@
 import sys
 import json
-import os
 import asyncio
 
 from dotenv import load_dotenv
@@ -30,6 +29,7 @@ load_dotenv()
 from unity.conversation_manager.events import *
 from unity.conversation_manager.utils import dispatch_agent
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.session_details import SESSION_DETAILS
 
 # Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
@@ -133,20 +133,23 @@ async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
     print("Connected to room")
 
-    # Read static config
-    voice_provider = os.environ.get("VOICE_PROVIDER")
-    voice_id = os.environ.get("VOICE_ID")
-    outbound = os.environ.get("OUTBOUND") == "True"
-    channel = os.environ.get("CHANNEL")
-    assistant_bio = os.environ.get("ASSISTANT_ABOUT", "")
+    # Populate SESSION_DETAILS from environment (set by configure_from_cli)
+    SESSION_DETAILS.populate_from_env()
+
+    # Read config from SESSION_DETAILS
+    voice_provider = SESSION_DETAILS.voice.provider
+    voice_id = SESSION_DETAILS.voice.id
+    outbound = SESSION_DETAILS.voice_call.outbound
+    channel = SESSION_DETAILS.voice_call.channel
+    assistant_bio = SESSION_DETAILS.assistant.about
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)
     print("channel", channel)
 
-    # Contact/boss payloads passed as json env vars
-    contact = json.loads(os.getenv("CONTACT", "{}"))
-    boss = json.loads(os.getenv("BOSS", "{}"))
+    # Contact/boss payloads from SESSION_DETAILS
+    contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
+    boss = json.loads(SESSION_DETAILS.voice_call.boss_json or "{}")
 
     # Fallback for whenever pre-loading fails
     if STT is None:

@@ -1,5 +1,4 @@
 from datetime import timedelta
-import os
 import asyncio
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -22,12 +21,10 @@ from unity.conductor.manager_registry import get_class
 def _get_impl(name: str, default: str = "real") -> str:
     """Get implementation setting from environment, allowing test-time override.
 
-    We read directly from os.environ instead of SETTINGS because the SETTINGS
-    singleton is instantiated at import time, before test conftests can set
-    environment variables. This allows test_conversation_manager/conftest.py
-    to set UNITY_*_IMPL=simulated and have it take effect.
+    Delegates to SESSION_DETAILS.get_impl_setting() which is the designated
+    place for direct os.environ access.
     """
-    return os.environ.get(name, default)
+    return SESSION_DETAILS.get_impl_setting(name, default)
 
 
 if TYPE_CHECKING:

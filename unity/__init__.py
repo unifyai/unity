@@ -1,4 +1,3 @@
-import os
 from typing import Optional
 
 from unity.common.context_registry import ContextRegistry
@@ -125,7 +124,7 @@ _install_llm_io_hooks()
 # Lazy runtime initialisation
 # ---------------------------------------------------------------------------
 
-from unity.session_details import DEFAULT_USER_CONTEXT
+from unity.session_details import DEFAULT_USER_CONTEXT, SESSION_DETAILS
 
 _INITIALISED = False
 ASSISTANT = None  # Will hold the selected assistant record once init() runs
@@ -178,8 +177,8 @@ def init(
         unify.activate(project_name, overwrite)
 
     # ── user context derivation ──────────────────────────────────────────
-    # Derive USER_CONTEXT from USER_NAME env var using same capitalization pattern
-    user_name_raw = os.environ.get("USER_NAME", "")
+    # Derive USER_CONTEXT from SESSION_DETAILS user name using same capitalization pattern
+    user_name_raw = SESSION_DETAILS.user.name
     if user_name_raw:
         USER_CONTEXT = "".join(
             [chunk.capitalize() for chunk in user_name_raw.split(" ")],

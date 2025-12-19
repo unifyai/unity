@@ -5,7 +5,6 @@ from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 import asyncio
 import json
-import os
 
 import contextlib
 import functools
@@ -171,7 +170,7 @@ class Conductor(BaseConductor):
             if SETTINGS.UNITY_CONVERSATION_IMPL == "simulated":
                 self._cm_handle = conversation_cls(
                     assistant_id=SESSION_DETAILS.assistant.id,
-                    contact_id=os.getenv("CONTACT_ID", "1"),
+                    contact_id=SETTINGS.CONTACT_ID,
                     description=description,
                     simulation_guidance=simulation_guidance,
                 )
