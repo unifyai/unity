@@ -342,7 +342,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         logger.info(f"🔌 Starting log stream listener for {ws_url}")
 
         # Prepare authentication headers
-        auth_key = SESSION_DETAILS.api_key
+        auth_key = SESSION_DETAILS.unify_key
         assistant_email = SESSION_DETAILS.assistant.email
         headers = {
             "Authorization": f"Bearer {auth_key} {assistant_email}".strip(),
@@ -500,7 +500,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         for attempt in range(retries):
             try:
                 # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>"
-                auth_key = SESSION_DETAILS.api_key
+                auth_key = SESSION_DETAILS.unify_key
                 assistant_email = SESSION_DETAILS.assistant.email
                 headers = {
                     "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
@@ -548,7 +548,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
     ) -> Any:
         try:
             url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
-            auth_key = SESSION_DETAILS.api_key
+            auth_key = SESSION_DETAILS.unify_key
             assistant_email = SESSION_DETAILS.assistant.email
             headers = {
                 "authorization": f"Bearer {auth_key} {assistant_email}".strip(),

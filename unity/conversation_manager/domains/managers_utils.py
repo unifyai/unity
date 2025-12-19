@@ -362,7 +362,7 @@ def _init_managers(
     )
 
     # Get API key from SESSION_DETAILS (set by ConversationManager on startup)
-    api_key = SESSION_DETAILS.api_key or None
+    api_key = SESSION_DETAILS.unify_key or None
 
     # 1. Configure EventBus
     print("[ManagersWorker] Configuring EventBus...")

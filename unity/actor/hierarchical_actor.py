@@ -4405,7 +4405,7 @@ class HierarchicalActor(BaseActor):
         Falls back to the provided agent_server_url on any failure.
         """
         orchestra_url = SETTINGS.UNIFY_BASE_URL
-        unify_key = SESSION_DETAILS.api_key
+        unify_key = SESSION_DETAILS.unify_key
         assistant_name = SESSION_DETAILS.assistant.name.strip()
 
         if not orchestra_url or not unify_key or not assistant_name:

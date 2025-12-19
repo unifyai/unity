@@ -524,7 +524,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.build_response_model()
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
-            SESSION_DETAILS.api_key = payload["api_key"]
+            SESSION_DETAILS.unify_key = payload["api_key"]
         # Populate the global SessionDetails singleton
         SESSION_DETAILS.populate(
             assistant_id=self.assistant_id,

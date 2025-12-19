@@ -74,7 +74,7 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
 
     def _headers(self) -> Dict[str, str]:
         # Mirror agent-service header style; service only checks presence
-        unify_key = SESSION_DETAILS.api_key
+        unify_key = SESSION_DETAILS.unify_key
         assistant_email = SESSION_DETAILS.assistant.email
         return {"authorization": f"Bearer {unify_key} {assistant_email}".strip()}
 

@@ -91,7 +91,7 @@ class SessionDetails:
     user: UserDetails = field(default_factory=UserDetails)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     voice_call: VoiceCallConfig = field(default_factory=VoiceCallConfig)
-    api_key: str = ""  # Unify API key, set dynamically from startup payload
+    unify_key: str = ""
 
     _initialized: bool = field(default=False, repr=False)
 
