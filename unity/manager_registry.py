@@ -302,6 +302,7 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
     ManagerRegistry.register_settings("memory", lambda: SETTINGS.memory)
+    ManagerRegistry.register_settings("conductor", lambda: SETTINGS.conductor)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Actor implementations
@@ -414,6 +415,15 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("memory", "real", MemoryManager)
     ManagerRegistry.register_class("memory", "simulated", SimulatedMemoryManager)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Conductor implementations
+    # ─────────────────────────────────────────────────────────────────────────
+    from .conductor.conductor import Conductor
+    from .conductor.simulated import SimulatedConductor
+
+    ManagerRegistry.register_class("conductor", "real", Conductor)
+    ManagerRegistry.register_class("conductor", "simulated", SimulatedConductor)
 
 
 # Populate on first import

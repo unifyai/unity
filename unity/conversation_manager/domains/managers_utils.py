@@ -14,19 +14,7 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.events import _get_now
 from unity.events.event_bus import EVENT_BUS
 from unity.memory_manager.memory_manager import MemoryManager
-from unity.conductor.conductor import Conductor
-from unity.conductor.simulated import SimulatedConductor
-from unity.conductor.manager_registry import get_class
-
-
-def _get_impl(name: str, default: str = "real") -> str:
-    """Get implementation setting from environment, allowing test-time override.
-
-    Delegates to SESSION_DETAILS.get_impl_setting() which is the designated
-    place for direct os.environ access.
-    """
-    return SESSION_DETAILS.get_impl_setting(name, default)
-
+from unity.manager_registry import ManagerRegistry
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -376,36 +364,33 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 2. Initialize ContactManager (respects UNITY_CONTACT_IMPL setting)
+    # 2. Initialize ContactManager (respects SETTINGS.contact.IMPL)
     print("[ManagersWorker] Initializing ContactManager...")
     local_start_time = perf_counter()
-    contacts_impl = _get_impl("UNITY_CONTACT_IMPL")
-    contacts_cls = get_class("contacts", contacts_impl)
-    if contacts_impl == "simulated":
-        cm.contact_manager = contacts_cls(description="production deployment")
-    else:
-        cm.contact_manager = contacts_cls()
+    cm.contact_manager = ManagerRegistry.get(
+        "contacts",
+        description="production deployment",
+    )
     print(
-        f"[ManagersWorker] ContactManager ({contacts_cls.__name__}) initialized in "
+        f"[ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 3. Initialize TranscriptManager (respects UNITY_TRANSCRIPT_IMPL setting)
+    # 3. Initialize TranscriptManager (respects SETTINGS.transcript.IMPL)
     print("[ManagersWorker] Initializing TranscriptManager...")
     local_start_time = perf_counter()
-    transcripts_impl = _get_impl("UNITY_TRANSCRIPT_IMPL")
-    transcripts_cls = get_class("transcripts", transcripts_impl)
-    if transcripts_impl == "simulated":
-        cm.transcript_manager = transcripts_cls(description="production deployment")
-    else:
-        cm.transcript_manager = transcripts_cls(contact_manager=cm.contact_manager)
+    cm.transcript_manager = ManagerRegistry.get(
+        "transcripts",
+        description="production deployment",
+        contact_manager=cm.contact_manager,
+    )
     print(
-        f"[ManagersWorker] TranscriptManager ({transcripts_cls.__name__}) initialized in "
+        f"[ManagersWorker] TranscriptManager ({type(cm.transcript_manager).__name__}) initialized in "
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
     # 4. Configure TranscriptManager logger (only for real implementation)
-    if api_key and transcripts_impl != "simulated":
+    if api_key and SETTINGS.transcript.IMPL != "simulated":
         cm.transcript_manager._get_logger().session.headers[
             "Authorization"
         ] = f"Bearer {api_key}"
@@ -426,19 +411,20 @@ def _init_managers(
     else:
         print("[ManagersWorker] MemoryManager disabled (SETTINGS.memory.ENABLED=False)")
 
-    # 6. Initialize ConversationManagerHandle (respects SETTINGS.conversation.IMPL setting)
+    # 6. Initialize ConversationManagerHandle (respects SETTINGS.conversation.IMPL)
     print("[ManagersWorker] Initializing ConversationManagerHandle...")
     local_start_time = perf_counter()
-    conversation_impl = _get_impl("UNITY_CONVERSATION_IMPL")
-    conversation_cls = get_class("conversation", conversation_impl)
-    if conversation_impl == "simulated":
-        cm._conversation_manager_handle = conversation_cls(
+    # ConversationManagerHandle has different constructor args for real vs simulated
+    if SETTINGS.conversation.IMPL == "simulated":
+        cm._conversation_manager_handle = ManagerRegistry.get(
+            "conversation",
+            description="production deployment",
             assistant_id=SESSION_DETAILS.assistant.id,
             contact_id="1",
-            description="production deployment",
         )
     else:
-        cm._conversation_manager_handle = conversation_cls(
+        cm._conversation_manager_handle = ManagerRegistry.get(
+            "conversation",
             event_broker=cm.event_broker,
             conversation_id=SESSION_DETAILS.assistant.id,
             contact_id="1",
@@ -446,28 +432,21 @@ def _init_managers(
             conversation_manager=cm,
         )
     print(
-        f"[ManagersWorker] ConversationManagerHandle ({conversation_cls.__name__}) initialized in "
+        f"[ManagersWorker] ConversationManagerHandle ({type(cm._conversation_manager_handle).__name__}) initialized in "
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 7. Initialize Conductor (respects SETTINGS.conductor.IMPL setting)
+    # 7. Initialize Conductor (respects SETTINGS.conductor.IMPL)
     print("[ManagersWorker] Initializing Conductor...")
     try:
         local_start_time = perf_counter()
-        conductor_impl = _get_impl("UNITY_CONDUCTOR_IMPL")
-        if conductor_impl == "simulated":
-            cm.conductor = SimulatedConductor(
-                description="production deployment",
-                contact_manager=cm.contact_manager,
-                transcript_manager=cm.transcript_manager,
-                conversation_manager=cm._conversation_manager_handle,
-            )
-        else:
-            cm.conductor = Conductor(
-                contact_manager=cm.contact_manager,
-                transcript_manager=cm.transcript_manager,
-                conversation_manager=cm._conversation_manager_handle,
-            )
+        cm.conductor = ManagerRegistry.get(
+            "conductor",
+            description="production deployment",
+            contact_manager=cm.contact_manager,
+            transcript_manager=cm.transcript_manager,
+            conversation_manager=cm._conversation_manager_handle,
+        )
         conductor_cls = type(cm.conductor).__name__
         print(
             f"[ManagersWorker] Conductor ({conductor_cls}) initialized in "

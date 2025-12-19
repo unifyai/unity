@@ -297,7 +297,7 @@ def test_enabled_managers_have_tools():
 @_handle_project
 def test_manager_registry_has_all_implementations():
     """Verify that the manager registry contains all expected implementations."""
-    from unity.conductor.manager_registry import get_class
+    from unity.manager_registry import ManagerRegistry
 
     # Actor implementations
     from unity.actor.hierarchical_actor import HierarchicalActor
@@ -305,34 +305,34 @@ def test_manager_registry_has_all_implementations():
     from unity.actor.code_act_actor import CodeActActor
     from unity.actor.simulated import SimulatedActor
 
-    assert get_class("actor", "hierarchical") is HierarchicalActor
-    assert get_class("actor", "single_function") is SingleFunctionActor
-    assert get_class("actor", "code_act") is CodeActActor
-    assert get_class("actor", "simulated") is SimulatedActor
+    assert ManagerRegistry.get_class("actor", "hierarchical") is HierarchicalActor
+    assert ManagerRegistry.get_class("actor", "single_function") is SingleFunctionActor
+    assert ManagerRegistry.get_class("actor", "code_act") is CodeActActor
+    assert ManagerRegistry.get_class("actor", "simulated") is SimulatedActor
 
     # Contact implementations
     from unity.contact_manager.contact_manager import ContactManager
     from unity.contact_manager.simulated import SimulatedContactManager
 
-    assert get_class("contacts", "real") is ContactManager
-    assert get_class("contacts", "simulated") is SimulatedContactManager
+    assert ManagerRegistry.get_class("contacts", "real") is ContactManager
+    assert ManagerRegistry.get_class("contacts", "simulated") is SimulatedContactManager
 
     # Knowledge implementations
     from unity.knowledge_manager.knowledge_manager import KnowledgeManager
     from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 
-    assert get_class("knowledge", "real") is KnowledgeManager
-    assert get_class("knowledge", "simulated") is SimulatedKnowledgeManager
+    assert ManagerRegistry.get_class("knowledge", "real") is KnowledgeManager
+    assert ManagerRegistry.get_class("knowledge", "simulated") is SimulatedKnowledgeManager
 
 
 @_handle_project
 def test_manager_registry_raises_for_unknown():
     """Verify that registry raises for unknown implementations."""
     import pytest
-    from unity.conductor.manager_registry import get_class
+    from unity.manager_registry import ManagerRegistry
 
     with pytest.raises(ValueError, match="Unknown implementation"):
-        get_class("actor", "nonexistent")
+        ManagerRegistry.get_class("actor", "nonexistent")
 
     with pytest.raises(ValueError, match="Unknown implementation"):
-        get_class("nonexistent_manager", "real")
+        ManagerRegistry.get_class("nonexistent_manager", "real")
