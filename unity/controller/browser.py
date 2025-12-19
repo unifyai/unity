@@ -1,7 +1,7 @@
 from typing import Any, Type
 
 from unity.common.async_tool_loop import SteerableToolHandle
-from unity.secret_manager.secret_manager import SecretManager
+from unity.manager_registry import ManagerRegistry
 from .browser_backends import (
     BrowserBackend,
     LegacyBrowserBackend,
@@ -20,7 +20,7 @@ class Browser:
     def __init__(
         self,
         mode: str = "legacy",
-        secret_manager: SecretManager = None,
+        secret_manager=None,
         **kwargs,
     ):
         """
@@ -41,7 +41,7 @@ class Browser:
             )
 
         self._secret_manager = (
-            SecretManager() if secret_manager is None else secret_manager
+            ManagerRegistry.get("secrets") if secret_manager is None else secret_manager
         )
 
     async def act(self, instruction: str, expectation: str = "") -> str:
