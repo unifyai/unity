@@ -446,7 +446,7 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 7. Initialize Conductor (respects UNITY_CONDUCTOR_IMPL setting)
+    # 7. Initialize Conductor (respects SETTINGS.conductor.IMPL setting)
     print("[ManagersWorker] Initializing Conductor...")
     try:
         local_start_time = perf_counter()
