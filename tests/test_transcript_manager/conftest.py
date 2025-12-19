@@ -14,7 +14,7 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
-from unity.singleton_registry import SingletonRegistry
+from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
@@ -265,7 +265,7 @@ def tm_scenario(request: pytest.FixtureRequest):
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data.
     """
-    SingletonRegistry.clear()
+    ManagerRegistry.clear()
     ContextRegistry.clear()
     os.environ["TQDM_DISABLE"] = "1"
 

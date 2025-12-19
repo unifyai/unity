@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
-from ..singleton_registry import SingletonABCMeta
+from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
 

@@ -1,6 +1,6 @@
 import pytest
 
-from unity.singleton_registry import SingletonRegistry
+from unity.manager_registry import ManagerRegistry
 from tests.helpers import _handle_project
 
 # Import simulated manager variants – each relies on `SingletonABCMeta` via their base class.
@@ -37,17 +37,17 @@ async def test_is_singleton(manager_cls):
     ), f"{manager_cls.__name__} did not return a singleton instance"
 
     # The central registry must return the same object too
-    assert SingletonRegistry.get(manager_cls) is first
+    assert ManagerRegistry.get_instance(manager_cls) is first
 
 
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("manager_cls", MANAGER_CLASSES)
 async def test_clear_registry(manager_cls):
-    """After `SingletonRegistry.clear` a brand-new instance should be created (simulated)."""
+    """After `ManagerRegistry.clear` a brand-new instance should be created (simulated)."""
 
     original = manager_cls()
-    SingletonRegistry.clear()
+    ManagerRegistry.clear()
     replacement = manager_cls()
 
     assert (
@@ -71,7 +71,7 @@ async def test_composition():
     assert knowledge_manager is SimulatedKnowledgeManager()
     assert task_scheduler is SimulatedTaskScheduler()
 
-    SingletonRegistry.clear()
+    ManagerRegistry.clear()
 
     contact_manager = SimulatedContactManager()
     transcript_manager = SimulatedTranscriptManager()

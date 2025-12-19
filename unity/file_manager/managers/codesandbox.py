@@ -4,7 +4,7 @@ from unity.file_manager.managers.file_manager import FileManager
 from unity.file_manager.filesystem_adapters.codesandbox_adapter import (
     CodeSandboxFileSystemAdapter,
 )
-from unity.singleton_registry import SingletonABCMeta
+from unity.manager_registry import SingletonABCMeta
 
 
 class CodeSandboxFileManager(FileManager, metaclass=SingletonABCMeta):

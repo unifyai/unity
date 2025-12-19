@@ -1,6 +1,6 @@
 import pytest
 
-from unity.singleton_registry import SingletonRegistry, SingletonABCMeta
+from unity.manager_registry import ManagerRegistry, SingletonABCMeta
 
 
 class _DummySingleton(metaclass=SingletonABCMeta):
@@ -23,12 +23,12 @@ async def test_same_instance():
     assert first.identity == second.identity
 
     # Registry should return that very instance as well
-    assert SingletonRegistry.get(_DummySingleton) is first
+    assert ManagerRegistry.get_instance(_DummySingleton) is first
 
 
 @pytest.mark.asyncio
 async def test_clear_creates_fresh_instance():
-    """`SingletonRegistry.clear` must drop the cached instance so that the
+    """`ManagerRegistry.clear` must drop the cached instance so that the
     next instantiation yields a *new* object.
     """
 
@@ -36,7 +36,7 @@ async def test_clear_creates_fresh_instance():
 
     # Purge the registry manually (the session-wide fixture only runs between
     # tests; we also check the behaviour *within* a single test).
-    SingletonRegistry.clear()
+    ManagerRegistry.clear()
 
     replacement = _DummySingleton()
 

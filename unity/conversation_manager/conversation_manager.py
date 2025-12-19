@@ -10,7 +10,7 @@ import contextvars
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
-from unity.singleton_registry import SingletonABCMeta
+from unity.manager_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.hierarchical_logger import SessionLogger
 from unity.conversation_manager import debug_logger
