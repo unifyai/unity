@@ -100,7 +100,8 @@ class ProductionSettings(BaseSettings):
     UNITY_FIXED_DATETIME: str = ""
     # Log subdirectory for LLM I/O debug files (datetime-prefixed for ordering)
     UNITY_LOG_SUBDIR: str = ""
-    # Legacy fallback for test socket identification
+    # Terminal socket name for tmux isolation; also used as log subdir fallback
+    # when UNITY_LOG_SUBDIR is not set
     UNITY_TEST_SOCKET: str = ""
     # Explicit repository root for log file placement (e.g., worktrees)
     UNITY_LOG_ROOT: str = ""
