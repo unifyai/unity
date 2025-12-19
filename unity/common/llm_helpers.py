@@ -24,12 +24,9 @@ from typing import (
 from .tool_spec import ToolSpec, normalise_tools  # Backward-compatibility
 
 
-_short_id_rng = random.Random(42)
-
-
 def short_id(length=4):
     alphabet = string.ascii_lowercase + string.digits  # base36
-    return "".join(_short_id_rng.choice(alphabet) for _ in range(length))
+    return "".join(random.choice(alphabet) for _ in range(length))
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
