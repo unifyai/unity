@@ -4,6 +4,10 @@ unity/session_details.py
 
 Runtime details for the active assistant session.
 
+This differs from unity.settings (SETTINGS) in a key way:
+  - SETTINGS: Static configuration from environment/.env, frozen at import time
+  - SESSION_DETAILS: Dynamic runtime state, populated when a session starts
+
 Populated dynamically when the ConversationManager receives a StartupEvent.
 
 Usage:

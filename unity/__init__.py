@@ -1,3 +1,22 @@
+"""
+unity/__init__.py
+==================
+
+Package initialization for the Unity AI Assistant framework.
+
+Importing this package performs one-time setup:
+  - Configures logging to filter to unity.* loggers only
+  - Installs LLM I/O debug hooks (if LLM_IO_DEBUG is enabled)
+
+The runtime must be explicitly initialized via init() before using managers:
+
+    import unity
+    unity.init()  # Activates Unify project, selects assistant, starts EventBus
+
+For code that may run before or after init(), use ensure_initialised() which
+is a no-op if already initialized.
+"""
+
 from typing import Optional
 
 from unity.common.context_registry import ContextRegistry

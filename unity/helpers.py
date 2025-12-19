@@ -1,13 +1,30 @@
+"""
+unity/helpers.py
+=================
+
+Subprocess and process management utilities.
+
+Provides cross-platform helpers for:
+  - Launching Python scripts in new terminals or background processes
+  - Graceful/forceful process termination
+  - Cleaning up orphaned call processes from crashed sessions
+
+These are low-level utilities used by the Actor and call infrastructure,
+not typically called directly by state managers.
+"""
+
 from __future__ import annotations
+
 import os
-import signal
-import sys
-import shutil
 import shlex
+import shutil
+import signal
 import subprocess
-from pathlib import Path
+import sys
 import time
+from pathlib import Path
 from typing import Union
+
 import psutil
 
 
