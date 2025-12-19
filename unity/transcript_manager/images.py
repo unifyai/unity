@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import unify
 
-from ..image_manager.image_manager import ImageManager
+from ..manager_registry import ManagerRegistry
 from .types.message import Message
 
 
@@ -167,4 +167,4 @@ def attach_message_images_to_context(
 def ensure_image_manager(self) -> None:
     """Ensure a lazy ImageManager exists on the manager instance."""
     if not hasattr(self, "_image_manager") or self._image_manager is None:
-        self._image_manager = ImageManager()
+        self._image_manager = ManagerRegistry.get("images")
