@@ -1,15 +1,16 @@
 from dotenv import load_dotenv
 
 load_dotenv()
-import os
 import time
 import traceback
 import requests
 import unify
 
+from unity.settings import SETTINGS
 
-api_key = os.environ.get("SHARED_UNIFY_KEY")
-if "AssistantJobs" not in unify.list_projects(api_key=api_key):
+
+api_key = SETTINGS.SHARED_UNIFY_KEY or None
+if api_key and "AssistantJobs" not in unify.list_projects(api_key=api_key):
     unify.create_project("AssistantJobs", api_key=api_key)
 
 
@@ -64,8 +65,8 @@ def log_job_startup(
         # Resolve liveview URL via comms infra service
         liveview_url = None
         max_retries = 5  # Cap retries to avoid infinite loops
-        comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
-        admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
+        comms_url = SETTINGS.UNITY_COMMS_URL.rstrip("/")
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
         if comms_url and admin_key and job_name:
             svc = f"unity-svc-{job_name}"
             for attempt in range(max_retries):
@@ -137,8 +138,8 @@ def mark_job_done(job_name: str):
 
     # delete the job service
     try:
-        comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
-        admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
+        comms_url = SETTINGS.UNITY_COMMS_URL.rstrip("/")
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
         svc = f"unity-svc-{job_name}"
         response = requests.delete(
             f"{comms_url}/infra/job/service",

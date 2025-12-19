@@ -29,6 +29,7 @@ def _get_impl(name: str, default: str = "real") -> str:
     """
     return os.environ.get(name, default)
 
+
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
@@ -363,8 +364,8 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # Assumes UNIFY_KEY is already in environment from set_details()
-    api_key = os.environ.get("UNIFY_KEY")
+    # Get API key from SESSION_DETAILS (set by ConversationManager on startup)
+    api_key = SESSION_DETAILS.api_key or None
 
     # 1. Configure EventBus
     print("[ManagersWorker] Configuring EventBus...")

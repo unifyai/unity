@@ -1,13 +1,13 @@
 from dotenv import load_dotenv
 import json
-import os
 import asyncio
 import aiohttp
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.settings import SETTINGS
 
 load_dotenv()
-headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
+headers = {"Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}"}
 
 # Lazily initialized publisher (avoids import-time GCP auth failures in tests)
 _publisher = None
@@ -41,7 +41,7 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
     print(f"Sending SMS from {from_number} to {to_number}: {content}")
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
+            f"{SETTINGS.UNITY_COMMS_URL}/phone/send-text",
             headers=headers,
             json={
                 "From": from_number,
@@ -64,7 +64,7 @@ async def send_unify_message(content: str) -> str:
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
         "-staging"
-        if os.getenv("STAGING") and DEFAULT_ASSISTANT_ID not in assistant_id
+        if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
         else ""
     )
     topic_name = f"unity-{assistant_id}{staging_suffix}"
@@ -121,7 +121,7 @@ async def send_email_via_address(
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/gmail/send",
+            f"{SETTINGS.UNITY_COMMS_URL}/gmail/send",
             headers=headers,
             json={
                 "from": from_email,
@@ -155,7 +155,7 @@ async def start_call(to_number: str) -> str:
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
+            f"{SETTINGS.UNITY_COMMS_URL}/phone/send-call",
             headers=headers,
             json={"From": from_number, "To": to_number, "NewCall": "true"},
         ) as response:
@@ -192,7 +192,7 @@ async def add_email_attachments(
                 # very basic filename sanitization
                 safe_filename = os.path.basename(raw_filename)
 
-                url = f"{os.getenv('UNITY_COMMS_URL')}/gmail/attachment"
+                url = f"{SETTINGS.UNITY_COMMS_URL}/gmail/attachment"
                 params = {
                     "receiver_email": receiver_email,
                     "gmail_message_id": gmail_message_id,

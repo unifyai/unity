@@ -64,6 +64,17 @@ class ProductionSettings(BaseSettings):
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
     TAVILY_API_KEY: str = ""
+    ORCHESTRA_ADMIN_KEY: str = ""
+    SHARED_UNIFY_KEY: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Infrastructure URLs
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_COMMS_URL: str = ""
+    UNIFY_BASE_URL: str = ""
+    CODESANDBOX_SERVICE_BASE_URL: str = ""
+    CODESANDBOX_SERVICE_PORT: str = "3100"
+    CODESANDBOX_API_TOKEN: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Debugging / Observability
@@ -93,6 +104,7 @@ class ProductionSettings(BaseSettings):
     UNITY_READONLY_ASK_GUARD: bool = True
     FIRST_ASK_TOOL_IS_SEARCH: bool = True
     FIRST_MUTATION_TOOL_IS_ASK: bool = True
+    STAGING: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging Control
@@ -102,6 +114,7 @@ class ProductionSettings(BaseSettings):
     UNITY_SILENCE_OPENAI: bool = True
     UNITY_LOG_ONLY_PROJECT: bool = True
     UNITY_LOG_INCLUDE_PREFIXES: str = "unity"
+    CONVERSATION_MANAGER_LOG_LEVEL: str = "INFO"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Conductor Manager Configuration
@@ -175,6 +188,7 @@ class ProductionSettings(BaseSettings):
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
         "FIRST_MUTATION_TOOL_IS_ASK",
+        "STAGING",
         "UNITY_SILENCE_HTTPX",
         "UNITY_SILENCE_URLLIB3",
         "UNITY_SILENCE_OPENAI",

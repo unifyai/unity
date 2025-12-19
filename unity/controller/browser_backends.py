@@ -1,5 +1,4 @@
 import inspect
-import os
 import subprocess
 import time
 from abc import ABC, abstractmethod
@@ -14,6 +13,7 @@ import asyncio
 import functools
 import websockets
 from unity.session_details import SESSION_DETAILS
+from unity.settings import SETTINGS
 from .controller import Controller
 
 logger = logging.getLogger("websockets")
@@ -342,7 +342,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         logger.info(f"🔌 Starting log stream listener for {ws_url}")
 
         # Prepare authentication headers
-        auth_key = os.getenv("UNIFY_KEY", "")
+        auth_key = SESSION_DETAILS.api_key
         assistant_email = SESSION_DETAILS.assistant.email
         headers = {
             "Authorization": f"Bearer {auth_key} {assistant_email}".strip(),
@@ -500,7 +500,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         for attempt in range(retries):
             try:
                 # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>"
-                auth_key = os.getenv("UNIFY_KEY", "")
+                auth_key = SESSION_DETAILS.api_key
                 assistant_email = SESSION_DETAILS.assistant.email
                 headers = {
                     "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
@@ -548,7 +548,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
     ) -> Any:
         try:
             url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
-            auth_key = os.getenv("UNIFY_KEY", "")
+            auth_key = SESSION_DETAILS.api_key
             assistant_email = SESSION_DETAILS.assistant.email
             headers = {
                 "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
@@ -592,7 +592,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         # list all files in /tmp/unify/assistant/install through the endpoint, then for each file, save in local /tmp/unify/assistant/install
         logger.info("🐍 PYTHON: Loading persistent installs...")
         try:
-            orchestra_url = os.getenv("UNIFY_BASE_URL")
+            orchestra_url = SETTINGS.UNIFY_BASE_URL
             dl_endpoint = f"{orchestra_url}/admin/file/download_url"
 
             user_id = SESSION_DETAILS.user.id
@@ -600,7 +600,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             project = "Assistants"
 
             headers = {
-                "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
+                "Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}",
             }
 
             os.makedirs("/tmp/unify/assistant/install", exist_ok=True)
@@ -731,12 +731,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
         # save files in /tmp/unify/assistant/install folder with the endpoint
         try:
             # Iterate local files and upload each via signed upload URL
-            orchestra_url = os.getenv("UNIFY_BASE_URL")
+            orchestra_url = SETTINGS.UNIFY_BASE_URL
             up_endpoint = f"{orchestra_url}/admin/file/upload_url"
             user_id = SESSION_DETAILS.user.id
             project = f"Assistants"
             headers = {
-                "Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY', '')}",
+                "Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}",
                 "Content-Type": "application/json",
             }
 
