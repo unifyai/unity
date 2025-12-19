@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import unity
 
+from unity.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
@@ -409,18 +410,21 @@ def _init_managers(
             "Authorization"
         ] = f"Bearer {api_key}"
 
-    # 5. Initialize MemoryManager (pass loop for thread-safe task scheduling)
-    print("[ManagersWorker] Initializing MemoryManager...")
-    local_start_time = perf_counter()
-    cm.memory_manager = MemoryManager(
-        transcript_manager=cm.transcript_manager,
-        contact_manager=cm.contact_manager,
-        loop=loop,
-    )
-    print(
-        "[ManagersWorker] MemoryManager initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds",
-    )
+    # 5. Initialize MemoryManager (optional - respects SETTINGS.memory.ENABLED)
+    if SETTINGS.memory.ENABLED:
+        print("[ManagersWorker] Initializing MemoryManager...")
+        local_start_time = perf_counter()
+        cm.memory_manager = MemoryManager(
+            transcript_manager=cm.transcript_manager,
+            contact_manager=cm.contact_manager,
+            loop=loop,
+        )
+        print(
+            "[ManagersWorker] MemoryManager initialized in "
+            f"{perf_counter() - local_start_time:.2f} seconds",
+        )
+    else:
+        print("[ManagersWorker] MemoryManager disabled (SETTINGS.memory.ENABLED=False)")
 
     # 6. Initialize ConversationManagerHandle (respects SETTINGS.conversation.IMPL setting)
     print("[ManagersWorker] Initializing ConversationManagerHandle...")
