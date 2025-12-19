@@ -479,7 +479,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
 
         # 2️⃣  Build & inject system prompt
-        table_schemas_json = json.dumps(self._tables_overview(), indent=4)
+        table_schemas_json = json.dumps(
+            self._tables_overview(),
+            indent=4,
+            sort_keys=True,
+        )
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -575,7 +579,11 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
-        table_schemas_json = json.dumps(self._tables_overview(), indent=4)
+        table_schemas_json = json.dumps(
+            self._tables_overview(),
+            indent=4,
+            sort_keys=True,
+        )
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -682,7 +690,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
-        table_schemas_json = json.dumps(tables_overview, indent=4)
+        table_schemas_json = json.dumps(tables_overview, indent=4, sort_keys=True)
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
