@@ -32,11 +32,11 @@ def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
 
 def sync_assistant_contact(self, assistant_log) -> None:
     """Ensure assistant contact (id == 0) exists and is correct."""
-    from .. import ASSISTANT as _GLOBAL_ASSISTANT  # local import to avoid cycles
+    from ..session_details import SESSION_DETAILS
 
     # 1) Prefer the assistant provided by unity.init
-    if _GLOBAL_ASSISTANT is not None:
-        selected = _GLOBAL_ASSISTANT
+    if SESSION_DETAILS.assistant_record is not None:
+        selected = SESSION_DETAILS.assistant_record
     else:
         # 2) Otherwise map the active context (if numeric) onto the list index
         assistants = fetch_assistant_info(self)
@@ -130,10 +130,10 @@ def fetch_user_info(self) -> Dict[str, Any]:
     }
     user_info.update({k: v for k, v in mapped.items() if v is not None})
 
-    from .. import ASSISTANT
+    from ..session_details import SESSION_DETAILS
 
-    if ASSISTANT is not None:
-        phone = ASSISTANT.get("user_phone")
+    if SESSION_DETAILS.assistant_record is not None:
+        phone = SESSION_DETAILS.assistant_record.get("user_phone")
         mapped_extra: Dict[str, Any] = {
             "phone_number": phone,
         }
