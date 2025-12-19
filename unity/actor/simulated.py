@@ -356,14 +356,10 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 except Exception:
                     continue
 
-            # Resolve any remaining ids to handles via ImageManager
+            # Resolve any remaining ids to handles via ManagerRegistry
             if ids_to_fetch:
                 try:
-                    from unity.image_manager.image_manager import (
-                        ImageManager as _ImageManager,
-                    )
-
-                    mgr = _ImageManager()
+                    mgr = ManagerRegistry.get("images")
                     fetched = mgr.get_images(ids_to_fetch)
                     for h in fetched:
                         if h is not None:
