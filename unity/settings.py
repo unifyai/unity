@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.guidance_manager.settings import GuidanceSettings
+from unity.knowledge_manager.settings import KnowledgeSettings
 from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
 from unity.skill_manager.settings import SkillSettings
@@ -154,6 +155,7 @@ class ProductionSettings(BaseSettings):
     conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
+    knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     secret: SecretSettings = Field(default_factory=SecretSettings)
     skill: SkillSettings = Field(default_factory=SkillSettings)
@@ -176,9 +178,6 @@ class ProductionSettings(BaseSettings):
 
     # -- Optional managers (disabled by default for minimal initial rollout) --
     # These will be enabled incrementally as they become stable and fully featured.
-    # KnowledgeManager
-    UNITY_KNOWLEDGE_ENABLED: bool = False
-    UNITY_KNOWLEDGE_IMPL: str = "real"
     # GlobalFileManager
     UNITY_FILES_ENABLED: bool = False
     UNITY_FILES_IMPL: str = "real"
@@ -194,11 +193,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     EMBEDDING_ENCODING: str = "cl100k_base"
     EMBEDDING_MAX_INPUT_TOKENS: int = 8000
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Token / Model Configuration
-    # ─────────────────────────────────────────────────────────────────────────
-    MODEL_MAX_INPUT_TOKENS: int = 128000
 
     # ─────────────────────────────────────────────────────────────────────────
     # Validators
@@ -219,7 +213,6 @@ class ProductionSettings(BaseSettings):
         "FIRST_MUTATION_TOOL_IS_ASK",
         "STAGING",
         "TEST",
-        "UNITY_KNOWLEDGE_ENABLED",
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
         "UNITY_TS_LOCAL_VIEW_OFF",

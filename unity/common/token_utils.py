@@ -265,7 +265,7 @@ def clip_text_to_token_limit(
 
 
 def read_model_max_input_tokens() -> int:
-    return SETTINGS.MODEL_MAX_INPUT_TOKENS
+    return SETTINGS.knowledge.MODEL_MAX_INPUT_TOKENS
 
 
 def safe_token_count(value: Any) -> int:
