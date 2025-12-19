@@ -25,8 +25,7 @@ from ..common.async_tool_loop import (
 )
 from ..common.model_to_fields import model_to_fields
 from ..events.manager_event_logging import log_manager_call
-from ..constants import is_semantic_cache_enabled
-from ..constants import is_readonly_ask_guard_enabled
+from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
@@ -228,7 +227,7 @@ class ContactManager(BaseContactManager):
         client.set_system_message(_ask_prompt)
 
         use_semantic_cache = (
-            ("both" if is_semantic_cache_enabled() else None) if not images else None
+            ("both" if SETTINGS.UNITY_SEMANTIC_CACHE else None) if not images else None
         )
         if use_semantic_cache in ("read", "both"):
             # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
@@ -249,7 +248,7 @@ class ContactManager(BaseContactManager):
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             images=images,
             response_format=response_format,

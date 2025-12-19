@@ -81,7 +81,6 @@ from .reintegration import ReintegrationManager
 from ..common.filter_utils import normalize_filter_expr
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from ..common.llm_client import new_llm_client
-from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
@@ -499,7 +498,7 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             images=images,
             response_format=response_format,

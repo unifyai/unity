@@ -27,8 +27,7 @@ from .prompt_builders import (
     build_refactor_prompt,
 )
 from ..common.tool_spec import read_only, manager_tool
-from ..constants import is_semantic_cache_enabled
-from ..constants import is_readonly_ask_guard_enabled
+from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.context_registry import ContextRegistry, TableContext
 from ..common.llm_client import new_llm_client
@@ -700,7 +699,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ),
         )
 
-        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
         tool_policy_fn = (
             None
             if use_semantic_cache in ("read", "both")
@@ -721,7 +720,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
         )
 

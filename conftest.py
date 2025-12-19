@@ -15,7 +15,7 @@ from datetime import datetime
 if "UNIFY_CACHE_DIR" not in os.environ:
     os.environ["UNIFY_CACHE_DIR"] = str(Path(__file__).resolve().parent)
 
-from unity.constants import PYTEST_LOG_TO_FILE
+from unity.settings import SETTINGS
 
 
 _TEE_FILE_HANDLE: Optional[object] = None
@@ -340,7 +340,7 @@ class _TeeStream:
 
 
 def pytest_sessionstart(session):
-    if not PYTEST_LOG_TO_FILE:
+    if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
     config = session.config
     if getattr(config.option, "collectonly", False):
@@ -415,7 +415,7 @@ def pytest_sessionstart(session):
 
 def pytest_unconfigure(config):
     """Print the log file path after pytest's own terminal summary has been emitted."""
-    if not PYTEST_LOG_TO_FILE:
+    if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
     global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR, _TEE_LOG_PATH
     tr = config.pluginmanager.get_plugin("terminalreporter")
@@ -462,7 +462,7 @@ def pytest_runtest_logreport(report):
     TerminalReporter tee due to capture internals. Here we append the captured
     streams from the test's call phase directly to the file to guarantee inclusion.
     """
-    if not PYTEST_LOG_TO_FILE:
+    if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
     # Only mirror the main call phase where test body runs
     if getattr(report, "when", None) != "call":
