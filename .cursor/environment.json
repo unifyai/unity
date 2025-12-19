@@ -1,7 +1,7 @@
 {
   "build": {
     "context": "..",
-    "dockerfile": ".cursor/Dockerfile"
+    "dockerfile": "Dockerfile"
   },
   "install": "uv sync --all-groups",
   "start": "sudo service redis-server start",
