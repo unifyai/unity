@@ -46,11 +46,11 @@ async def test_codesandbox_http_calls(csb_http):
 @pytest.mark.asyncio
 async def test_interact_token_and_search(interact_urlopen, monkeypatch):
     # Set environment variables for test (adapter requires some env vars like person_id)
-    monkeypatch.setenv("INTERACT_API_BASE", "https://api.example")
-    monkeypatch.setenv("INTERACT_KEY", "test_key")
-    monkeypatch.setenv("INTERACT_SECRET", "test_secret")
-    monkeypatch.setenv("INTERACT_PERSON_ID", "123")
-    monkeypatch.setenv("INTERACT_TENANT", "tenant123")
+    monkeypatch.setenv("UNITY_FILE_INTERACT_API_BASE", "https://api.example")
+    monkeypatch.setenv("UNITY_FILE_INTERACT_KEY", "test_key")
+    monkeypatch.setenv("UNITY_FILE_INTERACT_SECRET", "test_secret")
+    monkeypatch.setenv("UNITY_FILE_INTERACT_PERSON_ID", "123")
+    monkeypatch.setenv("UNITY_FILE_INTERACT_TENANT", "tenant123")
 
     # Configure token and search responses (use Interact API's actual field names)
     interact_urlopen.set(

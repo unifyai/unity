@@ -10,7 +10,7 @@ This module is used by parser enrichment steps to generate summaries that:
 import math
 from typing import Optional
 
-from unity.settings import SETTINGS
+from unity.file_manager.file_parsers.settings import FILE_PARSER_SETTINGS
 from unity.common.token_utils import (
     clip_text_to_token_limit,
     count_tokens_per_utf_byte,
@@ -70,11 +70,11 @@ def generate_summary_with_compression(
     if not has_meaningful_text(source_text):
         return source_text
 
-    enc = embedding_encoding or SETTINGS.EMBEDDING_ENCODING
+    enc = embedding_encoding or FILE_PARSER_SETTINGS.EMBEDDING_ENCODING
     max_tokens = (
         max_embedding_tokens
         if isinstance(max_embedding_tokens, int) and max_embedding_tokens > 0
-        else SETTINGS.EMBEDDING_MAX_INPUT_TOKENS
+        else FILE_PARSER_SETTINGS.EMBEDDING_MAX_INPUT_TOKENS
     )
 
     directive = extra_directive or ""

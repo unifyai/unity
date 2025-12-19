@@ -33,13 +33,13 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         service_base_url: Optional[str] = None,
     ):
         self._sandbox_id = sandbox_id
-        self._token = auth_token or SETTINGS.CODESANDBOX_API_TOKEN
+        self._token = auth_token or SETTINGS.file.CODESANDBOX_API_TOKEN
         # Optional direct SDK client; when not provided, we route via the local codesandbox-service
         self._client = client
         self._service_base = (
             service_base_url
-            or SETTINGS.CODESANDBOX_SERVICE_BASE_URL
-            or f"http://localhost:{SETTINGS.CODESANDBOX_SERVICE_PORT}"
+            or SETTINGS.file.CODESANDBOX_SERVICE_BASE_URL
+            or f"http://localhost:{SETTINGS.file.CODESANDBOX_SERVICE_PORT}"
         ).rstrip("/")
         self._connected = False
         self._caps = FileSystemCapabilities(

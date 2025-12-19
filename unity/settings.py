@@ -17,6 +17,7 @@ from unity.actor.settings import ActorSettings
 from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.conversation_manager.settings import ConversationSettings
+from unity.file_manager.settings import FileSettings
 from unity.guidance_manager.settings import GuidanceSettings
 from unity.knowledge_manager.settings import KnowledgeSettings
 from unity.memory_manager.settings import MemorySettings
@@ -83,18 +84,6 @@ class ProductionSettings(BaseSettings):
     # Infrastructure URLs
     # ─────────────────────────────────────────────────────────────────────────
     UNIFY_BASE_URL: str = ""
-    CODESANDBOX_SERVICE_BASE_URL: str = ""
-    CODESANDBOX_SERVICE_PORT: str = "3100"
-    CODESANDBOX_API_TOKEN: str = ""
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Interact API Settings (file manager adapter)
-    # ─────────────────────────────────────────────────────────────────────────
-    INTERACT_API_BASE: str = ""
-    INTERACT_KEY: str = ""
-    INTERACT_SECRET: str = ""
-    INTERACT_PERSON_ID: str = ""
-    INTERACT_TENANT: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Debugging / Observability
@@ -146,6 +135,7 @@ class ProductionSettings(BaseSettings):
     conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
+    file: FileSettings = Field(default_factory=FileSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
@@ -154,18 +144,6 @@ class ProductionSettings(BaseSettings):
     task: TaskSettings = Field(default_factory=TaskSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
     web: WebSettings = Field(default_factory=WebSettings)
-
-    # -- Optional managers (disabled by default for minimal initial rollout) --
-    # These will be enabled incrementally as they become stable and fully featured.
-    # GlobalFileManager
-    UNITY_FILES_ENABLED: bool = False
-    UNITY_FILES_IMPL: str = "real"
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # FileManager / Embedding Configuration
-    # ─────────────────────────────────────────────────────────────────────────
-    EMBEDDING_ENCODING: str = "cl100k_base"
-    EMBEDDING_MAX_INPUT_TOKENS: int = 8000
 
     # ─────────────────────────────────────────────────────────────────────────
     # Validators
@@ -186,7 +164,6 @@ class ProductionSettings(BaseSettings):
         "FIRST_MUTATION_TOOL_IS_ASK",
         "STAGING",
         "TEST",
-        "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
         mode="before",
     )

@@ -29,11 +29,11 @@ class InteractFileSystemAdapter(BaseFileSystemAdapter):
 
     def __init__(self, api_base: str, api_key: str, space: str):
         # All parameters can be overridden via SETTINGS
-        self._base = (SETTINGS.INTERACT_API_BASE or api_base or "").rstrip("/")
-        self._key = SETTINGS.INTERACT_KEY or api_key
-        self._secret = SETTINGS.INTERACT_SECRET
-        self._person_id = SETTINGS.INTERACT_PERSON_ID
-        self._tenant = SETTINGS.INTERACT_TENANT
+        self._base = (SETTINGS.file.INTERACT_API_BASE or api_base or "").rstrip("/")
+        self._key = SETTINGS.file.INTERACT_KEY or api_key
+        self._secret = SETTINGS.file.INTERACT_SECRET
+        self._person_id = SETTINGS.file.INTERACT_PERSON_ID
+        self._tenant = SETTINGS.file.INTERACT_TENANT
         self._space = space
         self._log = logging.getLogger(__name__)
         try:
