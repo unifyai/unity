@@ -234,7 +234,7 @@ def create_global_secrets(api_client, namespace="default"):
             "ELEVEN_API_KEY",
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
-            "TAVILY_API_KEY",
+            "UNITY_WEB_TAVILY_API_KEY",
             "ORCHESTRA_ADMIN_KEY",
             "SHARED_UNIFY_KEY",
             "VERTEXAI_CREDENTIALS",

@@ -50,7 +50,7 @@ class WebSearcher(BaseWebSearcher):
 
     def __init__(self):
         super().__init__()
-        self.tavily_client = TavilyClient(api_key=SETTINGS.TAVILY_API_KEY or None)
+        self.tavily_client = TavilyClient(api_key=SETTINGS.web.TAVILY_API_KEY or None)
         self._hierarchical_actor = None
         self._default_function_id = None
 

@@ -265,11 +265,11 @@ class Conductor(BaseConductor):
             self._web_searcher = None
         elif web_searcher is not None:
             self._web_searcher = web_searcher
-        elif not SETTINGS.UNITY_WEB_SEARCH_ENABLED:
+        elif not SETTINGS.web.ENABLED:
             self._web_searcher = None
         else:
-            web_cls = get_class("web_search", SETTINGS.UNITY_WEB_SEARCH_IMPL)
-            if SETTINGS.UNITY_WEB_SEARCH_IMPL == "simulated":
+            web_cls = get_class("web_search", SETTINGS.web.IMPL)
+            if SETTINGS.web.IMPL == "simulated":
                 self._web_searcher = web_cls(description=description)
             else:
                 self._web_searcher = web_cls()
