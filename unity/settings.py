@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
+from unity.guidance_manager.settings import GuidanceSettings
 from unity.memory_manager.settings import MemorySettings
 from unity.transcript_manager.settings import TranscriptSettings
 
@@ -150,6 +151,7 @@ class ProductionSettings(BaseSettings):
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
     conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
+    guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
 
@@ -172,9 +174,6 @@ class ProductionSettings(BaseSettings):
     # KnowledgeManager
     UNITY_KNOWLEDGE_ENABLED: bool = False
     UNITY_KNOWLEDGE_IMPL: str = "real"
-    # GuidanceManager
-    UNITY_GUIDANCE_ENABLED: bool = False
-    UNITY_GUIDANCE_IMPL: str = "real"
     # SecretManager
     UNITY_SECRETS_ENABLED: bool = False
     UNITY_SECRETS_IMPL: str = "real"
@@ -230,7 +229,6 @@ class ProductionSettings(BaseSettings):
         "STAGING",
         "TEST",
         "UNITY_KNOWLEDGE_ENABLED",
-        "UNITY_GUIDANCE_ENABLED",
         "UNITY_SECRETS_ENABLED",
         "UNITY_SKILLS_ENABLED",
         "UNITY_WEB_SEARCH_ENABLED",
