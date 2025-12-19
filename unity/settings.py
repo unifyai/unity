@@ -127,11 +127,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Logging Control
     # ─────────────────────────────────────────────────────────────────────────
-    UNITY_SILENCE_HTTPX: bool = True
-    UNITY_SILENCE_URLLIB3: bool = True
-    UNITY_SILENCE_OPENAI: bool = True
-    UNITY_LOG_ONLY_PROJECT: bool = True
-    UNITY_LOG_INCLUDE_PREFIXES: str = "unity"
     CONVERSATION_MANAGER_LOG_LEVEL: str = "INFO"
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -230,10 +225,6 @@ class ProductionSettings(BaseSettings):
         "FIRST_MUTATION_TOOL_IS_ASK",
         "STAGING",
         "TEST",
-        "UNITY_SILENCE_HTTPX",
-        "UNITY_SILENCE_URLLIB3",
-        "UNITY_SILENCE_OPENAI",
-        "UNITY_LOG_ONLY_PROJECT",
         "UNITY_KNOWLEDGE_ENABLED",
         "UNITY_GUIDANCE_ENABLED",
         "UNITY_SECRETS_ENABLED",

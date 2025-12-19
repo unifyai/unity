@@ -41,12 +41,7 @@ from unity.settings import SETTINGS as _SETTINGS
 def _configure_default_logging() -> None:
     """Apply safe, idempotent default logging rules.
 
-    Settings are sourced from unity.settings.ProductionSettings:
-      - UNITY_SILENCE_HTTPX (default true)
-      - UNITY_SILENCE_URLLIB3 (default true)
-      - UNITY_SILENCE_OPENAI (default true)
-      - UNITY_LOG_ONLY_PROJECT (default true)
-      - UNITY_LOG_INCLUDE_PREFIXES (default "unity")
+    Mutes verbose HTTP client libraries and filters to only show unity.* logs.
     """
     if getattr(_configure_default_logging, "_done", False):
         return
@@ -57,34 +52,24 @@ def _configure_default_logging() -> None:
         # 1) Keep our project logs visible
         logging.getLogger("unity").setLevel(logging.INFO)
 
-        # 2) Mute common HTTP client libraries by default
-        if _SETTINGS.UNITY_SILENCE_HTTPX:
-            logging.getLogger("httpx").setLevel(logging.WARNING)
-        if _SETTINGS.UNITY_SILENCE_URLLIB3:
-            logging.getLogger("urllib3").setLevel(logging.WARNING)
-        if _SETTINGS.UNITY_SILENCE_OPENAI:
-            logging.getLogger("openai").setLevel(logging.WARNING)
+        # 2) Mute common HTTP client libraries
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("openai").setLevel(logging.WARNING)
 
-        # 3) Optional include-only filter (default: enabled per request)
-        if _SETTINGS.UNITY_LOG_ONLY_PROJECT:
-            allow_raw = _SETTINGS.UNITY_LOG_INCLUDE_PREFIXES
-            allow = tuple(s.strip() for s in allow_raw.split(",") if s.strip())
+        # 3) Only show logs from unity.* loggers
+        class _OnlyProject(logging.Filter):
+            def filter(self, record: "logging.LogRecord") -> bool:  # type: ignore[name-defined]
+                name = record.name or ""
+                return name == "unity" or name.startswith("unity.")
 
-            class _OnlyProject(logging.Filter):
-                def filter(self, record: "logging.LogRecord") -> bool:  # type: ignore[name-defined]
-                    name = record.name or ""
-                    # exact match or child logger of any allowed prefix
-                    return any(name == p or name.startswith(p + ".") for p in allow)
-
-            root = logging.getLogger()
-            # Attach to root so future handlers are also filtered
-            root.addFilter(_OnlyProject())
-            # And to any already-present handlers to be thorough
-            for h in list(root.handlers):
-                try:
-                    h.addFilter(_OnlyProject())
-                except Exception:
-                    pass
+        root = logging.getLogger()
+        root.addFilter(_OnlyProject())
+        for h in list(root.handlers):
+            try:
+                h.addFilter(_OnlyProject())
+            except Exception:
+                pass
     except Exception:
         # Never let logging setup crash imports
         pass
