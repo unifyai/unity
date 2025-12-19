@@ -12,11 +12,11 @@ class MemorySettings(BaseSettings):
     """MemoryManager settings.
 
     Attributes:
-        REGISTER_UPDATE_CALLBACKS: Whether to register event bus callbacks
-            for automatic memory updates from transcripts.
+        ENABLED: Whether MemoryManager is enabled. When False, MemoryManager
+            is not created during ConversationManager initialization.
     """
 
-    REGISTER_UPDATE_CALLBACKS: bool = True
+    ENABLED: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="UNITY_MEMORY_",
