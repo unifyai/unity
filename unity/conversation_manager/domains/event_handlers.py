@@ -511,6 +511,13 @@ async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(SummarizeContext)
 async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs):
+    # Skip if MemoryManager is disabled
+    if cm.memory_manager is None:
+        print("[ManagersWorker] SummarizeContext skipped (MemoryManager disabled)")
+        cm.is_summarizing = False
+        cm.chat_history = []
+        return
+
     async def summarize_task():
         res = [
             (
