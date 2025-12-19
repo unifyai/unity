@@ -190,11 +190,11 @@ class Conductor(BaseConductor):
             self._knowledge_manager = None
         elif knowledge_manager is not None:
             self._knowledge_manager = knowledge_manager
-        elif not SETTINGS.UNITY_KNOWLEDGE_ENABLED:
+        elif not SETTINGS.knowledge.ENABLED:
             self._knowledge_manager = None
         else:
-            knowledge_cls = get_class("knowledge", SETTINGS.UNITY_KNOWLEDGE_IMPL)
-            if SETTINGS.UNITY_KNOWLEDGE_IMPL == "simulated":
+            knowledge_cls = get_class("knowledge", SETTINGS.knowledge.IMPL)
+            if SETTINGS.knowledge.IMPL == "simulated":
                 self._knowledge_manager = knowledge_cls(
                     description=description,
                     rolling_summary_in_prompts=rolling_summary_in_prompts,
