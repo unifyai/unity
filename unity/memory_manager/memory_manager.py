@@ -4,21 +4,24 @@ from __future__ import annotations
 import asyncio
 import json
 import functools
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass
 
 
 from ..session_details import SESSION_DETAILS
 from ..common.llm_client import new_llm_client
-from ..contact_manager.contact_manager import ContactManager
-from ..transcript_manager.transcript_manager import TranscriptManager
-from ..knowledge_manager.knowledge_manager import KnowledgeManager
-from ..task_scheduler.task_scheduler import TaskScheduler
+from ..manager_registry import ManagerRegistry
 from ..common.llm_helpers import methods_to_tool_dict
 from ..common.async_tool_loop import start_async_tool_loop
 from . import prompt_builders as pb
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
+
+if TYPE_CHECKING:
+    from ..contact_manager.base import BaseContactManager
+    from ..transcript_manager.base import BaseTranscriptManager
+    from ..knowledge_manager.base import BaseKnowledgeManager
+    from ..task_scheduler.base import BaseTaskScheduler
 
 
 class MemoryManager(BaseMemoryManager):
@@ -35,7 +38,7 @@ class MemoryManager(BaseMemoryManager):
     @staticmethod
     def build_plain_transcript(
         messages: list[dict],
-        contact_manager: Optional["ContactManager"] = None,
+        contact_manager: Optional["BaseContactManager"] = None,
     ) -> str:
         """Return *plain-text* view of the message/event list.
 
@@ -105,20 +108,37 @@ class MemoryManager(BaseMemoryManager):
     def __init__(
         self,
         *,
-        contact_manager: Optional[ContactManager] = None,
-        transcript_manager: Optional[TranscriptManager] = None,
-        knowledge_manager: Optional[KnowledgeManager] = None,
-        task_scheduler: Optional[TaskScheduler] = None,
+        contact_manager: Optional["BaseContactManager"] = None,
+        transcript_manager: Optional["BaseTranscriptManager"] = None,
+        knowledge_manager: Optional["BaseKnowledgeManager"] = None,
+        task_scheduler: Optional["BaseTaskScheduler"] = None,
         config: Optional["MemoryManager.MemoryConfig"] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
-
-        self._contact_manager = contact_manager or ContactManager()
-        self._transcript_manager = transcript_manager or TranscriptManager(
-            contact_manager=self._contact_manager,
+        # Use ManagerRegistry to get the correct implementation based on settings
+        self._contact_manager = (
+            contact_manager
+            if contact_manager is not None
+            else ManagerRegistry.get("contacts")
         )
-        self._knowledge_manager = knowledge_manager or KnowledgeManager()
-        self._task_scheduler = task_scheduler or TaskScheduler()
+        self._transcript_manager = (
+            transcript_manager
+            if transcript_manager is not None
+            else ManagerRegistry.get(
+                "transcripts",
+                contact_manager=self._contact_manager,
+            )
+        )
+        self._knowledge_manager = (
+            knowledge_manager
+            if knowledge_manager is not None
+            else ManagerRegistry.get("knowledge")
+        )
+        self._task_scheduler = (
+            task_scheduler
+            if task_scheduler is not None
+            else ManagerRegistry.get("tasks")
+        )
 
         # ── Config-controlled callback registration ----------------
         self._cfg: MemoryManager.MemoryConfig = (
