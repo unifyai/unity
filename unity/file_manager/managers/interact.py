@@ -4,7 +4,7 @@ from unity.file_manager.managers.file_manager import FileManager
 from unity.file_manager.filesystem_adapters.interact_adapter import (
     InteractFileSystemAdapter,
 )
-from unity.singleton_registry import SingletonABCMeta
+from unity.manager_registry import SingletonABCMeta
 
 
 class InteractFileManager(FileManager, metaclass=SingletonABCMeta):

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Type
 import asyncio
 from abc import abstractmethod
 from pydantic import BaseModel
-from unity.singleton_registry import SingletonABCMeta
+from unity.manager_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from ..common.state_managers import BaseStateManager
 

@@ -6,7 +6,7 @@ from unity.file_manager.filesystem_adapters.google_drive_adapter import (
     GoogleDriveAdapter,
 )
 from unity.file_manager.managers.file_manager import FileManager
-from unity.singleton_registry import SingletonABCMeta
+from unity.manager_registry import SingletonABCMeta
 
 
 class GoogleDriveFileManager(FileManager, metaclass=SingletonABCMeta):

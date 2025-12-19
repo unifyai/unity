@@ -4,7 +4,7 @@ from abc import abstractmethod
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
-from ..singleton_registry import SingletonABCMeta
+from ..manager_registry import SingletonABCMeta
 
 
 class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):

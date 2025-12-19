@@ -7,7 +7,7 @@ import os
 
 import unify
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-from unity.singleton_registry import SingletonRegistry
+from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
@@ -164,7 +164,7 @@ async def knowledge_scenario(
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data. Build scenario once and reuse across tests.
     """
-    SingletonRegistry.clear()
+    ManagerRegistry.clear()
     ContextRegistry.clear()
 
     os.environ["TQDM_DISABLE"] = "1"

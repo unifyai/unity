@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 from ..common.async_tool_loop import SteerableToolHandle
-from ..singleton_registry import SingletonABCMeta
+from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
 
