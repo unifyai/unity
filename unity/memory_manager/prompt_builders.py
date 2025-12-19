@@ -39,11 +39,11 @@ def _assistant_name() -> str:
         if name:
             return name
 
-    # 2) Fallback: query ContactManager (may hit a stub in offline tests)
+    # 2) Fallback: query ContactManager via registry (respects IMPL settings)
     try:
-        from unity.contact_manager.contact_manager import ContactManager  # noqa: WPS433
+        from unity.manager_registry import ManagerRegistry  # noqa: WPS433
 
-        cm = ContactManager()
+        cm = ManagerRegistry.get("contacts")
         assist = cm.filter_contacts(filter="contact_id == 0", limit=1)
         if assist:
             a = assist[0]
