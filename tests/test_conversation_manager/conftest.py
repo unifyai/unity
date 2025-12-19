@@ -72,6 +72,7 @@ def pytest_configure(config):
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
 
     # Disable optional managers that might connect to real backends
+    os.environ["UNITY_MEMORY_ENABLED"] = "false"
     os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
     os.environ["UNITY_GUIDANCE_ENABLED"] = "false"
     os.environ["UNITY_SECRET_ENABLED"] = "false"
