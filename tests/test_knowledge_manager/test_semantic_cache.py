@@ -5,6 +5,7 @@ from unittest.mock import patch
 from tests.helpers import _handle_project
 
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+from unity.settings import SETTINGS
 from unity.common._async_tool.semantic_cache import _Config
 from unity.common._async_tool import semantic_cache as sc
 
@@ -50,10 +51,7 @@ async def test_semantic_cache_exact_match():
 
     query = "What is the number of customers in New York? Answer with the number of customers only."
 
-    with patch(
-        "unity.knowledge_manager.knowledge_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         handle = await km.ask(query, _return_reasoning_steps=True)
         answer, reasoning_steps_first = await handle.result()
         assert answer == "10"
@@ -86,10 +84,7 @@ async def test_semantic_cache_no_exact_match():
     first_query = "What is the number of customers in New York? Answer with the number of customers only."
     second_query = "How many customers are there in New York? Answer with the number of customers only."
 
-    with patch(
-        "unity.knowledge_manager.knowledge_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         handle = await km.ask(first_query)
         answer = await handle.result()
         assert "10" in answer
@@ -123,10 +118,7 @@ async def test_semantic_cache_similar_query_benefit():
     first_query = "How many customers are there in all cities? Answer with the number of customers only."
     second_query = "How many customers are there in Los Angeles? Answer with the number of customers only."
 
-    with patch(
-        "unity.knowledge_manager.knowledge_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         handle = await km.ask(first_query)
         await handle.result()
 

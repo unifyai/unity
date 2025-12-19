@@ -8,6 +8,7 @@ from datetime import datetime
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.contact_manager.contact_manager import ContactManager
+from unity.settings import SETTINGS
 from unity.common._async_tool.semantic_cache import _Config
 from unity.common._async_tool import semantic_cache as sc
 
@@ -61,10 +62,7 @@ async def test_cache_exact_match():
         },
     )
 
-    with patch(
-        "unity.transcript_manager.transcript_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         handle = await tm.ask(
             "Is there any contact with name John? if so, please provide the latest message by John "
             "Provide only the message content if any in the JSON format of {message: <message_content>}",
@@ -114,10 +112,7 @@ async def test_cache_no_exact_match():
         },
     )
 
-    with patch(
-        "unity.transcript_manager.transcript_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         handle = await tm.ask(
             "Is there any contact with name John? if so, please provide the latest message by John "
             "Provide only the message content if any in the JSON format of {message: <message_content>}",
@@ -177,10 +172,7 @@ async def test_cache_similar_query():
         },
     )
 
-    with patch(
-        "unity.transcript_manager.transcript_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         handle = await tm.ask(
             "Do I have a contact named John? can you provide the latest message by John? "
             "Provide only the message content if any in the JSON format of {message: <message_content>}",

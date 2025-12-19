@@ -6,6 +6,7 @@ from typing import Dict
 from unittest.mock import patch
 
 from unity.contact_manager.contact_manager import ContactManager
+from unity.settings import SETTINGS
 from tests.helpers import _handle_project
 from unity.common._async_tool import semantic_cache as sc
 from unity.common._async_tool.semantic_cache import _Config
@@ -56,10 +57,7 @@ async def test_cache_exact_match(
     cm, _ = contact_manager_scenario
 
     # Ensure semantic cache is enabled for this test
-    with patch(
-        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         question = "What do you know about the contact Alice Smith?"
 
         # First run - should make tool calls
@@ -111,10 +109,7 @@ async def test_cache_similar_queries(
     first_contact = "Alice Smith"
     second_contact = "Bob Johnson"
 
-    with patch(
-        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         # First query - establish pattern
         question_1 = f"Find contact {first_contact}"
         handle_1 = await cm.ask(question_1, _return_reasoning_steps=True)
@@ -159,10 +154,7 @@ async def test_cache_partial_use(
     """
     cm, _ = contact_manager_scenario
 
-    with patch(
-        "unity.contact_manager.contact_manager.is_semantic_cache_enabled",
-        return_value=True,
-    ):
+    with patch.object(SETTINGS, "UNITY_SEMANTIC_CACHE", True):
         handle_1 = await cm.ask("What is Bob Johnson's full information?")
         await handle_1.result()
 
