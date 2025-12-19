@@ -125,11 +125,12 @@ _install_llm_io_hooks()
 # Lazy runtime initialisation
 # ---------------------------------------------------------------------------
 
+from unity.session_details import DEFAULT_USER_CONTEXT
+
 _INITIALISED = False
 ASSISTANT = None  # Will hold the selected assistant record once init() runs
 ASSISTANT_CONTEXT = None  # String used for Unify context (e.g., "JohnSmith")
 USER_CONTEXT = None  # String used for user namespace (e.g., "JohnDoe")
-DEFAULT_USER_CONTEXT = "DefaultUser"  # Fallback when USER_NAME not provided
 
 
 def _list_all_assistants() -> list[dict]:
