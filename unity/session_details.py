@@ -254,7 +254,7 @@ class SessionDetails:
         state and is only used during manager initialization.
 
         Args:
-            name: The env var name (e.g., "UNITY_CONTACTS_IMPL").
+            name: The env var name (e.g., "UNITY_CONTACT_IMPL").
             default: Default value if env var is not set.
 
         Returns:

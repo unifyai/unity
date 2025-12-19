@@ -375,10 +375,10 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 2. Initialize ContactManager (respects UNITY_CONTACTS_IMPL setting)
+    # 2. Initialize ContactManager (respects UNITY_CONTACT_IMPL setting)
     print("[ManagersWorker] Initializing ContactManager...")
     local_start_time = perf_counter()
-    contacts_impl = _get_impl("UNITY_CONTACTS_IMPL")
+    contacts_impl = _get_impl("UNITY_CONTACT_IMPL")
     contacts_cls = get_class("contacts", contacts_impl)
     if contacts_impl == "simulated":
         cm.contact_manager = contacts_cls(description="production deployment")
