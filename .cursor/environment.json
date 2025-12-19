@@ -4,14 +4,11 @@
     "dockerfile": "Dockerfile"
   },
   "install": "cd /workspace && uv sync --all-groups",
-  "start": "sudo service redis-server start && echo 'export PYTHONPATH=/workspace' >> ~/.bashrc",
-  "env": {
-    "PYTHONPATH": "/workspace"
-  },
+  "start": "sudo service redis-server start",
   "terminals": [
     {
       "name": "Tests",
-      "command": "cd /workspace && export PYTHONPATH=/workspace && echo '=== Unity Test Runner ===' && echo '' && echo 'To run ContactManager tests:' && echo '  ./tests/parallel_run.sh --wait tests/test_contact_manager/' && echo '' && echo 'To run a specific test:' && echo '  ./tests/parallel_run.sh --wait tests/test_contact_manager/test_ask.py'"
+      "command": "cd /workspace && echo '=== Unity Test Runner ===' && echo '' && echo 'To run ContactManager tests:' && echo '  ./tests/parallel_run.sh --wait tests/test_contact_manager/' && echo '' && echo 'To run a specific test:' && echo '  ./tests/parallel_run.sh --wait tests/test_contact_manager/test_ask.py'"
     }
   ]
 }
