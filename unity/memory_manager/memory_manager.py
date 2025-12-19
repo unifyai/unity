@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import functools
 from typing import Optional, Callable, Dict, Any
 from dataclasses import dataclass
 
 
+from ..settings import SETTINGS
 from ..session_details import SESSION_DETAILS
 from ..common.llm_client import new_llm_client
 from ..contact_manager.contact_manager import ContactManager
@@ -20,27 +20,6 @@ from ..common.async_tool_loop import start_async_tool_loop
 from . import prompt_builders as pb
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
-
-
-# ---------------------------------------------------------------------------
-#  Environment toggle helpers
-# ---------------------------------------------------------------------------
-
-
-def _env_flag(
-    var_name: str,
-    default: bool = True,
-) -> bool:  # noqa: D401 – imperative helper name
-    """Return *True* if the environment variable *var_name* is set to a truthy
-    value (case-insensitive ``true, 1, yes, y``).  Missing variables fall back
-    to *default* so existing behaviour remains unchanged when the variable is
-    absent.
-    """
-
-    val = os.getenv(var_name)
-    if val is None:
-        return default
-    return val.strip().lower() in {"1", "true", "yes", "y"}
 
 
 class MemoryManager(BaseMemoryManager):
@@ -147,7 +126,7 @@ class MemoryManager(BaseMemoryManager):
             config if config is not None else MemoryManager.MemoryConfig()
         )
         self._register_update_callbacks: bool = (
-            self._cfg.enable_callbacks and _env_flag("REGISTER_UPDATE_CALLBACKS", True)
+            self._cfg.enable_callbacks and SETTINGS.UNITY_REGISTER_UPDATE_CALLBACKS
         )
         # ── real-time 50-message trigger (update callbacks) --------------------
         self._CHUNK_SIZE: int = 50
