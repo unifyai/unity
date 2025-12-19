@@ -1,4 +1,3 @@
-import os
 from tavily import TavilyClient
 import functools
 from typing import List, Dict, Any, Optional, Type
@@ -7,6 +6,7 @@ import asyncio
 import unify
 import functools
 from pathlib import Path
+from unity.settings import SETTINGS
 from unity.common.log_utils import log as unity_log
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -51,7 +51,7 @@ class WebSearcher(BaseWebSearcher):
 
     def __init__(self):
         super().__init__()
-        self.tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+        self.tavily_client = TavilyClient(api_key=SETTINGS.TAVILY_API_KEY or None)
         self._hierarchical_actor = None
         self._default_function_id = None
 
