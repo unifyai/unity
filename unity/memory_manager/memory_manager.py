@@ -126,7 +126,7 @@ class MemoryManager(BaseMemoryManager):
             config if config is not None else MemoryManager.MemoryConfig()
         )
         self._register_update_callbacks: bool = (
-            self._cfg.enable_callbacks and SETTINGS.UNITY_REGISTER_UPDATE_CALLBACKS
+            self._cfg.enable_callbacks and SETTINGS.memory.REGISTER_UPDATE_CALLBACKS
         )
         # ── real-time 50-message trigger (update callbacks) --------------------
         self._CHUNK_SIZE: int = 50

@@ -11,8 +11,17 @@ and adds test-only configuration. This mirrors the structure of unity/settings.p
 import random
 import string
 
-from unity.settings import ProductionSettings
+from pydantic import Field
 from pydantic.fields import computed_field
+
+from unity.memory_manager.settings import MemorySettings
+from unity.settings import ProductionSettings
+
+
+class TestMemorySettings(MemorySettings):
+    """Test overrides for MemorySettings - disables callbacks by default."""
+
+    REGISTER_UPDATE_CALLBACKS: bool = False
 
 
 class TestingSettings(ProductionSettings):
@@ -22,12 +31,14 @@ class TestingSettings(ProductionSettings):
     inherited from ProductionSettings. This class adds test-only settings.
     """
 
+    # Override composed manager settings with test defaults
+    memory: MemorySettings = Field(default_factory=TestMemorySettings)
+
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure Settings
     # ─────────────────────────────────────────────────────────────────────────
     UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
     UNIFY_OVERWRITE_PROJECT: bool = False
-    UNITY_REGISTER_UPDATE_CALLBACKS: bool = False
     UNIFY_TESTS_RAND_PROJ: bool = False
     UNIFY_TESTS_DELETE_PROJ_ON_EXIT: bool = False
     UNIFY_CACHE_BENCHMARK: bool = False
