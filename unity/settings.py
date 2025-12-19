@@ -61,6 +61,11 @@ class ProductionSettings(BaseSettings):
     UNITY_VALIDATE_LLM_PROVIDERS: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
+    # External Service Credentials
+    # ─────────────────────────────────────────────────────────────────────────
+    TAVILY_API_KEY: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Debugging / Observability
     # ─────────────────────────────────────────────────────────────────────────
     LLM_IO_DEBUG: bool = True
