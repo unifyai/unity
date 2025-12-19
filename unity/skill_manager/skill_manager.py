@@ -21,7 +21,7 @@ from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.manager_event_logging import log_manager_call
 
-from ..function_manager.function_manager import FunctionManager
+from ..manager_registry import ManagerRegistry
 from ..function_manager.types.function import Function
 from .prompt_builders import build_ask_prompt
 from .base import BaseSkillManager
@@ -35,8 +35,8 @@ class SkillManager(BaseSkillManager):
 
     def __init__(self) -> None:
         super().__init__()
-        # Ensure the FunctionManager context exists to allow column/schema access
-        self._function_manager = FunctionManager()
+        # Get FunctionManager via registry to ensure context exists
+        self._function_manager = ManagerRegistry.get("functions")
 
         # Expose read-only FunctionManager methods directly (no wrappers)
         ask_tools: Dict[str, Callable] = {
