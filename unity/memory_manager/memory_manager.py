@@ -8,7 +8,6 @@ from typing import Optional, Callable, Dict, Any
 from dataclasses import dataclass
 
 
-from ..settings import SETTINGS
 from ..session_details import SESSION_DETAILS
 from ..common.llm_client import new_llm_client
 from ..contact_manager.contact_manager import ContactManager
@@ -121,13 +120,11 @@ class MemoryManager(BaseMemoryManager):
         self._knowledge_manager = knowledge_manager or KnowledgeManager()
         self._task_scheduler = task_scheduler or TaskScheduler()
 
-        # ── Config & environment-controlled callback registration ----------------
+        # ── Config-controlled callback registration ----------------
         self._cfg: MemoryManager.MemoryConfig = (
             config if config is not None else MemoryManager.MemoryConfig()
         )
-        self._register_update_callbacks: bool = (
-            self._cfg.enable_callbacks and SETTINGS.memory.REGISTER_UPDATE_CALLBACKS
-        )
+        self._register_update_callbacks: bool = self._cfg.enable_callbacks
         # ── real-time 50-message trigger (update callbacks) --------------------
         self._CHUNK_SIZE: int = 50
         self._recent_messages: list[dict] = []
