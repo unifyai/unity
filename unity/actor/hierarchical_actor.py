@@ -35,7 +35,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.function_manager.function_manager import FunctionManager
+from unity.manager_registry import ManagerRegistry
 from unity.actor.base import (
     BaseActor,
     BaseActorHandle,
@@ -4261,7 +4261,7 @@ class HierarchicalActor(BaseActor):
         """
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
-        self.function_manager = function_manager or FunctionManager()
+        self.function_manager = function_manager or ManagerRegistry.get("functions")
         self._session_connect_url = session_connect_url
         self._headless = headless
         self._browser_mode = browser_mode

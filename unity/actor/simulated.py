@@ -7,7 +7,7 @@ from .base import BaseActor, BaseActorHandle
 import functools
 from typing import Optional, Type
 from pydantic import BaseModel
-from unity.function_manager.function_manager import FunctionManager
+from unity.manager_registry import ManagerRegistry
 from unity.constants import LOGGER
 from unity.common.simulated import (
     SimulatedLineage,
@@ -773,7 +773,7 @@ class SimulatedActor(BaseActor):
         # If an entrypoint is provided, fetch real function metadata/code and prebake a result
         if entrypoint is not None:
             try:
-                fm = FunctionManager()
+                fm = ManagerRegistry.get("functions")
                 log = fm._get_log_by_function_id(function_id=int(entrypoint), raise_if_missing=True)  # type: ignore[attr-defined]
                 ent = log.entries if hasattr(log, "entries") else {}
                 entrypoint_info = {

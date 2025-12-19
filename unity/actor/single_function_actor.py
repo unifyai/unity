@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_loop
 from unity.common.llm_client import new_llm_client
 from unity.function_manager.execution_env import create_execution_globals
-from unity.function_manager.function_manager import FunctionManager
+from unity.manager_registry import ManagerRegistry
 from unity.function_manager.primitives import get_primitive_callable
 
 from ..task_scheduler.base import BaseActiveTask
@@ -294,7 +294,7 @@ class SingleFunctionActor(BaseActor):
                 agent_server_url=agent_server_url,
             )
 
-        self._function_manager = function_manager or FunctionManager()
+        self._function_manager = function_manager or ManagerRegistry.get("functions")
 
     def _get_function_by_id(self, function_id: int) -> Dict[str, Any]:
         """Get a user-defined function by its ID (not for primitives)."""
