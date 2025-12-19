@@ -87,11 +87,9 @@ def append_images_with_source(
                 if int(iid) not in reg:
                     missing_ids.append(int(iid))
             if missing_ids:
-                from unity.image_manager.image_manager import (
-                    ImageManager as _ImageManager,
-                )  # local import to avoid cycles
+                from unity.manager_registry import ManagerRegistry  # local import to avoid cycles
 
-                manager = _ImageManager()
+                manager = ManagerRegistry.get("images")
                 handles = manager.get_images(missing_ids)
                 for h in handles:
                     try:
@@ -163,9 +161,7 @@ def set_live_images_context(
         # Resolve referenced ids lazily with a local import to avoid circular dependencies at module import
         if images:
             try:
-                from unity.image_manager.image_manager import (
-                    ImageManager as _ImageManager,
-                )  # local import
+                from unity.manager_registry import ManagerRegistry  # local import
 
                 ids_to_fetch: List[int] = []
                 # Support ImageRefs, AnnotatedImageRefs, RawImageRefs, or plain list via duck typing on `root`
@@ -180,7 +176,7 @@ def set_live_images_context(
                     if iid not in id_map:
                         ids_to_fetch.append(iid)
                 if ids_to_fetch:
-                    manager = _ImageManager()
+                    manager = ManagerRegistry.get("images")
                     handles = manager.get_images(ids_to_fetch)
                     for h in handles:
                         try:
@@ -295,11 +291,9 @@ def build_live_image_tools(
             ih = cur_reg.get(iid)
             if ih is None:
                 try:
-                    from unity.image_manager.image_manager import (
-                        ImageManager as _ImageManager,
-                    )  # local import
+                    from unity.manager_registry import ManagerRegistry  # local import
 
-                    _handles = _ImageManager().get_images([iid])
+                    _handles = ManagerRegistry.get("images").get_images([iid])
                     ih = next(
                         (h for h in _handles if int(getattr(h, "image_id", -1)) == iid),
                         None,
@@ -366,11 +360,9 @@ def build_live_image_tools(
             ih = cur_reg.get(iid)
             if ih is None:
                 try:
-                    from unity.image_manager.image_manager import (
-                        ImageManager as _ImageManager,
-                    )  # local import
+                    from unity.manager_registry import ManagerRegistry  # local import
 
-                    _handles = _ImageManager().get_images([iid])
+                    _handles = ManagerRegistry.get("images").get_images([iid])
                     ih = next(
                         (h for h in _handles if int(getattr(h, "image_id", -1)) == iid),
                         None,
