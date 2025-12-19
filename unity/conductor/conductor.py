@@ -210,11 +210,11 @@ class Conductor(BaseConductor):
             self._guidance_manager = None
         elif guidance_manager is not None:
             self._guidance_manager = guidance_manager
-        elif not SETTINGS.UNITY_GUIDANCE_ENABLED:
+        elif not SETTINGS.guidance.ENABLED:
             self._guidance_manager = None
         else:
-            guidance_cls = get_class("guidance", SETTINGS.UNITY_GUIDANCE_IMPL)
-            if SETTINGS.UNITY_GUIDANCE_IMPL == "simulated":
+            guidance_cls = get_class("guidance", SETTINGS.guidance.IMPL)
+            if SETTINGS.guidance.IMPL == "simulated":
                 self._guidance_manager = guidance_cls(
                     description=description,
                     rolling_summary_in_prompts=rolling_summary_in_prompts,
