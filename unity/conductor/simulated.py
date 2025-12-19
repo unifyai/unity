@@ -14,7 +14,7 @@ from ..task_scheduler.base import BaseTaskScheduler
 from ..web_searcher.base import BaseWebSearcher
 from ..actor.base import BaseActor
 from ..guidance_manager.base import BaseGuidanceManager
-from ..guidance_manager.guidance_manager import GuidanceManager
+from ..manager_registry import ManagerRegistry
 from ..secret_manager.base import BaseSecretManager
 from ..secret_manager.simulated import SimulatedSecretManager
 
@@ -112,7 +112,8 @@ class SimulatedConductor(Conductor):
         _guidance_manager = (
             guidance_manager
             if guidance_manager is not None
-            else GuidanceManager(
+            else ManagerRegistry.get(
+                "guidance",
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
             )
         )
