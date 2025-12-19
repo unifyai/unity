@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.transcript_manager.settings import TranscriptSettings
 
@@ -146,6 +147,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Each manager owns its settings in its own settings.py file.
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
+    conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
 
@@ -156,11 +158,9 @@ class ProductionSettings(BaseSettings):
     UNITY_TASKS_IMPL: str = "real"
     # ConversationManager: real | simulated
     UNITY_CONVERSATION_IMPL: str = "real"
-    # Conductor: real | simulated
-    UNITY_CONDUCTOR_IMPL: str = "real"
 
     # SimulatedActor steps: number of steps before auto-completion, or None for manual
-    # Used when UNITY_CONDUCTOR_IMPL=simulated or UNITY_ACTOR_IMPL=simulated
+    # Used when SETTINGS.conductor.IMPL=simulated or UNITY_ACTOR_IMPL=simulated
     UNITY_SIMULATED_ACTOR_STEPS: int | None = 1
     # SimulatedActor duration in seconds (used in TaskScheduler's fallback actor)
     UNITY_SIM_ACTOR_DURATION: float = 20.0
