@@ -106,7 +106,7 @@ class _InterjectionRouter:
                 + f"\n{(message or '').strip()}"
             )
 
-            timeout_s = SETTINGS.UNITY_TS_ROUTER_TIMEOUT_SECONDS
+            timeout_s = SETTINGS.task.ROUTER_TIMEOUT_SECONDS
 
             try:
                 raw = await asyncio.wait_for(client.generate(user), timeout=timeout_s)

@@ -43,7 +43,7 @@ def test_default_settings_use_real_implementations():
     assert SETTINGS.UNITY_ACTOR_IMPL == "hierarchical"
     assert SETTINGS.contact.IMPL == "real"
     assert SETTINGS.transcript.IMPL == "real"
-    assert SETTINGS.UNITY_TASKS_IMPL == "real"
+    assert SETTINGS.task.IMPL == "real"
     assert SETTINGS.UNITY_CONVERSATION_IMPL == "real"
 
     # Optional managers also default to real (when enabled)
@@ -219,7 +219,7 @@ def test_disabled_sentinel_overrides_explicit_enable_via_patch():
         mock_settings.UNITY_ACTOR_IMPL = "hierarchical"
         mock_settings.contact.IMPL = "real"
         mock_settings.transcript.IMPL = "real"
-        mock_settings.UNITY_TASKS_IMPL = "real"
+        mock_settings.task.IMPL = "real"
 
         conductor = Conductor(
             conversation_manager=conv,

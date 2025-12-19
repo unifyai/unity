@@ -947,4 +947,4 @@ class LocalTaskView:
     # ----------------------------- Env helpers -----------------------------
     @staticmethod
     def _cache_disabled() -> bool:
-        return SETTINGS.UNITY_TS_LOCAL_VIEW_OFF
+        return SETTINGS.task.LOCAL_VIEW_OFF

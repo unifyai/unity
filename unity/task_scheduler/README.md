@@ -92,7 +92,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 - All I/O runs through `TasksStore`; caching and queue indexes via `LocalTaskView`.
 - `LocalTaskView` optimizes: queue membership (forward/reverse), head `start_at`, log‑id memoization, queue‑id allocation. It is tolerant to cache misses and can refresh opportunistically.
-- Environment toggle `UNITY_TS_LOCAL_VIEW_OFF` disables cache.
+- Environment toggle `UNITY_TASK_LOCAL_VIEW_OFF` disables cache.
 
 
 ### Execution handles
@@ -115,8 +115,8 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 ### Common environment variables
 
-- `UNITY_TS_LOCAL_VIEW_OFF`: disable `LocalTaskView` caching.
-- `UNITY_SIM_ACTOR_DURATION`: default simulated actor duration (seconds).
+- `UNITY_TASK_LOCAL_VIEW_OFF`: disable `LocalTaskView` caching.
+- `UNITY_TASK_SIM_ACTOR_DURATION`: default simulated actor duration (seconds).
 
 
 ### Quick orientation for new contributors

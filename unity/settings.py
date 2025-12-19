@@ -20,6 +20,7 @@ from unity.knowledge_manager.settings import KnowledgeSettings
 from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
 from unity.skill_manager.settings import SkillSettings
+from unity.task_scheduler.settings import TaskSettings
 from unity.transcript_manager.settings import TranscriptSettings
 from unity.web_searcher.settings import WebSettings
 
@@ -159,34 +160,25 @@ class ProductionSettings(BaseSettings):
     memory: MemorySettings = Field(default_factory=MemorySettings)
     secret: SecretSettings = Field(default_factory=SecretSettings)
     skill: SkillSettings = Field(default_factory=SkillSettings)
+    task: TaskSettings = Field(default_factory=TaskSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
     web: WebSettings = Field(default_factory=WebSettings)
 
     # -- Foundational managers (implementation only) --
     # Actor: hierarchical | single_function | code_act | simulated
     UNITY_ACTOR_IMPL: str = "hierarchical"
-    # TaskScheduler: real | simulated
-    UNITY_TASKS_IMPL: str = "real"
     # ConversationManager: real | simulated
     UNITY_CONVERSATION_IMPL: str = "real"
 
     # SimulatedActor steps: number of steps before auto-completion, or None for manual
     # Used when SETTINGS.conductor.IMPL=simulated or UNITY_ACTOR_IMPL=simulated
     UNITY_SIMULATED_ACTOR_STEPS: int | None = 1
-    # SimulatedActor duration in seconds (used in TaskScheduler's fallback actor)
-    UNITY_SIM_ACTOR_DURATION: float = 20.0
 
     # -- Optional managers (disabled by default for minimal initial rollout) --
     # These will be enabled incrementally as they become stable and fully featured.
     # GlobalFileManager
     UNITY_FILES_ENABLED: bool = False
     UNITY_FILES_IMPL: str = "real"
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # TaskScheduler Configuration
-    # ─────────────────────────────────────────────────────────────────────────
-    UNITY_TS_ROUTER_TIMEOUT_SECONDS: float = 60.0
-    UNITY_TS_LOCAL_VIEW_OFF: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # FileManager / Embedding Configuration
@@ -215,7 +207,6 @@ class ProductionSettings(BaseSettings):
         "TEST",
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
-        "UNITY_TS_LOCAL_VIEW_OFF",
         mode="before",
     )
     @classmethod

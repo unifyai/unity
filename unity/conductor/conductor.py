@@ -146,8 +146,8 @@ class Conductor(BaseConductor):
         if task_scheduler is not None:
             self._task_scheduler = task_scheduler
         else:
-            tasks_cls = get_class("tasks", SETTINGS.UNITY_TASKS_IMPL)
-            if SETTINGS.UNITY_TASKS_IMPL == "simulated":
+            tasks_cls = get_class("tasks", SETTINGS.task.IMPL)
+            if SETTINGS.task.IMPL == "simulated":
                 self._task_scheduler = tasks_cls(
                     description=description,
                     rolling_summary_in_prompts=rolling_summary_in_prompts,

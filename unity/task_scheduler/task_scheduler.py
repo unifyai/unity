@@ -334,7 +334,7 @@ class TaskScheduler(BaseTaskScheduler):
     @cached_property
     def _actor(self) -> BaseActor:
         if self.__actor is None:
-            self.__actor = SimulatedActor(duration=SETTINGS.UNITY_SIM_ACTOR_DURATION)
+            self.__actor = SimulatedActor(duration=SETTINGS.task.SIM_ACTOR_DURATION)
         return self.__actor
 
     # ------------------------------ Provisioning ----------------------------- #
