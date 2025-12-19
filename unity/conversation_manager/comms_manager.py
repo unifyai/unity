@@ -139,7 +139,7 @@ class CommsManager:
                     try:
                         import subprocess
 
-                        api_key = event.get("api_key", "") or SESSION_DETAILS.api_key
+                        api_key = event.get("api_key", "") or SESSION_DETAILS.unify_key
                         env = SESSION_DETAILS.get_subprocess_env(UNIFY_KEY=api_key)
                         subprocess.run(
                             ["/bin/bash", "/app/desktop/update_vnc_password.sh"],

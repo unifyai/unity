@@ -40,7 +40,7 @@ def log_job_startup(
     user_email: str,
     assistant_email: str,
 ):
-    api_key = SESSION_DETAILS.api_key or None
+    api_key = SESSION_DETAILS.unify_key or None
     if not api_key:
         print("[debug_logger] Skipping log_job_startup: no API key available")
         return
@@ -142,7 +142,7 @@ def log_job_startup(
 
 
 def mark_job_done(job_name: str):
-    api_key = SESSION_DETAILS.api_key or None
+    api_key = SESSION_DETAILS.unify_key or None
     if not api_key:
         print("[debug_logger] Skipping mark_job_done: no API key available")
         return
