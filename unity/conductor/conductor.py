@@ -247,11 +247,11 @@ class Conductor(BaseConductor):
             self._skill_manager = None
         elif skill_manager is not None:
             self._skill_manager = skill_manager
-        elif not SETTINGS.UNITY_SKILLS_ENABLED:
+        elif not SETTINGS.skill.ENABLED:
             self._skill_manager = None
         else:
-            skills_cls = get_class("skills", SETTINGS.UNITY_SKILLS_IMPL)
-            if SETTINGS.UNITY_SKILLS_IMPL == "simulated":
+            skills_cls = get_class("skills", SETTINGS.skill.IMPL)
+            if SETTINGS.skill.IMPL == "simulated":
                 self._skill_manager = skills_cls(
                     description=description,
                     rolling_summary_in_prompts=rolling_summary_in_prompts,

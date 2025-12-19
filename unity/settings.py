@@ -17,6 +17,7 @@ from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.guidance_manager.settings import GuidanceSettings
 from unity.memory_manager.settings import MemorySettings
+from unity.skill_manager.settings import SkillSettings
 from unity.transcript_manager.settings import TranscriptSettings
 
 
@@ -153,6 +154,7 @@ class ProductionSettings(BaseSettings):
     contact: ContactSettings = Field(default_factory=ContactSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    skill: SkillSettings = Field(default_factory=SkillSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
 
     # -- Foundational managers (implementation only) --
@@ -177,9 +179,6 @@ class ProductionSettings(BaseSettings):
     # SecretManager
     UNITY_SECRETS_ENABLED: bool = False
     UNITY_SECRETS_IMPL: str = "real"
-    # SkillManager
-    UNITY_SKILLS_ENABLED: bool = False
-    UNITY_SKILLS_IMPL: str = "real"
     # WebSearcher
     UNITY_WEB_SEARCH_ENABLED: bool = False
     UNITY_WEB_SEARCH_IMPL: str = "real"
@@ -230,7 +229,6 @@ class ProductionSettings(BaseSettings):
         "TEST",
         "UNITY_KNOWLEDGE_ENABLED",
         "UNITY_SECRETS_ENABLED",
-        "UNITY_SKILLS_ENABLED",
         "UNITY_WEB_SEARCH_ENABLED",
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
