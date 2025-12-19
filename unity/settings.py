@@ -116,6 +116,8 @@ class ProductionSettings(BaseSettings):
     # SimulatedActor steps: number of steps before auto-completion, or None for manual
     # Used when UNITY_CONDUCTOR_IMPL=simulated or UNITY_ACTOR_IMPL=simulated
     UNITY_SIMULATED_ACTOR_STEPS: int | None = 1
+    # SimulatedActor duration in seconds (used in TaskScheduler's fallback actor)
+    UNITY_SIM_ACTOR_DURATION: float = 20.0
 
     # -- Optional managers (disabled by default for minimal initial rollout) --
     # These will be enabled incrementally as they become stable and fully featured.

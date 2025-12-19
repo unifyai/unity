@@ -9,7 +9,6 @@ This module provides the concrete TaskScheduler which:
 
 from __future__ import annotations
 
-import os
 import unify
 import asyncio
 import functools
@@ -21,7 +20,7 @@ from pydantic import BaseModel
 from dataclasses import dataclass
 from functools import cached_property
 
-
+from ..settings import SETTINGS
 from ..common.tool_spec import read_only
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -336,13 +335,7 @@ class TaskScheduler(BaseTaskScheduler):
     @cached_property
     def _actor(self) -> BaseActor:
         if self.__actor is None:
-            # Allow tests to override default simulated duration via env var
-            try:
-                _dur_env = os.environ.get("UNITY_SIM_ACTOR_DURATION")
-                _duration = float(_dur_env) if _dur_env is not None else 20.0
-            except Exception:
-                _duration = 20.0
-            self.__actor = SimulatedActor(duration=_duration)
+            self.__actor = SimulatedActor(duration=SETTINGS.UNITY_SIM_ACTOR_DURATION)
         return self.__actor
 
     # ------------------------------ Provisioning ----------------------------- #
