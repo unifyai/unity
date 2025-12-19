@@ -28,10 +28,10 @@ Unity's architecture resembles a "back office" where specialized managers handle
 │                            Conductor                                  │
 │              (Top-level cross-domain orchestrator)                    │
 │                                                                       │
-│   ask (read-only) ─────────────────────── request (mutations)         │
-└───────┬───────────────────────────────────────────────────┬───────────┘
-        │                                                   │
-        ▼                                                   ▼
+│                      request (unified read/write)                     │
+└───────────────────────────────┬───────────────────────────────────────┘
+                                │
+                                ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │                         State Managers                                │
 │                                                                       │
@@ -63,7 +63,7 @@ Each manager owns a specific domain. The Conductor routes requests to the approp
 | Manager | Role |
 |---------|------|
 | **ConversationManager** | Live chat orchestrator. Wires steering (pause/resume/interject/stop) during conversations via the Conductor. |
-| **Conductor** | Top-level orchestrator unifying all managers. Two entry points: `ask` (read-only) and `request` (mutations). |
+| **Conductor** | Top-level orchestrator unifying all managers. Single entry point: `request` (unified read/write). |
 
 ### Data & Knowledge
 
