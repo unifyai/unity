@@ -8,20 +8,15 @@ This module is the single source of truth for:
   - Manager implementation registration (real, simulated, etc.)
   - Settings-based IMPL resolution
   - Singleton instance caching
-  - Factory method for obtaining manager instances
+  - Typed factory methods for obtaining manager instances
 
 Usage:
-    # Get a manager (auto-resolves IMPL from settings, returns singleton):
-    contact_manager = ManagerRegistry.get("contacts")
-
-    # Get a manager with dependencies:
-    transcript_manager = ManagerRegistry.get(
-        "transcripts",
-        contact_manager=contact_manager,
-    )
+    # Get a manager using typed methods (preferred - IDE autocomplete + type hints):
+    contact_manager = ManagerRegistry.get_contacts()
+    transcript_manager = ManagerRegistry.get_transcripts()
 
     # For simulated managers, pass description:
-    ManagerRegistry.get("contacts", description="test scenario")
+    ManagerRegistry.get_contacts(description="test scenario")
 
     # Clear all singletons (for test isolation):
     ManagerRegistry.clear()
@@ -31,7 +26,24 @@ from __future__ import annotations
 
 from abc import ABCMeta
 from threading import Lock
-from typing import Any, Callable, Dict, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Type
+
+if TYPE_CHECKING:
+    from .actor.base import BaseActor
+    from .conductor.base import BaseConductor
+    from .contact_manager.base import BaseContactManager
+    from .conversation_manager.base import BaseConversationManagerHandle
+    from .file_manager.base import BaseGlobalFileManager
+    from .function_manager.base import BaseFunctionManager
+    from .guidance_manager.base import BaseGuidanceManager
+    from .image_manager.base import BaseImageManager
+    from .knowledge_manager.base import BaseKnowledgeManager
+    from .memory_manager.base import BaseMemoryManager
+    from .secret_manager.base import BaseSecretManager
+    from .skill_manager.base import BaseSkillManager
+    from .task_scheduler.base import BaseTaskScheduler
+    from .transcript_manager.base import BaseTranscriptManager
+    from .web_searcher.base import BaseWebSearcher
 
 __all__ = [
     "ManagerRegistry",
@@ -174,6 +186,247 @@ class ManagerRegistry:
 
         return instance
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Typed Factory Methods (preferred over generic get())
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def get_actor(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseActor":
+        """Get the Actor singleton (respects IMPL settings)."""
+        return cls.get(
+            "actor",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_contacts(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        rolling_summary_in_prompts: bool = True,
+        **kwargs: Any,
+    ) -> "BaseContactManager":
+        """Get the ContactManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "contacts",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_transcripts(
+        cls,
+        *,
+        contact_manager: "BaseContactManager | None" = None,
+        rolling_summary_in_prompts: bool = True,
+        **kwargs: Any,
+    ) -> "BaseTranscriptManager":
+        """Get the TranscriptManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "transcripts",
+            contact_manager=contact_manager,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_tasks(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseTaskScheduler":
+        """Get the TaskScheduler singleton (respects IMPL settings)."""
+        return cls.get(
+            "tasks",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_conversation(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseConversationManagerHandle":
+        """Get the ConversationManagerHandle singleton (respects IMPL settings)."""
+        return cls.get(
+            "conversation",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_knowledge(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseKnowledgeManager":
+        """Get the KnowledgeManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "knowledge",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_guidance(
+        cls,
+        *,
+        rolling_summary_in_prompts: bool = True,
+        **kwargs: Any,
+    ) -> "BaseGuidanceManager":
+        """Get the GuidanceManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "guidance",
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_secrets(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseSecretManager":
+        """Get the SecretManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "secrets",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_skills(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseSkillManager":
+        """Get the SkillManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "skills",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_web_search(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseWebSearcher":
+        """Get the WebSearcher singleton (respects IMPL settings)."""
+        return cls.get(
+            "web_search",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_files(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseGlobalFileManager":
+        """Get the GlobalFileManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "files",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_functions(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseFunctionManager":
+        """Get the FunctionManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "functions",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_images(cls, **kwargs: Any) -> "BaseImageManager":
+        """Get the ImageManager singleton (respects IMPL settings)."""
+        return cls.get("images", **kwargs)
+
+    @classmethod
+    def get_memory(
+        cls,
+        *,
+        transcript_manager: "BaseTranscriptManager | None" = None,
+        contact_manager: "BaseContactManager | None" = None,
+        knowledge_manager: "BaseKnowledgeManager | None" = None,
+        task_scheduler: "BaseTaskScheduler | None" = None,
+        **kwargs: Any,
+    ) -> "BaseMemoryManager":
+        """Get the MemoryManager singleton (respects IMPL settings)."""
+        return cls.get(
+            "memory",
+            transcript_manager=transcript_manager,
+            contact_manager=contact_manager,
+            knowledge_manager=knowledge_manager,
+            task_scheduler=task_scheduler,
+            **kwargs,
+        )
+
+    @classmethod
+    def get_conductor(
+        cls,
+        *,
+        description: str | None = None,
+        simulation_guidance: str | None = None,
+        **kwargs: Any,
+    ) -> "BaseConductor":
+        """Get the Conductor singleton (respects IMPL settings)."""
+        return cls.get(
+            "conductor",
+            description=description,
+            simulation_guidance=simulation_guidance,
+            **kwargs,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Class Lookup
+    # ──────────────────────────────────────────────────────────────────────────
+
     @classmethod
     def get_class(cls, manager_key: str, impl_name: str | None = None) -> Type:
         """Get the class for a manager without instantiating.
@@ -260,8 +513,8 @@ class SingletonABCMeta(ABCMeta):
     again.
 
     Note: This supports direct class instantiation (e.g., `ContactManager()`).
-    For settings-aware instantiation that respects IMPL, use
-    `ManagerRegistry.get("contacts")` instead.
+    For settings-aware instantiation that respects IMPL, use the typed
+    factory methods like `ManagerRegistry.get_contacts()` instead.
     """
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
