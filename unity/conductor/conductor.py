@@ -113,8 +113,8 @@ class Conductor(BaseConductor):
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
-            contacts_cls = get_class("contacts", SETTINGS.UNITY_CONTACTS_IMPL)
-            if SETTINGS.UNITY_CONTACTS_IMPL == "simulated":
+            contacts_cls = get_class("contacts", SETTINGS.contact.IMPL)
+            if SETTINGS.contact.IMPL == "simulated":
                 self._contact_manager = contacts_cls(
                     description=description,
                     rolling_summary_in_prompts=rolling_summary_in_prompts,

@@ -62,7 +62,7 @@ def pytest_configure(config):
     """Configure environment variables before any tests run."""
     # Use simulated implementations for all managers
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
-    os.environ["UNITY_CONTACTS_IMPL"] = "simulated"
+    os.environ["UNITY_CONTACT_IMPL"] = "simulated"
     os.environ["UNITY_TRANSCRIPTS_IMPL"] = "simulated"
     os.environ["UNITY_TASKS_IMPL"] = "simulated"
     os.environ["UNITY_CONVERSATION_IMPL"] = "simulated"

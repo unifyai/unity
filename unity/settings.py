@@ -10,8 +10,10 @@ All settings can be overridden via environment variables or .env file.
 
 from typing import Any
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from unity.contact_manager.settings import ContactSettings
 
 
 def _parse_bool_or_str(v: Any) -> bool | str:
@@ -138,11 +140,16 @@ class ProductionSettings(BaseSettings):
     #   - KnowledgeManager, GuidanceManager, SecretManager, SkillManager,
     #     WebSearcher, GlobalFileManager
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Composed Manager Settings
+    # ─────────────────────────────────────────────────────────────────────────
+    # Each manager owns its settings in its own settings.py file.
+    # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
+    contact: ContactSettings = Field(default_factory=ContactSettings)
+
     # -- Foundational managers (implementation only) --
     # Actor: hierarchical | single_function | code_act | simulated
     UNITY_ACTOR_IMPL: str = "hierarchical"
-    # ContactManager: real | simulated
-    UNITY_CONTACTS_IMPL: str = "real"
     # TranscriptManager: real | simulated
     UNITY_TRANSCRIPTS_IMPL: str = "real"
     # TaskScheduler: real | simulated
