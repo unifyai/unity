@@ -220,7 +220,7 @@ class TaskScheduler(BaseTaskScheduler):
         self.include_in_multi_assistant_table = True
 
         # Get ContactManager via registry so its bound methods can act as tools
-        self._contact_manager = ManagerRegistry.get("contacts")
+        self._contact_manager = ManagerRegistry.get_contact_manager()
 
         # Query-only helpers – safe, read-only operations.  Include the *external* contact lookup
         ask_tools = {

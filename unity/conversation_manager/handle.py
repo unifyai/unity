@@ -54,7 +54,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         self.event_broker = event_broker
         self.conversation_id = conversation_id
         self.contact_id = contact_id
-        self._tm = transcript_manager or ManagerRegistry.get("transcripts")
+        self._tm = transcript_manager or ManagerRegistry.get_transcript_manager()
         self.conversation_manager = conversation_manager
 
         self._steering_channel = "app:comms:steering"

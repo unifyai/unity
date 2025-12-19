@@ -119,25 +119,24 @@ class MemoryManager(BaseMemoryManager):
         self._contact_manager = (
             contact_manager
             if contact_manager is not None
-            else ManagerRegistry.get("contacts")
+            else ManagerRegistry.get_contact_manager()
         )
         self._transcript_manager = (
             transcript_manager
             if transcript_manager is not None
-            else ManagerRegistry.get(
-                "transcripts",
+            else ManagerRegistry.get_transcript_manager(
                 contact_manager=self._contact_manager,
             )
         )
         self._knowledge_manager = (
             knowledge_manager
             if knowledge_manager is not None
-            else ManagerRegistry.get("knowledge")
+            else ManagerRegistry.get_knowledge_manager()
         )
         self._task_scheduler = (
             task_scheduler
             if task_scheduler is not None
-            else ManagerRegistry.get("tasks")
+            else ManagerRegistry.get_task_scheduler()
         )
 
         # ── Config-controlled callback registration ----------------

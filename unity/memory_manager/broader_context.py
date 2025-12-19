@@ -55,7 +55,7 @@ def get_broader_context(
 
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
-        cm = contact_manager if contact_manager is not None else ManagerRegistry.get("contacts")
+        cm = contact_manager if contact_manager is not None else ManagerRegistry.get_contact_manager()
         contacts = sorted(
             cm.filter_contacts(
                 filter="(contact_id == 0) or (contact_id == 1)",

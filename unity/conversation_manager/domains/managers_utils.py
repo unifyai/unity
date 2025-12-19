@@ -366,8 +366,7 @@ def _init_managers(
     # 2. Initialize ContactManager (respects SETTINGS.contact.IMPL)
     print("[ManagersWorker] Initializing ContactManager...")
     local_start_time = perf_counter()
-    cm.contact_manager = ManagerRegistry.get(
-        "contacts",
+    cm.contact_manager = ManagerRegistry.get_contact_manager(
         description="production deployment",
     )
     print(
@@ -378,8 +377,7 @@ def _init_managers(
     # 3. Initialize TranscriptManager (respects SETTINGS.transcript.IMPL)
     print("[ManagersWorker] Initializing TranscriptManager...")
     local_start_time = perf_counter()
-    cm.transcript_manager = ManagerRegistry.get(
-        "transcripts",
+    cm.transcript_manager = ManagerRegistry.get_transcript_manager(
         description="production deployment",
         contact_manager=cm.contact_manager,
     )
@@ -398,8 +396,7 @@ def _init_managers(
     if SETTINGS.memory.ENABLED:
         print("[ManagersWorker] Initializing MemoryManager...")
         local_start_time = perf_counter()
-        cm.memory_manager = ManagerRegistry.get(
-            "memory",
+        cm.memory_manager = ManagerRegistry.get_memory_manager(
             transcript_manager=cm.transcript_manager,
             contact_manager=cm.contact_manager,
             loop=loop,
@@ -416,15 +413,13 @@ def _init_managers(
     local_start_time = perf_counter()
     # ConversationManagerHandle has different constructor args for real vs simulated
     if SETTINGS.conversation.IMPL == "simulated":
-        cm._conversation_manager_handle = ManagerRegistry.get(
-            "conversation",
+        cm._conversation_manager_handle = ManagerRegistry.get_conversation_manager_handle(
             description="production deployment",
             assistant_id=SESSION_DETAILS.assistant.id,
             contact_id="1",
         )
     else:
-        cm._conversation_manager_handle = ManagerRegistry.get(
-            "conversation",
+        cm._conversation_manager_handle = ManagerRegistry.get_conversation_manager_handle(
             event_broker=cm.event_broker,
             conversation_id=SESSION_DETAILS.assistant.id,
             contact_id="1",
@@ -440,8 +435,7 @@ def _init_managers(
     print("[ManagersWorker] Initializing Conductor...")
     try:
         local_start_time = perf_counter()
-        cm.conductor = ManagerRegistry.get(
-            "conductor",
+        cm.conductor = ManagerRegistry.get_conductor(
             description="production deployment",
             contact_manager=cm.contact_manager,
             transcript_manager=cm.transcript_manager,

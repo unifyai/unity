@@ -1788,7 +1788,7 @@ class FunctionManager(BaseFunctionManager):
             if isinstance(limit, int) and limit >= 0:
                 image_ids = image_ids[:limit]
 
-        im = ManagerRegistry.get("images")
+        im = ManagerRegistry.get_image_manager()
         return im.get_images(image_ids)
 
     def _attach_guidance_images_for_function_to_context(

@@ -103,14 +103,13 @@ class Conductor(BaseConductor):
         # DISABLED sentinel explicitly disables optional managers.
 
         # Actor (foundational - cannot be disabled)
-        self._actor = actor if actor is not None else ManagerRegistry.get("actor")
+        self._actor = actor if actor is not None else ManagerRegistry.get_actor()
 
         # ContactManager (foundational - cannot be disabled)
         self._contact_manager = (
             contact_manager
             if contact_manager is not None
-            else ManagerRegistry.get(
-                "contacts",
+            else ManagerRegistry.get_contact_manager(
                 description=description,
                 simulation_guidance=simulation_guidance,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
@@ -121,8 +120,7 @@ class Conductor(BaseConductor):
         self._transcript_manager = (
             transcript_manager
             if transcript_manager is not None
-            else ManagerRegistry.get(
-                "transcripts",
+            else ManagerRegistry.get_transcript_manager(
                 description=description,
                 simulation_guidance=simulation_guidance,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
@@ -134,8 +132,7 @@ class Conductor(BaseConductor):
         self._task_scheduler = (
             task_scheduler
             if task_scheduler is not None
-            else ManagerRegistry.get(
-                "tasks",
+            else ManagerRegistry.get_task_scheduler(
                 description=description,
                 simulation_guidance=simulation_guidance,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
@@ -147,8 +144,7 @@ class Conductor(BaseConductor):
         if conversation_manager is not None:
             self._cm_handle = conversation_manager
         elif SETTINGS.conversation.IMPL == "simulated":
-            self._cm_handle = ManagerRegistry.get(
-                "conversation",
+            self._cm_handle = ManagerRegistry.get_conversation_manager_handle(
                 description=description,
                 simulation_guidance=simulation_guidance,
                 assistant_id=SESSION_DETAILS.assistant.id,
@@ -173,8 +169,7 @@ class Conductor(BaseConductor):
         elif not SETTINGS.knowledge.ENABLED:
             self._knowledge_manager = None
         else:
-            self._knowledge_manager = ManagerRegistry.get(
-                "knowledge",
+            self._knowledge_manager = ManagerRegistry.get_knowledge_manager(
                 description=description,
                 simulation_guidance=simulation_guidance,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
@@ -188,8 +183,7 @@ class Conductor(BaseConductor):
         elif not SETTINGS.guidance.ENABLED:
             self._guidance_manager = None
         else:
-            self._guidance_manager = ManagerRegistry.get(
-                "guidance",
+            self._guidance_manager = ManagerRegistry.get_guidance_manager(
                 description=description,
                 simulation_guidance=simulation_guidance,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
@@ -203,8 +197,7 @@ class Conductor(BaseConductor):
         elif not SETTINGS.secret.ENABLED:
             self._secret_manager = None
         else:
-            self._secret_manager = ManagerRegistry.get(
-                "secrets",
+            self._secret_manager = ManagerRegistry.get_secret_manager(
                 description=description,
                 simulation_guidance=simulation_guidance,
             )
@@ -217,8 +210,7 @@ class Conductor(BaseConductor):
         elif not SETTINGS.skill.ENABLED:
             self._skill_manager = None
         else:
-            self._skill_manager = ManagerRegistry.get(
-                "skills",
+            self._skill_manager = ManagerRegistry.get_skill_manager(
                 description=description,
                 simulation_guidance=simulation_guidance,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
@@ -232,8 +224,7 @@ class Conductor(BaseConductor):
         elif not SETTINGS.web.ENABLED:
             self._web_searcher = None
         else:
-            self._web_searcher = ManagerRegistry.get(
-                "web_search",
+            self._web_searcher = ManagerRegistry.get_web_searcher(
                 description=description,
                 simulation_guidance=simulation_guidance,
             )
@@ -246,7 +237,7 @@ class Conductor(BaseConductor):
         elif not SETTINGS.file.ENABLED:
             self._file_manager = None
         else:
-            self._file_manager = ManagerRegistry.get("files")
+            self._file_manager = ManagerRegistry.get_file_manager()
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore

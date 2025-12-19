@@ -89,7 +89,7 @@ def append_images_with_source(
             if missing_ids:
                 from unity.manager_registry import ManagerRegistry  # local import to avoid cycles
 
-                manager = ManagerRegistry.get("images")
+                manager = ManagerRegistry.get_image_manager()
                 handles = manager.get_images(missing_ids)
                 for h in handles:
                     try:
@@ -176,7 +176,7 @@ def set_live_images_context(
                     if iid not in id_map:
                         ids_to_fetch.append(iid)
                 if ids_to_fetch:
-                    manager = ManagerRegistry.get("images")
+                    manager = ManagerRegistry.get_image_manager()
                     handles = manager.get_images(ids_to_fetch)
                     for h in handles:
                         try:
@@ -293,7 +293,7 @@ def build_live_image_tools(
                 try:
                     from unity.manager_registry import ManagerRegistry  # local import
 
-                    _handles = ManagerRegistry.get("images").get_images([iid])
+                    _handles = ManagerRegistry.get_image_manager().get_images([iid])
                     ih = next(
                         (h for h in _handles if int(getattr(h, "image_id", -1)) == iid),
                         None,
@@ -362,7 +362,7 @@ def build_live_image_tools(
                 try:
                     from unity.manager_registry import ManagerRegistry  # local import
 
-                    _handles = ManagerRegistry.get("images").get_images([iid])
+                    _handles = ManagerRegistry.get_image_manager().get_images([iid])
                     ih = next(
                         (h for h in _handles if int(getattr(h, "image_id", -1)) == iid),
                         None,

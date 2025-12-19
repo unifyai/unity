@@ -126,7 +126,7 @@ class GuidanceManager(BaseGuidanceManager):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Get ImageManager via registry for resolving and attaching images
-        self._image_manager = ManagerRegistry.get("images")
+        self._image_manager = ManagerRegistry.get_image_manager()
 
         # Track custom fields seen/created during lifetime
         self._known_custom_fields: set[str] = set()

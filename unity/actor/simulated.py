@@ -359,7 +359,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             # Resolve any remaining ids to handles via ManagerRegistry
             if ids_to_fetch:
                 try:
-                    mgr = ManagerRegistry.get("images")
+                    mgr = ManagerRegistry.get_image_manager()
                     fetched = mgr.get_images(ids_to_fetch)
                     for h in fetched:
                         if h is not None:
@@ -769,7 +769,7 @@ class SimulatedActor(BaseActor):
         # If an entrypoint is provided, fetch real function metadata/code and prebake a result
         if entrypoint is not None:
             try:
-                fm = ManagerRegistry.get("functions")
+                fm = ManagerRegistry.get_function_manager()
                 log = fm._get_log_by_function_id(function_id=int(entrypoint), raise_if_missing=True)  # type: ignore[attr-defined]
                 ent = log.entries if hasattr(log, "entries") else {}
                 entrypoint_info = {
