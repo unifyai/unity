@@ -12,10 +12,12 @@ class MemorySettings(BaseSettings):
     """MemoryManager settings.
 
     Attributes:
+        IMPL: Implementation type - "real" or "simulated".
         ENABLED: Whether MemoryManager is enabled. When False, MemoryManager
             is not created during ConversationManager initialization.
     """
 
+    IMPL: str = "real"
     ENABLED: bool = True
 
     model_config = SettingsConfigDict(
