@@ -8,21 +8,14 @@ This module is used by parser enrichment steps to generate summaries that:
 """
 
 import math
-import os
 from typing import Optional
 
+from unity.settings import SETTINGS
 from unity.common.token_utils import (
     clip_text_to_token_limit,
     count_tokens_per_utf_byte,
     has_meaningful_text,
 )
-
-
-def _get_env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except Exception:
-        return default
 
 
 def _build_compression_directive(
@@ -77,11 +70,11 @@ def generate_summary_with_compression(
     if not has_meaningful_text(source_text):
         return source_text
 
-    enc = embedding_encoding or os.environ.get("EMBEDDING_ENCODING", "cl100k_base")
+    enc = embedding_encoding or SETTINGS.EMBEDDING_ENCODING
     max_tokens = (
         max_embedding_tokens
         if isinstance(max_embedding_tokens, int) and max_embedding_tokens > 0
-        else _get_env_int("EMBEDDING_MAX_INPUT_TOKENS", 8000)
+        else SETTINGS.EMBEDDING_MAX_INPUT_TOKENS
     )
 
     directive = extra_directive or ""

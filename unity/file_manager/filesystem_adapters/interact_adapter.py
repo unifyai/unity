@@ -5,10 +5,10 @@ import base64
 import json
 import urllib.parse
 import urllib.request
-import os
 import time
 import logging
 
+from unity.settings import SETTINGS
 from unity.file_manager.filesystem_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.types.filesystem import FileSystemCapabilities, FileReference
 
@@ -28,12 +28,12 @@ class InteractFileSystemAdapter(BaseFileSystemAdapter):
     """
 
     def __init__(self, api_base: str, api_key: str, space: str):
-        # All parameters can be overridden via environment variables
-        self._base = (os.environ.get("INTERACT_API_BASE") or api_base or "").rstrip("/")
-        self._key = os.environ.get("INTERACT_KEY") or api_key
-        self._secret = os.environ.get("INTERACT_SECRET") or ""
-        self._person_id = os.environ.get("INTERACT_PERSON_ID") or ""
-        self._tenant = os.environ.get("INTERACT_TENANT") or ""
+        # All parameters can be overridden via SETTINGS
+        self._base = (SETTINGS.INTERACT_API_BASE or api_base or "").rstrip("/")
+        self._key = SETTINGS.INTERACT_KEY or api_key
+        self._secret = SETTINGS.INTERACT_SECRET
+        self._person_id = SETTINGS.INTERACT_PERSON_ID
+        self._tenant = SETTINGS.INTERACT_TENANT
         self._space = space
         self._log = logging.getLogger(__name__)
         try:

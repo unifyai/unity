@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 from typing import Awaitable, Callable, Iterable, Optional
 
@@ -18,6 +17,7 @@ from unity.conversation_manager.events import (
     UnifyMeetEnded,
     UnifyMeetStarted,
 )
+from unity.session_details import SESSION_DETAILS
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +284,7 @@ def configure_from_cli(
     Shared CLI argument handling for both call scripts.
 
     extra_env: list of (ENV_NAME, is_json) describing additional arguments
-               after OUTBOUND that should be stuffed into env vars.
+               after OUTBOUND that should be stuffed into SESSION_DETAILS.
 
     Layout (common to both scripts):
       argv[0] = script name
@@ -311,17 +311,18 @@ def configure_from_cli(
         else:
             agent_name = f"unity_{assistant_number}"
             room_name = agent_name
-        os.environ["VOICE_PROVIDER"] = (
+
+        # Populate SESSION_DETAILS with voice config
+        SESSION_DETAILS.voice.provider = (
             sys.argv[3] if sys.argv[3] != "None" else "cartesia"
         )
-        os.environ["VOICE_ID"] = sys.argv[4] if sys.argv[4] != "None" else ""
-        os.environ["OUTBOUND"] = sys.argv[5]
-        os.environ["CHANNEL"] = sys.argv[6]
+        SESSION_DETAILS.voice.id = sys.argv[4] if sys.argv[4] != "None" else ""
+        SESSION_DETAILS.voice_call.outbound = sys.argv[5] == "True"
+        SESSION_DETAILS.voice_call.channel = sys.argv[6]
 
-        # extra env vars
+        # Parse extra args (CONTACT, BOSS, ASSISTANT_BIO)
         for idx, (env_name, is_json) in enumerate(extra_env, start=7):
             value = sys.argv[idx]
-            os.environ[env_name] = value
 
             if is_json:
                 try:
@@ -332,6 +333,17 @@ def configure_from_cli(
                 if not loaded:
                     print(f"{env_name} payload is invalid (empty)")
                     sys.exit(1)
+
+            # Map known extra args to SESSION_DETAILS fields
+            if env_name == "CONTACT":
+                SESSION_DETAILS.voice_call.contact_json = value
+            elif env_name == "BOSS":
+                SESSION_DETAILS.voice_call.boss_json = value
+            elif env_name == "ASSISTANT_BIO":
+                SESSION_DETAILS.assistant.about = value
+
+        # Export to env for subprocess inheritance
+        SESSION_DETAILS.export_to_env()
 
         # keep only script name and the command ("dev" / "connect" / "download-files")
         sys.argv = sys.argv[:2]

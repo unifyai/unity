@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 load_dotenv()
-import os
 import asyncio
 
+from unity.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
@@ -84,22 +84,7 @@ def _apply_test_mocks(cm: ConversationManager) -> None:
 
 def _populate_session_details_from_env() -> None:
     """Populate SESSION_DETAILS from environment variables."""
-    SESSION_DETAILS.populate(
-        assistant_id=os.getenv("ASSISTANT_ID", DEFAULT_ASSISTANT_ID),
-        assistant_name=os.getenv("ASSISTANT_NAME"),
-        assistant_age=os.getenv("ASSISTANT_AGE"),
-        assistant_nationality=os.getenv("ASSISTANT_NATIONALITY"),
-        assistant_about=os.getenv("ASSISTANT_ABOUT"),
-        assistant_number=os.getenv("ASSISTANT_NUMBER"),
-        assistant_email=os.getenv("ASSISTANT_EMAIL"),
-        user_id=os.getenv("USER_ID"),
-        user_name=os.getenv("USER_NAME"),
-        user_number=os.getenv("USER_NUMBER"),
-        user_email=os.getenv("USER_EMAIL"),
-        voice_provider=os.getenv("VOICE_PROVIDER"),
-        voice_id=os.getenv("VOICE_ID"),
-        voice_mode=os.getenv("VOICE_MODE"),
-    )
+    SESSION_DETAILS.populate_from_env()
 
 
 def create_conversation_manager(
@@ -124,7 +109,7 @@ def create_conversation_manager(
     """
     return ConversationManager(
         event_broker,
-        os.getenv("JOB_NAME", ""),
+        SETTINGS.JOB_NAME,
         SESSION_DETAILS.user.id,
         SESSION_DETAILS.assistant.id,
         SESSION_DETAILS.user.name,
@@ -203,7 +188,7 @@ async def run_conversation_manager(
 
     # Apply test mocks if requested
     should_apply_mocks = (
-        apply_test_mocks if apply_test_mocks is not None else bool(os.getenv("TEST"))
+        apply_test_mocks if apply_test_mocks is not None else SETTINGS.TEST
     )
     if should_apply_mocks:
         _apply_test_mocks(cm)
@@ -214,9 +199,7 @@ async def run_conversation_manager(
 
     # Start CommsManager if enabled
     should_enable_comms = (
-        enable_comms_manager
-        if enable_comms_manager is not None
-        else not bool(os.getenv("TEST"))
+        enable_comms_manager if enable_comms_manager is not None else not SETTINGS.TEST
     )
     if should_enable_comms:
         comms_manager = CommsManager(event_broker=event_broker)

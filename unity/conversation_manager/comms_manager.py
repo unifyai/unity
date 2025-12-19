@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from typing import TYPE_CHECKING
 
@@ -48,7 +47,7 @@ if TYPE_CHECKING:
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
 startup_subscription_id = (
-    "unity-startup" + ("-staging" if os.getenv("STAGING") else "") + "-sub"
+    "unity-startup" + ("-staging" if SETTINGS.STAGING else "") + "-sub"
 )
 
 
@@ -57,7 +56,7 @@ def _get_subscription_id() -> str:
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
         "-staging"
-        if os.getenv("STAGING") and DEFAULT_ASSISTANT_ID not in assistant_id
+        if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
         else ""
     )
     return f"unity-{assistant_id}{staging_suffix}-sub"
@@ -140,11 +139,8 @@ class CommsManager:
                     try:
                         import subprocess
 
-                        env = os.environ.copy()
-                        env["UNIFY_KEY"] = event.get("api_key", "") or env.get(
-                            "UNIFY_KEY",
-                            "",
-                        )
+                        api_key = event.get("api_key", "") or SESSION_DETAILS.api_key
+                        env = SESSION_DETAILS.get_subprocess_env(UNIFY_KEY=api_key)
                         subprocess.run(
                             ["/bin/bash", "/app/desktop/update_vnc_password.sh"],
                             check=True,

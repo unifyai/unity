@@ -27,10 +27,11 @@ The wrappers automatically:
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
 import unify
+
+from unity.session_details import SESSION_DETAILS
 
 
 def _get_user_name() -> Optional[str]:
@@ -44,8 +45,8 @@ def _get_user_name() -> Optional[str]:
 
 
 def _get_user_id() -> Optional[str]:
-    """Retrieve user_id from environment."""
-    return os.environ.get("USER_ID")
+    """Retrieve user_id from SESSION_DETAILS."""
+    return SESSION_DETAILS.user.id or None
 
 
 def _get_assistant_name() -> Optional[str]:

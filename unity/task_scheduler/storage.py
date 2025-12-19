@@ -12,10 +12,10 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Union, Literal, overload
 from enum import Enum
 from functools import cached_property
-import os
 
 import unify
 
+from unity.settings import SETTINGS
 from unity.common.context_store import _PRIVATE_FIELDS
 from unity.common.log_utils import log as unity_log, create_logs as unity_create_logs
 from unity.task_scheduler.types.queue_summary import QueueSummary
@@ -947,10 +947,4 @@ class LocalTaskView:
     # ----------------------------- Env helpers -----------------------------
     @staticmethod
     def _cache_disabled() -> bool:
-        try:
-            raw = os.getenv("UNITY_TS_LOCAL_VIEW_OFF")
-            if raw is None:
-                return False
-            return str(raw).strip().lower() in {"1", "true", "yes", "on"}
-        except Exception:
-            return False
+        return SETTINGS.UNITY_TS_LOCAL_VIEW_OFF

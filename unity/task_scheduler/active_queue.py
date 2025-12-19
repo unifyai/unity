@@ -16,9 +16,8 @@ from __future__ import annotations
 import asyncio
 from typing import Dict, Optional, List, Any, TYPE_CHECKING
 import json
-import os
 
-
+from ..settings import SETTINGS
 from ..common.llm_client import new_llm_client
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.handle_wrappers import HandleWrapperMixin
@@ -107,10 +106,7 @@ class _InterjectionRouter:
                 + f"\n{(message or '').strip()}"
             )
 
-            try:
-                timeout_s = float(os.getenv("UNITY_TS_ROUTER_TIMEOUT_SECONDS", "60.0"))
-            except Exception:
-                timeout_s = 60.0
+            timeout_s = SETTINGS.UNITY_TS_ROUTER_TIMEOUT_SECONDS
 
             try:
                 raw = await asyncio.wait_for(client.generate(user), timeout=timeout_s)
