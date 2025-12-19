@@ -13,7 +13,6 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 from unity.conversation_manager.events import _get_now
 from unity.events.event_bus import EVENT_BUS
-from unity.memory_manager.memory_manager import MemoryManager
 from unity.manager_registry import ManagerRegistry
 
 if TYPE_CHECKING:
@@ -395,11 +394,12 @@ def _init_managers(
             "Authorization"
         ] = f"Bearer {api_key}"
 
-    # 5. Initialize MemoryManager (optional - respects SETTINGS.memory.ENABLED)
+    # 5. Initialize MemoryManager (optional - respects SETTINGS.memory.ENABLED and IMPL)
     if SETTINGS.memory.ENABLED:
         print("[ManagersWorker] Initializing MemoryManager...")
         local_start_time = perf_counter()
-        cm.memory_manager = MemoryManager(
+        cm.memory_manager = ManagerRegistry.get(
+            "memory",
             transcript_manager=cm.transcript_manager,
             contact_manager=cm.contact_manager,
             loop=loop,
