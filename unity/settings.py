@@ -18,7 +18,9 @@ from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.conversation_manager.settings import ConversationSettings
 from unity.file_manager.settings import FileSettings
+from unity.function_manager.settings import FunctionSettings
 from unity.guidance_manager.settings import GuidanceSettings
+from unity.image_manager.settings import ImageSettings
 from unity.knowledge_manager.settings import KnowledgeSettings
 from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
@@ -136,7 +138,9 @@ class ProductionSettings(BaseSettings):
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
     file: FileSettings = Field(default_factory=FileSettings)
+    function: FunctionSettings = Field(default_factory=FunctionSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
+    image: ImageSettings = Field(default_factory=ImageSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     secret: SecretSettings = Field(default_factory=SecretSettings)
