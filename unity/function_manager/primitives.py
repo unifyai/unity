@@ -536,6 +536,9 @@ class Primitives:
     contacts and transcripts will NOT import or initialize the browser/desktop
     infrastructure.
 
+    All state managers are obtained via ManagerRegistry.get() to respect
+    the IMPL settings (real vs simulated).
+
     Usage in stored functions:
         async def my_function():
             # Only ContactManager is imported/initialized
@@ -546,7 +549,7 @@ class Primitives:
     """
 
     def __init__(self):
-        # All managers lazily initialized
+        # All managers lazily initialized via ManagerRegistry
         self._contacts: Optional["ContactManager"] = None
         self._transcripts: Optional["TranscriptManager"] = None
         self._knowledge: Optional["KnowledgeManager"] = None
@@ -561,72 +564,72 @@ class Primitives:
     def contacts(self) -> "ContactManager":
         """Contact management primitives (ask, update)."""
         if self._contacts is None:
-            from unity.contact_manager.contact_manager import ContactManager
+            from unity.manager_registry import ManagerRegistry
 
-            self._contacts = ContactManager()
+            self._contacts = ManagerRegistry.get("contacts")
         return self._contacts
 
     @property
     def transcripts(self) -> "TranscriptManager":
         """Transcript management primitives (ask)."""
         if self._transcripts is None:
-            from unity.transcript_manager.transcript_manager import TranscriptManager
+            from unity.manager_registry import ManagerRegistry
 
-            self._transcripts = TranscriptManager()
+            self._transcripts = ManagerRegistry.get("transcripts")
         return self._transcripts
 
     @property
     def knowledge(self) -> "KnowledgeManager":
         """Knowledge management primitives (ask, update, refactor)."""
         if self._knowledge is None:
-            from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+            from unity.manager_registry import ManagerRegistry
 
-            self._knowledge = KnowledgeManager()
+            self._knowledge = ManagerRegistry.get("knowledge")
         return self._knowledge
 
     @property
     def tasks(self) -> "TaskScheduler":
         """Task scheduling primitives (ask, update, execute)."""
         if self._tasks is None:
-            from unity.task_scheduler.task_scheduler import TaskScheduler
+            from unity.manager_registry import ManagerRegistry
 
-            self._tasks = TaskScheduler()
+            self._tasks = ManagerRegistry.get("tasks")
         return self._tasks
 
     @property
     def secrets(self) -> "SecretManager":
         """Secret management primitives (ask, update)."""
         if self._secrets is None:
-            from unity.secret_manager.secret_manager import SecretManager
+            from unity.manager_registry import ManagerRegistry
 
-            self._secrets = SecretManager()
+            self._secrets = ManagerRegistry.get("secrets")
         return self._secrets
 
     @property
     def guidance(self) -> "GuidanceManager":
         """Guidance management primitives (ask, update)."""
         if self._guidance is None:
-            from unity.guidance_manager.guidance_manager import GuidanceManager
+            from unity.manager_registry import ManagerRegistry
 
-            self._guidance = GuidanceManager()
+            self._guidance = ManagerRegistry.get("guidance")
         return self._guidance
 
     @property
     def web(self) -> "WebSearcher":
         """Web search primitives (ask)."""
         if self._web is None:
-            from unity.web_searcher.web_searcher import WebSearcher
+            from unity.manager_registry import ManagerRegistry
 
-            self._web = WebSearcher()
+            self._web = ManagerRegistry.get("web_search")
         return self._web
 
     @property
     def skills(self) -> "SkillManager":
         """Skill discovery primitives (ask)."""
         if self._skills is None:
-            from unity.skill_manager.skill_manager import SkillManager
+            from unity.manager_registry import ManagerRegistry
 
-            self._skills = SkillManager()
+            self._skills = ManagerRegistry.get("skills")
         return self._skills
 
     @property
