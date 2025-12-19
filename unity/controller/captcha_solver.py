@@ -12,7 +12,7 @@ import base64
 import logging
 from urllib.parse import urlparse
 
-from ..constants import ANTICAPTCHA_KEY
+from ..settings import SETTINGS
 
 try:
     from anticaptchaofficial.recaptchav2proxyless import recaptchaV2Proxyless
@@ -26,7 +26,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover – caught during tests
 
 LOGGER = logging.getLogger("unity.captcha")
 
-if not ANTICAPTCHA_KEY:
+if not SETTINGS.ANTICAPTCHA_KEY:
     LOGGER.warning(
         "ANTICAPTCHA_KEY env-var not set; CAPTCHA solving will be disabled.",
     )
@@ -68,7 +68,7 @@ def solve_recaptcha(
     failed.  Exceptions from the SDK are swallowed and logged so callers can
     decide what to do next (e.g. fall back to user prompt).
     """
-    if not ANTICAPTCHA_KEY:
+    if not SETTINGS.ANTICAPTCHA_KEY:
         return None
 
     # early exit on unsupported domain
@@ -77,7 +77,7 @@ def solve_recaptcha(
         return None
 
     solver = recaptchaV2Proxyless()
-    solver.set_key(ANTICAPTCHA_KEY)
+    solver.set_key(SETTINGS.ANTICAPTCHA_KEY)
     solver.set_website_url(url)
     solver.set_website_key(sitekey)
     solver.set_is_invisible(True)
@@ -101,7 +101,7 @@ def solve_hcaptcha(
     timeout: int = 120,
 ) -> Optional[str]:
     """Solve hCaptcha and return the token."""
-    if not ANTICAPTCHA_KEY:
+    if not SETTINGS.ANTICAPTCHA_KEY:
         return None
 
     # early exit on unsupported domain
@@ -110,7 +110,7 @@ def solve_hcaptcha(
         return None
 
     solver = hCaptchaProxyless()
-    solver.set_key(ANTICAPTCHA_KEY)
+    solver.set_key(SETTINGS.ANTICAPTCHA_KEY)
     solver.set_website_url(url)
     solver.set_website_key(sitekey)
     solver.set_is_invisible(invisible)
@@ -127,11 +127,11 @@ def solve_hcaptcha(
 
 def solve_image(base64_png: str, *, timeout: int = 120) -> Optional[str]:
     """Solve image-based CAPTCHA (PNG -> text answer)."""
-    if not ANTICAPTCHA_KEY:
+    if not SETTINGS.ANTICAPTCHA_KEY:
         return None
 
     solver = imagecaptcha()
-    solver.set_key(ANTICAPTCHA_KEY)
+    solver.set_key(SETTINGS.ANTICAPTCHA_KEY)
     # solver.set_task_timeout(timeout)
 
     try:

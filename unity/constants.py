@@ -8,7 +8,6 @@ For configurable settings, import SETTINGS from unity.settings.
 """
 
 import logging
-import os
 from datetime import datetime, timezone
 
 from unity.settings import SETTINGS
@@ -18,9 +17,6 @@ from unity.settings import SETTINGS
 # ─────────────────────────────────────────────────────────────────────────────
 SESSION_ID = datetime.now(timezone.utc).isoformat()
 LOGGER = logging.getLogger("unity")
-
-# External service key (not managed by settings since it's a secret)
-ANTICAPTCHA_KEY = os.getenv("ANTICAPTCHA_KEY")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging Setup for Verbose Asyncio Debug Mode
