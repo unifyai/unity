@@ -18,7 +18,7 @@ chmod 600 /root/.vnc/passwd || true
 
 # Start x11vnc with rfbauth
 x11vnc -display :99 -rfbauth /root/.vnc/passwd -forever -shared -bg -rfbport 5900 \
-       -rfbportv6 0 -noxdamage -nowf -nocursorshape -cursor arrow -nodpms
+       -rfbportv6 0 -noxdamage -nowf -nodpms
 
 /usr/libexec/xdg-desktop-portal &
 /usr/libexec/xdg-desktop-portal-gtk &
