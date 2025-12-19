@@ -41,7 +41,7 @@ class Browser:
             )
 
         self._secret_manager = (
-            ManagerRegistry.get("secrets") if secret_manager is None else secret_manager
+            ManagerRegistry.get_secret_manager() if secret_manager is None else secret_manager
         )
 
     async def act(self, instruction: str, expectation: str = "") -> str:

@@ -102,7 +102,7 @@ class ComputerPrimitives:
         if self._secret_manager is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._secret_manager = ManagerRegistry.get("secrets")
+            self._secret_manager = ManagerRegistry.get_secret_manager()
         return self._secret_manager
 
     def _setup_browser_methods(self):
@@ -477,18 +477,18 @@ def compute_primitives_hash(primitives: Dict[str, Dict[str, Any]]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
 
-# Mapping from class names to ManagerRegistry keys
-_CLASS_TO_MANAGER_KEY: Dict[str, str] = {
-    "ContactManager": "contacts",
-    "TranscriptManager": "transcripts",
-    "KnowledgeManager": "knowledge",
-    "TaskScheduler": "tasks",
-    "SecretManager": "secrets",
-    "GuidanceManager": "guidance",
-    "WebSearcher": "web_search",
-    "SkillManager": "skills",
-    "FunctionManager": "functions",
-    "ImageManager": "images",
+# Mapping from class names to ManagerRegistry getter method names
+_CLASS_TO_GETTER: Dict[str, str] = {
+    "ContactManager": "get_contact_manager",
+    "TranscriptManager": "get_transcript_manager",
+    "KnowledgeManager": "get_knowledge_manager",
+    "TaskScheduler": "get_task_scheduler",
+    "SecretManager": "get_secret_manager",
+    "GuidanceManager": "get_guidance_manager",
+    "WebSearcher": "get_web_searcher",
+    "SkillManager": "get_skill_manager",
+    "FunctionManager": "get_function_manager",
+    "ImageManager": "get_image_manager",
 }
 
 
@@ -524,21 +524,22 @@ def get_primitive_callable(
             return None
         return getattr(computer_primitives, method_name, None)
 
-    # State managers: use ManagerRegistry to respect IMPL settings
+    # State managers: use ManagerRegistry typed getters to respect IMPL settings
     class_name = class_path.rsplit(".", 1)[-1]
-    manager_key = _CLASS_TO_MANAGER_KEY.get(class_name)
+    getter_name = _CLASS_TO_GETTER.get(class_name)
 
-    if manager_key is None:
+    if getter_name is None:
         logger.warning(f"Unknown manager class: {class_name}")
         return None
 
     try:
         from unity.manager_registry import ManagerRegistry
 
-        instance = ManagerRegistry.get(manager_key)
+        getter = getattr(ManagerRegistry, getter_name)
+        instance = getter()
         return getattr(instance, method_name, None)
     except Exception as e:
-        logger.warning(f"Could not get manager '{manager_key}': {e}")
+        logger.warning(f"Could not get manager via '{getter_name}': {e}")
         return None
 
 
@@ -556,8 +557,8 @@ class Primitives:
     contacts and transcripts will NOT import or initialize the browser/desktop
     infrastructure.
 
-    All state managers are obtained via ManagerRegistry.get() to respect
-    the IMPL settings (real vs simulated).
+    All state managers are obtained via ManagerRegistry typed methods
+    (e.g., get_contact_manager()) to respect IMPL settings (real vs simulated).
 
     Usage in stored functions:
         async def my_function():
@@ -586,7 +587,7 @@ class Primitives:
         if self._contacts is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._contacts = ManagerRegistry.get("contacts")
+            self._contacts = ManagerRegistry.get_contact_manager()
         return self._contacts
 
     @property
@@ -595,7 +596,7 @@ class Primitives:
         if self._transcripts is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._transcripts = ManagerRegistry.get("transcripts")
+            self._transcripts = ManagerRegistry.get_transcript_manager()
         return self._transcripts
 
     @property
@@ -604,7 +605,7 @@ class Primitives:
         if self._knowledge is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._knowledge = ManagerRegistry.get("knowledge")
+            self._knowledge = ManagerRegistry.get_knowledge_manager()
         return self._knowledge
 
     @property
@@ -613,7 +614,7 @@ class Primitives:
         if self._tasks is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._tasks = ManagerRegistry.get("tasks")
+            self._tasks = ManagerRegistry.get_task_scheduler()
         return self._tasks
 
     @property
@@ -622,7 +623,7 @@ class Primitives:
         if self._secrets is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._secrets = ManagerRegistry.get("secrets")
+            self._secrets = ManagerRegistry.get_secret_manager()
         return self._secrets
 
     @property
@@ -631,7 +632,7 @@ class Primitives:
         if self._guidance is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._guidance = ManagerRegistry.get("guidance")
+            self._guidance = ManagerRegistry.get_guidance_manager()
         return self._guidance
 
     @property
@@ -640,7 +641,7 @@ class Primitives:
         if self._web is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._web = ManagerRegistry.get("web_search")
+            self._web = ManagerRegistry.get_web_searcher()
         return self._web
 
     @property
@@ -649,7 +650,7 @@ class Primitives:
         if self._skills is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._skills = ManagerRegistry.get("skills")
+            self._skills = ManagerRegistry.get_skill_manager()
         return self._skills
 
     @property

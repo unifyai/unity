@@ -175,7 +175,7 @@ class ScreenShareManager:
         """
         self.settings = settings or ScreenShareManagerSettings()
         self._debug = debug
-        self._image_manager = image_manager or ManagerRegistry.get("images")
+        self._image_manager = image_manager or ManagerRegistry.get_image_manager()
         self._detection_client = detection_client or new_llm_client(
             "gpt-4o-mini@openai",
             reasoning_effort=None,

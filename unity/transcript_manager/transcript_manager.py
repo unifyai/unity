@@ -131,7 +131,7 @@ class TranscriptManager(BaseTranscriptManager):
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
-            self._contact_manager = ManagerRegistry.get("contacts")
+            self._contact_manager = ManagerRegistry.get_contact_manager()
 
         ask_tools = {
             **methods_to_tool_dict(

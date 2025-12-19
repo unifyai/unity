@@ -36,7 +36,7 @@ class SkillManager(BaseSkillManager):
     def __init__(self) -> None:
         super().__init__()
         # Get FunctionManager via registry to ensure context exists
-        self._function_manager = ManagerRegistry.get("functions")
+        self._function_manager = ManagerRegistry.get_function_manager()
 
         # Expose read-only FunctionManager methods directly (no wrappers)
         ask_tools: Dict[str, Callable] = {

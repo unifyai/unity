@@ -43,7 +43,7 @@ def _assistant_name() -> str:
     try:
         from unity.manager_registry import ManagerRegistry  # noqa: WPS433
 
-        cm = ManagerRegistry.get("contacts")
+        cm = ManagerRegistry.get_contact_manager()
         assist = cm.filter_contacts(filter="contact_id == 0", limit=1)
         if assist:
             a = assist[0]

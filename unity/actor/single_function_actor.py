@@ -294,7 +294,7 @@ class SingleFunctionActor(BaseActor):
                 agent_server_url=agent_server_url,
             )
 
-        self._function_manager = function_manager or ManagerRegistry.get("functions")
+        self._function_manager = function_manager or ManagerRegistry.get_function_manager()
 
     def _get_function_by_id(self, function_id: int) -> Dict[str, Any]:
         """Get a user-defined function by its ID (not for primitives)."""

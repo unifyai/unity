@@ -4261,7 +4261,7 @@ class HierarchicalActor(BaseActor):
         """
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
-        self.function_manager = function_manager or ManagerRegistry.get("functions")
+        self.function_manager = function_manager or ManagerRegistry.get_function_manager()
         self._session_connect_url = session_connect_url
         self._headless = headless
         self._browser_mode = browser_mode
@@ -4986,7 +4986,7 @@ class HierarchicalActor(BaseActor):
             "[COURSE_CORRECTION] Screenshots decoded. Preparing image manager...",
         )
 
-        image_manager = ManagerRegistry.get("images")
+        image_manager = ManagerRegistry.get_image_manager()
         ids = image_manager.add_images(
             [
                 {

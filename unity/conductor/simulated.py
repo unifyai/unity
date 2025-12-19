@@ -112,8 +112,7 @@ class SimulatedConductor(Conductor):
         _guidance_manager = (
             guidance_manager
             if guidance_manager is not None
-            else ManagerRegistry.get(
-                "guidance",
+            else ManagerRegistry.get_guidance_manager(
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
             )
         )
