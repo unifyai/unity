@@ -20,6 +20,7 @@ from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
 from unity.skill_manager.settings import SkillSettings
 from unity.transcript_manager.settings import TranscriptSettings
+from unity.web_searcher.settings import WebSettings
 
 
 def _parse_bool_or_str(v: Any) -> bool | str:
@@ -72,7 +73,6 @@ class ProductionSettings(BaseSettings):
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
     ANTICAPTCHA_KEY: str = ""
-    TAVILY_API_KEY: str = ""
     ORCHESTRA_ADMIN_KEY: str = ""
     SHARED_UNIFY_KEY: str = ""
     BROWSERBASE_API_KEY: str = ""
@@ -158,6 +158,7 @@ class ProductionSettings(BaseSettings):
     secret: SecretSettings = Field(default_factory=SecretSettings)
     skill: SkillSettings = Field(default_factory=SkillSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
+    web: WebSettings = Field(default_factory=WebSettings)
 
     # -- Foundational managers (implementation only) --
     # Actor: hierarchical | single_function | code_act | simulated
@@ -178,9 +179,6 @@ class ProductionSettings(BaseSettings):
     # KnowledgeManager
     UNITY_KNOWLEDGE_ENABLED: bool = False
     UNITY_KNOWLEDGE_IMPL: str = "real"
-    # WebSearcher
-    UNITY_WEB_SEARCH_ENABLED: bool = False
-    UNITY_WEB_SEARCH_IMPL: str = "real"
     # GlobalFileManager
     UNITY_FILES_ENABLED: bool = False
     UNITY_FILES_IMPL: str = "real"
@@ -222,7 +220,6 @@ class ProductionSettings(BaseSettings):
         "STAGING",
         "TEST",
         "UNITY_KNOWLEDGE_ENABLED",
-        "UNITY_WEB_SEARCH_ENABLED",
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
         "UNITY_TS_LOCAL_VIEW_OFF",
