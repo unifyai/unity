@@ -17,6 +17,7 @@ from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.guidance_manager.settings import GuidanceSettings
 from unity.memory_manager.settings import MemorySettings
+from unity.secret_manager.settings import SecretSettings
 from unity.skill_manager.settings import SkillSettings
 from unity.transcript_manager.settings import TranscriptSettings
 
@@ -154,6 +155,7 @@ class ProductionSettings(BaseSettings):
     contact: ContactSettings = Field(default_factory=ContactSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    secret: SecretSettings = Field(default_factory=SecretSettings)
     skill: SkillSettings = Field(default_factory=SkillSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
 
@@ -176,9 +178,6 @@ class ProductionSettings(BaseSettings):
     # KnowledgeManager
     UNITY_KNOWLEDGE_ENABLED: bool = False
     UNITY_KNOWLEDGE_IMPL: str = "real"
-    # SecretManager
-    UNITY_SECRETS_ENABLED: bool = False
-    UNITY_SECRETS_IMPL: str = "real"
     # WebSearcher
     UNITY_WEB_SEARCH_ENABLED: bool = False
     UNITY_WEB_SEARCH_IMPL: str = "real"
@@ -191,11 +190,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_TS_ROUTER_TIMEOUT_SECONDS: float = 60.0
     UNITY_TS_LOCAL_VIEW_OFF: bool = False
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SecretManager Configuration
-    # ─────────────────────────────────────────────────────────────────────────
-    SECRET_DOTENV_PATH: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # FileManager / Embedding Configuration
@@ -228,7 +222,6 @@ class ProductionSettings(BaseSettings):
         "STAGING",
         "TEST",
         "UNITY_KNOWLEDGE_ENABLED",
-        "UNITY_SECRETS_ENABLED",
         "UNITY_WEB_SEARCH_ENABLED",
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
