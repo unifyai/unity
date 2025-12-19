@@ -371,11 +371,9 @@ def merge_contacts(
     except Exception:
         referenced = []
     if referenced:
-        from unity.transcript_manager.transcript_manager import (
-            TranscriptManager,
-        )  # local import
+        from unity.manager_registry import ManagerRegistry  # local import
 
-        tm = TranscriptManager(contact_manager=self)
+        tm = ManagerRegistry.get("transcripts")
         tm.update_contact_id(original_contact_id=delete_id, new_contact_id=keep_id)
 
     # Finally, delete the merged contact (FK SET NULL won't fire since no references remain)
