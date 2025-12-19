@@ -477,6 +477,19 @@ def compute_primitives_hash(primitives: Dict[str, Dict[str, Any]]) -> str:
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
 
+# Mapping from class names to ManagerRegistry keys
+_CLASS_TO_MANAGER_KEY: Dict[str, str] = {
+    "ContactManager": "contacts",
+    "TranscriptManager": "transcripts",
+    "KnowledgeManager": "knowledge",
+    "TaskScheduler": "tasks",
+    "SecretManager": "secrets",
+    "GuidanceManager": "guidance",
+    "WebSearcher": "web_search",
+    "SkillManager": "skills",
+}
+
+
 def get_primitive_callable(
     primitive_data: Dict[str, Any],
     computer_primitives: Optional[ComputerPrimitives] = None,
@@ -485,7 +498,7 @@ def get_primitive_callable(
     Resolve a primitive metadata dict to its actual callable.
 
     For ComputerPrimitives methods, uses the provided computer_primitives instance.
-    For state manager methods, instantiates the manager (singletons).
+    For state manager methods, uses ManagerRegistry to respect IMPL settings.
 
     Args:
         primitive_data: Primitive metadata with primitive_class and primitive_method.
@@ -509,16 +522,21 @@ def get_primitive_callable(
             return None
         return getattr(computer_primitives, method_name, None)
 
-    # State managers: instantiate (they're singletons)
-    cls = _import_class(class_path)
-    if cls is None:
+    # State managers: use ManagerRegistry to respect IMPL settings
+    class_name = class_path.rsplit(".", 1)[-1]
+    manager_key = _CLASS_TO_MANAGER_KEY.get(class_name)
+
+    if manager_key is None:
+        logger.warning(f"Unknown manager class: {class_name}")
         return None
 
     try:
-        instance = cls()
+        from unity.manager_registry import ManagerRegistry
+
+        instance = ManagerRegistry.get(manager_key)
         return getattr(instance, method_name, None)
     except Exception as e:
-        logger.warning(f"Could not instantiate {class_path}: {e}")
+        logger.warning(f"Could not get manager '{manager_key}': {e}")
         return None
 
 
