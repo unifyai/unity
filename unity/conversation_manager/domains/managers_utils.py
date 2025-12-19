@@ -389,10 +389,10 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 3. Initialize TranscriptManager (respects UNITY_TRANSCRIPTS_IMPL setting)
+    # 3. Initialize TranscriptManager (respects UNITY_TRANSCRIPT_IMPL setting)
     print("[ManagersWorker] Initializing TranscriptManager...")
     local_start_time = perf_counter()
-    transcripts_impl = _get_impl("UNITY_TRANSCRIPTS_IMPL")
+    transcripts_impl = _get_impl("UNITY_TRANSCRIPT_IMPL")
     transcripts_cls = get_class("transcripts", transcripts_impl)
     if transcripts_impl == "simulated":
         cm.transcript_manager = transcripts_cls(description="production deployment")

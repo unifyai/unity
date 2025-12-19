@@ -14,6 +14,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from unity.contact_manager.settings import ContactSettings
+from unity.transcript_manager.settings import TranscriptSettings
 
 
 def _parse_bool_or_str(v: Any) -> bool | str:
@@ -146,12 +147,11 @@ class ProductionSettings(BaseSettings):
     # Each manager owns its settings in its own settings.py file.
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
     contact: ContactSettings = Field(default_factory=ContactSettings)
+    transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
 
     # -- Foundational managers (implementation only) --
     # Actor: hierarchical | single_function | code_act | simulated
     UNITY_ACTOR_IMPL: str = "hierarchical"
-    # TranscriptManager: real | simulated
-    UNITY_TRANSCRIPTS_IMPL: str = "real"
     # TaskScheduler: real | simulated
     UNITY_TASKS_IMPL: str = "real"
     # ConversationManager: real | simulated

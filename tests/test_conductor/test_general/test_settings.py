@@ -42,7 +42,7 @@ def test_default_settings_use_real_implementations():
     # Foundational managers default to real implementations
     assert SETTINGS.UNITY_ACTOR_IMPL == "hierarchical"
     assert SETTINGS.contact.IMPL == "real"
-    assert SETTINGS.UNITY_TRANSCRIPTS_IMPL == "real"
+    assert SETTINGS.transcript.IMPL == "real"
     assert SETTINGS.UNITY_TASKS_IMPL == "real"
     assert SETTINGS.UNITY_CONVERSATION_IMPL == "real"
 
@@ -218,7 +218,7 @@ def test_disabled_sentinel_overrides_explicit_enable_via_patch():
         mock_settings.UNITY_FILES_ENABLED = False
         mock_settings.UNITY_ACTOR_IMPL = "hierarchical"
         mock_settings.contact.IMPL = "real"
-        mock_settings.UNITY_TRANSCRIPTS_IMPL = "real"
+        mock_settings.transcript.IMPL = "real"
         mock_settings.UNITY_TASKS_IMPL = "real"
 
         conductor = Conductor(
