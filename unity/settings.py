@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from unity.actor.settings import ActorSettings
 from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.guidance_manager.settings import GuidanceSettings
@@ -74,11 +75,8 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
-    ANTICAPTCHA_KEY: str = ""
     ORCHESTRA_ADMIN_KEY: str = ""
     SHARED_UNIFY_KEY: str = ""
-    BROWSERBASE_API_KEY: str = ""
-    BROWSERBASE_PROJECT_ID: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
@@ -153,6 +151,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Each manager owns its settings in its own settings.py file.
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
+    actor: ActorSettings = Field(default_factory=ActorSettings)
     conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
@@ -165,14 +164,8 @@ class ProductionSettings(BaseSettings):
     web: WebSettings = Field(default_factory=WebSettings)
 
     # -- Foundational managers (implementation only) --
-    # Actor: hierarchical | single_function | code_act | simulated
-    UNITY_ACTOR_IMPL: str = "hierarchical"
     # ConversationManager: real | simulated
     UNITY_CONVERSATION_IMPL: str = "real"
-
-    # SimulatedActor steps: number of steps before auto-completion, or None for manual
-    # Used when SETTINGS.conductor.IMPL=simulated or UNITY_ACTOR_IMPL=simulated
-    UNITY_SIMULATED_ACTOR_STEPS: int | None = 1
 
     # -- Optional managers (disabled by default for minimal initial rollout) --
     # These will be enabled incrementally as they become stable and fully featured.

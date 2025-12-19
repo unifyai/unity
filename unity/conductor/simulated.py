@@ -70,7 +70,7 @@ class SimulatedConductor(Conductor):
             actor
             if actor is not None
             else SimulatedActor(
-                steps=SETTINGS.UNITY_SIMULATED_ACTOR_STEPS,
+                steps=SETTINGS.actor.SIMULATED_STEPS,
                 duration=None,
                 simulation_guidance=simulation_guidance,
             )

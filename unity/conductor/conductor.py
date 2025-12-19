@@ -106,7 +106,7 @@ class Conductor(BaseConductor):
         if actor is not None:
             self._actor = actor
         else:
-            actor_cls = get_class("actor", SETTINGS.UNITY_ACTOR_IMPL)
+            actor_cls = get_class("actor", SETTINGS.actor.IMPL)
             self._actor = actor_cls()
 
         # ContactManager (foundational - cannot be disabled)
