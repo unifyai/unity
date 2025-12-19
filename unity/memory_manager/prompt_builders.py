@@ -25,21 +25,19 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
 
 
 def _assistant_name() -> str:
-    # 1) Prefer the globally initialised assistant record populated by
-    #    `unity.init` (avoids unnecessary database look-ups and possible
-    #    circular imports).
-    try:
-        from unity import ASSISTANT  # noqa: WPS433 – local import
+    # 1) Prefer the assistant record from SESSION_DETAILS (populated by unity.init)
+    from unity.session_details import SESSION_DETAILS  # noqa: WPS433 – local import
 
-        if ASSISTANT is not None:
-            first = ASSISTANT.get("first_name") or ""
-            last = ASSISTANT.get("surname") or ASSISTANT.get("last_name") or ""
-            name = f"{first} {last}".strip()
-            if name:
-                return name
-    except Exception:
-        # Silent fall-through to backup strategy
-        pass
+    if SESSION_DETAILS.assistant_record is not None:
+        first = SESSION_DETAILS.assistant_record.get("first_name") or ""
+        last = (
+            SESSION_DETAILS.assistant_record.get("surname")
+            or SESSION_DETAILS.assistant_record.get("last_name")
+            or ""
+        )
+        name = f"{first} {last}".strip()
+        if name:
+            return name
 
     # 2) Fallback: query ContactManager (may hit a stub in offline tests)
     try:

@@ -1,7 +1,8 @@
 import pytest
-import unity  # Added to patch global assistant
+import unity
 
 from unity.contact_manager.contact_manager import ContactManager
+from unity.session_details import SESSION_DETAILS
 from tests.helpers import _handle_project
 
 
@@ -14,16 +15,16 @@ from tests.helpers import _handle_project
 def _clear_cached_assistant(monkeypatch):
     """Force *unity* to behave as if no real assistant were configured.
 
-    We patch the global ``unity.ASSISTANT`` that `unity.init()` caches so that
-    every time a ``ContactManager`` instance synchronises the assistant (id 0)
-    it sees *None* and therefore falls back to the dummy placeholder record.
+    We clear SESSION_DETAILS.assistant_record so that every time a
+    ``ContactManager`` instance synchronises the assistant (id 0) it sees
+    *None* and therefore falls back to the dummy placeholder record.
 
     The fixture is *autouse* and therefore applies to every test in this
     module without having to be listed explicitly.
     """
 
     # 1. Clear any previously cached assistant record (from earlier tests)
-    monkeypatch.setattr(unity, "ASSISTANT", None, raising=False)
+    SESSION_DETAILS.assistant_record = None
 
     # 2. Ensure future `unity.init()` calls cannot discover a real assistant
     #    by monkey-patching the internal helper it relies on.
@@ -37,8 +38,7 @@ def _clear_cached_assistant(monkeypatch):
     # 3. Prevent ContactManager from touching the network when synchronising
     #    the default *user* contact (id == 1). We replace the helper with a
     #    stub that returns an *empty* dict so no metadata is available but –
-    #    crucially – the call succeeds without needing a real backend and
-    #    without relying on ``unity.ASSISTANT`` being a mapping.
+    #    crucially – the call succeeds without needing a real backend.
     from unity.contact_manager.contact_manager import ContactManager
 
     monkeypatch.setattr(

@@ -50,9 +50,9 @@ class _Config:
 
     @property
     def context(self):
-        from unity import ASSISTANT_CONTEXT, USER_CONTEXT
+        from unity.session_details import SESSION_DETAILS
 
-        return f"{USER_CONTEXT}/{ASSISTANT_CONTEXT}/{self._context}"
+        return f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/{self._context}"
 
     def get_client(self):
         return new_llm_client(async_client=False)

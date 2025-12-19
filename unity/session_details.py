@@ -93,7 +93,41 @@ class SessionDetails:
     voice_call: VoiceCallConfig = field(default_factory=VoiceCallConfig)
     unify_key: str = ""
 
+    # Raw assistant record from Unify API (for contexts that need the full dict)
+    assistant_record: dict | None = field(default=None, repr=False)
+
     _initialized: bool = field(default=False, repr=False)
+
+    @property
+    def assistant_context(self) -> str:
+        """Derived context string for the assistant (e.g., 'JohnSmith').
+
+        Used for Unify context paths like '{user_context}/{assistant_context}/...'.
+        """
+        # Prefer deriving from assistant_record if available (has first_name/surname)
+        if self.assistant_record:
+            first = self.assistant_record.get("first_name") or ""
+            surname = self.assistant_record.get("surname") or ""
+            if first or surname:
+                first_part = "".join(chunk.capitalize() for chunk in first.split())
+                surname_part = "".join(chunk.capitalize() for chunk in surname.split())
+                return first_part + surname_part
+        # Fall back to assistant.name
+        name = self.assistant.name
+        if name and name != DEFAULT_ASSISTANT_NAME:
+            return "".join(chunk.capitalize() for chunk in name.split())
+        return "Assistant"
+
+    @property
+    def user_context(self) -> str:
+        """Derived context string for the user (e.g., 'JohnDoe').
+
+        Used for Unify context paths like '{user_context}/{assistant_context}/...'.
+        """
+        name = self.user.name
+        if name:
+            return "".join(chunk.capitalize() for chunk in name.split())
+        return DEFAULT_USER_CONTEXT
 
     @property
     def is_initialized(self) -> bool:
@@ -146,6 +180,8 @@ class SessionDetails:
         self.user = UserDetails()
         self.voice = VoiceConfig()
         self.voice_call = VoiceCallConfig()
+        self.unify_key = ""
+        self.assistant_record = None
         self._initialized = False
 
     def export_to_env(self) -> None:
