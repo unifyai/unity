@@ -1,0 +1,14 @@
+{
+  "build": {
+    "context": "..",
+    "dockerfile": ".cursor/Dockerfile"
+  },
+  "install": "uv sync --all-groups",
+  "start": "sudo service redis-server start",
+  "terminals": [
+    {
+      "name": "Tests",
+      "command": "cd /workspace && echo 'Ready to run tests with: ./tests/parallel_run.sh <target>'"
+    }
+  ]
+}
