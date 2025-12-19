@@ -3,12 +3,15 @@
     "context": "..",
     "dockerfile": "Dockerfile"
   },
-  "install": "uv sync --all-groups",
+  "install": "export PYTHONPATH=/workspace && uv sync --all-groups",
   "start": "sudo service redis-server start",
+  "env": {
+    "PYTHONPATH": "/workspace"
+  },
   "terminals": [
     {
       "name": "Tests",
-      "command": "cd /workspace && echo 'Ready to run tests with: ./tests/parallel_run.sh <target>'"
+      "command": "echo '=== Unity Test Runner ===' && echo 'Run: ./tests/parallel_run.sh --wait tests/test_contact_manager'"
     }
   ]
 }
