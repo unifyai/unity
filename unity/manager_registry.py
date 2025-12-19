@@ -301,6 +301,8 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("skills", lambda: SETTINGS.skill)
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
+    ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
+    ManagerRegistry.register_settings("images", lambda: SETTINGS.image)
     ManagerRegistry.register_settings("memory", lambda: SETTINGS.memory)
     ManagerRegistry.register_settings("conductor", lambda: SETTINGS.conductor)
 
@@ -424,6 +426,23 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("conductor", "real", Conductor)
     ManagerRegistry.register_class("conductor", "simulated", SimulatedConductor)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # FunctionManager implementations
+    # ─────────────────────────────────────────────────────────────────────────
+    from .function_manager.function_manager import FunctionManager
+    from .function_manager.simulated import SimulatedFunctionManager
+
+    ManagerRegistry.register_class("functions", "real", FunctionManager)
+    ManagerRegistry.register_class("functions", "simulated", SimulatedFunctionManager)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ImageManager implementations
+    # ─────────────────────────────────────────────────────────────────────────
+    from .image_manager.image_manager import ImageManager
+
+    ManagerRegistry.register_class("images", "real", ImageManager)
+    # Note: No simulated implementation exists for ImageManager
 
 
 # Populate on first import

@@ -487,6 +487,8 @@ _CLASS_TO_MANAGER_KEY: Dict[str, str] = {
     "GuidanceManager": "guidance",
     "WebSearcher": "web_search",
     "SkillManager": "skills",
+    "FunctionManager": "functions",
+    "ImageManager": "images",
 }
 
 
