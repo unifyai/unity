@@ -63,6 +63,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
+    ANTICAPTCHA_KEY: str = ""
     TAVILY_API_KEY: str = ""
     ORCHESTRA_ADMIN_KEY: str = ""
     SHARED_UNIFY_KEY: str = ""
