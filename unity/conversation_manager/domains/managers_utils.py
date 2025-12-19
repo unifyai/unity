@@ -332,7 +332,7 @@ def _init_managers(
     # 0. Initialize unity using SESSION_DETAILS (the canonical source of session config)
     print("[ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
-    if not unity.ASSISTANT:
+    if not SESSION_DETAILS.assistant_record:
         # When default_assistant is provided, unity.init() uses it directly
         # and ignores the assistant_id parameter entirely
         unity.init(

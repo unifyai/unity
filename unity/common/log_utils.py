@@ -35,13 +35,12 @@ from unity.session_details import SESSION_DETAILS
 
 
 def _get_user_name() -> Optional[str]:
-    """Retrieve user's name from USER_CONTEXT."""
-    try:
-        from unity import USER_CONTEXT
+    """Retrieve user's context name from SESSION_DETAILS."""
+    ctx = SESSION_DETAILS.user_context
+    # Return None if it's the default placeholder
+    from unity.session_details import DEFAULT_USER_CONTEXT
 
-        return USER_CONTEXT
-    except Exception:
-        return None
+    return ctx if ctx != DEFAULT_USER_CONTEXT else None
 
 
 def _get_user_id() -> Optional[str]:
@@ -50,24 +49,16 @@ def _get_user_id() -> Optional[str]:
 
 
 def _get_assistant_name() -> Optional[str]:
-    """Retrieve assistant's name from ASSISTANT_CONTEXT."""
-    try:
-        from unity import ASSISTANT_CONTEXT
-
-        return ASSISTANT_CONTEXT
-    except Exception:
-        return None
+    """Retrieve assistant's context name from SESSION_DETAILS."""
+    ctx = SESSION_DETAILS.assistant_context
+    # Return None if it's the default placeholder
+    return ctx if ctx != "Assistant" else None
 
 
 def _get_assistant_id() -> Optional[str]:
-    """Retrieve assistant's ID from ASSISTANT dict."""
-    try:
-        from unity import ASSISTANT
-
-        if ASSISTANT is not None:
-            return ASSISTANT.get("agent_id")
-    except Exception:
-        pass
+    """Retrieve assistant's ID from SESSION_DETAILS."""
+    if SESSION_DETAILS.assistant_record is not None:
+        return SESSION_DETAILS.assistant_record.get("agent_id")
     return None
 
 

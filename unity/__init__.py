@@ -109,12 +109,9 @@ _install_llm_io_hooks()
 # Lazy runtime initialisation
 # ---------------------------------------------------------------------------
 
-from unity.session_details import DEFAULT_USER_CONTEXT, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 
 _INITIALISED = False
-ASSISTANT = None  # Will hold the selected assistant record once init() runs
-ASSISTANT_CONTEXT = None  # String used for Unify context (e.g., "JohnSmith")
-USER_CONTEXT = None  # String used for user namespace (e.g., "JohnDoe")
 
 
 def _list_all_assistants() -> list[dict]:
@@ -150,7 +147,7 @@ def init(
        ``EVENT_BUS`` raise a :class:`RuntimeError`.
     """
 
-    global _INITIALISED, ASSISTANT, ASSISTANT_CONTEXT, USER_CONTEXT
+    global _INITIALISED
     if _INITIALISED:
         return
 
@@ -161,48 +158,32 @@ def init(
     if not unify.active_project():
         unify.activate(project_name, overwrite)
 
-    # ── user context derivation ──────────────────────────────────────────
-    # Derive USER_CONTEXT from SESSION_DETAILS user name using same capitalization pattern
-    user_name_raw = SESSION_DETAILS.user.name
-    if user_name_raw:
-        USER_CONTEXT = "".join(
-            [chunk.capitalize() for chunk in user_name_raw.split(" ")],
-        )
-    else:
-        USER_CONTEXT = DEFAULT_USER_CONTEXT
-
     # ── assistant validation & context selection ─────────────────────────
+    # Determine which assistant record to use and store in SESSION_DETAILS
     assistants = _list_all_assistants()
 
     if assistants:
         if not default_assistant:
             if assistant_id is None:
-                ASSISTANT = assistants[0]
+                SESSION_DETAILS.assistant_record = assistants[0]
             else:
                 filtered_assistants = [
                     assistant
                     for assistant in assistants
                     if assistant["agent_id"] == str(assistant_id)
                 ]
-                ASSISTANT = filtered_assistants[0] if filtered_assistants else None
+                SESSION_DETAILS.assistant_record = (
+                    filtered_assistants[0] if filtered_assistants else None
+                )
         else:
-            ASSISTANT = default_assistant
-        first_name = "".join(
-            [chnk.capitalize() for chnk in ASSISTANT["first_name"].split(" ")],
-        )
-        surname = "".join(
-            [chnk.capitalize() for chnk in ASSISTANT["surname"].split(" ")],
-        )
-        assistant_ctx = first_name + surname
+            SESSION_DETAILS.assistant_record = default_assistant
     else:
         # No assistants returned or explicitly passed (offline)
-        ASSISTANT = default_assistant
-        assistant_ctx = "Assistant"
+        SESSION_DETAILS.assistant_record = default_assistant
 
-    # 2. Set the Unify context name *after* validation
+    # 2. Set the Unify context name using computed properties from SESSION_DETAILS
     # Context is now UserName/AssistantName (e.g., "JohnDoe/MyAssistant")
-    ASSISTANT_CONTEXT = assistant_ctx
-    full_ctx = f"{USER_CONTEXT}/{ASSISTANT_CONTEXT}"
+    full_ctx = f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
 
     # Idempotent context setup: tolerate concurrent creation from parallel processes
     # (e.g., pytest-xdist workers, CI parallelism, multi-instance deployments)
@@ -257,4 +238,4 @@ def ensure_initialised(
 
 
 # What the package exports at top-level
-__all__ = ["init", "ASSISTANT", "ASSISTANT_CONTEXT", "USER_CONTEXT"]
+__all__ = ["init"]
