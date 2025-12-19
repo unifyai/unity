@@ -51,8 +51,8 @@ TriggerLike = Optional[Union[Trigger, Dict[str, Any]]]
 RepeatLike = Optional[List[Union[RepeatPattern, Dict[str, Any]]]]
 ToolsDict = Dict[str, Callable]
 
-# Contact manager import (lazy at module level to avoid cycles in other modules)
-from ..contact_manager.contact_manager import ContactManager
+# Contact manager obtained via ManagerRegistry to respect IMPL settings
+from ..manager_registry import ManagerRegistry
 from ..common.model_to_fields import model_to_fields
 from .prompt_builders import (
     build_ask_prompt,
@@ -219,8 +219,8 @@ class TaskScheduler(BaseTaskScheduler):
         super().__init__()
         self.include_in_multi_assistant_table = True
 
-        # Instantiate a ContactManager once so its bound methods can act as tools
-        self._contact_manager = ContactManager()
+        # Get ContactManager via registry so its bound methods can act as tools
+        self._contact_manager = ManagerRegistry.get("contacts")
 
         # Query-only helpers – safe, read-only operations.  Include the *external* contact lookup
         ask_tools = {
