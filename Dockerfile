@@ -4,45 +4,20 @@ FROM python:3.11-slim
 # Accept build argument for UNIFY_KEY
 ARG UNIFY_KEY
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 # Set working directory
 WORKDIR /app
-
-# Install system dependencies including tini and redis
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    portaudio19-dev \
-    python3-dev \
-    pkg-config \
-    tini \
-    git \
-    redis-server \
-    && rm -rf /var/lib/apt/lists/*
-
 
 # Virtual devices and remote browser setup
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
 
-# System dependencies for virtual desktop/devices, browser runtime, and native modules
-RUN apt-get update && apt-get install -y \
-    curl wget unzip git gnupg2 \
-    xvfb x11vnc fluxbox xdotool wmctrl xterm dbus dbus-x11 websockify \
-    xdg-desktop-portal xdg-desktop-portal-gtk \
-    libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
-    libasound2 libasound2-plugins libxshmfence1 libxcomposite1 libxdamage1 \
-    libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    ffmpeg ca-certificates \
-    pipewire pipewire-pulse pipewire-alsa wireplumber pulseaudio-utils alsa-utils \
-    libportaudio2 libpulse0 \
-    fuse3 libfuse2 squashfs-tools \
-    build-essential python3 pkg-config libvips \
-    && rm -rf /var/lib/apt/lists/*
+# Install all system dependencies from shared script (full production set)
+COPY scripts/install-system-deps.sh /tmp/
+RUN chmod +x /tmp/install-system-deps.sh && /tmp/install-system-deps.sh && rm /tmp/install-system-deps.sh
+
+# Set locale environment
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 # noVNC static files
 RUN mkdir -p /opt/novnc && \
@@ -51,7 +26,7 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
-# Dependencies for virtual camera
+# Dependencies for virtual camera (currently disabled)
 # RUN apt-get update && apt-get install -y \
 #     gstreamer1.0-tools \
 #     gstreamer1.0-plugins-base \
@@ -95,16 +70,6 @@ RUN uv pip install --system --no-cache .
 
 # Copy all application files
 COPY . /app
-
-# After the other apt-get installs in Dockerfile
-RUN apt-get update && apt-get install -y \
-    libgtk-4-1 \
-    libharfbuzz-icu0 \
-    libenchant-2-2 \
-    libsecret-1-0 \
-    libhyphen0 \
-    libmanette-0.2-0 \
-    && rm -rf /var/lib/apt/lists/*
 
 # Ensure desktop scripts are executable
 RUN chmod +x /app/desktop/desktop.sh /app/desktop/display.sh /app/desktop/device.sh /app/desktop/update_vnc_password.sh /app/desktop/startup.sh /app/entrypoint.sh || true
