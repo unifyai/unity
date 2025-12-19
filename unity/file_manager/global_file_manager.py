@@ -18,7 +18,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from ..constants import is_readonly_ask_guard_enabled, is_semantic_cache_enabled
+from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.events.manager_event_logging import log_manager_call
 from unity.common.tool_spec import manager_tool
@@ -173,7 +173,7 @@ class GlobalFileManager(BaseGlobalFileManager):
             include_activity=include_activity,
         )
         client.set_system_message(system_msg)
-        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
         tool_policy_fn = (
             None
             if use_semantic_cache in ("read", "both")
@@ -190,7 +190,7 @@ class GlobalFileManager(BaseGlobalFileManager):
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.ask",
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             response_format=response_format,
         )

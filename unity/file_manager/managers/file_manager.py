@@ -40,8 +40,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from unity.constants import is_readonly_ask_guard_enabled
-from unity.constants import is_semantic_cache_enabled
+from unity.settings import SETTINGS
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.events.manager_event_logging import log_manager_call
 from unity.common.context_store import TableStore
@@ -2715,7 +2714,7 @@ class FileManager(BaseFileManager):
         # TODO: REMOVE - Debug file dump for prompt inspection
         open("system_msg.txt", "w").write(system_msg)
         client.set_system_message(system_msg)
-        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
         tool_policy_fn = (
             None
             if use_semantic_cache in ("read", "both")
@@ -2730,7 +2729,7 @@ class FileManager(BaseFileManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.ask",
@@ -2820,7 +2819,7 @@ class FileManager(BaseFileManager):
             {"filesystem": self._fs_type, "file_path": file_path, "question": question},
             indent=2,
         )
-        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
         tool_policy_fn = (
             None
             if use_semantic_cache in ("read", "both")
@@ -2835,7 +2834,7 @@ class FileManager(BaseFileManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.ask_about_file",

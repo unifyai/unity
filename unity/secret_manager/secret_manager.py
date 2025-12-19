@@ -19,7 +19,7 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
-from ..constants import is_readonly_ask_guard_enabled
+from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import (
@@ -497,7 +497,7 @@ class SecretManager(BaseSecretManager):
             tool_policy=self._default_ask_tool_policy,
             response_format=response_format,
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
         )
 

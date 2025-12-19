@@ -32,8 +32,7 @@ from ..events.manager_event_logging import (
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
 from ..common.tool_spec import read_only, manager_tool
-from ..constants import is_semantic_cache_enabled
-from ..constants import is_readonly_ask_guard_enabled
+from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from .storage import (
     provision_storage as _storage_provision,
@@ -256,7 +255,7 @@ class TranscriptManager(BaseTranscriptManager):
                 effective_tool_policy = require_first("search_messages")
             else:
                 effective_tool_policy = tool_policy
-            use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+            use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
             # When semantic cache read is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
             effective_tool_policy = (
                 None
@@ -276,7 +275,7 @@ class TranscriptManager(BaseTranscriptManager):
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             images=images,
             response_format=response_format,

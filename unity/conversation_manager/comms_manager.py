@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 from google.cloud import pubsub_v1
 
-from unity.constants import ASYNCIO_DEBUG
+from unity.settings import SETTINGS
 from unity.conversation_manager.domains.comms_utils import add_email_attachments
 from unity.conversation_manager.events import *
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
@@ -453,4 +453,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main(), debug=ASYNCIO_DEBUG)
+    asyncio.run(main(), debug=SETTINGS.ASYNCIO_DEBUG)

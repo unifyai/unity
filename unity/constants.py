@@ -2,12 +2,9 @@
 unity/constants.py
 ==================
 
-Runtime constants and backward-compatible accessors for settings.
+Runtime constants that cannot be configured via environment.
 
-This module provides:
-1. True runtime constants (SESSION_ID, LOGGER) that cannot be configured via env
-2. Backward-compatible module-level accessors for settings (now in unity/settings.py)
-3. Logging setup for verbose asyncio debug mode
+For configurable settings, import SETTINGS from unity.settings.
 """
 
 import logging
@@ -26,31 +23,10 @@ LOGGER = logging.getLogger("unity")
 ANTICAPTCHA_KEY = os.getenv("ANTICAPTCHA_KEY")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Backward-Compatible Accessors
-# These provide module-level access to settings for existing code.
-# New code should import SETTINGS directly from unity.settings.
-# ─────────────────────────────────────────────────────────────────────────────
-ASYNCIO_DEBUG = SETTINGS.ASYNCIO_DEBUG
-ASYNCIO_VERBOSE_DEBUG = SETTINGS.ASYNCIO_VERBOSE_DEBUG
-LLM_IO_DEBUG = SETTINGS.LLM_IO_DEBUG
-PYTEST_LOG_TO_FILE = SETTINGS.PYTEST_LOG_TO_FILE
-
-
-def is_semantic_cache_enabled() -> bool:
-    """Check if semantic cache mode is enabled."""
-    return SETTINGS.UNITY_SEMANTIC_CACHE
-
-
-def is_readonly_ask_guard_enabled() -> bool:
-    """Check if the read-only ask guard is enabled."""
-    return SETTINGS.UNITY_READONLY_ASK_GUARD
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Logging Setup for Verbose Asyncio Debug Mode
 # ─────────────────────────────────────────────────────────────────────────────
 
-if ASYNCIO_VERBOSE_DEBUG:
+if SETTINGS.ASYNCIO_VERBOSE_DEBUG:
     import asyncio
     import sys
     import threading

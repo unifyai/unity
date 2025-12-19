@@ -13,7 +13,6 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
-from unity.constants import is_readonly_ask_guard_enabled
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import (
@@ -201,7 +200,7 @@ class WebSearcher(BaseWebSearcher):
             parent_chat_context=_parent_chat_context,
             response_format=response_format,
             handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
             timeout=1200,
         )
