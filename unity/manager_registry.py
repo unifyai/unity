@@ -103,6 +103,7 @@ class ManagerRegistry:
         manager_key: str,
         *,
         description: str | None = None,
+        simulation_guidance: str | None = None,
         _force_new: bool = False,
         **kwargs: Any,
     ) -> Any:
@@ -117,6 +118,9 @@ class ManagerRegistry:
         description : str | None
             For simulated managers, the scenario description. Ignored for real
             managers.
+        simulation_guidance : str | None
+            For simulated managers, additional guidance for simulation behavior.
+            Ignored for real managers.
         _force_new : bool
             If True, bypass the singleton cache and create a fresh instance.
             Primarily for testing.
@@ -149,8 +153,12 @@ class ManagerRegistry:
 
         # 4. Build constructor kwargs
         ctor_kwargs = dict(kwargs)
-        if impl_name == "simulated" and description is not None:
-            ctor_kwargs["description"] = description
+        # Simulated-only parameters
+        if impl_name == "simulated":
+            if description is not None:
+                ctor_kwargs["description"] = description
+            if simulation_guidance is not None:
+                ctor_kwargs["simulation_guidance"] = simulation_guidance
 
         # 5. Create instance
         instance = klass(**ctor_kwargs)

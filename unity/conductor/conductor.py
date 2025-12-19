@@ -53,7 +53,7 @@ from ..events.manager_event_logging import (
 from .concurrency_guard import ActiveSessionRegistry
 from ..common.sentinels import _DisabledSentinel
 from ..settings import SETTINGS
-from .manager_registry import get_class
+from ..manager_registry import ManagerRegistry
 
 if TYPE_CHECKING:  # type hints only
     from ..image_manager.types.image_refs import ImageRefs
@@ -99,89 +99,69 @@ class Conductor(BaseConductor):
         self._simulation_guidance = simulation_guidance
 
         # ── Managers – use provided instances or settings-driven defaults ──
-        # When None is passed, use SETTINGS to determine implementation.
+        # When None is passed, ManagerRegistry resolves the IMPL from settings.
         # DISABLED sentinel explicitly disables optional managers.
 
         # Actor (foundational - cannot be disabled)
-        if actor is not None:
-            self._actor = actor
-        else:
-            actor_cls = get_class("actor", SETTINGS.actor.IMPL)
-            self._actor = actor_cls()
+        self._actor = actor if actor is not None else ManagerRegistry.get("actor")
 
         # ContactManager (foundational - cannot be disabled)
-        if contact_manager is not None:
-            self._contact_manager = contact_manager
-        else:
-            contacts_cls = get_class("contacts", SETTINGS.contact.IMPL)
-            if SETTINGS.contact.IMPL == "simulated":
-                self._contact_manager = contacts_cls(
-                    description=description,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                self._contact_manager = contacts_cls(
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                )
+        self._contact_manager = (
+            contact_manager
+            if contact_manager is not None
+            else ManagerRegistry.get(
+                "contacts",
+                description=description,
+                simulation_guidance=simulation_guidance,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+            )
+        )
 
         # TranscriptManager (foundational - cannot be disabled)
-        if transcript_manager is not None:
-            self._transcript_manager = transcript_manager
-        else:
-            transcripts_cls = get_class("transcripts", SETTINGS.transcript.IMPL)
-            if SETTINGS.transcript.IMPL == "simulated":
-                self._transcript_manager = transcripts_cls(
-                    description=description,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                self._transcript_manager = transcripts_cls(
-                    contact_manager=self._contact_manager,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                )
+        self._transcript_manager = (
+            transcript_manager
+            if transcript_manager is not None
+            else ManagerRegistry.get(
+                "transcripts",
+                description=description,
+                simulation_guidance=simulation_guidance,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+                contact_manager=self._contact_manager,
+            )
+        )
 
         # TaskScheduler (foundational - cannot be disabled)
-        if task_scheduler is not None:
-            self._task_scheduler = task_scheduler
-        else:
-            tasks_cls = get_class("tasks", SETTINGS.task.IMPL)
-            if SETTINGS.task.IMPL == "simulated":
-                self._task_scheduler = tasks_cls(
-                    description=description,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                self._task_scheduler = tasks_cls(
-                    actor=self._actor,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                )
+        self._task_scheduler = (
+            task_scheduler
+            if task_scheduler is not None
+            else ManagerRegistry.get(
+                "tasks",
+                description=description,
+                simulation_guidance=simulation_guidance,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+                actor=self._actor,
+            )
+        )
 
         # ConversationManager (foundational - cannot be disabled)
         if conversation_manager is not None:
             self._cm_handle = conversation_manager
-        else:
-            conversation_cls = get_class(
+        elif SETTINGS.conversation.IMPL == "simulated":
+            self._cm_handle = ManagerRegistry.get(
                 "conversation",
-                SETTINGS.conversation.IMPL,
+                description=description,
+                simulation_guidance=simulation_guidance,
+                assistant_id=SESSION_DETAILS.assistant.id,
+                contact_id=SETTINGS.conversation.CONTACT_ID,
             )
-            if SETTINGS.conversation.IMPL == "simulated":
-                self._cm_handle = conversation_cls(
-                    assistant_id=SESSION_DETAILS.assistant.id,
-                    contact_id=SETTINGS.conversation.CONTACT_ID,
-                    description=description,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                # Real ConversationManagerHandle requires a ConversationManager
-                # which has complex dependencies - caller must provide it explicitly
-                raise ValueError(
-                    "SETTINGS.conversation.IMPL='real' requires an explicit "
-                    "conversation_manager argument. Either pass a conversation_manager "
-                    "or set UNITY_CONVERSATION_IMPL='simulated'.",
-                )
+        else:
+            # Real ConversationManagerHandle requires a ConversationManager
+            # which has complex dependencies - caller must provide it explicitly
+            raise ValueError(
+                "SETTINGS.conversation.IMPL='real' requires an explicit "
+                "conversation_manager argument. Either pass a conversation_manager "
+                "or set UNITY_CONVERSATION_IMPL='simulated'.",
+            )
 
         # ── Optional managers (can be disabled via DISABLED sentinel or settings) ──
 
@@ -193,17 +173,12 @@ class Conductor(BaseConductor):
         elif not SETTINGS.knowledge.ENABLED:
             self._knowledge_manager = None
         else:
-            knowledge_cls = get_class("knowledge", SETTINGS.knowledge.IMPL)
-            if SETTINGS.knowledge.IMPL == "simulated":
-                self._knowledge_manager = knowledge_cls(
-                    description=description,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                self._knowledge_manager = knowledge_cls(
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                )
+            self._knowledge_manager = ManagerRegistry.get(
+                "knowledge",
+                description=description,
+                simulation_guidance=simulation_guidance,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+            )
 
         # GuidanceManager
         if isinstance(guidance_manager, _DisabledSentinel):
@@ -213,17 +188,12 @@ class Conductor(BaseConductor):
         elif not SETTINGS.guidance.ENABLED:
             self._guidance_manager = None
         else:
-            guidance_cls = get_class("guidance", SETTINGS.guidance.IMPL)
-            if SETTINGS.guidance.IMPL == "simulated":
-                self._guidance_manager = guidance_cls(
-                    description=description,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                self._guidance_manager = guidance_cls(
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                )
+            self._guidance_manager = ManagerRegistry.get(
+                "guidance",
+                description=description,
+                simulation_guidance=simulation_guidance,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+            )
 
         # SecretManager
         if isinstance(secret_manager, _DisabledSentinel):
@@ -233,14 +203,11 @@ class Conductor(BaseConductor):
         elif not SETTINGS.secret.ENABLED:
             self._secret_manager = None
         else:
-            secrets_cls = get_class("secrets", SETTINGS.secret.IMPL)
-            if SETTINGS.secret.IMPL == "simulated":
-                self._secret_manager = secrets_cls(
-                    description=description,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                self._secret_manager = secrets_cls()
+            self._secret_manager = ManagerRegistry.get(
+                "secrets",
+                description=description,
+                simulation_guidance=simulation_guidance,
+            )
 
         # SkillManager
         if isinstance(skill_manager, _DisabledSentinel):
@@ -250,15 +217,12 @@ class Conductor(BaseConductor):
         elif not SETTINGS.skill.ENABLED:
             self._skill_manager = None
         else:
-            skills_cls = get_class("skills", SETTINGS.skill.IMPL)
-            if SETTINGS.skill.IMPL == "simulated":
-                self._skill_manager = skills_cls(
-                    description=description,
-                    rolling_summary_in_prompts=rolling_summary_in_prompts,
-                    simulation_guidance=simulation_guidance,
-                )
-            else:
-                self._skill_manager = skills_cls()
+            self._skill_manager = ManagerRegistry.get(
+                "skills",
+                description=description,
+                simulation_guidance=simulation_guidance,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+            )
 
         # WebSearcher
         if isinstance(web_searcher, _DisabledSentinel):
@@ -268,11 +232,11 @@ class Conductor(BaseConductor):
         elif not SETTINGS.web.ENABLED:
             self._web_searcher = None
         else:
-            web_cls = get_class("web_search", SETTINGS.web.IMPL)
-            if SETTINGS.web.IMPL == "simulated":
-                self._web_searcher = web_cls(description=description)
-            else:
-                self._web_searcher = web_cls()
+            self._web_searcher = ManagerRegistry.get(
+                "web_search",
+                description=description,
+                simulation_guidance=simulation_guidance,
+            )
 
         # GlobalFileManager
         if isinstance(global_file_manager, _DisabledSentinel):
@@ -282,8 +246,7 @@ class Conductor(BaseConductor):
         elif not SETTINGS.file.ENABLED:
             self._file_manager = None
         else:
-            files_cls = get_class("files", SETTINGS.file.IMPL)
-            self._file_manager = files_cls([])
+            self._file_manager = ManagerRegistry.get("files")
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
