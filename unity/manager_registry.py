@@ -90,6 +90,9 @@ class ManagerRegistry:
 
     _lock: Lock = Lock()
 
+    # Flag to track if the registry has been populated
+    _populated: bool = False
+
     # ──────────────────────────────────────────────────────────────────────────
     # Registration API
     # ──────────────────────────────────────────────────────────────────────────
@@ -110,7 +113,11 @@ class ManagerRegistry:
         cls._classes[(manager_key, impl_name)] = klass
 
     @classmethod
-    def register_settings(cls, manager_key: str, settings_accessor: Callable[[], Any]) -> None:
+    def register_settings(
+        cls,
+        manager_key: str,
+        settings_accessor: Callable[[], Any],
+    ) -> None:
         """Register a settings accessor for a manager key.
 
         Parameters
@@ -122,6 +129,26 @@ class ManagerRegistry:
             Expected to have an `IMPL` attribute.
         """
         cls._settings_map[manager_key] = settings_accessor
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Lazy Population
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def _ensure_populated(cls) -> None:
+        """Ensure the registry is populated with all known implementations.
+
+        This is called lazily on first access to avoid circular imports.
+        The managers import SingletonABCMeta from this module, so we can't
+        import them at module load time.
+        """
+        if cls._populated:
+            return
+        with cls._lock:
+            if cls._populated:
+                return
+            _populate_registry()
+            cls._populated = True
 
     # ──────────────────────────────────────────────────────────────────────────
     # Factory API
@@ -168,6 +195,8 @@ class ManagerRegistry:
             If the manager_key is unknown or no implementation is registered
             for the resolved IMPL.
         """
+        cls._ensure_populated()
+
         # 1. Resolve IMPL from settings
         impl_name = cls._resolve_impl(manager_key)
 
@@ -225,6 +254,8 @@ class ManagerRegistry:
         ValueError
             If no implementation is registered for the given key/impl.
         """
+        cls._ensure_populated()
+
         if impl_name is None:
             impl_name = cls._resolve_impl(manager_key)
 
@@ -639,7 +670,11 @@ def _populate_registry() -> None:
     from .transcript_manager.simulated import SimulatedTranscriptManager
 
     ManagerRegistry.register_class("transcripts", "real", TranscriptManager)
-    ManagerRegistry.register_class("transcripts", "simulated", SimulatedTranscriptManager)
+    ManagerRegistry.register_class(
+        "transcripts",
+        "simulated",
+        SimulatedTranscriptManager,
+    )
 
     # ─────────────────────────────────────────────────────────────────────────
     # TaskScheduler implementations
@@ -657,7 +692,11 @@ def _populate_registry() -> None:
     from .conversation_manager.simulated import SimulatedConversationManagerHandle
 
     ManagerRegistry.register_class("conversation", "real", ConversationManagerHandle)
-    ManagerRegistry.register_class("conversation", "simulated", SimulatedConversationManagerHandle)
+    ManagerRegistry.register_class(
+        "conversation",
+        "simulated",
+        SimulatedConversationManagerHandle,
+    )
 
     # ─────────────────────────────────────────────────────────────────────────
     # KnowledgeManager implementations
@@ -747,8 +786,3 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("images", "real", ImageManager)
     # Note: No simulated implementation exists for ImageManager
-
-
-# Populate on first import
-_populate_registry()
-
