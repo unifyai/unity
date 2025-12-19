@@ -8,7 +8,7 @@ import unify
 from pydantic import BaseModel
 from ..common.log_utils import log as unity_log
 from ..contact_manager.base import BaseContactManager
-from ..contact_manager.contact_manager import ContactManager
+from ..manager_registry import ManagerRegistry
 from .types.message import Message, UNASSIGNED
 from .types.exchange import Exchange
 
@@ -131,7 +131,7 @@ class TranscriptManager(BaseTranscriptManager):
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
-            self._contact_manager = ContactManager()
+            self._contact_manager = ManagerRegistry.get("contacts")
 
         ask_tools = {
             **methods_to_tool_dict(
