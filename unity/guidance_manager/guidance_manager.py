@@ -31,7 +31,7 @@ from ..events.manager_event_logging import log_manager_call
 from ..common.search_utils import table_search_top_k
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
-from ..image_manager.image_manager import ImageManager
+from ..manager_registry import ManagerRegistry
 from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
@@ -125,8 +125,8 @@ class GuidanceManager(BaseGuidanceManager):
         self.add_tools("update", update_tools)
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
-        # Lazy-safe image manager for resolving and attaching images
-        self._image_manager: ImageManager = ImageManager()
+        # Get ImageManager via registry for resolving and attaching images
+        self._image_manager = ManagerRegistry.get("images")
 
         # Track custom fields seen/created during lifetime
         self._known_custom_fields: set[str] = set()
