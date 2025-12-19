@@ -75,7 +75,7 @@ def pytest_configure(config):
     os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
     os.environ["UNITY_GUIDANCE_ENABLED"] = "false"
     os.environ["UNITY_SECRETS_ENABLED"] = "false"
-    os.environ["UNITY_SKILLS_ENABLED"] = "false"
+    os.environ["UNITY_SKILL_ENABLED"] = "false"
     os.environ["UNITY_WEB_SEARCH_ENABLED"] = "false"
     os.environ["UNITY_FILES_ENABLED"] = "false"
 
