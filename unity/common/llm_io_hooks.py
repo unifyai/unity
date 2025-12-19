@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from unity.settings import SETTINGS
+
 # Module-level state
 _HOOKS_INSTALLED = False
 _LLM_IO_DIR: str | None = None
@@ -36,20 +38,18 @@ def _get_socket_subdir() -> str:
         - 'standalone' for direct invocations outside parallel_run.sh
     """
     # Prefer the datetime-prefixed log subdir if available
-    log_subdir = os.environ.get("UNITY_LOG_SUBDIR", "").strip()
-    if log_subdir:
-        return log_subdir
+    if SETTINGS.UNITY_LOG_SUBDIR:
+        return SETTINGS.UNITY_LOG_SUBDIR
     # Fallback to socket name for backward compatibility
-    socket = os.environ.get("UNITY_TEST_SOCKET", "").strip()
-    if socket:
-        return socket
+    if SETTINGS.UNITY_TEST_SOCKET:
+        return SETTINGS.UNITY_TEST_SOCKET
     return "standalone"
 
 
 def _get_repo_root() -> Path:
     """Determine the repository root directory.
 
-    Prefers UNITY_LOG_ROOT env var if set, allowing explicit worktree targeting.
+    Prefers UNITY_LOG_ROOT if set in SETTINGS, allowing explicit worktree targeting.
     Otherwise falls back to detecting the repo root from this file's location,
     which correctly resolves to the worktree when running from one.
 
@@ -57,9 +57,8 @@ def _get_repo_root() -> Path:
     would have logs written to the main repo instead of their worktree.
     """
     # Allow explicit override for flexibility
-    log_root = os.environ.get("UNITY_LOG_ROOT", "").strip()
-    if log_root:
-        return Path(log_root)
+    if SETTINGS.UNITY_LOG_ROOT:
+        return Path(SETTINGS.UNITY_LOG_ROOT)
 
     # Derive repo root from this file's location (works correctly in worktrees)
     # __file__ is unity/common/llm_io_hooks.py, so go up 2 levels to repo root

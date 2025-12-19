@@ -79,6 +79,12 @@ class ProductionSettings(BaseSettings):
     # Fixed datetime for LLM cache consistency in tests (ISO format string)
     # When set, _get_now() returns this fixed datetime instead of datetime.now()
     UNITY_FIXED_DATETIME: str = ""
+    # Log subdirectory for LLM I/O debug files (datetime-prefixed for ordering)
+    UNITY_LOG_SUBDIR: str = ""
+    # Legacy fallback for test socket identification
+    UNITY_TEST_SOCKET: str = ""
+    # Explicit repository root for log file placement (e.g., worktrees)
+    UNITY_LOG_ROOT: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
