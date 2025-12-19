@@ -4970,7 +4970,6 @@ class HierarchicalActor(BaseActor):
         )
         logger.debug(f"[COURSE_CORRECTION] Trajectory: {trajectory}")
         from .code_act_actor import CodeActActor
-        from unity.image_manager.image_manager import ImageManager
 
         computer_primitives = plan._get_computer_primitives()
 
@@ -4987,7 +4986,7 @@ class HierarchicalActor(BaseActor):
             "[COURSE_CORRECTION] Screenshots decoded. Preparing image manager...",
         )
 
-        image_manager = ImageManager()
+        image_manager = ManagerRegistry.get("images")
         ids = image_manager.add_images(
             [
                 {
