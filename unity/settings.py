@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
+from unity.memory_manager.settings import MemorySettings
 from unity.transcript_manager.settings import TranscriptSettings
 
 
@@ -149,6 +150,7 @@ class ProductionSettings(BaseSettings):
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
     conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
 
     # -- Foundational managers (implementation only) --
@@ -185,11 +187,6 @@ class ProductionSettings(BaseSettings):
     # GlobalFileManager
     UNITY_FILES_ENABLED: bool = False
     UNITY_FILES_IMPL: str = "real"
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # MemoryManager Configuration
-    # ─────────────────────────────────────────────────────────────────────────
-    UNITY_REGISTER_UPDATE_CALLBACKS: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
     # TaskScheduler Configuration
@@ -239,7 +236,6 @@ class ProductionSettings(BaseSettings):
         "UNITY_WEB_SEARCH_ENABLED",
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
-        "UNITY_REGISTER_UPDATE_CALLBACKS",
         "UNITY_TS_LOCAL_VIEW_OFF",
         mode="before",
     )
