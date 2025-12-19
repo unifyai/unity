@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from enum import Enum
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 from unity.common.llm_client import new_llm_client
-from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.manager_registry import ManagerRegistry
 from .base import BaseConversationManagerHandle
 from .events import (
     NotificationInjectedEvent,
@@ -23,6 +23,7 @@ import logging
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
+    from unity.transcript_manager.base import BaseTranscriptManager
 
 T = TypeVar("T", bound=[BaseModel, Enum])
 
@@ -44,7 +45,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         conversation_id: str,
         contact_id: int,
         *,
-        transcript_manager: TranscriptManager | None = None,
+        transcript_manager: "BaseTranscriptManager | None" = None,
         conversation_manager: "ConversationManager",
     ):
         """
@@ -53,7 +54,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         self.event_broker = event_broker
         self.conversation_id = conversation_id
         self.contact_id = contact_id
-        self._tm = transcript_manager or TranscriptManager()
+        self._tm = transcript_manager or ManagerRegistry.get("transcripts")
         self.conversation_manager = conversation_manager
 
         self._steering_channel = "app:comms:steering"
