@@ -77,7 +77,7 @@ def pytest_configure(config):
     os.environ["UNITY_SECRET_ENABLED"] = "false"
     os.environ["UNITY_SKILL_ENABLED"] = "false"
     os.environ["UNITY_WEB_ENABLED"] = "false"
-    os.environ["UNITY_FILES_ENABLED"] = "false"
+    os.environ["UNITY_FILE_ENABLED"] = "false"
 
     # Fixed datetime for LLM cache consistency
     os.environ["UNITY_FIXED_DATETIME"] = _FIXED_DATETIME.isoformat()

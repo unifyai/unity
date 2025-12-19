@@ -279,10 +279,10 @@ class Conductor(BaseConductor):
             self._file_manager: BaseGlobalFileManager | None = None
         elif global_file_manager is not None:
             self._file_manager = global_file_manager
-        elif not SETTINGS.UNITY_FILES_ENABLED:
+        elif not SETTINGS.file.ENABLED:
             self._file_manager = None
         else:
-            files_cls = get_class("files", SETTINGS.UNITY_FILES_IMPL)
+            files_cls = get_class("files", SETTINGS.file.IMPL)
             self._file_manager = files_cls([])
 
         #  Run-time state & tool-dict helpers

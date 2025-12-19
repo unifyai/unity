@@ -31,7 +31,7 @@ def test_default_settings_disable_optional_managers():
     assert SETTINGS.secret.ENABLED is False
     assert SETTINGS.skill.ENABLED is False
     assert SETTINGS.web.ENABLED is False
-    assert SETTINGS.UNITY_FILES_ENABLED is False
+    assert SETTINGS.file.ENABLED is False
 
 
 @_handle_project
@@ -52,7 +52,7 @@ def test_default_settings_use_real_implementations():
     assert SETTINGS.secret.IMPL == "real"
     assert SETTINGS.skill.IMPL == "real"
     assert SETTINGS.web.IMPL == "real"
-    assert SETTINGS.UNITY_FILES_IMPL == "real"
+    assert SETTINGS.file.IMPL == "real"
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ def test_disabled_sentinel_overrides_explicit_enable_via_patch():
         mock_settings.secret.ENABLED = False
         mock_settings.skill.ENABLED = False
         mock_settings.web.ENABLED = False
-        mock_settings.UNITY_FILES_ENABLED = False
+        mock_settings.file.ENABLED = False
         mock_settings.actor.IMPL = "hierarchical"
         mock_settings.contact.IMPL = "real"
         mock_settings.transcript.IMPL = "real"
