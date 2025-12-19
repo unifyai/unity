@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from unity.actor.settings import ActorSettings
 from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
+from unity.conversation_manager.settings import ConversationSettings
 from unity.guidance_manager.settings import GuidanceSettings
 from unity.knowledge_manager.settings import KnowledgeSettings
 from unity.memory_manager.settings import MemorySettings
@@ -81,7 +82,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
     # ─────────────────────────────────────────────────────────────────────────
-    UNITY_COMMS_URL: str = ""
     UNIFY_BASE_URL: str = ""
     CODESANDBOX_SERVICE_BASE_URL: str = ""
     CODESANDBOX_SERVICE_PORT: str = "3100"
@@ -118,10 +118,6 @@ class ProductionSettings(BaseSettings):
     UNITY_LOG_ROOT: str = ""
     # Test mode flag
     TEST: bool = False
-    # Job name for ConversationManager
-    JOB_NAME: str = ""
-    # Default contact ID for simulated ConversationManager
-    CONTACT_ID: str = "1"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
@@ -131,11 +127,6 @@ class ProductionSettings(BaseSettings):
     FIRST_ASK_TOOL_IS_SEARCH: bool = True
     FIRST_MUTATION_TOOL_IS_ASK: bool = True
     STAGING: bool = False
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Logging Control
-    # ─────────────────────────────────────────────────────────────────────────
-    CONVERSATION_MANAGER_LOG_LEVEL: str = "INFO"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Conductor Manager Configuration
@@ -154,6 +145,7 @@ class ProductionSettings(BaseSettings):
     actor: ActorSettings = Field(default_factory=ActorSettings)
     conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
+    conversation: ConversationSettings = Field(default_factory=ConversationSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
@@ -162,10 +154,6 @@ class ProductionSettings(BaseSettings):
     task: TaskSettings = Field(default_factory=TaskSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
     web: WebSettings = Field(default_factory=WebSettings)
-
-    # -- Foundational managers (implementation only) --
-    # ConversationManager: real | simulated
-    UNITY_CONVERSATION_IMPL: str = "real"
 
     # -- Optional managers (disabled by default for minimal initial rollout) --
     # These will be enabled incrementally as they become stable and fully featured.

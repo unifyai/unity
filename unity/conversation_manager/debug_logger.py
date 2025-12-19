@@ -65,7 +65,7 @@ def log_job_startup(
         # Resolve liveview URL via comms infra service
         liveview_url = None
         max_retries = 5  # Cap retries to avoid infinite loops
-        comms_url = SETTINGS.UNITY_COMMS_URL.rstrip("/")
+        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
         if comms_url and admin_key and job_name:
             svc = f"unity-svc-{job_name}"
@@ -138,7 +138,7 @@ def mark_job_done(job_name: str):
 
     # delete the job service
     try:
-        comms_url = SETTINGS.UNITY_COMMS_URL.rstrip("/")
+        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
         svc = f"unity-svc-{job_name}"
         response = requests.delete(
