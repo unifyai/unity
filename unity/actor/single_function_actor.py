@@ -13,6 +13,8 @@ or action primitives (like ContactManager.ask, TaskScheduler.execute, etc.).
 Supports optional verification via LLM to check if the function achieved its goal.
 """
 
+from __future__ import annotations
+
 import asyncio
 import functools
 import inspect
@@ -294,7 +296,9 @@ class SingleFunctionActor(BaseActor):
                 agent_server_url=agent_server_url,
             )
 
-        self._function_manager = function_manager or ManagerRegistry.get_function_manager()
+        self._function_manager = (
+            function_manager or ManagerRegistry.get_function_manager()
+        )
 
     def _get_function_by_id(self, function_id: int) -> Dict[str, Any]:
         """Get a user-defined function by its ID (not for primitives)."""
