@@ -78,7 +78,6 @@ class ProductionSettings(BaseSettings):
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
     ORCHESTRA_ADMIN_KEY: str = ""
-    SHARED_UNIFY_KEY: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs

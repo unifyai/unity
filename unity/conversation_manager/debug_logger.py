@@ -6,12 +6,25 @@ import traceback
 import requests
 import unify
 
+from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
 
-api_key = SETTINGS.SHARED_UNIFY_KEY or None
-if api_key and "AssistantJobs" not in unify.list_projects(api_key=api_key):
-    unify.create_project("AssistantJobs", api_key=api_key)
+# Track whether AssistantJobs project has been verified/created
+_project_verified = False
+
+
+def _ensure_project_exists(api_key: str) -> None:
+    """Lazily ensure the AssistantJobs project exists."""
+    global _project_verified
+    if _project_verified or not api_key:
+        return
+    try:
+        if "AssistantJobs" not in unify.list_projects(api_key=api_key):
+            unify.create_project("AssistantJobs", api_key=api_key)
+        _project_verified = True
+    except Exception as e:
+        print(f"[debug_logger] Could not verify/create AssistantJobs project: {e}")
 
 
 def log_job_startup(
@@ -27,6 +40,13 @@ def log_job_startup(
     user_email: str,
     assistant_email: str,
 ):
+    api_key = SESSION_DETAILS.api_key or None
+    if not api_key:
+        print("[debug_logger] Skipping log_job_startup: no API key available")
+        return
+
+    _ensure_project_exists(api_key)
+
     try:
         # Create startup event log and get log instance
         unify.create_logs(
@@ -122,6 +142,11 @@ def log_job_startup(
 
 
 def mark_job_done(job_name: str):
+    api_key = SESSION_DETAILS.api_key or None
+    if not api_key:
+        print("[debug_logger] Skipping mark_job_done: no API key available")
+        return
+
     # mark job done in the logs
     try:
         job_log = unify.get_logs(
