@@ -1,11 +1,12 @@
-import os
 import requests
 from unify.utils import http
 
+from unity.settings import SETTINGS
+
 
 # admin headers and URLs
-admin_headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
-unity_comms_url = os.getenv("UNITY_COMMS_URL")
+admin_headers = {"Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}"}
+unity_comms_url = SETTINGS.UNITY_COMMS_URL
 
 
 # dispatch agent

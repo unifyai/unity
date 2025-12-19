@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from typing import Iterable, Optional, List, Dict, Any
-import os
 
 from unify.utils import http
 
 from unity.session_details import SESSION_DETAILS
+from unity.settings import SETTINGS
 from unity.file_manager.filesystem_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.types.filesystem import FileSystemCapabilities, FileReference
 
@@ -33,13 +33,13 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         service_base_url: Optional[str] = None,
     ):
         self._sandbox_id = sandbox_id
-        self._token = auth_token or os.environ.get("CODESANDBOX_API_TOKEN") or ""
+        self._token = auth_token or SETTINGS.CODESANDBOX_API_TOKEN
         # Optional direct SDK client; when not provided, we route via the local codesandbox-service
         self._client = client
         self._service_base = (
             service_base_url
-            or os.environ.get("CODESANDBOX_SERVICE_BASE_URL")
-            or f"http://localhost:{os.environ.get('CODESANDBOX_SERVICE_PORT','3100')}"
+            or SETTINGS.CODESANDBOX_SERVICE_BASE_URL
+            or f"http://localhost:{SETTINGS.CODESANDBOX_SERVICE_PORT}"
         ).rstrip("/")
         self._connected = False
         self._caps = FileSystemCapabilities(
@@ -74,7 +74,7 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
 
     def _headers(self) -> Dict[str, str]:
         # Mirror agent-service header style; service only checks presence
-        unify_key = os.environ.get("UNIFY_KEY", "")
+        unify_key = SESSION_DETAILS.api_key
         assistant_email = SESSION_DETAILS.assistant.email
         return {"authorization": f"Bearer {unify_key} {assistant_email}".strip()}
 

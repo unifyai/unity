@@ -1,4 +1,3 @@
-import os
 import asyncio
 import logging
 
@@ -48,7 +47,7 @@ from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 logger = logging.getLogger(__name__)
 
 # Set logging level and add handler if not already configured
-log_level = os.getenv("CONVERSATION_MANAGER_LOG_LEVEL", "INFO").upper()
+log_level = SETTINGS.CONVERSATION_MANAGER_LOG_LEVEL.upper()
 logger.setLevel(getattr(logging, log_level, logging.INFO))
 
 # Ensure we have a console handler to actually display logs
@@ -523,8 +522,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.voice_id = payload["voice_id"]
         self.voice_mode = payload["voice_mode"]
         self.build_response_model()
+        # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
-            os.environ["UNIFY_KEY"] = payload["api_key"]
+            SESSION_DETAILS.api_key = payload["api_key"]
         # Populate the global SessionDetails singleton
         SESSION_DETAILS.populate(
             assistant_id=self.assistant_id,

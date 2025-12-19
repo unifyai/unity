@@ -11,11 +11,11 @@ import inspect
 import json
 import logging
 import sys
-import os
 import textwrap
 import traceback
 
 from unity.session_details import SESSION_DETAILS
+from unity.settings import SETTINGS
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
@@ -4404,8 +4404,8 @@ class HierarchicalActor(BaseActor):
 
         Falls back to the provided agent_server_url on any failure.
         """
-        orchestra_url = os.getenv("UNIFY_BASE_URL")
-        unify_key = os.getenv("UNIFY_KEY")
+        orchestra_url = SETTINGS.UNIFY_BASE_URL
+        unify_key = SESSION_DETAILS.api_key
         assistant_name = SESSION_DETAILS.assistant.name.strip()
 
         if not orchestra_url or not unify_key or not assistant_name:

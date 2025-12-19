@@ -76,6 +76,7 @@ class SessionDetails:
     assistant: AssistantDetails = field(default_factory=AssistantDetails)
     user: UserDetails = field(default_factory=UserDetails)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    api_key: str = ""  # Unify API key, set dynamically from startup payload
 
     _initialized: bool = field(default=False, repr=False)
 
