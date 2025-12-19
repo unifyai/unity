@@ -1,3 +1,22 @@
+"""
+unity/singleton_registry.py
+============================
+
+Singleton infrastructure for Unity's state managers.
+
+State managers (ContactManager, TaskScheduler, etc.) are singletons to ensure
+a single source of truth. This module provides:
+
+  - SingletonRegistry: Central storage for singleton instances, with clear()
+    for test isolation between test runs.
+  - SingletonABCMeta: Metaclass that enforces singleton behavior and auto-
+    registers instances in the registry.
+
+Usage in managers:
+    class ContactManager(BaseContactManager, metaclass=SingletonABCMeta):
+        ...
+"""
+
 from __future__ import annotations
 
 from abc import ABCMeta
