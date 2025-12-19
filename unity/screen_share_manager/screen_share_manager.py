@@ -22,7 +22,8 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from skimage.metrics import structural_similarity as ssim
 
-from unity.image_manager.image_manager import ImageManager, ImageHandle
+from unity.image_manager.image_manager import ImageHandle
+from unity.manager_registry import ManagerRegistry
 from .prompt_builders import (
     build_summary_update_prompt,
     build_single_annotation_prompt,
@@ -155,7 +156,7 @@ class ScreenShareManager:
     def __init__(
         self,
         settings: Optional[ScreenShareManagerSettings] = None,
-        image_manager: Optional[ImageManager] = None,
+        image_manager=None,
         detection_client: Optional[unify.AsyncUnify] = None,
         analysis_client: Optional[unify.AsyncUnify] = None,
         summary_client: Optional[unify.AsyncUnify] = None,
@@ -174,7 +175,7 @@ class ScreenShareManager:
         """
         self.settings = settings or ScreenShareManagerSettings()
         self._debug = debug
-        self._image_manager = image_manager or ImageManager()
+        self._image_manager = image_manager or ManagerRegistry.get("images")
         self._detection_client = detection_client or new_llm_client(
             "gpt-4o-mini@openai",
             reasoning_effort=None,
