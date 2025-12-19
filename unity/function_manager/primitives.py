@@ -98,11 +98,11 @@ class ComputerPrimitives:
 
     @property
     def secret_manager(self):
-        """Lazily initialize and return the SecretManager."""
+        """Lazily initialize and return the SecretManager via ManagerRegistry."""
         if self._secret_manager is None:
-            from unity.secret_manager.secret_manager import SecretManager
+            from unity.manager_registry import ManagerRegistry
 
-            self._secret_manager = SecretManager()
+            self._secret_manager = ManagerRegistry.get("secrets")
         return self._secret_manager
 
     def _setup_browser_methods(self):
