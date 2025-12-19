@@ -66,6 +66,20 @@ class VoiceConfig:
 
 
 @dataclass
+class VoiceCallConfig:
+    """Runtime configuration for an active voice call.
+
+    Populated by configure_from_cli() in medium_scripts/common.py
+    when a call agent subprocess is launched.
+    """
+
+    outbound: bool = False
+    channel: str = ""  # "phone" or "meet"
+    contact_json: str = "{}"  # JSON-serialized contact dict
+    boss_json: str = "{}"  # JSON-serialized boss dict
+
+
+@dataclass
 class SessionDetails:
     """Runtime details populated by ConversationManager on startup.
 
@@ -76,6 +90,7 @@ class SessionDetails:
     assistant: AssistantDetails = field(default_factory=AssistantDetails)
     user: UserDetails = field(default_factory=UserDetails)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    voice_call: VoiceCallConfig = field(default_factory=VoiceCallConfig)
     api_key: str = ""  # Unify API key, set dynamically from startup payload
 
     _initialized: bool = field(default=False, repr=False)
@@ -130,6 +145,7 @@ class SessionDetails:
         self.assistant = AssistantDetails()
         self.user = UserDetails()
         self.voice = VoiceConfig()
+        self.voice_call = VoiceCallConfig()
         self._initialized = False
 
     def export_to_env(self) -> None:
@@ -151,6 +167,11 @@ class SessionDetails:
         os.environ["VOICE_PROVIDER"] = self.voice.provider
         os.environ["VOICE_ID"] = self.voice.id
         os.environ["VOICE_MODE"] = self.voice.mode
+        # Voice call config (for call agent subprocesses)
+        os.environ["OUTBOUND"] = str(self.voice_call.outbound)
+        os.environ["CHANNEL"] = self.voice_call.channel
+        os.environ["CONTACT"] = self.voice_call.contact_json
+        os.environ["BOSS"] = self.voice_call.boss_json
 
     def populate_from_env(self) -> None:
         """Populate from environment variables.
@@ -191,7 +212,55 @@ class SessionDetails:
             self.voice.id = val
         if val := os.environ.get("VOICE_MODE"):
             self.voice.mode = val
+        # Voice call config (for call agent subprocesses)
+        if val := os.environ.get("OUTBOUND"):
+            self.voice_call.outbound = val == "True"
+        if val := os.environ.get("CHANNEL"):
+            self.voice_call.channel = val
+        if val := os.environ.get("CONTACT"):
+            self.voice_call.contact_json = val
+        if val := os.environ.get("BOSS"):
+            self.voice_call.boss_json = val
         self._initialized = True
+
+    def get_subprocess_env(self, **overrides: str) -> dict[str, str]:
+        """Get a copy of the current environment for subprocess use.
+
+        This is the only approved way to access os.environ for subprocess
+        communication. First exports SESSION_DETAILS values, then returns
+        a copy with any overrides applied.
+
+        Args:
+            **overrides: Key-value pairs to add/override in the env dict.
+
+        Returns:
+            A dict suitable for passing to subprocess.run(env=...).
+        """
+        self.export_to_env()
+        env = dict(os.environ)
+        env.update(overrides)
+        return env
+
+    @staticmethod
+    def get_impl_setting(name: str, default: str = "real") -> str:
+        """Get implementation setting from environment for test-time override.
+
+        SETTINGS is instantiated at import time, before test conftests can set
+        environment variables. This helper reads directly from os.environ to
+        allow test_conversation_manager/conftest.py to set UNITY_*_IMPL=simulated
+        and have it take effect.
+
+        This is intentionally a static method since it doesn't depend on session
+        state and is only used during manager initialization.
+
+        Args:
+            name: The env var name (e.g., "UNITY_CONTACTS_IMPL").
+            default: Default value if env var is not set.
+
+        Returns:
+            The implementation type ("real" or "simulated").
+        """
+        return os.environ.get(name, default)
 
 
 # Global singleton instance

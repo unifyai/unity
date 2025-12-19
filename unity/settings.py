@@ -67,6 +67,8 @@ class ProductionSettings(BaseSettings):
     TAVILY_API_KEY: str = ""
     ORCHESTRA_ADMIN_KEY: str = ""
     SHARED_UNIFY_KEY: str = ""
+    BROWSERBASE_API_KEY: str = ""
+    BROWSERBASE_PROJECT_ID: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
@@ -76,6 +78,15 @@ class ProductionSettings(BaseSettings):
     CODESANDBOX_SERVICE_BASE_URL: str = ""
     CODESANDBOX_SERVICE_PORT: str = "3100"
     CODESANDBOX_API_TOKEN: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Interact API Settings (file manager adapter)
+    # ─────────────────────────────────────────────────────────────────────────
+    INTERACT_API_BASE: str = ""
+    INTERACT_KEY: str = ""
+    INTERACT_SECRET: str = ""
+    INTERACT_PERSON_ID: str = ""
+    INTERACT_TENANT: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Debugging / Observability
@@ -97,6 +108,12 @@ class ProductionSettings(BaseSettings):
     UNITY_TEST_SOCKET: str = ""
     # Explicit repository root for log file placement (e.g., worktrees)
     UNITY_LOG_ROOT: str = ""
+    # Test mode flag
+    TEST: bool = False
+    # Job name for ConversationManager
+    JOB_NAME: str = ""
+    # Default contact ID for simulated ConversationManager
+    CONTACT_ID: str = "1"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
@@ -173,6 +190,28 @@ class ProductionSettings(BaseSettings):
     UNITY_REGISTER_UPDATE_CALLBACKS: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
+    # TaskScheduler Configuration
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_TS_ROUTER_TIMEOUT_SECONDS: float = 60.0
+    UNITY_TS_LOCAL_VIEW_OFF: bool = False
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SecretManager Configuration
+    # ─────────────────────────────────────────────────────────────────────────
+    SECRET_DOTENV_PATH: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # FileManager / Embedding Configuration
+    # ─────────────────────────────────────────────────────────────────────────
+    EMBEDDING_ENCODING: str = "cl100k_base"
+    EMBEDDING_MAX_INPUT_TOKENS: int = 8000
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Token / Model Configuration
+    # ─────────────────────────────────────────────────────────────────────────
+    MODEL_MAX_INPUT_TOKENS: int = 128000
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
     @field_validator("UNIFY_CACHE", mode="before")
@@ -190,6 +229,7 @@ class ProductionSettings(BaseSettings):
         "FIRST_ASK_TOOL_IS_SEARCH",
         "FIRST_MUTATION_TOOL_IS_ASK",
         "STAGING",
+        "TEST",
         "UNITY_SILENCE_HTTPX",
         "UNITY_SILENCE_URLLIB3",
         "UNITY_SILENCE_OPENAI",
@@ -202,6 +242,7 @@ class ProductionSettings(BaseSettings):
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
         "UNITY_REGISTER_UPDATE_CALLBACKS",
+        "UNITY_TS_LOCAL_VIEW_OFF",
         mode="before",
     )
     @classmethod
