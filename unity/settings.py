@@ -134,6 +134,11 @@ class ProductionSettings(BaseSettings):
     UNITY_FILES_IMPL: str = "real"
 
     # ─────────────────────────────────────────────────────────────────────────
+    # MemoryManager Configuration
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_REGISTER_UPDATE_CALLBACKS: bool = True
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
     @field_validator("UNIFY_CACHE", mode="before")
@@ -161,6 +166,7 @@ class ProductionSettings(BaseSettings):
         "UNITY_WEB_SEARCH_ENABLED",
         "UNITY_FILES_ENABLED",
         "UNITY_VALIDATE_LLM_PROVIDERS",
+        "UNITY_REGISTER_UPDATE_CALLBACKS",
         mode="before",
     )
     @classmethod
