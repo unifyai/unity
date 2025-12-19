@@ -69,7 +69,7 @@ def pytest_configure(config):
     os.environ["UNITY_CONDUCTOR_IMPL"] = "simulated"
 
     # Steps for SimulatedActor - 3 allows for pause+resume interactions
-    os.environ["UNITY_SIMULATED_ACTOR_STEPS"] = "3"
+    os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
 
     # Disable optional managers that might connect to real backends
     os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
