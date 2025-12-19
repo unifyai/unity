@@ -27,7 +27,6 @@ class TestingSettings(ProductionSettings):
     # ─────────────────────────────────────────────────────────────────────────
     UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
     UNIFY_OVERWRITE_PROJECT: bool = False
-    UNIFY_REGISTER_SUMMARY_CALLBACKS: bool = False
     UNITY_REGISTER_UPDATE_CALLBACKS: bool = False
     UNIFY_TESTS_RAND_PROJ: bool = False
     UNIFY_TESTS_DELETE_PROJ_ON_EXIT: bool = False
