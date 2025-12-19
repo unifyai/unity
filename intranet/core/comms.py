@@ -115,7 +115,7 @@ def _to_mutable_payload(raw: Any) -> Dict[str, Any]:
 async def send_email(to_email: str, subject: str, content: str, message_id: str):
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/email/send",
+            f"{os.getenv('UNITY_CONVERSATION_COMMS_URL')}/email/send",
             headers=headers,
             json={
                 "from": assistant_email,

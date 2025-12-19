@@ -422,7 +422,7 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 6. Initialize ConversationManagerHandle (respects UNITY_CONVERSATION_IMPL setting)
+    # 6. Initialize ConversationManagerHandle (respects SETTINGS.conversation.IMPL setting)
     print("[ManagersWorker] Initializing ConversationManagerHandle...")
     local_start_time = perf_counter()
     conversation_impl = _get_impl("UNITY_CONVERSATION_IMPL")

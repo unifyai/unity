@@ -6,7 +6,7 @@ from unity.settings import SETTINGS
 
 # admin headers and URLs
 admin_headers = {"Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}"}
-unity_comms_url = SETTINGS.UNITY_COMMS_URL
+unity_comms_url = SETTINGS.conversation.COMMS_URL
 
 
 # dispatch agent

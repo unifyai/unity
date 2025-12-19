@@ -165,12 +165,12 @@ class Conductor(BaseConductor):
         else:
             conversation_cls = get_class(
                 "conversation",
-                SETTINGS.UNITY_CONVERSATION_IMPL,
+                SETTINGS.conversation.IMPL,
             )
-            if SETTINGS.UNITY_CONVERSATION_IMPL == "simulated":
+            if SETTINGS.conversation.IMPL == "simulated":
                 self._cm_handle = conversation_cls(
                     assistant_id=SESSION_DETAILS.assistant.id,
-                    contact_id=SETTINGS.CONTACT_ID,
+                    contact_id=SETTINGS.conversation.CONTACT_ID,
                     description=description,
                     simulation_guidance=simulation_guidance,
                 )
@@ -178,7 +178,7 @@ class Conductor(BaseConductor):
                 # Real ConversationManagerHandle requires a ConversationManager
                 # which has complex dependencies - caller must provide it explicitly
                 raise ValueError(
-                    "UNITY_CONVERSATION_IMPL='real' requires an explicit "
+                    "SETTINGS.conversation.IMPL='real' requires an explicit "
                     "conversation_manager argument. Either pass a conversation_manager "
                     "or set UNITY_CONVERSATION_IMPL='simulated'.",
                 )

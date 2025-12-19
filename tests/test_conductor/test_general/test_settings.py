@@ -44,7 +44,7 @@ def test_default_settings_use_real_implementations():
     assert SETTINGS.contact.IMPL == "real"
     assert SETTINGS.transcript.IMPL == "real"
     assert SETTINGS.task.IMPL == "real"
-    assert SETTINGS.UNITY_CONVERSATION_IMPL == "real"
+    assert SETTINGS.conversation.IMPL == "real"
 
     # Optional managers also default to real (when enabled)
     assert SETTINGS.knowledge.IMPL == "real"

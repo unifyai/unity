@@ -109,7 +109,7 @@ def create_conversation_manager(
     """
     return ConversationManager(
         event_broker,
-        SETTINGS.JOB_NAME,
+        SETTINGS.conversation.JOB_NAME,
         SESSION_DETAILS.user.id,
         SESSION_DETAILS.assistant.id,
         SESSION_DETAILS.user.name,

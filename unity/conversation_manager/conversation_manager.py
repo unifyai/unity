@@ -47,7 +47,7 @@ from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 logger = logging.getLogger(__name__)
 
 # Set logging level and add handler if not already configured
-log_level = SETTINGS.CONVERSATION_MANAGER_LOG_LEVEL.upper()
+log_level = SETTINGS.conversation.LOG_LEVEL.upper()
 logger.setLevel(getattr(logging, log_level, logging.INFO))
 
 # Ensure we have a console handler to actually display logs

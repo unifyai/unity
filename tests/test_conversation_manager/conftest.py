@@ -84,7 +84,7 @@ def pytest_configure(config):
 
     # Mark as test mode
     os.environ["TEST"] = "true"
-    os.environ["JOB_NAME"] = "test_job"
+    os.environ["UNITY_CONVERSATION_JOB_NAME"] = "test_job"
 
 
 # =============================================================================
