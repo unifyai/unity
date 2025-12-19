@@ -129,8 +129,8 @@ class Conductor(BaseConductor):
         if transcript_manager is not None:
             self._transcript_manager = transcript_manager
         else:
-            transcripts_cls = get_class("transcripts", SETTINGS.UNITY_TRANSCRIPTS_IMPL)
-            if SETTINGS.UNITY_TRANSCRIPTS_IMPL == "simulated":
+            transcripts_cls = get_class("transcripts", SETTINGS.transcript.IMPL)
+            if SETTINGS.transcript.IMPL == "simulated":
                 self._transcript_manager = transcripts_cls(
                     description=description,
                     rolling_summary_in_prompts=rolling_summary_in_prompts,

@@ -63,7 +63,7 @@ def pytest_configure(config):
     # Use simulated implementations for all managers
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_CONTACT_IMPL"] = "simulated"
-    os.environ["UNITY_TRANSCRIPTS_IMPL"] = "simulated"
+    os.environ["UNITY_TRANSCRIPT_IMPL"] = "simulated"
     os.environ["UNITY_TASKS_IMPL"] = "simulated"
     os.environ["UNITY_CONVERSATION_IMPL"] = "simulated"
     os.environ["UNITY_CONDUCTOR_IMPL"] = "simulated"
