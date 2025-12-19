@@ -230,11 +230,11 @@ class Conductor(BaseConductor):
             self._secret_manager = None
         elif secret_manager is not None:
             self._secret_manager = secret_manager
-        elif not SETTINGS.UNITY_SECRETS_ENABLED:
+        elif not SETTINGS.secret.ENABLED:
             self._secret_manager = None
         else:
-            secrets_cls = get_class("secrets", SETTINGS.UNITY_SECRETS_IMPL)
-            if SETTINGS.UNITY_SECRETS_IMPL == "simulated":
+            secrets_cls = get_class("secrets", SETTINGS.secret.IMPL)
+            if SETTINGS.secret.IMPL == "simulated":
                 self._secret_manager = secrets_cls(
                     description=description,
                     simulation_guidance=simulation_guidance,

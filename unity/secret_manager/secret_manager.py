@@ -191,11 +191,11 @@ class SecretManager(BaseSecretManager):
     def _dotenv_path(self) -> str:
         """Return the path to the .env file used for local sync.
 
-        Honors SECRET_DOTENV_PATH from SETTINGS; defaults to ".env" in CWD.
+        Honors UNITY_SECRET_DOTENV_PATH from SETTINGS; defaults to ".env" in CWD.
         """
         import os as _os
 
-        return SETTINGS.SECRET_DOTENV_PATH or _os.path.join(_os.getcwd(), ".env")
+        return SETTINGS.secret.DOTENV_PATH or _os.path.join(_os.getcwd(), ".env")
 
     def _ensure_dotenv_synced_on_init(self) -> None:
         """Create .env if missing and merge existing Unify secrets into it."""

@@ -18,7 +18,7 @@ def _read(path: str) -> str:
 def test_created_and_backfilled_on_init(monkeypatch, secret_manager_context):
     with tempfile.TemporaryDirectory() as td:
         dotenv_path = str(pathlib.Path(td) / ".env")
-        monkeypatch.setenv("SECRET_DOTENV_PATH", dotenv_path)
+        monkeypatch.setenv("UNITY_SECRET_DOTENV_PATH", dotenv_path)
 
         sm = SecretManager()
         # Seed two secrets in storage
@@ -35,7 +35,7 @@ def test_created_and_backfilled_on_init(monkeypatch, secret_manager_context):
 def test_updates_on_create_update_delete(monkeypatch, secret_manager_context):
     with tempfile.TemporaryDirectory() as td:
         dotenv_path = str(pathlib.Path(td) / ".env")
-        monkeypatch.setenv("SECRET_DOTENV_PATH", dotenv_path)
+        monkeypatch.setenv("UNITY_SECRET_DOTENV_PATH", dotenv_path)
 
         sm = SecretManager()
 

@@ -28,7 +28,7 @@ def test_default_settings_disable_optional_managers():
     # Optional managers should be disabled by default
     assert SETTINGS.UNITY_KNOWLEDGE_ENABLED is False
     assert SETTINGS.guidance.ENABLED is False
-    assert SETTINGS.UNITY_SECRETS_ENABLED is False
+    assert SETTINGS.secret.ENABLED is False
     assert SETTINGS.skill.ENABLED is False
     assert SETTINGS.UNITY_WEB_SEARCH_ENABLED is False
     assert SETTINGS.UNITY_FILES_ENABLED is False
@@ -49,7 +49,7 @@ def test_default_settings_use_real_implementations():
     # Optional managers also default to real (when enabled)
     assert SETTINGS.UNITY_KNOWLEDGE_IMPL == "real"
     assert SETTINGS.guidance.IMPL == "real"
-    assert SETTINGS.UNITY_SECRETS_IMPL == "real"
+    assert SETTINGS.secret.IMPL == "real"
     assert SETTINGS.skill.IMPL == "real"
     assert SETTINGS.UNITY_WEB_SEARCH_IMPL == "real"
     assert SETTINGS.UNITY_FILES_IMPL == "real"
@@ -212,7 +212,7 @@ def test_disabled_sentinel_overrides_explicit_enable_via_patch():
         mock_settings.UNITY_KNOWLEDGE_ENABLED = True
         mock_settings.UNITY_KNOWLEDGE_IMPL = "simulated"
         mock_settings.guidance.ENABLED = False
-        mock_settings.UNITY_SECRETS_ENABLED = False
+        mock_settings.secret.ENABLED = False
         mock_settings.skill.ENABLED = False
         mock_settings.UNITY_WEB_SEARCH_ENABLED = False
         mock_settings.UNITY_FILES_ENABLED = False
