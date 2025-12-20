@@ -39,12 +39,13 @@ from unity.session_details import SESSION_DETAILS
 
 
 def _get_user_name() -> Optional[str]:
-    """Retrieve user's context name from SESSION_DETAILS."""
-    ctx = SESSION_DETAILS.user_context
-    # Return None if it's the default placeholder
-    from unity.session_details import DEFAULT_USER_CONTEXT
+    """Retrieve user's context name from SESSION_DETAILS.
 
-    return ctx if ctx != DEFAULT_USER_CONTEXT else None
+    Returns the user context name, including default values like "DefaultUser".
+    These are always injected because they are part of the context path structure
+    and are needed by orchestra for 3-tier deletion cascade.
+    """
+    return SESSION_DETAILS.user_context or None
 
 
 def _get_user_id() -> Optional[str]:
@@ -53,10 +54,13 @@ def _get_user_id() -> Optional[str]:
 
 
 def _get_assistant_name() -> Optional[str]:
-    """Retrieve assistant's context name from SESSION_DETAILS."""
-    ctx = SESSION_DETAILS.assistant_context
-    # Return None if it's the default placeholder
-    return ctx if ctx != "Assistant" else None
+    """Retrieve assistant's context name from SESSION_DETAILS.
+
+    Returns the assistant context name, including default values like "Assistant".
+    These are always injected because they are part of the context path structure
+    and are needed by orchestra for 3-tier deletion cascade.
+    """
+    return SESSION_DETAILS.assistant_context or None
 
 
 def _get_assistant_id() -> Optional[str]:
