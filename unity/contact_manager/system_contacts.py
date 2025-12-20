@@ -4,7 +4,6 @@ from typing import Any, Dict, List
 
 import unify
 
-from ..common.log_utils import log as unity_log
 from ..knowledge_manager.types import ColumnType
 
 
@@ -102,21 +101,7 @@ def sync_assistant_contact(self, assistant_log) -> None:
         return
 
     # Insert the assistant row
-    if not unify.get_logs(context=self._ctx, limit=1, return_ids_only=True):
-        self._create_contact(**base_fields)
-    else:
-        log = unity_log(
-            context=self._ctx,
-            contact_id=0,
-            **base_fields,
-            new=True,
-            mutable=True,
-            add_to_all_context=self.include_in_multi_assistant_table,
-        )
-        try:
-            self._data_store.put(log.entries)
-        except Exception:
-            pass
+    self._create_contact(**base_fields)
 
 
 def fetch_user_info(self) -> Dict[str, Any]:
