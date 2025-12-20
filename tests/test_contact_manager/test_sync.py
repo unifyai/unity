@@ -40,14 +40,19 @@ def _clear_cached_assistant(monkeypatch):
     #    stub that returns an *empty* dict so no metadata is available but –
     #    crucially – the call succeeds without needing a real backend.
     from unity.contact_manager.contact_manager import ContactManager
+    from unity.session_details import (
+        DEFAULT_USER_EMAIL,
+        DEFAULT_USER_FIRST_NAME,
+        DEFAULT_USER_SURNAME,
+    )
 
     monkeypatch.setattr(
         ContactManager,
         "_fetch_user_info",
         lambda self: {
-            "first_name": "John",
-            "last_name": "Doe",
-            "email": "john.doe@example.com",
+            "first_name": DEFAULT_USER_FIRST_NAME,
+            "last_name": DEFAULT_USER_SURNAME,
+            "email": DEFAULT_USER_EMAIL,
         },
         raising=False,
     )
@@ -55,7 +60,13 @@ def _clear_cached_assistant(monkeypatch):
 
 @_handle_project
 def test_dummy_assistant(monkeypatch):
-    """When the account has no assistants, a dummy assistant with ID 0 should be created."""
+    """When the account has no assistants, a default assistant with ID 0 should be created."""
+    from unity.session_details import (
+        DEFAULT_ASSISTANT_EMAIL,
+        DEFAULT_ASSISTANT_FIRST_NAME,
+        DEFAULT_ASSISTANT_PHONE,
+        DEFAULT_ASSISTANT_SURNAME,
+    )
 
     # Force assistant discovery helper to return an empty list (new location)
     monkeypatch.setattr(
@@ -70,10 +81,10 @@ def test_dummy_assistant(monkeypatch):
     assert len(assistants) == 1, "Exactly one assistant contact (ID 0) should exist"
 
     a = assistants[0]
-    assert a.first_name == "Unify"
-    assert a.surname == "Assistant"
-    assert a.email_address == "unify.assistant@unify.ai"
-    assert a.phone_number == "+10000000000"
+    assert a.first_name == DEFAULT_ASSISTANT_FIRST_NAME
+    assert a.surname == DEFAULT_ASSISTANT_SURNAME
+    assert a.email_address == DEFAULT_ASSISTANT_EMAIL
+    assert a.phone_number == DEFAULT_ASSISTANT_PHONE
     # System contact timezone should be hard-coded to UTC for now
     assert a.utc_offset_hours == 0.0
 
