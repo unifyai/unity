@@ -100,8 +100,16 @@ def sync_assistant_contact(self, assistant_log) -> None:
             pass
         return
 
-    # Insert the assistant row
-    self._create_contact(**base_fields)
+    # Insert the assistant row. Use try-except to handle race conditions where
+    # another process creates the contact concurrently.
+    try:
+        self._create_contact(**base_fields)
+    except ValueError as e:
+        if "unique fields" in str(e):
+            # Another process created the contact concurrently – that's fine
+            pass
+        else:
+            raise
 
 
 def fetch_user_info(self) -> Dict[str, Any]:
@@ -190,4 +198,13 @@ def sync_user_contact(self, user_log) -> None:
             pass
         return
 
-    self._create_contact(**{k: v for k, v in base_fields.items() if v is not None})
+    # Insert the user row. Use try-except to handle race conditions where
+    # another process creates the contact concurrently.
+    try:
+        self._create_contact(**{k: v for k, v in base_fields.items() if v is not None})
+    except ValueError as e:
+        if "unique fields" in str(e):
+            # Another process created the contact concurrently – that's fine
+            pass
+        else:
+            raise
