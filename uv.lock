@@ -8998,7 +8998,7 @@ wheels = [
 [[package]]
 name = "unifyai"
 version = "0.9.10"
-source = { git = "https://github.com/unifyai/unify.git?branch=main#5b280c67d8ed6969b43464a0208650d4cb97f9f9" }
+source = { git = "https://github.com/unifyai/unify.git?branch=main#2f801b5a4162b0aa6a4e6a103effcaa3fd7c3c91" }
 dependencies = [
     { name = "aiohttp" },
     { name = "google-genai" },
