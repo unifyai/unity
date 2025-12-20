@@ -1,7 +1,13 @@
+"""
+Tests for TranscriptManager return shape consistency.
+
+NOTE: These tests use the tm_manager_scenario fixture which provides
+pre-seeded data. They should NOT use @_handle_project as that would
+conflict with the scenario's context management.
+"""
+
 from __future__ import annotations
 
-
-from tests.helpers import _handle_project
 from unity.contact_manager.types.contact import Contact
 
 
@@ -32,7 +38,6 @@ _EXPECTED_KEYS_ORDER = [
 ]
 
 
-@_handle_project
 def test_filter_return_shape(tm_manager_scenario):
     tm, _ = tm_manager_scenario
 
@@ -52,7 +57,6 @@ def test_filter_return_shape(tm_manager_scenario):
     assert isinstance(out["messages"], list)
 
 
-@_handle_project
 def test_search_return_shape(tm_manager_scenario):
     tm, _ = tm_manager_scenario
 
