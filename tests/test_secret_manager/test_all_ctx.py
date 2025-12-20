@@ -252,3 +252,86 @@ def test_deleting_secret_removes_from_all_ctxs():
         assert (
             len(all_logs_after) == 0
         ), f"Secret should be removed from {all_ctx} after deletion"
+
+
+@_handle_project
+def test_update_syncs_to_all_aggregation_contexts():
+    """Updating a secret should be immediately visible in all aggregation contexts."""
+    sm = SecretManager()
+
+    # Create a secret with initial values
+    result = sm._create_secret(
+        name="update_sync_secret",
+        value="test-value",
+        description="Original description",
+    )
+    assert result["outcome"] == "secret created"
+
+    secrets = sm._filter_secrets(filter="name == 'update_sync_secret'")
+    assert len(secrets) >= 1
+    secret_id = secrets[0].secret_id
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(sm._ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify initial description in all contexts
+    for ctx in [sm._ctx, *all_ctxs]:
+        log = _get_raw_log_by_secret_id(ctx, secret_id)
+        assert log is not None, f"Log should exist in {ctx}"
+        assert (
+            log.entries.get("description") == "Original description"
+        ), f"Initial description in {ctx}"
+
+    # Update the secret's description
+    sm._update_secret(name="update_sync_secret", description="Updated description")
+
+    # Verify the update is immediately visible in ALL contexts (primary + aggregations)
+    for ctx in [sm._ctx, *all_ctxs]:
+        log = _get_raw_log_by_secret_id(ctx, secret_id)
+        assert log is not None, f"Log should exist in {ctx} after update"
+        assert log.entries.get("description") == "Updated description", (
+            f"Updated description should be visible in {ctx}. "
+            f"Expected 'Updated description', got '{log.entries.get('description')}'"
+        )
+
+
+@_handle_project
+def test_log_id_unchanged_after_update():
+    """Updates should modify the existing log entry, not create a new one."""
+    sm = SecretManager()
+
+    # Create a secret
+    result = sm._create_secret(
+        name="log_id_test_secret",
+        value="test-value",
+        description="Before update",
+    )
+    assert result["outcome"] == "secret created"
+
+    secrets = sm._filter_secrets(filter="name == 'log_id_test_secret'")
+    assert len(secrets) >= 1
+    secret_id = secrets[0].secret_id
+
+    # Get the original log ID
+    original_log = _get_raw_log_by_secret_id(sm._ctx, secret_id)
+    original_log_id = original_log.id
+
+    # Update the secret
+    sm._update_secret(name="log_id_test_secret", description="After update")
+
+    # Verify the log ID is unchanged (in-place update, not delete+create)
+    updated_log = _get_raw_log_by_secret_id(sm._ctx, secret_id)
+    assert updated_log.id == original_log_id, (
+        f"Log ID should be unchanged after update. "
+        f"Original: {original_log_id}, After update: {updated_log.id}"
+    )
+
+    # Verify all aggregation contexts still reference the same log ID
+    all_ctxs = _derive_all_contexts(sm._ctx)
+    for all_ctx in all_ctxs:
+        agg_log = _get_raw_log_by_secret_id(all_ctx, secret_id)
+        assert agg_log.id == original_log_id, (
+            f"Aggregation context {all_ctx} should still reference the same log. "
+            f"Expected {original_log_id}, got {agg_log.id}"
+        )
