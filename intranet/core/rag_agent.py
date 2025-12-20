@@ -594,23 +594,22 @@ class IntranetRAGAgent:
         #         pass
 
         ctx = "IntranetUsage"  # f"{active_ctx}/IntranetUsage" if active_ctx else "IntranetUsage"
+        unify.create_context(ctx)
         try:
-            if ctx not in unify.get_contexts():
-                unify.create_context(ctx)
-                unify.create_fields(
-                    {
-                        "query": {"type": "str", "mutable": True},
-                        "answer": {"type": "str", "mutable": True},
-                        "success": {"type": "bool", "mutable": True},
-                        "error": {"type": "str", "mutable": True},
-                        "sources": {"type": "list", "mutable": True},
-                        "confidence": {"type": "float", "mutable": True},
-                        "response_time": {"type": "float", "mutable": True},
-                    },
-                    context=ctx,
-                )
+            unify.create_fields(
+                {
+                    "query": {"type": "str", "mutable": True},
+                    "answer": {"type": "str", "mutable": True},
+                    "success": {"type": "bool", "mutable": True},
+                    "error": {"type": "str", "mutable": True},
+                    "sources": {"type": "list", "mutable": True},
+                    "confidence": {"type": "float", "mutable": True},
+                    "response_time": {"type": "float", "mutable": True},
+                },
+                context=ctx,
+            )
         except Exception:
-            # Tolerate races or partial creation in concurrent scenarios
+            # Tolerate races or partial field creation in concurrent scenarios
             pass
 
         return ctx

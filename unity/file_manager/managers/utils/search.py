@@ -421,14 +421,11 @@ def create_join(
 
 
 def ensure_tmp_ctx(self, ctx: str) -> None:
-    try:
-        unify.create_context(
-            ctx,
-            unique_keys={"row_id": "int"},
-            auto_counting={"row_id": None},
-        )
-    except Exception:
-        pass
+    unify.create_context(
+        ctx,
+        unique_keys={"row_id": "int"},
+        auto_counting={"row_id": None},
+    )
 
 
 def filter_join(

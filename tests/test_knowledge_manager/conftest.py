@@ -183,11 +183,8 @@ async def knowledge_scenario(
     if not reuse_scenario:
         # delete all contexts to freshly create the new scenario
         def recreate_contexts(ctx):
-            try:
-                unify.delete_context(ctx)
-                unify.create_context(ctx)
-            except Exception as e:
-                pass
+            unify.delete_context(ctx)
+            unify.create_context(ctx)
 
         existing_ctx_names = list(existing_contexts.keys())
         if existing_ctx_names:

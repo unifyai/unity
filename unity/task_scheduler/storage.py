@@ -53,17 +53,13 @@ class TasksStore:
         If the context already exists, any missing fields are created.
         Idempotent: tolerates pre-existing contexts and concurrent creation.
         """
-        # Idempotent creation: try to create, tolerate if already exists
-        try:
-            unify.create_context(
-                self._ctx,
-                unique_keys=unique_keys,
-                auto_counting=auto_counting,
-                description=description,
-                foreign_keys=foreign_keys,
-            )
-        except Exception:
-            pass  # Already exists or transient failure
+        unify.create_context(
+            self._ctx,
+            unique_keys=unique_keys,
+            auto_counting=auto_counting,
+            description=description,
+            foreign_keys=foreign_keys,
+        )
 
         # Ensure all required fields exist (idempotent per-field)
         try:
@@ -139,11 +135,7 @@ class TasksStore:
             else:
                 description = f"Aggregation of {self._ctx.split('/')[-1]} across all assistants for this user"
 
-            # Idempotent creation: try to create, tolerate if already exists
-            try:
-                unify.create_context(all_ctx, description=description)
-            except Exception:
-                pass  # Already exists or transient failure
+            unify.create_context(all_ctx, description=description)
 
             # Merge manager fields with private fields for All context
             fields_with_private = dict(fields)

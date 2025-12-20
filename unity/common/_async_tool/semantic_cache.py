@@ -116,10 +116,7 @@ class _SemanticCacheSaver:
         tool_trajectory,
     ):
         # store_context is captured at call-time to avoid thread-local context loss
-        # Ensure context exists
-        context_exist = store_context in unify.get_contexts(prefix=store_context)
-        if not context_exist:
-            unify.create_context(store_context)
+        unify.create_context(store_context)
 
         log_id = unity_log(
             context=store_context,
@@ -422,10 +419,7 @@ def search_semantic_cache(
     global _CONFIG
     store_context = _CONFIG.context
 
-    # Ensure context exists
-    context_exist = store_context in unify.get_contexts(prefix=store_context)
-    if not context_exist:
-        unify.create_context(store_context)
+    unify.create_context(store_context)
 
     # Build distance/similarity expression once for consistent logging and querying
     _escaped = escape_single_quotes(user_message)

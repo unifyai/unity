@@ -20,8 +20,7 @@ def _ensure_project_exists(api_key: str) -> None:
     if _project_verified or not api_key:
         return
     try:
-        if "AssistantJobs" not in unify.list_projects(api_key=api_key):
-            unify.create_project("AssistantJobs", api_key=api_key)
+        unify.create_project("AssistantJobs", api_key=api_key)
         _project_verified = True
     except Exception as e:
         print(f"[debug_logger] Could not verify/create AssistantJobs project: {e}")

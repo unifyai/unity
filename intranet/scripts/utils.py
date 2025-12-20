@@ -52,8 +52,7 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
             unify.delete_context("Traces")
 
     # Always ensure Traces context exists
-    if "Traces" not in unify.get_contexts():
-        unify.create_context("Traces")
+    unify.create_context("Traces")
 
 
 def setup_project_path():

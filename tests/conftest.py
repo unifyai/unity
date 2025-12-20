@@ -346,10 +346,7 @@ def pytest_sessionstart(session):
         # Combined context already prepared externally; skip creation
         pass
     else:
-        try:
-            unify.create_context("Combined")
-        except Exception:
-            pass  # Already exists or transient failure
+        unify.create_context("Combined")
         try:
             unify.create_fields(
                 context="Combined",

@@ -62,24 +62,23 @@ def _ensure_email_logging_context() -> str:
     #         logger.error(f"Error ensuring initialised: {e}")
 
     ctx = "IntranetEmails"  # f"{active_ctx}/IntranetEmails" if active_ctx else "IntranetEmails"
+    unify.create_context(ctx)
     try:
-        if ctx not in unify.get_contexts():
-            unify.create_context(ctx)
-            unify.create_fields(
-                {
-                    "sender_email": {"type": "str", "mutable": True},
-                    "subject": {"type": "str", "mutable": True},
-                    "body": {"type": "str", "mutable": True},
-                    "message_id": {"type": "str", "mutable": True},
-                    "timestamp": {"type": "datetime", "mutable": True},
-                    "answer": {"type": "str", "mutable": True},
-                    "error": {"type": "str", "mutable": True},
-                    "success": {"type": "bool", "mutable": True},
-                },
-                context=ctx,
-            )
+        unify.create_fields(
+            {
+                "sender_email": {"type": "str", "mutable": True},
+                "subject": {"type": "str", "mutable": True},
+                "body": {"type": "str", "mutable": True},
+                "message_id": {"type": "str", "mutable": True},
+                "timestamp": {"type": "datetime", "mutable": True},
+                "answer": {"type": "str", "mutable": True},
+                "error": {"type": "str", "mutable": True},
+                "success": {"type": "bool", "mutable": True},
+            },
+            context=ctx,
+        )
     except Exception as e:
-        logger.error(f"Error ensuring initialised: {e}")
+        logger.error(f"Error creating fields: {e}")
 
     return ctx
 
