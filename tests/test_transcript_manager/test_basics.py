@@ -179,7 +179,7 @@ async def test_get_messages():
     messages = tm._filter_messages(
         filter="medium in ('email', 'sms_message')",
     )["messages"]
-    assert len(messages) == 7
+    assert len(messages) == 10  # All 10 messages are either 'email' or 'sms_message'
     assert all(isinstance(msg, Message) for msg in messages)
 
     # timestamp
