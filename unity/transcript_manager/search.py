@@ -12,7 +12,7 @@ from ..common.search_utils import (
     fetch_top_k_by_terms_with_score,
     fetch_scores_for_ids,
 )
-from ..common.semantic_search import extract_placeholders, ensure_join_context
+from ..common.semantic_search import extract_placeholders
 from .types.message import Message
 from ..contact_manager.types.contact import Contact
 from ..common.embed_utils import ensure_vector_column
@@ -118,34 +118,6 @@ def _classify_terms(
         sender_contact_embed_columns,
         receiver_contact_embed_columns,
         query_hash,
-    )
-
-
-def _build_sender_join_ctx(
-    *,
-    left_ctx: str,
-    right_ctx: str,
-    msg_embed_columns: list[tuple[str, str]],
-    sender_contact_embed_columns: list[tuple[str, str]],
-    query_hash: str,
-) -> str:
-    join_ctx = f"{left_ctx}__sender_join__{query_hash}"
-    select: Dict[str, str] = {}
-    # include all Message fields so we can reconstruct rows without a second fetch
-    for mf in Message.model_fields.keys():
-        select[f"{left_ctx}.{mf}"] = mf
-    for embed_col, _ in msg_embed_columns:
-        select[f"{left_ctx}.{embed_col}"] = embed_col
-    for embed_col, _ in sender_contact_embed_columns:
-        select[f"{right_ctx}.{embed_col}"] = embed_col
-    return ensure_join_context(
-        left_ctx=left_ctx,
-        right_ctx=right_ctx,
-        join_expr=f"{left_ctx}.sender_id is not None and {left_ctx}.sender_id == {right_ctx}.contact_id",
-        new_context=join_ctx,
-        columns=select,
-        mode="inner",
-        copy=True,
     )
 
 
@@ -276,28 +248,81 @@ def search_messages(
         results = [Message(**lg) for lg in rows]
         return format_contacts_and_messages(self, results)
 
-    # 4) Build sender-join context and compute base scores (message + sender)
+    # 4) Compute scores without join - fetch messages and scores separately
     left_ctx = self._transcripts_ctx
     right_ctx = self._contact_manager._ctx
-    sender_join_ctx = _build_sender_join_ctx(
-        left_ctx=left_ctx,
-        right_ctx=right_ctx,
-        msg_embed_columns=msg_embed_columns,
-        sender_contact_embed_columns=sender_contact_embed_columns,
-        query_hash=query_hash,
-    )
-
-    base_terms = list(msg_embed_columns) + list(sender_contact_embed_columns)
 
     candidate_rows: list[dict]
     candidate_score_key = ""
-    if base_terms:
+    if msg_embed_columns or sender_contact_embed_columns:
+        # Avoid problematic join - compute scores from original contexts directly
         oversample = max(k * OVERSAMPLE_FACTOR, BASE_OVERSAMPLE_MIN)
-        candidate_rows, candidate_score_key = fetch_top_k_by_terms_with_score(
-            sender_join_ctx,
-            base_terms,
-            k=oversample,
+
+        # Step 1: Get all messages from Transcripts
+        all_messages = unify.get_logs(
+            context=left_ctx,
+            limit=oversample * 3,  # Fetch more to have room after filtering
+            from_fields=list(Message.model_fields.keys()),
+            sorting={"timestamp": "descending"},
         )
+
+        # Step 2: Compute message-based scores if needed
+        msg_scores: dict[int, float] = {}
+        if msg_embed_columns:
+            msg_ids = [
+                int(lg.entries.get("message_id"))
+                for lg in all_messages
+                if lg.entries.get("message_id") is not None
+            ]
+            if msg_ids:
+                msg_scores, _ = fetch_scores_for_ids(
+                    left_ctx,
+                    msg_embed_columns,
+                    id_field="message_id",
+                    ids=msg_ids,
+                )
+
+        # Step 3: Compute sender contact scores if needed
+        sender_scores: dict[int, float] = {}
+        if sender_contact_embed_columns:
+            # Get unique sender_ids from messages
+            sender_ids = list(
+                set(
+                    int(lg.entries.get("sender_id"))
+                    for lg in all_messages
+                    if lg.entries.get("sender_id") is not None
+                ),
+            )
+            if sender_ids:
+                sender_scores, _ = fetch_scores_for_ids(
+                    right_ctx,
+                    sender_contact_embed_columns,
+                    id_field="contact_id",
+                    ids=sender_ids,
+                )
+
+        # Step 4: Combine scores for each message
+        scored_rows: list[tuple[dict, float]] = []
+        for lg in all_messages:
+            entries = lg.entries
+            mid = entries.get("message_id")
+            sender_id = entries.get("sender_id")
+            if mid is None:
+                continue
+            try:
+                mid_int = int(mid)
+                sender_id_int = int(sender_id) if sender_id is not None else None
+            except Exception:
+                continue
+            # Sum the scores (lower is better for cosine distance)
+            total_score = msg_scores.get(mid_int, 0.0)
+            if sender_id_int is not None:
+                total_score += sender_scores.get(sender_id_int, 0.0)
+            scored_rows.append((entries, total_score))
+
+        # Sort by combined score (ascending - lower distance is better)
+        scored_rows.sort(key=lambda x: x[1])
+        candidate_rows = [row for row, _ in scored_rows[:oversample]]
     else:
         # Receiver-only: rank contacts then pull messages containing them
         top_contacts_limit = max(k * TOP_CONTACTS_FACTOR, TOP_CONTACTS_MIN)
