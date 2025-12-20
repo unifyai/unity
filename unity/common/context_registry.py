@@ -161,6 +161,11 @@ class ContextRegistry:
           - {UserName}/All/{suffix} - all assistants for this user
           - All/{suffix}            - all users, all assistants
 
+        For test contexts (starting with "tests/"), the aggregation contexts are
+        scoped to the test root for proper isolation:
+          - {test_root}/{UserName}/All/{suffix}
+          - {test_root}/All/{suffix}
+
         These contexts:
         - Have the same fields as the source context (for consistent querying)
         - Include private fields (_user, _user_id, _assistant, _assistant_id)
@@ -169,20 +174,51 @@ class ContextRegistry:
         parts = target_name.split("/")
         if len(parts) < 3:
             return
-        user_ctx = parts[0]
-        suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
 
-        # Two aggregation contexts: user-level and global
-        all_ctxs = [
-            (
-                f"{user_ctx}/All/{suffix}",
-                f"Aggregation of {table.name} across all assistants for this user",
-            ),
-            (
-                f"All/{suffix}",
-                f"Global aggregation of {table.name} across all users and assistants",
-            ),
-        ]
+        # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
+        # Find the User position by looking for "DefaultUser" marker
+        if parts[0] == "tests":
+            from unity.session_details import DEFAULT_USER_CONTEXT
+
+            try:
+                user_idx = parts.index(DEFAULT_USER_CONTEXT)
+            except ValueError:
+                # Can't determine structure without the DefaultUser marker
+                return
+
+            # Need at least User/Assistant/Suffix after the test root
+            if user_idx + 2 >= len(parts):
+                return
+
+            test_root = "/".join(parts[:user_idx])
+            user_ctx = parts[user_idx]
+            suffix = "/".join(parts[user_idx + 2 :])
+
+            all_ctxs = [
+                (
+                    f"{test_root}/{user_ctx}/All/{suffix}",
+                    f"Aggregation of {table.name} across all assistants for this user",
+                ),
+                (
+                    f"{test_root}/All/{suffix}",
+                    f"Global aggregation of {table.name} across all users and assistants",
+                ),
+            ]
+        else:
+            # Production path: User/Assistant/Suffix
+            user_ctx = parts[0]
+            suffix = "/".join(parts[2:])
+
+            all_ctxs = [
+                (
+                    f"{user_ctx}/All/{suffix}",
+                    f"Aggregation of {table.name} across all assistants for this user",
+                ),
+                (
+                    f"All/{suffix}",
+                    f"Global aggregation of {table.name} across all users and assistants",
+                ),
+            ]
 
         for all_ctx, description in all_ctxs:
             # Idempotent creation: try to create, tolerate if already exists
