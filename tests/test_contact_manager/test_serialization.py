@@ -293,7 +293,7 @@ async def test_deserialize_and_continue_ask_with_interjection():
         m
         for m in hist
         if isinstance(m, dict)
-        and m.get("role") == "system"
+        and m.get("role") == "user"
         and interjection_text in str(m.get("content", ""))
     ]
     assert len(seen) == 1
@@ -328,7 +328,7 @@ async def test_deserialize_and_continue_update_before_nested_with_interjection()
         m
         for m in hist
         if isinstance(m, dict)
-        and m.get("role") == "system"
+        and m.get("role") == "user"
         and interjection_text in str(m.get("content", ""))
     ]
     assert len(seen) == 1
@@ -371,7 +371,7 @@ async def test_deserialize_and_continue_update_then_ask_nested_with_interjection
         m
         for m in hist
         if isinstance(m, dict)
-        and m.get("role") == "system"
+        and m.get("role") == "user"
         and interjection_text in str(m.get("content", ""))
     ]
     assert len(seen) == 1
