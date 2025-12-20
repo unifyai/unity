@@ -277,3 +277,84 @@ def test_deleting_function_removes_from_all_ctxs():
         assert (
             len(all_logs_after) == 0
         ), f"Function should be removed from {all_ctx} after deletion"
+
+
+@_handle_project
+def test_update_syncs_to_all_aggregation_contexts():
+    """Updating a function should be immediately visible in all aggregation contexts."""
+    fm = FunctionManager()
+
+    # Create a function with initial docstring
+    src = '''def update_sync_func(x):
+    """Original docstring."""
+    return x + 1
+'''
+    result = fm.add_functions(implementations=src)
+    assert result == {"update_sync_func": "added"}
+
+    listing = fm.list_functions()
+    function_id = listing["update_sync_func"]["function_id"]
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(fm._compositional_ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify initial docstring in all contexts
+    for ctx in [fm._compositional_ctx, *all_ctxs]:
+        log = _get_raw_log_by_function_id(ctx, function_id)
+        assert log is not None, f"Log should exist in {ctx}"
+        assert (
+            log.entries.get("docstring") == "Original docstring."
+        ), f"Initial docstring in {ctx}"
+
+    # Update the function's docstring
+    fm._update_custom_function(function_id, {"docstring": "Updated docstring."})
+
+    # Verify the update is immediately visible in ALL contexts (primary + aggregations)
+    for ctx in [fm._compositional_ctx, *all_ctxs]:
+        log = _get_raw_log_by_function_id(ctx, function_id)
+        assert log is not None, f"Log should exist in {ctx} after update"
+        assert log.entries.get("docstring") == "Updated docstring.", (
+            f"Updated docstring should be visible in {ctx}. "
+            f"Expected 'Updated docstring.', got '{log.entries.get('docstring')}'"
+        )
+
+
+@_handle_project
+def test_log_id_unchanged_after_update():
+    """Updates should modify the existing log entry, not create a new one."""
+    fm = FunctionManager()
+
+    # Create a function
+    src = '''def log_id_test_func(x):
+    """Before update."""
+    return x
+'''
+    result = fm.add_functions(implementations=src)
+    assert result == {"log_id_test_func": "added"}
+
+    listing = fm.list_functions()
+    function_id = listing["log_id_test_func"]["function_id"]
+
+    # Get the original log ID
+    original_log = _get_raw_log_by_function_id(fm._compositional_ctx, function_id)
+    original_log_id = original_log.id
+
+    # Update the function
+    fm._update_custom_function(function_id, {"docstring": "After update."})
+
+    # Verify the log ID is unchanged (in-place update, not delete+create)
+    updated_log = _get_raw_log_by_function_id(fm._compositional_ctx, function_id)
+    assert updated_log.id == original_log_id, (
+        f"Log ID should be unchanged after update. "
+        f"Original: {original_log_id}, After update: {updated_log.id}"
+    )
+
+    # Verify all aggregation contexts still reference the same log ID
+    all_ctxs = _derive_all_contexts(fm._compositional_ctx)
+    for all_ctx in all_ctxs:
+        agg_log = _get_raw_log_by_function_id(all_ctx, function_id)
+        assert agg_log.id == original_log_id, (
+            f"Aggregation context {all_ctx} should still reference the same log. "
+            f"Expected {original_log_id}, got {agg_log.id}"
+        )
