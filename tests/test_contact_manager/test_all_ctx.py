@@ -212,3 +212,122 @@ def test_deleting_contact_removes_from_all_ctxs():
         assert (
             len(all_logs_after) == 0
         ), f"Contact should be removed from {all_ctx} after deletion"
+
+
+@_handle_project
+def test_aggregation_contexts_share_same_log_reference():
+    """All three contexts should point to the exact same log entry (by reference, not copy)."""
+    cm = ContactManager()
+
+    # Create a contact
+    result = cm._create_contact(first_name="RefTest", surname="Contact")
+    contact_id = result["details"]["contact_id"]
+
+    # Get the log from the primary context
+    primary_log = _get_raw_log_by_contact_id(cm._ctx, contact_id)
+    assert primary_log is not None, "Log should exist in primary context"
+    primary_log_id = primary_log.id
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(cm._ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify all aggregation contexts have the SAME log ID (not just same contact_id)
+    for all_ctx in all_ctxs:
+        agg_log = _get_raw_log_by_contact_id(all_ctx, contact_id)
+        assert agg_log is not None, f"Log should exist in {all_ctx}"
+        assert agg_log.id == primary_log_id, (
+            f"Aggregation context {all_ctx} should reference the same log. "
+            f"Expected log.id={primary_log_id}, got log.id={agg_log.id}"
+        )
+
+
+@_handle_project
+def test_update_syncs_to_all_aggregation_contexts():
+    """Updating a contact should be immediately visible in all aggregation contexts."""
+    cm = ContactManager()
+
+    # Create a contact with initial values
+    result = cm._create_contact(first_name="UpdateSync", surname="Original")
+    contact_id = result["details"]["contact_id"]
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(cm._ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify initial surname in all contexts
+    for ctx in [cm._ctx, *all_ctxs]:
+        log = _get_raw_log_by_contact_id(ctx, contact_id)
+        assert log is not None, f"Log should exist in {ctx}"
+        assert log.entries.get("surname") == "Original", f"Initial surname in {ctx}"
+
+    # Update the contact's surname
+    cm.update_contact(contact_id=contact_id, surname="Updated")
+
+    # Verify the update is immediately visible in ALL contexts (primary + aggregations)
+    for ctx in [cm._ctx, *all_ctxs]:
+        log = _get_raw_log_by_contact_id(ctx, contact_id)
+        assert log is not None, f"Log should exist in {ctx} after update"
+        assert log.entries.get("surname") == "Updated", (
+            f"Updated surname should be visible in {ctx}. "
+            f"Expected 'Updated', got '{log.entries.get('surname')}'"
+        )
+
+
+@_handle_project
+def test_multiple_updates_sync_to_all_contexts():
+    """Multiple sequential updates should all be reflected in aggregation contexts."""
+    cm = ContactManager()
+
+    # Create a contact
+    result = cm._create_contact(first_name="MultiUpdate", surname="Alpha")
+    contact_id = result["details"]["contact_id"]
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(cm._ctx)
+
+    # Perform multiple updates (surnames must be valid - no digits)
+    updates = ["Beta", "Gamma", "Delta"]
+    for new_surname in updates:
+        cm.update_contact(contact_id=contact_id, surname=new_surname)
+
+        # After each update, verify all contexts reflect the change
+        for ctx in [cm._ctx, *all_ctxs]:
+            log = _get_raw_log_by_contact_id(ctx, contact_id)
+            assert log.entries.get("surname") == new_surname, (
+                f"After update to '{new_surname}', context {ctx} shows "
+                f"'{log.entries.get('surname')}'"
+            )
+
+
+@_handle_project
+def test_log_id_unchanged_after_update():
+    """Updates should modify the existing log entry, not create a new one."""
+    cm = ContactManager()
+
+    # Create a contact
+    result = cm._create_contact(first_name="SameLogId", surname="Before")
+    contact_id = result["details"]["contact_id"]
+
+    # Get the original log ID
+    original_log = _get_raw_log_by_contact_id(cm._ctx, contact_id)
+    original_log_id = original_log.id
+
+    # Update the contact
+    cm.update_contact(contact_id=contact_id, surname="After")
+
+    # Verify the log ID is unchanged (in-place update, not delete+create)
+    updated_log = _get_raw_log_by_contact_id(cm._ctx, contact_id)
+    assert updated_log.id == original_log_id, (
+        f"Log ID should be unchanged after update. "
+        f"Original: {original_log_id}, After update: {updated_log.id}"
+    )
+
+    # Verify all aggregation contexts still reference the same log ID
+    all_ctxs = _derive_all_contexts(cm._ctx)
+    for all_ctx in all_ctxs:
+        agg_log = _get_raw_log_by_contact_id(all_ctx, contact_id)
+        assert agg_log.id == original_log_id, (
+            f"Aggregation context {all_ctx} should still reference the same log. "
+            f"Expected {original_log_id}, got {agg_log.id}"
+        )
