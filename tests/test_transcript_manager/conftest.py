@@ -383,7 +383,6 @@ def tm_scenario(request: pytest.FixtureRequest):
         except Exception as _exc:
             pass
 
-    unify.unset_context()
     yield sb.tm, _ID_BY_NAME
 
 
@@ -401,5 +400,8 @@ def tm_manager_scenario(tm_scenario):
     scenario_names = list(SCENARIO_COMMIT_HASHES.keys())
     if scenario_names:
         unify.map(rollback_context, scenario_names, mode="asyncio")
+
+    # Re-set the scenario context to ensure nested operations work
+    unify.set_context("tests/test_transcript_manager/Scenario", relative=False)
 
     yield tm, _ID_BY_NAME

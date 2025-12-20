@@ -523,7 +523,6 @@ async def test_clarification_request(
     )
 
 
-@_handle_project
 @pytest.mark.asyncio
 async def test_ask_uses_reduce_for_numeric_aggregation(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
