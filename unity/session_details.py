@@ -58,6 +58,7 @@ class UserDetails:
     name: str = ""
     number: str = ""
     email: str = ""
+    contact_id: int = 1  # Contact ID in Contacts table
 
 
 @dataclass
