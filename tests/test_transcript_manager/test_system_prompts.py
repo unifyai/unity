@@ -79,49 +79,60 @@ def test_ask_system_prompt_formatting():
     assert set(tools_json.keys()) == set(tools.keys())
     assert "Tools (name" in prompt
 
-    # Counts line should reflect the real number of messages
-    m = re.search(
-        r"There are currently\s+(\d+)\s+messages\s+stored in a table with the following sections:",
-        prompt,
-    )
-    assert m, "Missing counts/sections line"
+    # Schema-based two-table info: count line + data architecture
+    m = re.search(r"There are currently\s+(\d+)\s+messages\.", prompt)
+    assert m, "Missing counts line"
     assert int(m.group(1)) == tm._num_messages()
 
-    assert "Transcript columns" in prompt
-    assert (
-        "Sender contact columns (fields available on the Contacts table for the message sender)"
-        in prompt
-    )
+    # Two-table architecture explanation (references schemas)
+    assert "Data architecture:" in prompt
+    assert "**Transcripts table**" in prompt
+    assert "**Contacts table**" in prompt
+    assert "Columns defined in the Message schema above" in prompt
+    assert "Columns defined in the Contact schema above" in prompt
+
+    # Schemas rendered early
+    assert "Schemas" in prompt
+    assert "Contact = " in prompt
+    assert "Message = " in prompt
+
+    # Two-table reasoning guidance
     assert "Two-table reasoning:" in prompt
     assert "`search_messages`" in prompt and "`filter_messages`" in prompt
+
+    # Standard blocks
     assert "Images policy (when images are present)" in prompt
     assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
+
     # Clarification top sentence (no clarification tool provided → else-policy)
     assert re.search(
         r"Do not ask the user questions in your final response\..*sensible defaults",
         prompt,
         re.S,
     )
-    # Schemas and shorthand sections
-    assert "Schemas" in prompt
+
+    # Shorthand sections
     assert "Message field shorthand (full → shorthand)" in prompt
     assert "Message field shorthand (shorthand → full)" in prompt
 
-    # Ordering checks (build the dynamic counts line fragment)
-    counts_line = f"There are currently {tm._num_messages()} messages stored in a table with the following sections:"
+    # Ordering checks - schemas appear early, special blocks (two-table info) appear late
+    counts_line = f"There are currently {tm._num_messages()} messages."
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
             "Two-table reasoning:",
-            counts_line,
+            "Schemas",
+            "Contact = ",
+            "Message = ",
             "Tools (name",
             "Examples",
             "Images policy (when images are present)",
             "Images forwarding to nested tools",
             "Parallelism and single",
-            "Schemas",
+            counts_line,  # special_blocks come after parallelism
+            "Data architecture:",
             "Current UTC time is ",
         ],
     )
