@@ -125,7 +125,7 @@ class _SemanticCacheSaver:
             tool_trajectory=tool_trajectory,
         )
 
-        embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}')"
+        embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}', async_embeddings=False)"
         unify.create_derived_logs(
             context=store_context,
             key=_USER_MESSAGE_EMBEDDING_FIELD_NAME,
@@ -423,7 +423,7 @@ def search_semantic_cache(
 
     # Build distance/similarity expression once for consistent logging and querying
     _escaped = escape_single_quotes(user_message)
-    metric_expr = f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{_escaped}', model='{_CONFIG.embedding_model}'))"
+    metric_expr = f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{_escaped}', model='{_CONFIG.embedding_model}', async_embeddings=False))"
     # NOTE: On this backend, `cosine(a,b)` acts like a distance (lower is better).
     # We keep candidates with distance <= threshold and sort ascending so exact/close matches win.
     filter_expr = f"({metric_expr} <= {_CONFIG.threshold})"
