@@ -421,7 +421,6 @@ def search_semantic_cache(
 
     unify.create_context(store_context)
 
-    # Build distance/similarity expression once for consistent logging and querying
     _escaped = escape_single_quotes(user_message)
     metric_expr = f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{_escaped}', model='{_CONFIG.embedding_model}', async_embeddings=False))"
     # NOTE: On this backend, `cosine(a,b)` acts like a distance (lower is better).
@@ -454,41 +453,41 @@ def semantic_search_placeholder(user_message: str):
     """
     Search a semantic cache for prior solutions relevant to the given user_message.
 
-    Workflow:
-    1. Performs a semantic search over cached user messages using embeddings keyed by the
-       provided user_message.
-    2. Returns the ordered tool trajectory previously used to answer a similar message.
-       For each step, the result_status is either "new" or "cached", and the original order is preserved.
-    3. If the result_status is "new", the tool is re-executed with the stored arguments to compute
-       fresh results (avoiding stale data), and the original order is preserved.
-    4. If the result_status is "cached", the tool is not re-executed, and the result is the cached result from previous run.
+    Returns a tool trajectory from a similar past query. Each tool in the trajectory
+    has a `result_status` field:
 
-    Usage guidance:
-    - Prefer these returned results over issuing new tool calls for the same purpose.
-    - The tools may or may not fully resolve the request; use judgment to synthesize an
-      answer from these results before deciding to call additional tools.
+    - "fresh": The tool was AUTOMATICALLY RE-EXECUTED just now with up-to-date data.
+      The result is CURRENT and ACCURATE. Do NOT call this tool again — the fresh
+      result is already provided and calling it would be redundant.
+
+    - "stale": The tool was NOT re-executed (e.g., it has side effects). The result
+      is from a previous run and may be outdated. You may need to call this tool
+      yourself if you need current data.
+
+    IMPORTANT: For tools with result_status="fresh", the data is guaranteed current.
+    There is NO reason to call these tools again. Use the provided results directly.
 
     Input: user_message (str)
-    Output: List[dict] with entries of the form {"name", "arguments", "result", "result_status"}, in execution order.
+    Output: List[dict] with {"name", "arguments", "result", "result_status"}, in order.
     """
 
 
 def get_system_msg_hint() -> str:
     return """
-    You have access to a best-effort semantic cache of prior tool trajectories.
-    For the current user message, the 'semantic_search' tool may return the set of tools that were previously called to answer a similar query, along with already-computed results.
+    You have access to a semantic cache that provides pre-computed tool results.
+    The 'semantic_search' tool returns a trajectory of tools from a similar past query.
 
-    Guidance:
-    - Prefer using those returned results directly when the status is "new", or follow a similar sequence of tools with updated arguments if required, before creating new or unrelated tool calls.
-    - Treat them as latency-saving precomputed outputs to avoid redundant work and reduce time.
-    - If gaps remain or the results do not fully address the request, call only the minimal additional tools needed.
-    - If tools status is "cached", and you need the result, you must call the tool instead of using the cached result.
+    CRITICAL: Each tool result has a `result_status`:
+    - "fresh" = Tool was AUTOMATICALLY RE-EXECUTED with current data. Use this result
+      directly. Do NOT call the tool again — it would be redundant and wasteful.
+    - "stale" = Tool was not re-executed. Result may be outdated. Call if needed.
 
     Rules:
-    - Do not call the 'semantic_search' tool again, it is only used to get the tool trajectory.
-    - Do not call tools that are in the tool trajectory, they are already executed with the same arguments and has the "result_status":"new".
-    - Do NOT state, hint, or imply that you are using a cache, 'semantic_search', prior runs, or precomputed results.
-    - Write answers as if you executed the necessary tools now.
+    1. For result_status="fresh": TRUST the result. It is current. Do NOT re-call.
+    2. For result_status="stale": Call the tool yourself if you need fresh data.
+    3. Only call additional tools if the cached trajectory doesn't cover your needs.
+    4. Never mention the cache, semantic_search, or prior runs to the user.
+    5. Write your answer as if you executed the tools yourself just now.
     """
 
 
@@ -519,7 +518,7 @@ async def _rexecute_tools(tool_trajectory, tools):
     with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
         awaitables_map = {}
         for idx, tool_call in enumerate(history):
-            history[idx]["result_status"] = "cached"  # type: ignore
+            history[idx]["result_status"] = "stale"  # type: ignore
 
             if (tool_name := tool_call.get("name")) in tools:
                 if _is_manager_tool(tools[tool_name]):
@@ -555,7 +554,7 @@ async def _rexecute_tools(tool_trajectory, tools):
             if isinstance(result, Exception):
                 continue
 
-            history[idx]["result_status"] = "new"
+            history[idx]["result_status"] = "fresh"
             history[idx]["result"] = result
 
     return history

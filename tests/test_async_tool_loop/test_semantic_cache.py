@@ -376,10 +376,10 @@ async def test_get_dummy_tool_result_status():
     assert len(trajectory) == number_of_calls
     for tool_call in trajectory:
         if tool_call["name"] == "say_hello":
-            assert tool_call["result_status"] == "new"
+            assert tool_call["result_status"] == "fresh"
 
         if tool_call["name"] == "say_goodbye":
-            assert tool_call["result_status"] == "cached"
+            assert tool_call["result_status"] == "stale"
 
 
 @pytest.mark.asyncio
@@ -409,11 +409,11 @@ async def test_get_dummy_tool_parse_arguments():
     assert trajectory[0]["name"] == "echo"
     assert trajectory[0]["arguments"] == json.dumps({"msgs": ["Hello", "World"]})
     assert trajectory[0]["result"] == ["Hello", "World"]
-    assert trajectory[0]["result_status"] == "new"
+    assert trajectory[0]["result_status"] == "fresh"
 
 
 @pytest.mark.asyncio
-async def test_get_dummy_tool_parse_arguments_cached():
+async def test_get_dummy_tool_parse_arguments_stale():
     @read_only
     def echo():
         pass
@@ -440,7 +440,7 @@ async def test_get_dummy_tool_parse_arguments_cached():
     assert len(trajectory) == 1
     assert trajectory[0]["name"] == "echo"
     assert trajectory[0]["result"] == "Hello!"
-    assert trajectory[0]["result_status"] == "cached"
+    assert trajectory[0]["result_status"] == "stale"
 
 
 @pytest.mark.asyncio
@@ -554,13 +554,13 @@ async def test_semantic_cache_recursive(model, monkeypatch):
         normalise_tools(manager.get_tools("ask")),
     )
 
-    # Walk through the returned tool trajectory, check that the result status is all new
+    # Walk through the returned tool trajectory, check that the result status is all fresh
     def _check_result_status(trajectory):
         if not isinstance(trajectory, list):
             return
         for tool_call in trajectory:
             if isinstance(tool_call, dict) and "result_status" in tool_call.keys():
-                assert tool_call["result_status"] == "new"
+                assert tool_call["result_status"] == "fresh"
                 _check_result_status(tool_call["result"])
 
     _check_result_status(history)
