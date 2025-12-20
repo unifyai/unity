@@ -84,7 +84,7 @@ Log directories use a **datetime-prefixed format** for natural time-based orderi
 ├── 2025-12-05T09-15-22_unity_dev_ttys004/
 ├── 2025-12-05T10-30-45_unity_dev_ttys026/
 ├── 2025-12-05T14-22-18_unity_dev_ttys004/
-└── standalone/
+└── 2025-12-05T15-00-00_unity_dev_ttys042/
 ```
 
 **Environment variables:**

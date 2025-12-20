@@ -29,13 +29,36 @@ _HOOKS_INSTALLED = False
 _LLM_IO_DIR: str | None = None
 
 
+def _derive_socket_name() -> str:
+    """Derive a unique socket name from the terminal's TTY device.
+
+    Mirrors the logic in tests/_shell_common.sh::_derive_socket_name() to ensure
+    consistent naming whether tests are run via parallel_run.sh or directly via pytest.
+
+    Returns:
+        - 'unity_dev_ttysXXX' if running in a TTY (e.g., terminal session)
+        - 'unity_pidXXX' if not running in a TTY (e.g., background process)
+    """
+    import sys
+
+    try:
+        # Try to get the TTY device path (e.g., '/dev/ttys042')
+        tty_path = os.ttyname(sys.stdout.fileno())
+        # Sanitize: /dev/ttys042 -> unity_dev_ttys042
+        tty_id = tty_path.replace("/", "_")
+        return f"unity{tty_id}"
+    except (OSError, AttributeError):
+        # Not a TTY (e.g., piped output, background process)
+        return f"unity_pid{os.getpid()}"
+
+
 def _get_socket_subdir() -> str:
     """Determine the log subdirectory for LLM I/O debug files.
 
     Returns a datetime-prefixed directory name for natural time-based ordering:
         - UNITY_LOG_SUBDIR if set (e.g., '2025-12-05T14-30-45_unity_dev_ttys042')
         - Falls back to UNITY_TEST_SOCKET for legacy compatibility
-        - 'standalone' for direct invocations outside parallel_run.sh
+        - Derives terminal ID for direct pytest invocations (same as parallel_run.sh would)
     """
     # Prefer the datetime-prefixed log subdir if available
     if SETTINGS.UNITY_LOG_SUBDIR:
@@ -43,7 +66,9 @@ def _get_socket_subdir() -> str:
     # Fallback to socket name for backward compatibility
     if SETTINGS.UNITY_TEST_SOCKET:
         return SETTINGS.UNITY_TEST_SOCKET
-    return "standalone"
+    # Derive terminal ID (same logic as _shell_common.sh) for direct pytest invocations
+    socket_name = _derive_socket_name()
+    return f"{datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}_{socket_name}"
 
 
 def _get_repo_root() -> Path:
@@ -73,7 +98,7 @@ def _ensure_io_dir() -> str | None:
     """Ensure the per-session LLM I/O debug directory exists.
 
     Directory structure:
-        .llm_io_debug/{socket_or_standalone}/{session_id}/
+        .llm_io_debug/{datetime}_{socket_name}/{session_id}/
     """
     global _LLM_IO_DIR
     if _LLM_IO_DIR is not None:
