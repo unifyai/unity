@@ -234,3 +234,70 @@ def test_deleting_task_removes_from_all_ctxs():
         assert (
             len(all_logs_after) == 0
         ), f"Task should be removed from {all_ctx} after deletion"
+
+
+@_handle_project
+def test_update_syncs_to_all_aggregation_contexts():
+    """Updating a task should be immediately visible in all aggregation contexts."""
+    ts = TaskScheduler()
+
+    # Create a task with initial values
+    result = ts._create_task(name="UpdateSync Task", description="Original description")
+    task_id = result["details"]["task_id"]
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(ts._ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify initial description in all contexts
+    for ctx in [ts._ctx, *all_ctxs]:
+        log = _get_raw_log_by_task_id(ctx, task_id)
+        assert log is not None, f"Log should exist in {ctx}"
+        assert (
+            log.entries.get("description") == "Original description"
+        ), f"Initial description in {ctx}"
+
+    # Update the task's description
+    ts._update_task(task_id=task_id, description="Updated description")
+
+    # Verify the update is immediately visible in ALL contexts (primary + aggregations)
+    for ctx in [ts._ctx, *all_ctxs]:
+        log = _get_raw_log_by_task_id(ctx, task_id)
+        assert log is not None, f"Log should exist in {ctx} after update"
+        assert log.entries.get("description") == "Updated description", (
+            f"Updated description should be visible in {ctx}. "
+            f"Expected 'Updated description', got '{log.entries.get('description')}'"
+        )
+
+
+@_handle_project
+def test_log_id_unchanged_after_update():
+    """Updates should modify the existing log entry, not create a new one."""
+    ts = TaskScheduler()
+
+    # Create a task
+    result = ts._create_task(name="LogIdTest Task", description="Before update")
+    task_id = result["details"]["task_id"]
+
+    # Get the original log ID
+    original_log = _get_raw_log_by_task_id(ts._ctx, task_id)
+    original_log_id = original_log.id
+
+    # Update the task
+    ts._update_task(task_id=task_id, description="After update")
+
+    # Verify the log ID is unchanged (in-place update, not delete+create)
+    updated_log = _get_raw_log_by_task_id(ts._ctx, task_id)
+    assert updated_log.id == original_log_id, (
+        f"Log ID should be unchanged after update. "
+        f"Original: {original_log_id}, After update: {updated_log.id}"
+    )
+
+    # Verify all aggregation contexts still reference the same log ID
+    all_ctxs = _derive_all_contexts(ts._ctx)
+    for all_ctx in all_ctxs:
+        agg_log = _get_raw_log_by_task_id(all_ctx, task_id)
+        assert agg_log.id == original_log_id, (
+            f"Aggregation context {all_ctx} should still reference the same log. "
+            f"Expected {original_log_id}, got {agg_log.id}"
+        )
