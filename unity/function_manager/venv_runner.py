@@ -30,6 +30,7 @@ The script:
 import asyncio
 import io
 import json
+import signal
 import sys
 import threading
 import traceback
@@ -37,6 +38,43 @@ import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from queue import Queue
 from typing import Any, Dict
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Signal Handling for Graceful Shutdown
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _cleanup_multiprocessing_children() -> None:
+    """Terminate all multiprocessing child processes."""
+    try:
+        import multiprocessing
+
+        # Get all active children and terminate them
+        for child in multiprocessing.active_children():
+            try:
+                child.terminate()
+                child.join(timeout=1.0)
+                if child.is_alive():
+                    child.kill()
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+
+def _sigterm_handler(signum: int, frame: Any) -> None:
+    """Handle SIGTERM signal for graceful shutdown."""
+    _cleanup_multiprocessing_children()
+    # Exit gracefully
+    sys.exit(0)
+
+
+def _setup_signal_handlers() -> None:
+    """Install signal handlers for graceful shutdown."""
+    # Only set up on Unix-like systems
+    if sys.platform != "win32":
+        signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -487,6 +525,9 @@ def run_with_rpc_loop(implementation: str, call_kwargs: dict, is_async: bool) ->
 
 def main():
     """Main entry point for the runner."""
+    # Set up signal handlers for graceful shutdown
+    _setup_signal_handlers()
+
     # Read initial execution request from stdin
     try:
         line = sys.__stdin__.readline()
