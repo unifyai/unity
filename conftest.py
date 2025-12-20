@@ -8,12 +8,27 @@ from datetime import datetime
 # ─────────────────────────────────────────────────────────────────────────────
 # Early Environment Setup (MUST be before any unity/unify imports)
 # ─────────────────────────────────────────────────────────────────────────────
-# Set UNIFY_CACHE_DIR based on this file's location to ensure the LLM cache
-# (.cache.ndjson) is written to the correct repo/worktree, not wherever
-# os.getcwd() happens to point. This must happen before unify is imported
-# because the cache directory is captured at class definition time.
+# Set UNIFY_CACHE_DIR to use the MAIN repo's cache, not the worktree's.
+# This ensures all worktrees share the same LLM cache (.cache.ndjson) for
+# consistent cache hits. This must happen before unify is imported because
+# the cache directory is captured at class definition time.
 if "UNIFY_CACHE_DIR" not in os.environ:
-    os.environ["UNIFY_CACHE_DIR"] = str(Path(__file__).resolve().parent)
+    repo_root = Path(__file__).resolve().parent
+    git_path = repo_root / ".git"
+    # Check if we're in a worktree (.git is a file, not a directory)
+    if git_path.is_file():
+        try:
+            # .git file contains: "gitdir: /path/to/main/.git/worktrees/name"
+            gitdir_line = git_path.read_text().strip()
+            if gitdir_line.startswith("gitdir:"):
+                gitdir = gitdir_line[7:].strip()
+                # Go up from .git/worktrees/name to main repo root
+                main_repo = Path(gitdir).parent.parent.parent
+                if main_repo.exists():
+                    repo_root = main_repo
+        except Exception:
+            pass  # Fall back to current repo root
+    os.environ["UNIFY_CACHE_DIR"] = str(repo_root)
 
 from unity.settings import SETTINGS
 
