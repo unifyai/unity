@@ -21,8 +21,12 @@ Replace direct unify.log/create_logs calls with these wrappers:
 The wrappers automatically:
 - Inject _user, _user_id, _assistant, _assistant_id as private fields
 - Add logs to aggregation contexts by reference (when add_to_all_context=True):
-  - {UserName}/All/{Ctx} - user-level aggregation (all assistants for this user)
-  - All/{Ctx} - global aggregation (all users, all assistants)
+  - {UserName}/All/{Suffix} - user-level aggregation (all assistants for this user)
+  - All/{Suffix} - global aggregation (all users, all assistants)
+
+For test contexts (starting with "tests/"), aggregation is scoped to the test root:
+  - {test_root}/{UserName}/All/{Suffix}
+  - {test_root}/All/{Suffix}
 """
 
 from __future__ import annotations
@@ -93,16 +97,54 @@ def _derive_all_contexts(context: str) -> List[str]:
       - {UserName}/All/{suffix} - all assistants for this user
       - All/{suffix}            - all users, all assistants
 
+    For test contexts (starting with "tests/"), the aggregation contexts are
+    scoped to the test root for proper isolation:
+      - {test_root}/{UserName}/All/{suffix}
+      - {test_root}/All/{suffix}
+
     Examples:
+        Production:
         "JohnDoe/MyAssistant/Contacts" -> ["JohnDoe/All/Contacts", "All/Contacts"]
-        "JohnDoe/Contacts" -> []  (old format, missing user prefix)
-        "Contacts" -> []          (no prefix)
+
+        Testing:
+        "tests/test_foo/DefaultUser/Assistant/Contacts" ->
+            ["tests/test_foo/DefaultUser/All/Contacts", "tests/test_foo/All/Contacts"]
+
+        Invalid (too few parts):
+        "JohnDoe/Contacts" -> []
+        "Contacts" -> []
     """
     parts = context.split("/")
     if len(parts) < 3:
         return []
+
+    # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
+    # Find the User position by looking for "DefaultUser" marker
+    if parts[0] == "tests":
+        from unity.session_details import DEFAULT_USER_CONTEXT
+
+        try:
+            user_idx = parts.index(DEFAULT_USER_CONTEXT)
+        except ValueError:
+            # Can't determine structure without the DefaultUser marker
+            return []
+
+        # Need at least User/Assistant/Suffix after the test root
+        if user_idx + 2 >= len(parts):
+            return []
+
+        test_root = "/".join(parts[:user_idx])
+        user_ctx = parts[user_idx]
+        suffix = "/".join(parts[user_idx + 2 :])
+
+        return [
+            f"{test_root}/{user_ctx}/All/{suffix}",  # User-level aggregation
+            f"{test_root}/All/{suffix}",  # Global aggregation
+        ]
+
+    # Production path: User/Assistant/Suffix
     user_ctx = parts[0]
-    suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
+    suffix = "/".join(parts[2:])
     return [
         f"{user_ctx}/All/{suffix}",  # User-level aggregation
         f"All/{suffix}",  # Global aggregation
