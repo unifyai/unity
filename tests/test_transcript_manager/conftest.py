@@ -85,7 +85,19 @@ class ScenarioBuilder:
 
     # --------------------------------------------------------------------- #
     def _seed_contacts(self) -> None:
+        """Create contacts if they don't already exist (idempotent for parallel runs)."""
         for c in _CONTACTS:
+            # Check if contact already exists by email (unique field)
+            if c.get("email_address"):
+                existing_contacts = self.cm.filter_contacts(
+                    filter=f"email_address == '{c['email_address']}'",
+                )["contacts"]
+                if existing_contacts:
+                    # Contact already exists, just record the ID mapping
+                    assigned_id = existing_contacts[0].contact_id
+                    _ID_BY_NAME[c["first_name"].lower()] = assigned_id
+                    continue
+
             outcome = self.cm._create_contact(**c)
             assigned_id = outcome["details"]["contact_id"]
             _ID_BY_NAME[c["first_name"].lower()] = assigned_id
