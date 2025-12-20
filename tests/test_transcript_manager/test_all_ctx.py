@@ -288,3 +288,92 @@ def test_deleting_message_removes_from_all_ctxs():
         assert (
             len(all_logs_after) == 0
         ), f"Message should be removed from {all_ctx} after deletion"
+
+
+@_handle_project
+def test_update_syncs_to_all_aggregation_contexts():
+    """Updating a message should be immediately visible in all aggregation contexts."""
+    tm = TranscriptManager()
+
+    # Create a message with a specific sender_id
+    msg = Message(
+        medium="email",
+        sender_id=100,
+        receiver_ids=[200],
+        timestamp=datetime.now(UTC),
+        content="Update sync test message",
+        exchange_id=0,
+    )
+    tm.log_messages(msg)
+
+    result = tm._filter_messages(filter="content == 'Update sync test message'")
+    messages = result["messages"]
+    assert len(messages) >= 1
+    message_id = messages[0].message_id
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(tm._transcripts_ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify initial sender_id in all contexts
+    for ctx in [tm._transcripts_ctx, *all_ctxs]:
+        log = _get_raw_log_by_message_id(ctx, message_id)
+        assert log is not None, f"Log should exist in {ctx}"
+        assert log.entries.get("sender_id") == 100, f"Initial sender_id in {ctx}"
+
+    # Update the contact_id from 100 to 999
+    tm.update_contact_id(original_contact_id=100, new_contact_id=999)
+
+    # Verify the update is immediately visible in ALL contexts (primary + aggregations)
+    for ctx in [tm._transcripts_ctx, *all_ctxs]:
+        log = _get_raw_log_by_message_id(ctx, message_id)
+        assert log is not None, f"Log should exist in {ctx} after update"
+        assert log.entries.get("sender_id") == 999, (
+            f"Updated sender_id should be visible in {ctx}. "
+            f"Expected 999, got '{log.entries.get('sender_id')}'"
+        )
+
+
+@_handle_project
+def test_log_id_unchanged_after_update():
+    """Updates should modify the existing log entry, not create a new one."""
+    tm = TranscriptManager()
+
+    # Create a message
+    msg = Message(
+        medium="email",
+        sender_id=101,
+        receiver_ids=[201],
+        timestamp=datetime.now(UTC),
+        content="Log ID test message",
+        exchange_id=0,
+    )
+    tm.log_messages(msg)
+
+    result = tm._filter_messages(filter="content == 'Log ID test message'")
+    messages = result["messages"]
+    assert len(messages) >= 1
+    message_id = messages[0].message_id
+
+    # Get the original log ID
+    original_log = _get_raw_log_by_message_id(tm._transcripts_ctx, message_id)
+    original_log_id = original_log.id
+
+    # Update the contact_id
+    tm.update_contact_id(original_contact_id=101, new_contact_id=888)
+
+    # Verify the log ID is unchanged (in-place update, not delete+create)
+    updated_log = _get_raw_log_by_message_id(tm._transcripts_ctx, message_id)
+    assert updated_log.id == original_log_id, (
+        f"Log ID should be unchanged after update. "
+        f"Original: {original_log_id}, After update: {updated_log.id}"
+    )
+
+    # Verify all aggregation contexts still reference the same log ID
+    all_ctxs = _derive_all_contexts(tm._transcripts_ctx)
+    for all_ctx in all_ctxs:
+        agg_log = _get_raw_log_by_message_id(all_ctx, message_id)
+        assert agg_log.id == original_log_id, (
+            f"Aggregation context {all_ctx} should still reference the same log. "
+            f"Expected {original_log_id}, got {agg_log.id}"
+        )
