@@ -761,16 +761,21 @@ class FunctionManager(BaseFunctionManager):
             entries=[insert_data],
             add_to_all_context=self.include_in_multi_assistant_table,
         )
-        # unity_create_logs returns a dict with log_event_ids
-        log_ids = result.get("log_event_ids", [])
-        if log_ids:
-            logs = unify.get_logs(
-                context=self._compositional_ctx,
-                filter=f"id == {log_ids[0]}",
-                limit=1,
-            )
-            if logs and hasattr(logs[0], "entries"):
-                return logs[0].entries.get("function_id")
+        # unity_create_logs can return either a dict or a list of Log objects
+        if isinstance(result, list) and len(result) > 0:
+            log = result[0]
+            if hasattr(log, "entries"):
+                return log.entries.get("function_id", -1)
+        elif isinstance(result, dict):
+            log_ids = result.get("log_event_ids", [])
+            if log_ids:
+                logs = unify.get_logs(
+                    context=self._compositional_ctx,
+                    filter=f"id == {log_ids[0]}",
+                    limit=1,
+                )
+                if logs and hasattr(logs[0], "entries"):
+                    return logs[0].entries.get("function_id")
         return -1
 
     # ------------------------------------------------------------------ #
@@ -866,16 +871,21 @@ class FunctionManager(BaseFunctionManager):
             entries=[insert_data],
             add_to_all_context=self.include_in_multi_assistant_table,
         )
-        # unity_create_logs returns a dict with log_event_ids
-        log_ids = result.get("log_event_ids", [])
-        if log_ids:
-            logs = unify.get_logs(
-                context=self._venvs_ctx,
-                filter=f"id == {log_ids[0]}",
-                limit=1,
-            )
-            if logs and hasattr(logs[0], "entries"):
-                return logs[0].entries.get("venv_id")
+        # unity_create_logs can return either a dict or a list of Log objects
+        if isinstance(result, list) and len(result) > 0:
+            log = result[0]
+            if hasattr(log, "entries"):
+                return log.entries.get("venv_id", -1)
+        elif isinstance(result, dict):
+            log_ids = result.get("log_event_ids", [])
+            if log_ids:
+                logs = unify.get_logs(
+                    context=self._venvs_ctx,
+                    filter=f"id == {log_ids[0]}",
+                    limit=1,
+                )
+                if logs and hasattr(logs[0], "entries"):
+                    return logs[0].entries.get("venv_id")
         return -1
 
     def sync_custom_venvs(self) -> Dict[str, int]:
@@ -1847,18 +1857,26 @@ class FunctionManager(BaseFunctionManager):
             entries=[{"venv": venv}],
             add_to_all_context=self.include_in_multi_assistant_table,
         )
-        # unity_create_logs returns a dict with log_event_ids
-        log_ids = result.get("log_event_ids", [])
-        if log_ids:
-            logs = unify.get_logs(
-                context=self._venvs_ctx,
-                filter=f"id == {log_ids[0]}",
-                limit=1,
-            )
-            if logs and hasattr(logs[0], "entries"):
-                venv_id = logs[0].entries.get("venv_id")
+        # unity_create_logs can return either a dict or a list of Log objects
+        if isinstance(result, list) and len(result) > 0:
+            # List of Log objects - can extract venv_id directly from entries
+            log = result[0]
+            if hasattr(log, "entries"):
+                venv_id = log.entries.get("venv_id")
                 if venv_id is not None:
                     return venv_id
+        elif isinstance(result, dict):
+            log_ids = result.get("log_event_ids", [])
+            if log_ids:
+                logs = unify.get_logs(
+                    context=self._venvs_ctx,
+                    filter=f"id == {log_ids[0]}",
+                    limit=1,
+                )
+                if logs and hasattr(logs[0], "entries"):
+                    venv_id = logs[0].entries.get("venv_id")
+                    if venv_id is not None:
+                        return venv_id
         raise RuntimeError("Failed to retrieve venv_id after creation")
 
     def get_venv(self, *, venv_id: int) -> Optional[Dict[str, Any]]:
