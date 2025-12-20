@@ -431,11 +431,20 @@ class EventBus:
 
     async def _async_load_subscriptions(self) -> None:
         """Async wrapper around the former blocking `_load_subscriptions`."""
-        rows = await asyncio.to_thread(
-            unify.get_logs,
-            context=self._callbacks_ctx,
-            sorting={"row_id": "ascending"},
-        )
+        try:
+            rows = await asyncio.to_thread(
+                unify.get_logs,
+                context=self._callbacks_ctx,
+                sorting={"row_id": "ascending"},
+            )
+        except Exception as e:
+            # Handle 404 errors gracefully - the context may not exist yet due to
+            # eventual consistency after create_context(). For a newly created
+            # context, having no subscriptions is the expected initial state.
+            if "404" in str(e) or "not found" in str(e).lower():
+                rows = []
+            else:
+                raise
         self._subscriptions = self._rows_to_subscriptions(rows)
 
     # ------------------------------------------------------------------
