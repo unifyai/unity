@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, List
 from unity.events.event_bus import EVENT_BUS
 from unity.common.context_registry import ContextRegistry
+from unity.manager_registry import ManagerRegistry
 from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
 
 from tests.settings import SETTINGS
@@ -245,6 +246,7 @@ class _TestContext:
         self.start_time = time.perf_counter()
 
         unify.set_context(self.ctx, relative=False, skip_create=skip_ctx_create)
+        ManagerRegistry.clear()
         ContextRegistry.clear()
         EVENT_BUS.clear(delete_contexts=False)
 
