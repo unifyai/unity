@@ -9,12 +9,9 @@ from pathlib import Path
 from typing import Any, Callable, List
 from unity.events.event_bus import EVENT_BUS
 from unity.common.context_registry import ContextRegistry
-from unity.session_details import DEFAULT_USER_CONTEXT
+from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
 
 from tests.settings import SETTINGS
-
-# Default assistant context used in test isolation
-DEFAULT_ASSISTANT_CONTEXT = "Assistant"
 
 # Contexts that were pre-created during collection;
 PRECREATED_CONTEXTS: set[str] = set()
