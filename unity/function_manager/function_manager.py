@@ -4,6 +4,8 @@ import inspect
 import functools
 import json
 import os
+import signal
+import sys
 import logging
 from pathlib import Path
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
@@ -2265,12 +2267,18 @@ class FunctionManager(BaseFunctionManager):
         )
 
         # Execute in subprocess with bidirectional communication
+        # Use start_new_session=True to create a new process group, allowing
+        # us to kill all child processes (including multiprocessing workers)
+        # with a single os.killpg() call.
+        # Note: start_new_session is not supported on Windows
+        use_process_group = sys.platform != "win32"
         process = await asyncio.create_subprocess_exec(
             str(python_path),
             str(runner_path),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=use_process_group,
         )
 
         # Send initial execution request
@@ -2359,12 +2367,11 @@ class FunctionManager(BaseFunctionManager):
                         "stderr": msg.get("stderr", "") + "".join(stderr_output),
                     }
 
+        except asyncio.CancelledError:
+            # Task was cancelled (e.g., Actor.stop() was called)
+            # Re-raise after cleanup in finally block
+            raise
         except Exception as e:
-            stderr_task.cancel()
-            try:
-                await stderr_task
-            except asyncio.CancelledError:
-                pass
             return {
                 "result": None,
                 "error": f"RPC error: {e}",
@@ -2372,13 +2379,67 @@ class FunctionManager(BaseFunctionManager):
                 "stderr": "".join(stderr_output),
             }
         finally:
-            # Ensure process is terminated
+            # Cancel stderr reader task
+            stderr_task.cancel()
+            try:
+                await stderr_task
+            except asyncio.CancelledError:
+                pass
+
+            # Ensure process and all its children are terminated
             if process.returncode is None:
-                process.terminate()
+                await self._terminate_process_group(process, use_process_group)
+
+    async def _terminate_process_group(
+        self,
+        process: asyncio.subprocess.Process,
+        use_process_group: bool,
+    ) -> None:
+        """
+        Terminate a subprocess and all its children (process group).
+
+        Sends SIGTERM first for graceful shutdown, then SIGKILL if the process
+        doesn't terminate within the timeout.
+
+        Args:
+            process: The subprocess to terminate.
+            use_process_group: Whether the process was started with start_new_session=True.
+        """
+        try:
+            if use_process_group and process.pid is not None:
+                # Kill the entire process group (subprocess + all its children)
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                    pgid = os.getpgid(process.pid)
+                    # Send SIGTERM for graceful shutdown
+                    os.killpg(pgid, signal.SIGTERM)
+                except (ProcessLookupError, OSError):
+                    # Process already dead or no permission
+                    pass
+            else:
+                # Fall back to terminating just the main process
+                process.terminate()
+
+            # Wait for process to terminate
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                # Process didn't terminate gracefully, force kill
+                if use_process_group and process.pid is not None:
+                    try:
+                        pgid = os.getpgid(process.pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
+                        pass
+                else:
                     process.kill()
+                # Wait for kill to complete
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass
+        except Exception:
+            # Best effort cleanup - don't let cleanup errors propagate
+            pass
 
     def _make_json_serializable(self, obj: Any) -> Any:
         """Convert an object to a JSON-serializable form."""
