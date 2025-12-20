@@ -47,21 +47,7 @@ def prepare_shared_project() -> None:
     unify.set_user_logging(False)
 
     # 2. Ensure Combined context with fields (idempotent)
-    try:
-        existing_contexts = unify.get_contexts(prefix="Combined")
-    except Exception:
-        existing_contexts = []
-
-    if "Combined" not in existing_contexts:
-        try:
-            unify.create_context("Combined")
-        except Exception as e:
-            # Tolerate if already exists (race with another process)
-            if "already exists" not in str(e).lower():
-                print(
-                    f"Note: Combined context creation returned: {e}",
-                    file=sys.stderr,
-                )
+    unify.create_context("Combined")
 
     # Ensure fields exist (idempotent - create_fields tolerates existing fields)
     try:

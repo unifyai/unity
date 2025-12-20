@@ -285,23 +285,15 @@ class EventBus:
                 # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
                 pass
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
-        # Idempotent context creation: tolerates pre-existing contexts and
-        # concurrent creation attempts from parallel processes.
-        try:
-            unify.create_context(self._global_ctx)
-        except Exception:
-            pass  # Already exists or transient failure
+        unify.create_context(self._global_ctx)
 
         # Persisted subscription metadata lives here
         self._callbacks_ctx = f"{self._global_ctx}/_callbacks"
-        try:
-            unify.create_context(
-                self._callbacks_ctx,
-                unique_keys={"row_id": "int"},
-                auto_counting={"row_id": None},
-            )
-        except Exception:
-            pass  # Already exists or transient failure
+        unify.create_context(
+            self._callbacks_ctx,
+            unique_keys={"row_id": "int"},
+            auto_counting={"row_id": None},
+        )
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
@@ -584,12 +576,7 @@ class EventBus:
                 self._specific_ctxs[event_type] = full_ctx
                 # Create the context without any server-side auto-increment so
                 # we can fully control the sequence from the client.
-                # Idempotent: tolerates pre-existing contexts and concurrent
-                # creation attempts from parallel processes.
-                try:
-                    unify.create_context(full_ctx)
-                except Exception:
-                    pass  # Already exists or transient failure
+                unify.create_context(full_ctx)
 
             # Ensure a local counter exists for this event-type
             self._next_row_ids.setdefault(event_type, 0)
