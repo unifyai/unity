@@ -281,3 +281,90 @@ def test_deleting_image_removes_from_all_ctxs():
         assert (
             len(all_logs_after) == 0
         ), f"Image should be removed from {all_ctx} after deletion"
+
+
+@_handle_project
+def test_update_syncs_to_all_aggregation_contexts():
+    """Updating an image should be immediately visible in all aggregation contexts."""
+    im = ImageManager()
+
+    # Create an image with initial values
+    ids = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "Original caption",
+                "data": PNG_RED_B64,
+            },
+        ],
+        synchronous=True,
+    )
+    assert len(ids) >= 1 and ids[0] is not None
+    image_id = ids[0]
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(im._ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify initial caption in all contexts
+    for ctx in [im._ctx, *all_ctxs]:
+        log = _get_raw_log_by_image_id(ctx, image_id)
+        assert log is not None, f"Log should exist in {ctx}"
+        assert (
+            log.entries.get("caption") == "Original caption"
+        ), f"Initial caption in {ctx}"
+
+    # Update the image's caption
+    im.update_images([{"image_id": image_id, "caption": "Updated caption"}])
+
+    # Verify the update is immediately visible in ALL contexts (primary + aggregations)
+    for ctx in [im._ctx, *all_ctxs]:
+        log = _get_raw_log_by_image_id(ctx, image_id)
+        assert log is not None, f"Log should exist in {ctx} after update"
+        assert log.entries.get("caption") == "Updated caption", (
+            f"Updated caption should be visible in {ctx}. "
+            f"Expected 'Updated caption', got '{log.entries.get('caption')}'"
+        )
+
+
+@_handle_project
+def test_log_id_unchanged_after_update():
+    """Updates should modify the existing log entry, not create a new one."""
+    im = ImageManager()
+
+    # Create an image
+    ids = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "Before update",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=True,
+    )
+    assert len(ids) >= 1 and ids[0] is not None
+    image_id = ids[0]
+
+    # Get the original log ID
+    original_log = _get_raw_log_by_image_id(im._ctx, image_id)
+    original_log_id = original_log.id
+
+    # Update the image
+    im.update_images([{"image_id": image_id, "caption": "After update"}])
+
+    # Verify the log ID is unchanged (in-place update, not delete+create)
+    updated_log = _get_raw_log_by_image_id(im._ctx, image_id)
+    assert updated_log.id == original_log_id, (
+        f"Log ID should be unchanged after update. "
+        f"Original: {original_log_id}, After update: {updated_log.id}"
+    )
+
+    # Verify all aggregation contexts still reference the same log ID
+    all_ctxs = _derive_all_contexts(im._ctx)
+    for all_ctx in all_ctxs:
+        agg_log = _get_raw_log_by_image_id(all_ctx, image_id)
+        assert agg_log.id == original_log_id, (
+            f"Aggregation context {all_ctx} should still reference the same log. "
+            f"Expected {original_log_id}, got {agg_log.id}"
+        )
