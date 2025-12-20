@@ -32,8 +32,23 @@ DEFAULT_ASSISTANT_ID = "default-assistant"
 DEFAULT_ASSISTANT_NAME = "assistant"
 DEFAULT_USER_ID = "default"
 DEFAULT_USER_CONTEXT = "DefaultUser"  # Used when USER_NAME not provided
+DEFAULT_ASSISTANT_CONTEXT = "Assistant"  # Used when assistant name not provided
 DEFAULT_VOICE_PROVIDER = "cartesia"
 DEFAULT_VOICE_MODE = "tts"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dummy contact defaults for system contacts (id=0 assistant, id=1 user)
+# Used when no real assistant/user info is available (e.g., offline tests)
+# ─────────────────────────────────────────────────────────────────────────────
+DUMMY_ASSISTANT_FIRST_NAME = "Unify"
+DUMMY_ASSISTANT_SURNAME = "Assistant"
+DUMMY_ASSISTANT_EMAIL = "unify.assistant@unify.ai"
+DUMMY_ASSISTANT_PHONE = "+10000000000"
+DUMMY_ASSISTANT_BIO = "Your helpful Unify AI assistant."
+
+DUMMY_USER_FIRST_NAME = "John"
+DUMMY_USER_SURNAME = "Doe"
+DUMMY_USER_EMAIL = "john.doe@email.com"
 
 
 @dataclass
