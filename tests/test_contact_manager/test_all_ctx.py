@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import unify
 from tests.helpers import _handle_project
 from unity.common.log_utils import _derive_all_contexts
@@ -120,12 +118,15 @@ def test_assistant_id_field_injected():
 
 @_handle_project
 def test_user_id_field_injected():
-    """Logs should have _user_id field when USER_ID env is set."""
+    """Logs should have _user_id field set to user's ID."""
     from unittest.mock import patch
 
     test_user_id = "test-user-456"
 
-    with patch.dict(os.environ, {"USER_ID": test_user_id}):
+    with patch(
+        "unity.common.log_utils._get_user_id",
+        return_value=test_user_id,
+    ):
         cm = ContactManager()
         result = cm._create_contact(first_name="UserIdTest", surname="Injection")
         contact_id = result["details"]["contact_id"]
