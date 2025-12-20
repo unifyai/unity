@@ -18,7 +18,7 @@ Usage:
         print(SESSION_DETAILS.assistant.name)
 
     # All fields have sensible defaults, so no `or "fallback"` is needed
-    name = SESSION_DETAILS.assistant.name  # defaults to "assistant"
+    name = SESSION_DETAILS.assistant.name  # empty string until populated
 """
 
 import os
@@ -26,29 +26,38 @@ from dataclasses import dataclass, field
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Default values - single source of truth
+# Default Assistant Identity
+# Used when no real assistant is configured (offline mode, tests)
 # ─────────────────────────────────────────────────────────────────────────────
 DEFAULT_ASSISTANT_ID = "default-assistant"
-DEFAULT_ASSISTANT_NAME = "assistant"
+DEFAULT_ASSISTANT_FIRST_NAME = "Default"
+DEFAULT_ASSISTANT_SURNAME = "Assistant"
+DEFAULT_ASSISTANT_EMAIL = "assistant@unify.ai"
+DEFAULT_ASSISTANT_PHONE = "+10000000000"
+DEFAULT_ASSISTANT_BIO = "Your helpful AI assistant."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default User Identity
+# Used when no real user is configured (offline mode, tests)
+# ─────────────────────────────────────────────────────────────────────────────
 DEFAULT_USER_ID = "default"
-DEFAULT_USER_CONTEXT = "DefaultUser"  # Used when USER_NAME not provided
-DEFAULT_ASSISTANT_CONTEXT = "Assistant"  # Used when assistant name not provided
+DEFAULT_USER_FIRST_NAME = "Default"
+DEFAULT_USER_SURNAME = "User"
+DEFAULT_USER_EMAIL = "user@example.com"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Context Path Defaults (for Unify context hierarchy)
+# Format: {UserContext}/{AssistantContext}/... e.g., "DefaultUser/DefaultAssistant/Contacts"
+# Values derived from {FirstName}{Surname} for consistency
+# ─────────────────────────────────────────────────────────────────────────────
+DEFAULT_USER_CONTEXT = "DefaultUser"
+DEFAULT_ASSISTANT_CONTEXT = "DefaultAssistant"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice Defaults
+# ─────────────────────────────────────────────────────────────────────────────
 DEFAULT_VOICE_PROVIDER = "cartesia"
 DEFAULT_VOICE_MODE = "tts"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dummy contact defaults for system contacts (id=0 assistant, id=1 user)
-# Used when no real assistant/user info is available (e.g., offline tests)
-# ─────────────────────────────────────────────────────────────────────────────
-DUMMY_ASSISTANT_FIRST_NAME = "Unify"
-DUMMY_ASSISTANT_SURNAME = "Assistant"
-DUMMY_ASSISTANT_EMAIL = "unify.assistant@unify.ai"
-DUMMY_ASSISTANT_PHONE = "+10000000000"
-DUMMY_ASSISTANT_BIO = "Your helpful Unify AI assistant."
-
-DUMMY_USER_FIRST_NAME = "John"
-DUMMY_USER_SURNAME = "Doe"
-DUMMY_USER_EMAIL = "john.doe@email.com"
 
 
 @dataclass
@@ -56,7 +65,7 @@ class AssistantDetails:
     """Details about the assistant."""
 
     id: str = DEFAULT_ASSISTANT_ID
-    name: str = DEFAULT_ASSISTANT_NAME
+    name: str = ""  # Populated from StartupEvent; empty = use defaults
     age: str = ""
     nationality: str = ""
     about: str = ""
@@ -132,11 +141,11 @@ class SessionDetails:
                 first_part = "".join(chunk.capitalize() for chunk in first.split())
                 surname_part = "".join(chunk.capitalize() for chunk in surname.split())
                 return first_part + surname_part
-        # Fall back to assistant.name
+        # Fall back to assistant.name if populated
         name = self.assistant.name
-        if name and name != DEFAULT_ASSISTANT_NAME:
+        if name:
             return "".join(chunk.capitalize() for chunk in name.split())
-        return "Assistant"
+        return DEFAULT_ASSISTANT_CONTEXT
 
     @property
     def user_context(self) -> str:
