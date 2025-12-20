@@ -5,6 +5,16 @@ from typing import Any, Dict, List
 import unify
 
 from ..knowledge_manager.types import ColumnType
+from ..session_details import (
+    DUMMY_ASSISTANT_BIO,
+    DUMMY_ASSISTANT_EMAIL,
+    DUMMY_ASSISTANT_FIRST_NAME,
+    DUMMY_ASSISTANT_PHONE,
+    DUMMY_ASSISTANT_SURNAME,
+    DUMMY_USER_EMAIL,
+    DUMMY_USER_FIRST_NAME,
+    DUMMY_USER_SURNAME,
+)
 
 
 def fetch_assistant_info(self) -> List[Dict[str, Any]]:
@@ -69,11 +79,11 @@ def sync_assistant_contact(self, assistant_log) -> None:
         base_fields["response_policy"] = ""
         base_fields.update(
             {
-                "first_name": "Unify",
-                "surname": "Assistant",
-                "email_address": "unify.assistant@unify.ai",
-                "phone_number": "+10000000000",
-                "bio": "Your helpful Unify AI assistant.",
+                "first_name": DUMMY_ASSISTANT_FIRST_NAME,
+                "surname": DUMMY_ASSISTANT_SURNAME,
+                "email_address": DUMMY_ASSISTANT_EMAIL,
+                "phone_number": DUMMY_ASSISTANT_PHONE,
+                "bio": DUMMY_ASSISTANT_BIO,
                 "rolling_summary": None,
             },
         )
@@ -136,9 +146,9 @@ def fetch_user_info(self) -> Dict[str, Any]:
         return user_info
 
     return {
-        "first_name": "John",
-        "last_name": "Doe",
-        "email": "john.doe@email.com",
+        "first_name": DUMMY_USER_FIRST_NAME,
+        "last_name": DUMMY_USER_SURNAME,
+        "email": DUMMY_USER_EMAIL,
     }
 
 
