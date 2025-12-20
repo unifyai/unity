@@ -47,7 +47,7 @@ When tests run from a worktree (via any method - `parallel_run`, direct `pytest`
 └── ...
 
 /Users/you/unity/.llm_io_debug/
-├── standalone/                               # main repo's own debug logs
+├── 2025-12-05T14-30-45_unity_dev_ttys042/    # main repo's logs (terminal A)
 ├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/.llm_io_debug/
 └── ...
 ```

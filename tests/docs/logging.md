@@ -25,8 +25,8 @@ Directory names follow the format: `YYYY-MM-DDTHH-MM-SS_{socket_name}`
 │   └── test_foo.txt
 ├── 2025-12-05T14-35-00_unity_pid12345/       # Non-interactive shell
 │   └── ...
-└── standalone/                               # Direct pytest runs (no parallel_run)
-    └── test_foo_2025-12-05_14-35-00.txt
+└── 2025-12-05T14-40-00_unity_dev_ttys042/    # Direct pytest from Terminal A (same ID as parallel_run)
+    └── test_foo.txt
 
 .llm_io_debug/
 ├── 2025-12-05T09-15-22_unity_dev_ttys042/    # Same datetime-prefixed structure
