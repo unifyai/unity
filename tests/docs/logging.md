@@ -15,7 +15,7 @@ Directory names follow the format: `YYYY-MM-DDTHH-MM-SS_{socket_name}`
 - The socket name identifies the terminal session for isolation
 
 ```
-.pytest_logs/
+pytest_logs/
 ├── 2025-12-05T09-15-22_unity_dev_ttys042/    # Run at 09:15 from Terminal A
 │   ├── test_contact-test_ask.txt
 │   └── test_task-test_update.txt
@@ -53,24 +53,24 @@ At the end of every test run, a banner shows exactly where logs are:
 
 ```
 ========================================================================
-📄 Test log: /Users/you/unity/.pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/test_foo.txt
-📁 This run's logs: /Users/you/unity/.pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/
-📂 All log directories:  /Users/you/unity/.pytest_logs/*/
+📄 Test log: /Users/you/unity/pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/test_foo.txt
+📁 This run's logs: /Users/you/unity/pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/
+📂 All log directories:  /Users/you/unity/pytest_logs/*/
 ========================================================================
 ```
 
 **Finding recent runs:** Directories are sorted chronologically, so recent runs appear at the bottom of `ls` output:
 ```bash
-ls .pytest_logs/              # Oldest first, newest last
-ls -r .pytest_logs/           # Newest first
+ls pytest_logs/              # Oldest first, newest last
+ls -r pytest_logs/           # Newest first
 ```
 
 **For agents:** Read the terminal output to find the exact log path. The directory name (e.g., `2025-12-05T14-30-22_unity_dev_ttys042`) is printed when tests start via `parallel_run`.
 
 **For cross-run analysis:** Use glob patterns to search across all runs:
 ```bash
-ls .pytest_logs/*/            # List all run directories
-ls .pytest_logs/*/*.txt       # List all log files across all runs
+ls pytest_logs/*/            # List all run directories
+ls pytest_logs/*/*.txt       # List all log files across all runs
 ```
 
 ---

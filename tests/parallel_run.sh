@@ -965,8 +965,8 @@ echo "Created ${#made_sessions[@]} tmux sessions."
 
 echo
 echo "========================================================================"
-echo "📁 Test logs for THIS run: .pytest_logs/$LOG_SUBDIR/"
-echo "📂 All log directories:    .pytest_logs/*/"
+echo "📁 Test logs for THIS run: pytest_logs/$LOG_SUBDIR/"
+echo "📂 All log directories:    pytest_logs/*/"
 echo "========================================================================"
 echo
 echo "Trigger:"
@@ -1047,7 +1047,7 @@ if (( WAIT_FOR_COMPLETION )); then
   done
 
   if (( failures )); then
-    echo "Failures detected. Logs are available in .pytest_logs/$LOG_SUBDIR/"
+    echo "Failures detected. Logs are available in pytest_logs/$LOG_SUBDIR/"
     exit 1
   else
     echo "All tests passed!"

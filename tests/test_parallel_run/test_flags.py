@@ -66,7 +66,7 @@ class TestWaitFlag:
         assert result.exit_code != 0, "Should return non-zero on partial failure"
 
     def test_wait_creates_log_files(self, runner):
-        """--wait should create log files in .pytest_logs/{socket}/."""
+        """--wait should create log files in pytest_logs/{socket}/."""
         result = runner.run(
             "--wait",
             runner.fixture_path("test_always_pass.py"),

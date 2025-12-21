@@ -1,0 +1,64 @@
+---
+description: How to navigate gitignored directories like pytest_logs/
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Navigating Gitignored Directories (pytest_logs/, .llm_io_debug/)
+
+## Tool Behavior Summary
+
+| Tool | Gitignored Dirs | Hidden Dirs (`.xxx`) |
+|------|-----------------|----------------------|
+| **Read** | ✅ Always works | ✅ Always works |
+| **Shell** | ✅ Always works | ✅ Always works |
+| **LS** | ⚠️ May work with direct path | ❌ "no children found" |
+| **Glob** | ❌ Won't find files | ❌ Won't find files |
+| **Grep** | ❌ Won't find matches | ❌ Won't find matches |
+
+## Practical Workflow
+
+**Step 1: Explore directories with Shell**
+```bash
+# List log directories (sorted by time, newest last)
+ls pytest_logs/
+
+# List contents of a specific run
+ls pytest_logs/2025-12-05T14-30-45_unity_dev_ttys042/
+```
+
+**Step 2: Read files with Read tool**
+```
+Read: pytest_logs/2025-12-05T14-30-45_unity_dev_ttys042/test_contact_manager-test_ask.txt
+```
+
+The `Read` tool works perfectly for gitignored files - use it directly once you know the path.
+
+## Key Points
+
+1. **Read always works** - Don't use `cat`; prefer the `Read` tool for file contents
+2. **Shell for exploration** - Use `ls` to discover directory structure and file names
+3. **Glob/Grep are blind** - They use a git-aware index that excludes gitignored paths
+4. **LS is unreliable** - Works sometimes but not consistently for gitignored dirs
+
+## Common Directories
+
+| Directory | Purpose |
+|-----------|---------|
+| `pytest_logs/` | Test output logs (datetime-prefixed subdirs per run) |
+| `.llm_io_debug/` | Raw LLM request/response traces |
+
+## Example: Debugging a Test Failure
+
+```bash
+# 1. Find recent log directories
+ls pytest_logs/
+
+# 2. List logs in the most recent run
+ls pytest_logs/2025-12-21T16-00-00_unity_dev_ttys042/
+```
+
+Then use the Read tool:
+```
+Read: pytest_logs/2025-12-21T16-00-00_unity_dev_ttys042/test_contact_manager-test_ask.txt
+```

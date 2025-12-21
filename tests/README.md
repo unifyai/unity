@@ -30,7 +30,7 @@ All test commands **automatically detect the current git repository** and use th
 
 - ✅ Commands work correctly in **git worktrees** (e.g., Cursor Background Agents)
 - ✅ Tests run against the **current repo's code**, not a hardcoded path
-- ✅ Logs appear in the **current repo's** `.pytest_logs/` directory
+- ✅ Logs appear in the **current repo's** `pytest_logs/` directory
 - ✅ No manual path adjustments needed
 
 **How it works:** When you run `parallel_run`, the shell function checks `git rev-parse --show-toplevel` to find the current repo root, then uses that repo's `tests/parallel_run.sh`. If you're not in a git repo, it falls back to the originally configured path.
@@ -40,10 +40,10 @@ All test commands **automatically detect the current git repository** and use th
 When tests run from a worktree (via any method - `parallel_run`, direct `pytest`, etc.), **symlinks are automatically created** in the main repo's log directories pointing to each worktree's logs:
 
 ```
-/Users/you/unity/.pytest_logs/
+/Users/you/unity/pytest_logs/
 ├── 2025-12-05T14-30-45_unity_dev_ttys042/   # main repo's own logs
-├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/.pytest_logs/
-├── worktree-xyz/  →  ~/.cursor/worktrees/unity/xyz/.pytest_logs/
+├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/pytest_logs/
+├── worktree-xyz/  →  ~/.cursor/worktrees/unity/xyz/pytest_logs/
 └── ...
 
 /Users/you/unity/.llm_io_debug/
@@ -141,8 +141,8 @@ watch_tests                    # Look for f ❌ prefix
 attach 'f ❌ test_contact_manager-test_ask'
 
 # Or check the log file
-ls .pytest_logs/*/             # Find the run directory
-cat .pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/test_contact_manager-test_ask.txt
+ls pytest_logs/*/             # Find the run directory
+cat pytest_logs/2025-12-05T14-30-22_unity_dev_ttys042/test_contact_manager-test_ask.txt
 ```
 
 ### Clean up after tests
