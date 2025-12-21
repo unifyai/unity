@@ -167,6 +167,16 @@ parallel_run --env UNIFY_TESTS_RAND_PROJ=true tests
 grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" tests/
 ```
 
+### Overwrite test scenarios
+
+Some test suites (ContactManager, TranscriptManager, etc.) use pre-seeded scenario data that persists between runs for speed. To delete and recreate these scenarios from scratch:
+
+```bash
+parallel_run --overwrite-scenarios tests/test_contact_manager
+```
+
+Use this when scenario seed data has changed (e.g., new contacts, updated transcript exchanges) and you need to regenerate the cached scenario state.
+
 ---
 
 ## Parallel Runner Quick Reference
@@ -186,6 +196,7 @@ parallel_run -j 8 tests/                         # Limit to 8 concurrent
 parallel_run --eval-only tests/                  # Only eval tests
 parallel_run --env KEY=VALUE tests/              # Set environment variable
 parallel_run --repeat 5 tests/                   # Run each test 5 times
+parallel_run --overwrite-scenarios tests/        # Delete and recreate test scenarios
 ```
 
 See [Parallel Runner Guide](docs/parallel-runner.md) for full documentation.
