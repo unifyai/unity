@@ -169,7 +169,7 @@ class TestAutoClose:
 
 
 class TestLogFiles:
-    """Tests for log file creation in .pytest_logs/{socket}/."""
+    """Tests for log file creation in pytest_logs/{socket}/."""
 
     def test_wait_creates_log_file(self, runner):
         """--wait should create log file for each session."""

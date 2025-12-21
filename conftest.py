@@ -284,7 +284,7 @@ def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
     """Create symlinks in main repo's log directories pointing to worktree's logs.
 
     Creates symlinks like:
-        /main/repo/.pytest_logs/worktree-oty -> /path/to/worktree/oty/.pytest_logs
+        /main/repo/pytest_logs/worktree-oty -> /path/to/worktree/oty/pytest_logs
         /main/repo/.llm_io_debug/worktree-oty -> /path/to/worktree/oty/.llm_io_debug
 
     This lets you browse all worktree logs from the main repo.
@@ -298,7 +298,7 @@ def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
 
     worktree_name = _get_worktree_name(repo_root)
 
-    for log_dir_name in (".pytest_logs", ".llm_io_debug"):
+    for log_dir_name in ("pytest_logs", ".llm_io_debug"):
         main_log_dir = main_repo / log_dir_name
         worktree_log_dir = repo_root / log_dir_name
         symlink_path = main_log_dir / f"worktree-{worktree_name}"
@@ -374,7 +374,7 @@ def pytest_sessionstart(session):
     # Determine subdirectory based on terminal context
     # Directory names are datetime-prefixed for natural time-based ordering
     subdir = _get_log_subdir()
-    logs_dir = root_path / ".pytest_logs" / subdir
+    logs_dir = root_path / "pytest_logs" / subdir
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Derive semantic name from command-line args
@@ -438,7 +438,7 @@ def pytest_unconfigure(config):
         # Use worktree-aware log root for consistent path display
         root_path = _get_log_root(Path(config.rootpath))
         log_file = (
-            _TEE_LOG_PATH or (root_path / ".pytest_logs" / "unknown.txt")
+            _TEE_LOG_PATH or (root_path / "pytest_logs" / "unknown.txt")
         ).resolve()
         subdir = _get_log_subdir()
 
@@ -447,9 +447,9 @@ def pytest_unconfigure(config):
         tr.write_line("=" * 72)
         tr.write_line(f"📄 Test log: {log_file}")
         tr.write_line(
-            f"📁 This run's logs: {root_path / '.pytest_logs' / subdir}/",
+            f"📁 This run's logs: {root_path / 'pytest_logs' / subdir}/",
         )
-        tr.write_line(f"📂 All log directories:  {root_path / '.pytest_logs'}/*/")
+        tr.write_line(f"📂 All log directories:  {root_path / 'pytest_logs'}/*/")
         tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.
     if _TEE_FILE_HANDLE is not None:

@@ -150,7 +150,7 @@ parallel_run --wait 120 tests/my_tests
 - If all pass, exits with code `0`.
 - If any fail, exits with code `1` and lists the failed sessions.
 - If timeout is reached before completion, exits with code `2`.
-- **Logs**: Each session writes its full pytest output to `.pytest_logs/{datetime}_{socket}/`.
+- **Logs**: Each session writes its full pytest output to `pytest_logs/{datetime}_{socket}/`.
 
 **Timeout examples:**
 ```bash
@@ -254,7 +254,7 @@ pytest-xdist works fine for basic parallel execution. However, `parallel_run` pr
 | **Interactive debugging** | `tmux attach -t <session>` to any running/failed test | Output multiplexed across workers; hard to isolate |
 | **Post-failure inspection** | Failed sessions stay open with full scrollback | Just a failure message in terminal |
 | **Visual status** | Real-time `p ✅` / `f ❌` / `r ⏳` per test | Single progress bar |
-| **Log isolation** | Per-run folders in `.pytest_logs/` | Merged output |
+| **Log isolation** | Per-run folders in `pytest_logs/` | Merged output |
 
 **When tmux shines:** Our tests involve complex async LLM tool loops with steering, pausing, resuming, and interjections. When something fails, you need the complete context. Being able to `tmux attach` to a failing test and scroll through its full history is invaluable.
 
