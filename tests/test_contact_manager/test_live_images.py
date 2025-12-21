@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+from typing import Any, Dict, List, Tuple
 import pytest
 
 from unity.contact_manager.contact_manager import ContactManager
@@ -18,6 +19,48 @@ def _load_contact_card_png_b64() -> str:
     with open(img_path, "rb") as f:
         data = f.read()
     return base64.b64encode(data).decode("ascii")
+
+
+def _find_tool_calls_and_results(
+    messages: List[Dict[str, Any]],
+    tool_name: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Find all tool calls with the given name and their corresponding results.
+
+    Handles both sync (direct) and async (check_status_*) tool patterns:
+    - Sync: tool result has tool_call_id == original call id
+    - Async: tool result has tool_call_id == original call id + "_completed"
+
+    Returns:
+        Tuple of (tool_calls, tool_results) where tool_calls are the assistant's
+        invocations and tool_results are the corresponding results.
+    """
+    # Find all tool_calls with the given name
+    tool_calls = []
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            if (tc.get("function") or {}).get("name") == tool_name:
+                tool_calls.append(tc)
+
+    # Find corresponding tool results by matching tool_call_id
+    tool_results = []
+    for tc in tool_calls:
+        call_id = tc.get("id")
+        if not call_id:
+            continue
+        # Look for tool result with matching id (sync) or id_completed (async)
+        for m in messages:
+            if m.get("role") != "tool":
+                continue
+            result_id = m.get("tool_call_id", "")
+            if result_id == call_id or result_id == f"{call_id}_completed":
+                tool_results.append(m)
+                break
+
+    return tool_calls, tool_results
 
 
 @pytest.mark.asyncio
@@ -61,42 +104,31 @@ async def test_lookup_via_image(static_now) -> None:
 
     _final_answer, messages = await handle.result()
 
-    # 1) The image text should be read correctly via ask_image tool results
-    ask_msgs = [
-        m for m in messages if m.get("role") == "tool" and m.get("name") == "ask_image"
-    ]
-
-    # If the model chose to attach the image instead, acknowledge that path too
-    attach_calls = []
-    for m in messages:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = (tc.get("function") or {}).get("name")
-            if fn == "attach_image_raw":
-                attach_calls.append(tc)
+    # 1) Verify the model used ask_image or attach_image_raw to process the image
+    ask_image_calls, ask_image_results = _find_tool_calls_and_results(
+        messages,
+        "ask_image",
+    )
+    attach_image_calls, _ = _find_tool_calls_and_results(messages, "attach_image_raw")
 
     assert (
-        ask_msgs or attach_calls
+        ask_image_calls or attach_image_calls
     ), "Expected the model to use ask_image or attach_image_raw with live images"
 
-    if ask_msgs:
-        all_ask_text = "\n".join(str(m.get("content") or "") for m in ask_msgs).lower()
+    # 2) If ask_image was used, verify the result contains the expected parsed content
+    if ask_image_results:
+        all_ask_text = "\n".join(
+            str(m.get("content") or "") for m in ask_image_results
+        ).lower()
         assert any(
             term in all_ask_text for term in ["david", "smith", "david.smith@gmail.com"]
         ), "Expected ask_image output to include name or email parsed from the card"
 
-    # 2) Verify the assistant attempted a contacts lookup via either filter_contacts or search_contacts
-    lookup_calls = []
-    for m in messages:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = (tc.get("function") or {}).get("name")
-            if fn in ("filter_contacts", "search_contacts"):
-                lookup_calls.append(tc)
+    # 3) Verify the assistant attempted a contacts lookup
+    filter_calls, _ = _find_tool_calls_and_results(messages, "filter_contacts")
+    search_calls, _ = _find_tool_calls_and_results(messages, "search_contacts")
     assert (
-        lookup_calls
+        filter_calls or search_calls
     ), "Expected at least one contacts lookup (filter_contacts or search_contacts)"
 
 
