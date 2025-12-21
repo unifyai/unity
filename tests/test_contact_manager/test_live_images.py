@@ -4,6 +4,7 @@ import base64
 import os
 import pytest
 
+from unity.contact_manager.contact_manager import ContactManager
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
@@ -21,8 +22,8 @@ def _load_contact_card_png_b64() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_lookup_via_image(contact_manager_scenario, static_now) -> None:
-    cm, _ = contact_manager_scenario
+async def test_lookup_via_image(static_now) -> None:
+    cm = ContactManager()
 
     # Persist a real image row and build typed ImageRefs for the loop
     manager = ImageManager()
@@ -101,8 +102,8 @@ async def test_lookup_via_image(contact_manager_scenario, static_now) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_from_image(contact_manager_scenario, static_now) -> None:
-    cm, _ = contact_manager_scenario
+async def test_update_from_image(static_now) -> None:
+    cm = ContactManager()
 
     # Persist image and provide typed ImageRefs
     manager = ImageManager()
