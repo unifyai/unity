@@ -428,3 +428,105 @@ async def capture_events(
             await EVENT_BUS.join_callbacks()
         except Exception:
             pass
+
+
+# ---------- Idempotent Seeding Helpers for Parallel Tests ----------
+#
+# These helpers enable safe parallel execution of tests that share scenario
+# data. The approach is simple: make individual operations idempotent rather
+# than using distributed locks.
+# --------------------------------------------------------------------------
+
+
+def get_or_create_contact(
+    cm: "ContactManager",
+    *,
+    email_address: str,
+    **fields,
+) -> int:
+    """
+    Idempotent contact creation - handles parallel race conditions.
+
+    Strategy: Check first (fast path), then try create. If creation fails
+    due to unique constraint (another process won), query again.
+
+    Args:
+        cm: ContactManager instance
+        email_address: Unique email for deduplication
+        **fields: Additional contact fields (first_name, surname, etc.)
+
+    Returns:
+        The contact_id (existing or newly created)
+    """
+    # Fast path: check if exists
+    existing = cm.filter_contacts(
+        filter=f"email_address == '{email_address}'",
+    )["contacts"]
+    if existing:
+        return existing[0].contact_id
+
+    # Try to create
+    try:
+        result = cm._create_contact(email_address=email_address, **fields)
+        return result["details"]["contact_id"]
+    except (ValueError, Exception) as e:
+        # Unique constraint violation - another process won the race
+        if "unique" in str(e).lower() or "already exists" in str(e).lower():
+            existing = cm.filter_contacts(
+                filter=f"email_address == '{email_address}'",
+            )["contacts"]
+            if existing:
+                return existing[0].contact_id
+        raise
+
+
+def rebuild_id_mapping(
+    cm: "ContactManager",
+    contact_defs: list[dict],
+) -> dict[str, int]:
+    """
+    Rebuild first_name -> contact_id mapping from existing contacts.
+
+    Args:
+        cm: ContactManager instance to query
+        contact_defs: List of contact definitions (with email_address, first_name)
+
+    Returns:
+        Dict mapping lowercase first_name to contact_id
+    """
+    id_by_name: dict[str, int] = {}
+    for c in contact_defs:
+        email = c.get("email_address")
+        first_name = c.get("first_name", "").lower()
+        if email and first_name:
+            existing = cm.filter_contacts(
+                filter=f"email_address == '{email}'",
+            )["contacts"]
+            if existing:
+                id_by_name[first_name] = existing[0].contact_id
+    return id_by_name
+
+
+def is_scenario_seeded(
+    cm: "ContactManager",
+    contact_defs: list[dict],
+) -> bool:
+    """
+    Check if scenario contacts already exist (seeded by another process).
+
+    Args:
+        cm: ContactManager instance to query
+        contact_defs: List of contact definitions to check
+
+    Returns:
+        True if at least one expected contact exists
+    """
+    for c in contact_defs:
+        email = c.get("email_address")
+        if email:
+            existing = cm.filter_contacts(
+                filter=f"email_address == '{email}'",
+            )["contacts"]
+            if existing:
+                return True
+    return False
