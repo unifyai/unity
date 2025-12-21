@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
+from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed, find_tool_calls_and_results
 from tests.helpers import _handle_project
 from tests.settings import SETTINGS
@@ -28,10 +29,7 @@ def _llm_judge_contact_retrieval(
     Uses an LLM to judge if the candidate_answer correctly answers the question,
     focusing on the presence of expected_answer_fragment.
     """
-    judge = unify.Unify(
-        "o4-mini@openai",
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    judge = new_llm_client(async_client=False)
     system_prompt = (
         "You are a meticulous but fair unit-test judge for contact information retrieval. "
         "You will be given a question, an expected key piece of information that the answer should contain, "

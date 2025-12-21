@@ -7,6 +7,7 @@ import unify
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.common.async_tool_loop import AsyncToolLoopHandle
+from unity.common.llm_client import new_llm_client
 
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import _handle_project
@@ -204,12 +205,7 @@ async def test_supports_clarification_channels():
         try:
             q = await asyncio.wait_for(up_q.get(), timeout=3.0)
             assert isinstance(q, str) and q.strip()
-            client = unify.AsyncUnify(
-                "o4-mini@openai",
-                reasoning_effort="high",
-                service_tier="priority",
-                cache=True,
-            )
+            client = new_llm_client()
             client.set_system_message(
                 "You answer clarification questions concisely and specifically. "
                 "Provide concrete parameters (counts, timing, channels) when relevant.",
