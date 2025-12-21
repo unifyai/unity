@@ -373,9 +373,9 @@ async def test_add_bio(
 async def test_set_timezone_hint(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
-    """Ensure the assistant can set utc_offset_hours based on a location hint.
+    """Ensure the assistant can set the timezone field based on a location hint.
 
-    We use a stable, non-DST example (Mumbai, India → UTC+5:30) to avoid ambiguity.
+    We use a stable, non-DST example (Mumbai, India → Asia/Kolkata) to avoid ambiguity.
     """
     cm, _ = contact_manager_scenario
 
@@ -388,12 +388,12 @@ async def test_set_timezone_hint(
 
     # Ask the assistant to ensure the timezone is logged correctly
     request_text = (
-        "Diana Prince lives in Mumbai (UTC+5:30). Can you make sure we've logged "
+        "Diana Prince lives in Mumbai, India. Can you make sure we've logged "
         "her timezone correctly?"
     )
     handle = await cm.update(request_text)
     await handle.result()
 
-    # Verify utc_offset_hours has been set to +5.5
+    # Verify timezone has been set to Asia/Kolkata (Mumbai's IANA timezone)
     updated = cm.filter_contacts(filter=f"contact_id == {diana_id}")["contacts"][0]
-    assert updated.utc_offset_hours == 5.5
+    assert updated.timezone == "Asia/Kolkata"

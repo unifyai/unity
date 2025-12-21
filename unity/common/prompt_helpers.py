@@ -75,11 +75,11 @@ def now(time_only: bool = False) -> str:
     """Return the current timestamp in the assistant's timezone.
 
     The assistant is the system contact with ``contact_id == 0`` in the
-    Contacts table. We derive its ``utc_offset_hours`` and apply that offset
-    relative to UTC. The timezone label is rendered as ``UTC`` or
-    ``UTC±HH:MM`` for non-zero offsets.
+    Contacts table. We read its ``timezone`` field (an IANA timezone
+    identifier like "America/New_York") and convert UTC to local time.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone as dt_timezone
+    from zoneinfo import ZoneInfo
     import unify as _unify
 
     # Resolve Contacts context for the active project
@@ -91,35 +91,32 @@ def now(time_only: bool = False) -> str:
     _contacts_ctx = f"{_read_ctx}/Contacts" if _read_ctx else "Contacts"
 
     # Default to UTC if assistant row/field is unavailable
-    offset_hours: float = 0.0
+    tz_name: str = "UTC"
     try:
         rows = _unify.get_logs(
             context=_contacts_ctx,
             filter="contact_id == 0",
             limit=1,
-            from_fields=["utc_offset_hours"],
+            from_fields=["timezone"],
         )
         if rows:
-            val = rows[0].entries.get("utc_offset_hours")
-            if isinstance(val, (int, float)):
-                offset_hours = float(val)
+            val = rows[0].entries.get("timezone")
+            if isinstance(val, str) and val.strip():
+                tz_name = val.strip()
     except Exception:
         # Best-effort only; fall back to UTC
-        offset_hours = 0.0
+        tz_name = "UTC"
 
-    # Compute local time from UTC and prepare a stable label
-    utc_now = datetime.now(timezone.utc)
-    local_dt = utc_now + timedelta(minutes=int(round(offset_hours * 60)))
-
-    total_minutes = int(round(offset_hours * 60))
-    if total_minutes == 0:
+    # Convert UTC now to the target timezone
+    utc_now = datetime.now(dt_timezone.utc)
+    try:
+        tz_info = ZoneInfo(tz_name)
+        local_dt = utc_now.astimezone(tz_info)
+        label = tz_name
+    except Exception:
+        # Invalid timezone identifier; fall back to UTC
+        local_dt = utc_now
         label = "UTC"
-    else:
-        sign = "+" if total_minutes >= 0 else "-"
-        mm_abs = abs(total_minutes)
-        hh = mm_abs // 60
-        mm = mm_abs % 60
-        label = f"UTC{sign}{hh:02d}:{mm:02d}"
 
     return (
         local_dt.strftime("%H:%M:%S ") + label

@@ -159,19 +159,19 @@ def provision_assistant_contact(self, assistant_log) -> None:
             },
         )
 
-    # Temporary: hard-code system contacts to UTC so a timezone exists for these
+    # Hard-code system contacts to UTC so a timezone exists for these
     # canonical contacts until frontend configuration is available.
-    base_fields["utc_offset_hours"] = 0.0
+    base_fields["timezone"] = "UTC"
 
     if assistant_log is not None:
         try:
             entries = assistant_log.entries
-            current = entries.get("utc_offset_hours")
-            if current != 0.0:
+            current = entries.get("timezone")
+            if current != "UTC":
                 # Only update the timezone field to avoid clobbering other values
                 self.update_contact(
                     contact_id=0,
-                    utc_offset_hours=0.0,
+                    timezone="UTC",
                     _log_id=assistant_log.id,
                 )
             else:
@@ -217,9 +217,9 @@ def provision_user_contact(self, user_log) -> None:
         },
     )
 
-    # Temporary: hard-code system contacts to UTC so a timezone exists for these
+    # Hard-code system contacts to UTC so a timezone exists for these
     # canonical contacts until frontend configuration is available.
-    base_fields["utc_offset_hours"] = 0.0
+    base_fields["timezone"] = "UTC"
 
     extra_fields = {
         k: v
@@ -238,12 +238,12 @@ def provision_user_contact(self, user_log) -> None:
     if user_log is not None:
         try:
             entries = user_log.entries
-            current = entries.get("utc_offset_hours")
-            if current != 0.0:
+            current = entries.get("timezone")
+            if current != "UTC":
                 # Only update the timezone field to avoid clobbering other values
                 self.update_contact(
                     contact_id=1,
-                    utc_offset_hours=0.0,
+                    timezone="UTC",
                     _log_id=user_log.id,
                 )
             else:
