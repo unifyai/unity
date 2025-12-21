@@ -112,10 +112,10 @@ async def test_real_ask_response_format(
 @pytest.mark.asyncio
 @_handle_project
 async def test_real_update_response_format(
-    contact_manager_scenario: tuple[ContactManager, dict],
+    contact_manager_mutation_scenario: tuple[ContactManager, dict],
 ):
     """Real ContactManager.update should return structured output when response_format is provided."""
-    cm, _ = contact_manager_scenario
+    cm, _ = contact_manager_mutation_scenario
 
     handle = await cm.update(
         "Update Alice Smith's notes to mention she prefers email contact",
