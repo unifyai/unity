@@ -184,8 +184,7 @@ def setup_session_context():
     """Set up a session-wide context for all tests in this module."""
     file_path = __file__
     ctx = "/".join(file_path.split("/tests/")[1].split("/"))[:-3]
-    if unify.get_contexts(prefix=ctx):
-        unify.delete_context(ctx)
+    unify.delete_context(ctx)
     with unify.Context(ctx):
         unify.set_trace_context("Traces")
         yield

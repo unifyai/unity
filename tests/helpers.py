@@ -236,12 +236,7 @@ class _TestContext:
         if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
             skip_ctx_create = self.ctx in PRECREATED_CONTEXTS
         elif not self.try_reuse_prev_ctx:
-            # EAFP: Just try to delete - don't check first.
-            # The context may not exist or may have been deleted by a parallel test.
-            try:
-                unify.delete_context(self.ctx)
-            except Exception:
-                pass
+            unify.delete_context(self.ctx)
 
         self.llm_io_before = _list_llm_io_files()
         self.start_time = time.perf_counter()

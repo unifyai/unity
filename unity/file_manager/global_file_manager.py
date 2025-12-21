@@ -298,17 +298,11 @@ class GlobalFileManager(BaseGlobalFileManager):
         - All errors are swallowed to keep ``clear()`` idempotent and safe to call
           in test setup/teardown.
         """
-        # Best‑effort: clear a derived global context if present
-        try:
-            ctxs = unify.get_active_context()
-            read_ctx = ctxs.get("read")
-            global_ctx = f"{read_ctx}/FilesGlobal" if read_ctx else "FilesGlobal"
-            try:
-                unify.delete_context(global_ctx)
-            except Exception:
-                pass
-        except Exception:
-            pass
+        # Clear a derived global context if present
+        ctxs = unify.get_active_context()
+        read_ctx = ctxs.get("read")
+        global_ctx = f"{read_ctx}/FilesGlobal" if read_ctx else "FilesGlobal"
+        unify.delete_context(global_ctx)
 
         # Fan‑out clear to all underlying managers
         try:

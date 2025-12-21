@@ -1302,12 +1302,7 @@ class ImageManager(BaseImageManager):
     # ------------------------------ Maintenance ---------------------------
     @functools.wraps(BaseImageManager.clear, updated=())
     def clear(self) -> None:
-        try:
-            # Drop the entire images table for this active assistant context
-            unify.delete_context(self._ctx)
-        except Exception:
-            # Proceed even if deletion fails (context may already be absent)
-            pass
+        unify.delete_context(self._ctx)
 
         # Ensure the schema exists again via shared provisioning helper
         ContextRegistry.refresh(self, "Images")

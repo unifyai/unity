@@ -78,11 +78,7 @@ def test_count_matches_rows_and_resets():
         ), f"Expected metric to reset to 0 after context deletion, got {_as_int0(metric_reset)} (context={ctx})"
 
     finally:
-        # Best-effort cleanup
-        try:
-            unify.delete_context(ctx)
-        except Exception:
-            pass
+        unify.delete_context(ctx)
 
 
 def test_max_matches_row_ids_and_resets():
@@ -169,7 +165,4 @@ def test_max_matches_row_ids_and_resets():
         ), f"Expected max metric to reset to 0 after context deletion, got {_as_int0(metric_max_reset)} (context={ctx})"
 
     finally:
-        try:
-            unify.delete_context(ctx)
-        except Exception:
-            pass
+        unify.delete_context(ctx)

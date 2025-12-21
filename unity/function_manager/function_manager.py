@@ -490,25 +490,10 @@ class FunctionManager(BaseFunctionManager):
 
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
-        try:
-            unify.delete_context(self._compositional_ctx)
-        except Exception:
-            pass
-
-        try:
-            unify.delete_context(self._primitives_ctx)
-        except Exception:
-            pass
-
-        try:
-            unify.delete_context(self._venvs_ctx)
-        except Exception:
-            pass
-
-        try:
-            unify.delete_context(self._meta_ctx)
-        except Exception:
-            pass
+        unify.delete_context(self._compositional_ctx)
+        unify.delete_context(self._primitives_ctx)
+        unify.delete_context(self._venvs_ctx)
+        unify.delete_context(self._meta_ctx)
 
         # Reset any manager-local counters or caches
         try:

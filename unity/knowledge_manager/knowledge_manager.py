@@ -774,19 +774,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         - Then re-provisions optional linked storage (e.g., Contacts) so future
           calls see a consistent schema.
         """
-        try:
-            km_prefix = f"{self._ctx}/"
-            ctxs = unify.get_contexts(prefix=km_prefix)
-            # Delete all child contexts (tables) under the Knowledge namespace
-            for full_ctx in list(ctxs.keys()):
-                try:
-                    unify.delete_context(full_ctx)
-                except Exception:
-                    # Best-effort delete per context
-                    pass
-        except Exception:
-            # Proceed even if listing/deleting fails
-            pass
+        km_prefix = f"{self._ctx}/"
+        ctxs = unify.get_contexts(prefix=km_prefix)
+        for full_ctx in list(ctxs.keys()):
+            unify.delete_context(full_ctx)
 
         # Re-provision any required/linked storage
 

@@ -331,12 +331,7 @@ class GuidanceManager(BaseGuidanceManager):
 
     @functools.wraps(BaseGuidanceManager.clear, updated=())
     def clear(self) -> None:
-        try:
-            # Drop the entire guidance table for this active assistant context
-            unify.delete_context(self._ctx)
-        except Exception:
-            # Proceed even if deletion fails (context may already be absent)
-            pass
+        unify.delete_context(self._ctx)
 
         # Reset observed custom fields for this manager instance
         try:

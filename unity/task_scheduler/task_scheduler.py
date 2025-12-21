@@ -351,12 +351,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     @functools.wraps(BaseTaskScheduler.clear, updated=())
     def clear(self) -> None:
-        try:
-            # Drop the entire tasks table for this active assistant context
-            unify.delete_context(self._ctx)
-        except Exception:
-            # Proceed even if deletion fails (context may already be absent)
-            pass
+        unify.delete_context(self._ctx)
 
         # Reset local/cached state so subsequent operations see a clean slate
         try:

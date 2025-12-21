@@ -105,9 +105,7 @@ def _chunk_to_text(messages: List[Dict[str, Any]]) -> str:
 
 
 def _clear_contacts() -> None:
-    ctxs = unify.get_contexts()
-    if "Contacts" in ctxs:
-        unify.delete_context("Contacts")
+    unify.delete_context("Contacts")
 
 
 def _clear_knowledge() -> None:

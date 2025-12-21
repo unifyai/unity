@@ -136,11 +136,7 @@ class SecretManager(BaseSecretManager):
 
     @functools.wraps(BaseSecretManager.clear, updated=())
     def clear(self) -> None:
-        try:
-            unify.delete_context(self._ctx)
-        except Exception:
-            # Proceed even if deletion fails (context may already be absent)
-            pass
+        unify.delete_context(self._ctx)
 
         # Force re-provisioning even if previously ensured
         ContextRegistry.refresh(self, "Secrets")
