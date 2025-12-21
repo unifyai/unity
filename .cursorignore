@@ -1,4 +1,16 @@
 # Override .gitignore patterns to include these directories in Cursor indexing
 # These are excluded from git but useful for AI context when debugging tests
+#
+# NOTE: The ! negation syntax is documented to override .gitignore but is known
+# to be buggy (see: forum.cursor.com/t/bug-prefix-in-gitignore-and-cursorignore-is-not-honored)
+# We include these patterns anyway in anticipation of future bug fixes.
+
+# Test output logs
 !pytest_logs/
+!pytest_logs/**
+!pytest_logs/*
+
+# LLM request/response debug traces
 !llm_io_debug/
+!llm_io_debug/**
+!llm_io_debug/*
