@@ -35,6 +35,7 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
         "surname": "Johnson",
         "email_address": "bobbyj@example.net",
         "phone_number": "4445556666",
+        "timezone": "Asia/Tokyo",
     },
     {
         "first_name": "Charlie",
