@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
-from tests.assertion_helpers import assertion_failed
+from tests.assertion_helpers import assertion_failed, find_tool_calls_and_results
 from tests.helpers import _handle_project
 from tests.settings import SETTINGS
 
@@ -388,15 +388,8 @@ async def test_ask_uses_reduce_for_numeric_aggregation(
     answer, steps = await handle.result()
 
     # Assert reduce tool was called
-    reduce_called = any(
-        any(
-            "reduce" in (tc.get("function", {}).get("name", "") or "").lower()
-            for tc in (step.get("tool_calls") or [])
-        )
-        for step in steps
-        if step.get("role") == "assistant"
-    )
-    assert reduce_called, assertion_failed(
+    reduce_calls, _ = find_tool_calls_and_results(steps, "reduce")
+    assert reduce_calls, assertion_failed(
         "reduce tool to be called",
         f"steps without reduce: {[s for s in steps if s.get('role') == 'assistant']}",
         steps,
