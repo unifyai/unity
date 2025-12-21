@@ -543,3 +543,45 @@ async def test_deserialize_replay_nested_loops(caplog):
     assert (
         has_nested_label
     ), "No 'hierarchy_label' like 'ContactManager.update->ContactManager.ask(xxxx)' after resume"
+
+
+@pytest.mark.asyncio
+async def test_litellm_logs_are_suppressed(model, caplog):
+    """
+    Verify that LiteLLM logs are suppressed by our logging configuration.
+
+    LiteLLM creates loggers like 'LiteLLM', 'LiteLLM Proxy', 'LiteLLM Router'.
+    These should be muted to WARNING level so INFO logs don't pollute output.
+    This test catches regressions if LiteLLM changes logger names or adds new ones.
+    """
+    import logging
+
+    # Capture all logs at DEBUG level to ensure we catch everything
+    caplog.set_level(logging.DEBUG)
+
+    def noop_tool() -> str:
+        return "ok"
+
+    client = new_llm_client(model=model)
+    client.set_system_message("Call noop_tool, then reply 'done'.")
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"noop_tool": noop_tool},
+        loop_id="LiteLLMTest",
+        max_steps=5,
+        timeout=60,
+    )
+
+    await handle.result()
+
+    # Check that no log records come from LiteLLM loggers
+    litellm_logs = [
+        record for record in caplog.records if "litellm" in record.name.lower()
+    ]
+
+    assert not litellm_logs, (
+        f"Found {len(litellm_logs)} log(s) from LiteLLM loggers that should be suppressed. "
+        f"Logger names: {sorted(set(r.name for r in litellm_logs))}"
+    )
