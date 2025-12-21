@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List
 import pytest
 
@@ -304,28 +304,12 @@ async def test_stop():
 async def test_parent_context(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
-    # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
+    # The static scenario includes a Dan-Julia basketball phone call on 2025-05-20
+    # (exchange_id=5). This test verifies that when parent context references
+    # "basketball", the LLM can use that to disambiguate and find the correct date.
     tm, _ID_BY_NAME = tm_manager_scenario
-    cid = _ID_BY_NAME
-    t = datetime(2025, 5, 20, 15, 0, tzinfo=timezone.utc)
 
-    for s, r, txt in [
-        (cid["dan"], cid["julia"], "Did you catch the **basketball** game?"),
-        (cid["julia"], cid["dan"], "Absolutely – great conversation!"),
-    ]:
-        tm.log_messages(
-            {
-                "medium": "phone_call",
-                "sender_id": s,
-                "receiver_ids": [r],
-                "timestamp": t.isoformat(),
-                "content": txt,
-                "exchange_id": 99,
-            },
-        )
-    tm.join_published()
-
-    # ── 2.  Outer chat context in which `ask` will be called ────────────
+    # ── 1.  Outer chat context referencing the basketball conversation ────────────
     parent_ctx = [
         {
             "role": "user",
@@ -334,7 +318,7 @@ async def test_parent_context(
         {"role": "assistant", "content": "Me too."},
     ]
 
-    # ── 3.  Call `.ask()` with that context ────────────────────────────
+    # ── 2.  Call `.ask()` with that context ────────────────────────────
     handle = await tm.ask(
         "What date was the conversation referenced in the parent context?",
         _return_reasoning_steps=True,
@@ -342,10 +326,10 @@ async def test_parent_context(
     )
     answer, steps = await handle.result()
 
-    # ── 4.  Assertions ─────────────────────────────────────────────────
+    # ── 3.  Assertions ─────────────────────────────────────────────────
     # a) Broader-context header is present
     assert any(m.get("_ctx_header") for m in steps), "System context header missing."
-    # b) LLM judged answer correct
+    # b) LLM judged answer correct (basketball phone call is dated 2025-05-20)
     expected = "2025-05-20"
     _llm_assert_correct("What date was the conversation?", expected, answer, steps)
 
@@ -360,51 +344,19 @@ async def test_clarification_request(
     `request_clarification` helper.  The question must bubble up via
     `clarification_up_q`; the supplied answer then flows back down and the
     tool use continues to completion.
+
+    The static scenario includes:
+    - A Dan-Julia basketball phone call on 2025-05-20 (exchange_id=5)
+    - A Dan-Julia holiday planning email on 2025-05-25 (exchange_id=6)
     """
 
     tm, _ID_BY_NAME = tm_manager_scenario
 
-    # ── 1.  Seed a short "basketball" conversation on 2025-05-20 ───────────
-    t_conv_basketball = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
-    t_conv_holiday = datetime(2025, 5, 25, 20, 0, tzinfo=timezone.utc)
-    dan, julia = _ID_BY_NAME["dan"], _ID_BY_NAME["julia"]
-
-    for s, r, txt in [
-        (dan, julia, "Did you catch the basketball game last night?"),
-        (julia, dan, "Absolutely – it was great!"),
-    ]:
-        tm.log_messages(
-            {
-                "medium": "phone_call",
-                "sender_id": s,
-                "receiver_ids": [r],
-                "timestamp": t_conv_basketball.isoformat(),
-                "content": txt,
-                "exchange_id": 123,
-            },
-        )
-
-    for s, r, txt in [
-        (dan, julia, "When are you next going on holiday?"),
-        (julia, dan, "I'm hoping to go in August, but lets see what my boss says."),
-    ]:
-        tm.log_messages(
-            {
-                "medium": "email",
-                "sender_id": s,
-                "receiver_ids": [r],
-                "timestamp": t_conv_holiday.isoformat(),
-                "content": txt,
-                "exchange_id": 321,
-            },
-        )
-    tm.join_published()
-
-    # ── 2.  Prepare clarification channels ────────────────────────────────
+    # ── 1.  Prepare clarification channels ────────────────────────────────
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    # ── 3.  Start a dynamic clarification responder (may handle multiple turns) ─
+    # ── 2.  Start a dynamic clarification responder (may handle multiple turns) ─
     saw_first_clarification = asyncio.Event()
 
     original_user_query = (
@@ -415,13 +367,13 @@ async def test_clarification_request(
             "topic": "basketball",
             "medium": "phone_call",
             "date": "2025-05-20",
-            "exchange_id": 123,
+            "exchange_id": 5,
         },
         {
-            "topic": "holiday",
+            "topic": "holiday planning",
             "medium": "email",
             "date": "2025-05-25",
-            "exchange_id": 321,
+            "exchange_id": 6,
         },
     ]
 
@@ -429,8 +381,8 @@ async def test_clarification_request(
         clarifier = new_llm_client(async_client=False)
         clarifier.set_system_message(
             "You are a helpful assistant that answers clarification questions succinctly. "
-            "You know about two possible conversations: a basketball phone call on 2025-05-20 (exchange 123), "
-            "and a holiday email on 2025-05-25 (exchange 321). "
+            "You know about two possible conversations: a basketball phone call on 2025-05-20 (exchange 5), "
+            "and a holiday planning email on 2025-05-25 (exchange 6). "
             "When asked to disambiguate which conversation the user means, prefer the basketball conversation. "
             "Keep responses short and directly disambiguate (e.g., 'The basketball phone call last week.').",
         )
@@ -462,7 +414,7 @@ async def test_clarification_request(
 
     worker_task = asyncio.create_task(_clarification_worker())
 
-    # ── 4.  Call `.ask()` WITHOUT parent context ───────────────────────────
+    # ── 3.  Call `.ask()` WITHOUT parent context ───────────────────────────
     handle = await tm.ask(
         original_user_query,
         _return_reasoning_steps=True,
@@ -473,7 +425,7 @@ async def test_clarification_request(
     # Ensure at least one clarification was requested
     await asyncio.wait_for(saw_first_clarification.wait(), timeout=300)
 
-    # ── 5.  Await final answer and reasoning steps ─────────────────────────
+    # ── 4.  Await final answer and reasoning steps ─────────────────────────
     answer, steps = await handle.result()
 
     # Stop the worker
@@ -483,15 +435,15 @@ async def test_clarification_request(
     except asyncio.CancelledError:
         pass
 
-    # ── 7.  Initial step roles ─────────────────────────
+    # ── 5.  Initial step roles ─────────────────────────
     assert steps[0]["role"] == "system"
     assert steps[1]["role"] == "user"
 
-    # ── 8.  Assistant responds ─────────────────────────
+    # ── 6.  Assistant responds ─────────────────────────
     assert steps[-1]["role"] == "assistant"
     assert steps[-1]["tool_calls"] is None
 
-    # ── 9.  Evaluate – should return the correct date 2025-05-20 ───────────
+    # ── 7.  Evaluate – should return the correct date 2025-05-20 ───────────
     expected = "2025-05-20"
 
     judge = new_llm_client(async_client=False)
