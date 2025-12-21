@@ -1063,26 +1063,13 @@ class EventBus:
 
         # 2. Delete all Unify contexts owned by this EventBus instance
         if delete_contexts:
-            try:
-                # First remove children (…/Events/<TYPE>, …/Events/_callbacks, …)
-                upstream_ctxs = list(unify.get_contexts(prefix=self._global_ctx))
-                for ctx in upstream_ctxs:
-                    try:
-                        unify.delete_context(ctx)
-                    except Exception:
-                        # Context might already have been removed; ignore
-                        pass
+            # First remove children (…/Events/<TYPE>, …/Events/_callbacks, …)
+            upstream_ctxs = list(unify.get_contexts(prefix=self._global_ctx) or [])
+            for ctx in upstream_ctxs:
+                unify.delete_context(ctx)
 
-                # Finally remove the global Events context itself
-                if self._global_ctx in upstream_ctxs:
-                    try:
-                        unify.delete_context(self._global_ctx)
-                    except Exception:
-                        pass
-            except Exception:  # pragma: no cover – defensive
-                # Failing to clean up contexts must not break the reset; we still
-                # proceed with re-initialisation.
-                pass
+            # Finally remove the global Events context itself
+            unify.delete_context(self._global_ctx)
 
         # 3. Re-initialise this *same* instance
         self._get_logger().clear_queue()  # *IMPORTANT* This will IMPACT all instances of EventBus

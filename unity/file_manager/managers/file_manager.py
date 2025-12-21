@@ -2940,28 +2940,15 @@ class FileManager(BaseFileManager):
         # 1) Delete all per-file contexts under the alias root
         try:
             per_file_prefix = str(self._per_file_root)
-            try:
-                ctxs = list(unify.get_contexts(prefix=per_file_prefix))
-            except Exception:
-                ctxs = []
+            ctxs = list(unify.get_contexts(prefix=per_file_prefix) or [])
             for ctx in sorted(ctxs, key=len, reverse=True):
-                try:
-                    unify.delete_context(ctx)
-                except Exception:
-                    continue
-            # Attempt to drop the root itself as well
-            try:
-                unify.delete_context(per_file_prefix)
-            except Exception:
-                pass
+                unify.delete_context(ctx)
+            unify.delete_context(per_file_prefix)
         except Exception:
             pass
 
         # 2) Delete the index context for this filesystem
-        try:
-            unify.delete_context(self._ctx)
-        except Exception:
-            pass
+        unify.delete_context(self._ctx)
 
         try:
             # Drop ensure memo for TableStore if used

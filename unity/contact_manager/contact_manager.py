@@ -331,12 +331,7 @@ class ContactManager(BaseContactManager):
 
     @functools.wraps(BaseContactManager.clear, updated=())
     def clear(self) -> None:
-        try:
-            # Drop the entire contacts table for this active assistant context
-            unify.delete_context(self._ctx)
-        except Exception:
-            # Proceed even if deletion fails (context may already be absent)
-            pass
+        unify.delete_context(self._ctx)
 
         # Clear local cache and custom-field state so subsequent reads/writes
         # operate against a clean slate

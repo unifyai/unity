@@ -46,10 +46,7 @@ def test_reduce_logs_single_key_and_filter():
         )
         assert mean_gt1 == 2.5
     finally:
-        try:
-            unify.delete_context(ctx)
-        except Exception:
-            pass
+        unify.delete_context(ctx)
 
 
 def test_reduce_logs_multi_key_and_group_by():
@@ -80,10 +77,7 @@ def test_reduce_logs_multi_key_and_group_by():
         )
         assert isinstance(grouped_multi, dict)
     finally:
-        try:
-            unify.delete_context(ctx)
-        except Exception:
-            pass
+        unify.delete_context(ctx)
 
 
 def test_reduce_logs_rejects_unsupported_metric():
@@ -96,7 +90,4 @@ def test_reduce_logs_rejects_unsupported_metric():
         except ValueError:
             pass
     finally:
-        try:
-            unify.delete_context(ctx)
-        except Exception:
-            pass
+        unify.delete_context(ctx)

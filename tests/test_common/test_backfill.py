@@ -21,10 +21,7 @@ def test_backfill_assistant_field():
     ctx = "TestAssistant/TestBackfill"
 
     # Create context with required fields
-    try:
-        unify.delete_context(ctx)
-    except Exception:
-        pass
+    unify.delete_context(ctx)
     unify.create_context(ctx)
     unify.create_fields({"name": "str", "_assistant": "str"}, context=ctx)
 
@@ -60,10 +57,7 @@ def test_backfill_assistant_field_empty_context():
     ctx = "TestAssistant/TestBackfillEmpty"
 
     # Create empty context
-    try:
-        unify.delete_context(ctx)
-    except Exception:
-        pass
+    unify.delete_context(ctx)
     unify.create_context(ctx)
     unify.create_fields({"name": "str", "_assistant": "str"}, context=ctx)
 
@@ -78,10 +72,7 @@ def test_backfill_assistant_field_with_filter():
     """Backfill should respect additional filter."""
     ctx = "TestAssistant/TestBackfillFilter"
 
-    try:
-        unify.delete_context(ctx)
-    except Exception:
-        pass
+    unify.delete_context(ctx)
     unify.create_context(ctx)
     unify.create_fields(
         {"name": "str", "category": "str", "_assistant": "str"},
@@ -126,10 +117,7 @@ def test_backfill_all_contexts_for_assistant():
     ctx2 = f"{assistant}/ContextTwo"
 
     for ctx in [ctx1, ctx2]:
-        try:
-            unify.delete_context(ctx)
-        except Exception:
-            pass
+        unify.delete_context(ctx)
         unify.create_context(ctx)
         unify.create_fields({"name": "str", "_assistant": "str"}, context=ctx)
 
@@ -153,10 +141,7 @@ def test_backfill_idempotent():
     """Running backfill twice should not update already-backfilled logs."""
     ctx = "TestAssistant/TestBackfillIdempotent"
 
-    try:
-        unify.delete_context(ctx)
-    except Exception:
-        pass
+    unify.delete_context(ctx)
     unify.create_context(ctx)
     unify.create_fields({"name": "str", "_assistant": "str"}, context=ctx)
 

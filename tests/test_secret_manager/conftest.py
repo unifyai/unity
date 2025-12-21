@@ -14,12 +14,5 @@ def secret_manager_context(request):
     except Exception:
         pass
     yield ctx
-    # Best-effort cleanup
-    try:
-        unify.delete_context(ctx)
-    except Exception:
-        pass
-    try:
-        unify.unset_context()
-    except Exception:
-        pass
+    unify.delete_context(ctx)
+    unify.unset_context()

@@ -278,10 +278,7 @@ class WebSearcher(BaseWebSearcher):
             pass
 
         # Re-provision storage to a clean slate
-        try:
-            unify.delete_context(self._websites_ctx)
-        except Exception:
-            pass
+        unify.delete_context(self._websites_ctx)
 
         ContextRegistry.refresh(self, "Websites")
 

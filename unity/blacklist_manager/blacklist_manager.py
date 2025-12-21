@@ -71,10 +71,7 @@ class BlackListManager(BaseBlackListManager):
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseBlackListManager.clear, updated=())
     def clear(self) -> None:
-        try:
-            unify.delete_context(self._ctx)
-        except Exception:
-            pass
+        unify.delete_context(self._ctx)
 
         # Force re-provisioning by clearing TableStore ensure memo for this context
         ContextRegistry.refresh(self, "BlackList")

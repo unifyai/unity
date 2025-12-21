@@ -222,10 +222,7 @@ def search_join(
             enabled=getattr(self, "_group_results", False),
         )
     finally:
-        try:
-            unify.delete_context(dest_ctx)
-        except Exception:
-            pass
+        unify.delete_context(dest_ctx)
 
 
 def search_multi_join(
@@ -386,10 +383,7 @@ def filter_join(
             exclude_fields=list_private_fields(dest_ctx),
         )
     ]
-    try:
-        unify.delete_context(dest_ctx)
-    except Exception:
-        pass
+    unify.delete_context(dest_ctx)
 
     grouped = maybe_group_rows(
         rows=rows,

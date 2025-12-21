@@ -58,16 +58,9 @@ def num_messages(self) -> int:
 
 
 def clear(self) -> None:
-    """Best-effort deletion of both contexts and re-provision storage."""
-    # Best-effort deletion of both contexts
-    try:
-        unify.delete_context(self._transcripts_ctx)
-    except Exception:
-        pass
-    try:
-        unify.delete_context(self._exchanges_ctx)
-    except Exception:
-        pass
+    """Delete both contexts and re-provision storage."""
+    unify.delete_context(self._transcripts_ctx)
+    unify.delete_context(self._exchanges_ctx)
 
     # No local cache to reset
 

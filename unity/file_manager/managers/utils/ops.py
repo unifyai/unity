@@ -251,32 +251,15 @@ def delete_file_contexts(
     if ingest_mode == "per_file":
         root = safe(file_path)
         ctx = f"{base}/{root}/Content"
-        try:
-            unify.delete_context(ctx)
-        except Exception:
-            try:
-                ids = list(unify.get_logs(context=ctx, return_ids_only=True))
-                if ids:
-                    unify.delete_logs(
-                        logs=ids,
-                        context=ctx,
-                        project=unify.active_project(),
-                        delete_empty_logs=True,
-                    )
-                    purged["content_rows"] += len(ids)
-            except Exception:
-                pass
+        unify.delete_context(ctx)
         if table_ingest:
-            try:
-                prefix = f"{base}/{root}/Tables/"
-                for tctx in (unify.get_contexts(prefix=prefix) or {}).keys():
-                    try:
-                        unify.delete_context(tctx)
-                        purged["tables"] += 1
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            prefix = f"{base}/{root}/Tables/"
+            for tctx in (unify.get_contexts(prefix=prefix) or {}).keys():
+                try:
+                    unify.delete_context(tctx, missing_ok=False)
+                    purged["tables"] += 1
+                except Exception:
+                    pass
     else:
         # unified: delete only rows with matching file_id from unified Content
         uctx = f"{base}/{safe(str(unified_label or 'Unified'))}/Content"
@@ -295,16 +278,13 @@ def delete_file_contexts(
             pass
         if table_ingest:
             root = safe(file_path)
-            try:
-                prefix = f"{base}/{root}/Tables/"
-                for tctx in (unify.get_contexts(prefix=prefix) or {}).keys():
-                    try:
-                        unify.delete_context(tctx)
-                        purged["tables"] += 1
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            prefix = f"{base}/{root}/Tables/"
+            for tctx in (unify.get_contexts(prefix=prefix) or {}).keys():
+                try:
+                    unify.delete_context(tctx, missing_ok=False)
+                    purged["tables"] += 1
+                except Exception:
+                    pass
 
     return {"purged": purged}
 
