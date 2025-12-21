@@ -51,23 +51,34 @@ async def test_max_steps_exceeded(model):
         await handle.result()
 
 
-# ── 2. timeout safeguard ──────────────────────────────────────────────────
+# ── 2. timeout safeguard (guards against hung tools, not slow LLM) ───────────
 @pytest.mark.asyncio
-async def test_timeout_exceeded(model, monkeypatch):
+async def test_timeout_exceeded(model):
+    """Timeout triggers when a TOOL hangs beyond the timeout threshold.
+    The timeout is activity-based and guards against hung tools, not slow LLM.
+
+    The tool takes 5s, much longer than the LLM response (~1s). After the LLM
+    finishes, the timer resets, then we enter 'tools only' mode where the
+    0.5s timeout is enforced. The hung tool triggers the timeout."""
+
+    async def slow_tool():
+        await asyncio.sleep(5)  # Hangs much longer than timeout
+        return "done"
+
     client = new_llm_client(model=model)
-    # Force generate to be slower than timeout using monkeypatch while still calling the real LLM.
-    orig_generate = client.generate
+    # Preseed a tool call so it starts immediately
+    _preseed_tool_call(
+        client,
+        call_id="call_slow_tool",
+        tool_name="slow_tool",
+        args_json="{}",
+    )
 
-    async def _slow_generate(**kwargs):
-        await asyncio.sleep(0.2)
-        return await orig_generate(**kwargs)
-
-    monkeypatch.setattr(client, "generate", _slow_generate, raising=True)
     handle = start_async_tool_loop(
         client,
-        message="hi",
-        tools={},
-        timeout=0.1,  # deliberately tiny
+        message="run slow_tool",
+        tools={"slow_tool": slow_tool},
+        timeout=0.5,  # Tool takes 5s, timeout is 0.5s (after LLM responds)
         max_steps=100,
         raise_on_limit=True,
     )
@@ -436,6 +447,44 @@ async def test_policy_two_required_then_auto(model):
 
     # The tool was called at least twice (guaranteed by "required")
     assert counter["n"] >= 2
+
+
+# ── 9. timeout resets after LLM response (activity-based) ─────────────────────
+@pytest.mark.asyncio
+async def test_timeout_resets_after_llm_response(model, monkeypatch):
+    """Timeout is activity-based: a slow LLM call should NOT trigger timeout
+    as long as the LLM eventually responds. The timeout only guards against
+    hung tools, not slow LLM inference."""
+
+    client = new_llm_client(model=model)
+
+    # Inject delay into the LLM call that exceeds the timeout value.
+    # If timeout were measured from loop start, this would fail.
+    # With activity-based timeout (reset after LLM response), it should pass.
+    orig_generate = client.generate
+    call_count = {"n": 0}
+
+    async def _slow_generate(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First LLM call: delay longer than the timeout
+            await asyncio.sleep(0.3)
+        return await orig_generate(**kwargs)
+
+    monkeypatch.setattr(client, "generate", _slow_generate, raising=True)
+
+    handle = start_async_tool_loop(
+        client,
+        message="Reply with 'done'.",
+        tools={},
+        timeout=0.2,  # Timeout shorter than the LLM delay
+        max_steps=100,
+        raise_on_limit=True,  # Would raise if timeout triggered incorrectly
+    )
+
+    # Should NOT raise TimeoutError - the LLM response resets the timer
+    result = await handle.result()
+    assert "done" in result.lower() or len(result) > 0
 
 
 @pytest.mark.skip(reason="Will only pass once we support the responses API")
