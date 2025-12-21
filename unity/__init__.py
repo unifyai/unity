@@ -71,10 +71,13 @@ def _configure_default_logging() -> None:
         # 1) Keep our project logs visible
         logging.getLogger("unity").setLevel(logging.INFO)
 
-        # 2) Mute common HTTP client libraries
+        # 2) Mute common HTTP client libraries and LLM SDKs
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("openai").setLevel(logging.WARNING)
+        logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+        logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
+        logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
 
         # 3) Only show logs from unity.* loggers
         class _OnlyProject(logging.Filter):
