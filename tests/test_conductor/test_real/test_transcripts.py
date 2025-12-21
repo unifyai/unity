@@ -39,17 +39,9 @@ def _stub_assistant_and_user_sync(monkeypatch):
     # Ensure discovery returns no real assistants
     monkeypatch.setattr(unity, "_list_all_assistants", lambda: [], raising=False)
 
-    # Stub user info fetch to a local, deterministic value for ContactManager
-    monkeypatch.setattr(
-        ContactManager,
-        "_fetch_user_info",
-        lambda self: {
-            "first_name": "John",
-            "last_name": "Doe",
-            "email": "john.doe@example.com",
-        },
-        raising=False,
-    )
+    # Note: With SESSION_DETAILS.is_initialized=False (the default in tests),
+    # _resolve_user_details automatically returns defaults without API calls.
+    # No additional patching needed.
 
 
 # ---------------------------------------------------------------------------
