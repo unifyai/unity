@@ -16,7 +16,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
-from tests.helpers import get_or_create_contact
+from tests.helpers import get_or_create_contact, rebuild_id_mapping, is_scenario_seeded
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -90,6 +90,7 @@ class ScenarioBuilder:
         for c in _CONTACTS:
             email = c.get("email_address")
             if email:
+                # Use race-safe helper that handles parallel creation
                 contact_id = get_or_create_contact(self.cm, **c)
                 _ID_BY_NAME[c["first_name"].lower()] = contact_id
 
@@ -262,119 +263,98 @@ class ScenarioBuilder:
 # --------------------------------------------------------------------------- #
 #  VERSIONED SCENARIO FIXTURE
 # --------------------------------------------------------------------------- #
+
+
+def _commit_contexts_for_rollback(ctx_prefix: str) -> None:
+    """Commit all contexts under prefix for rollback support."""
+    created_contexts = unify.get_contexts(prefix=ctx_prefix)
+    created_context_names = list(created_contexts.keys())
+
+    def commit_context_and_store(ctx_name):
+        try:
+            commit_info = unify.commit_context(
+                name=ctx_name,
+                commit_message="Initial seed data for tests",
+            )
+            SCENARIO_COMMIT_HASHES[ctx_name] = commit_info["commit_hash"]
+        except Exception:
+            pass  # May already be committed
+
+    if created_context_names:
+        unify.map(commit_context_and_store, created_context_names, mode="asyncio")
+
+
+def _rebuild_commit_hashes(ctx_prefix: str) -> None:
+    """Rebuild commit hashes from existing contexts for rollback support."""
+    existing_contexts = unify.get_contexts(prefix=ctx_prefix)
+    for ctx_name in existing_contexts.keys():
+        try:
+            history = unify.get_context_commits(ctx_name)
+            if history:
+                SCENARIO_COMMIT_HASHES[ctx_name] = history[0]["commit_hash"]
+        except Exception:
+            pass
+
+
 @pytest.fixture(scope="session")
 def tm_scenario(request: pytest.FixtureRequest):
     """
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data.
+
+    Uses idempotent seeding - each operation handles its own race conditions:
+    - Contacts are created with get_or_create_contact (race-safe)
+    - If contacts already exist, we just rebuild the ID mapping
+    - No distributed locks needed
     """
     ManagerRegistry.clear()
     ContextRegistry.clear()
     os.environ["TQDM_DISABLE"] = "1"
 
     ctx = "tests/test_transcript_manager/Scenario"
-    unify.set_context(ctx, relative=False)
-    sb = ScenarioBuilder()
-    existing_contexts = unify.get_contexts(prefix=ctx)
-    existing_context_names = list(existing_contexts.keys())
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
-    # If --no-reuse-scenario is explicitly set, override reuse_scenario
+    # If --no-reuse-scenario is explicitly set, delete existing contexts first
     if no_reuse_scenario:
-        reuse_scenario = False
+        existing_contexts = unify.get_contexts(prefix=ctx)
+        existing_context_names = list(existing_contexts.keys())
+        if existing_context_names:
+            unify.map(
+                lambda c: unify.delete_context(c),
+                existing_context_names,
+                mode="asyncio",
+            )
+
+    # Set context before any operations
+    unify.set_context(ctx, relative=False)
+
+    # Create managers
+    cm = ContactManager()
+
+    # Check if scenario is already seeded (by another parallel process)
+    # Must check BOTH contacts AND transcripts to avoid race where contacts exist
+    # but transcript seeding is still in progress
+    transcript_ctx = f"{ctx}/Transcripts"
+    if is_scenario_seeded(cm, _CONTACTS, transcript_context=transcript_ctx):
+        # Scenario exists - just rebuild local state
+        print("Scenario already seeded, rebuilding local state...")
+        tm = TranscriptManager(contact_manager=cm)
+        ids = rebuild_id_mapping(cm, _CONTACTS)
+        _ID_BY_NAME.update(ids)
+        _rebuild_commit_hashes(ctx)
     else:
-        reuse_scenario = True
-
-    if not reuse_scenario:
-        # delete all contexts to freshly create the new scenario
-        def delete_all_contexts(ctx):
-            unify.delete_context(ctx)
-
-        if existing_context_names:
-            unify.map(
-                delete_all_contexts,
-                existing_context_names,
-                mode="asyncio",
-            )
-
-    if reuse_scenario and not SCENARIO_COMMIT_HASHES:
-
-        def get_and_rollback_context(ctx):
-            history = unify.get_context_commits(ctx)
-            if history:
-                unify.rollback_context(
-                    name=ctx,
-                    commit_hash=history[0]["commit_hash"],
-                )
-                SCENARIO_COMMIT_HASHES[ctx] = history[0]["commit_hash"]
-
-        if existing_context_names:
-            unify.map(
-                get_and_rollback_context,
-                existing_context_names,
-                mode="asyncio",
-            )
-
-    # --- One-time setup (per session) ---
-    if not SCENARIO_COMMIT_HASHES:
+        # Scenario not seeded - seed it (using idempotent helpers internally)
         print("Seeding transcript manager scenario...")
-        sb.create()
+        sb = ScenarioBuilder()
+        sb.cm = cm  # Use the ContactManager we already created
+        sb.tm = TranscriptManager(contact_manager=cm)
+        sb._seed_contacts()  # Uses get_or_create_contact - race safe
+        sb._seed_key_exchanges()
+        sb._seed_filler()
+        tm = sb.tm
+        _commit_contexts_for_rollback(ctx)
 
-        def commit_context_and_store(ctx):
-            commit_info = unify.commit_context(
-                name=ctx,
-                commit_message="Initial seed data for tests",
-            )
-            SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
-
-        # After seeding, re-fetch contexts created under the test prefix
-        created_contexts = unify.get_contexts(prefix=ctx)
-        created_context_names = list(created_contexts.keys())
-
-        if created_context_names:
-            unify.map(
-                commit_context_and_store,
-                created_context_names,
-                mode="asyncio",
-            )
-        else:
-            # Fallback: try committing known child contexts if present
-            all_ctxs = unify.get_contexts()
-            for _ctx in [
-                f"{ctx}/Contacts",
-                f"{ctx}/Transcripts",
-            ]:
-                if _ctx in all_ctxs:
-                    commit_context_and_store(_ctx)
-
-    # If we reused an existing scenario (no fresh seeding in this process), the
-    # in-memory name→id map may still be empty. Rebuild it from the Contacts table
-    # so downstream tests (that rely on _ID_BY_NAME) do not fail.
-    if not _ID_BY_NAME:
-        try:
-            # Attempt to read all contacts in the active scenario and populate the map.
-            # We prefer the ContactManager tool to keep logic consistent.
-            contacts_dict = sb.cm.filter_contacts(limit=1000)
-            contacts = (
-                contacts_dict["contacts"]
-                if isinstance(contacts_dict, dict)
-                else contacts_dict
-            )
-            rebuilt: dict[str, int] = {}
-            for c in contacts or []:
-                try:
-                    first = getattr(c, "first_name", None)
-                    cid = getattr(c, "contact_id", None)
-                    if first is not None and cid is not None:
-                        rebuilt[str(first).lower()] = int(cid)
-                except Exception:
-                    continue
-            if rebuilt:
-                _ID_BY_NAME.update(rebuilt)
-        except Exception as _exc:
-            pass
-
-    yield sb.tm, _ID_BY_NAME
+    yield tm, dict(_ID_BY_NAME)
 
 
 @pytest.fixture(scope="function")
