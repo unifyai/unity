@@ -28,7 +28,7 @@ pytest_logs/
 └── 2025-12-05T14-40-00_unity_dev_ttys042/    # Direct pytest from Terminal A (same ID as parallel_run)
     └── test_foo.txt
 
-.llm_io_debug/
+llm_io_debug/
 ├── 2025-12-05T09-15-22_unity_dev_ttys042/    # Same datetime-prefixed structure
 │   └── {session_id}/
 │       └── *.txt
@@ -90,7 +90,7 @@ Every test logs a summary record to the shared `Combined` context within the `Un
 | `test_fpath` | `str` | Test path: `folder/file.py::test_name` |
 | `tags` | `list` | Session-level tags (via `--tags` or `UNIFY_TEST_TAGS`) |
 | `duration` | `float` | Wall-clock time in seconds |
-| `llm_io` | `list` | Full LLM request/response logs (from `.llm_io_debug/` files) |
+| `llm_io` | `list` | Full LLM request/response logs (from `llm_io_debug/` files) |
 | `settings` | `dict` | Complete settings snapshot (production + test-only) |
 
 **Use cases:**
