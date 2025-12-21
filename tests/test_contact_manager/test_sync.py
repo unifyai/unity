@@ -35,27 +35,9 @@ def _clear_cached_assistant(monkeypatch):
         raising=False,
     )
 
-    # 3. Prevent ContactManager from touching the network when synchronising
-    #    the default *user* contact (id == 1). We replace the helper with a
-    #    stub that returns an *empty* dict so no metadata is available but –
-    #    crucially – the call succeeds without needing a real backend.
-    from unity.contact_manager.contact_manager import ContactManager
-    from unity.session_details import (
-        DEFAULT_USER_EMAIL,
-        DEFAULT_USER_FIRST_NAME,
-        DEFAULT_USER_SURNAME,
-    )
-
-    monkeypatch.setattr(
-        ContactManager,
-        "_fetch_user_info",
-        lambda self: {
-            "first_name": DEFAULT_USER_FIRST_NAME,
-            "last_name": DEFAULT_USER_SURNAME,
-            "email": DEFAULT_USER_EMAIL,
-        },
-        raising=False,
-    )
+    # Note: With SESSION_DETAILS.is_initialized=False (the default in tests),
+    # _resolve_user_details automatically returns defaults without API calls.
+    # No additional patching needed.
 
 
 @_handle_project
@@ -68,9 +50,9 @@ def test_dummy_assistant(monkeypatch):
         DEFAULT_ASSISTANT_SURNAME,
     )
 
-    # Force assistant discovery helper to return an empty list (new location)
+    # Force assistant discovery helper to return an empty list
     monkeypatch.setattr(
-        "unity.contact_manager.system_contacts.fetch_assistant_info",
+        "unity.contact_manager.system_contacts._list_assistants",
         lambda self: [],
         raising=True,
     )
@@ -111,7 +93,7 @@ def test_real_assistant(monkeypatch):
     ]
 
     monkeypatch.setattr(
-        "unity.contact_manager.system_contacts.fetch_assistant_info",
+        "unity.contact_manager.system_contacts._list_assistants",
         lambda self: sample_info,
         raising=True,
     )

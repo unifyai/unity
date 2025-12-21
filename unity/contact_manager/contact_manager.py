@@ -39,8 +39,8 @@ from .storage import (
 )
 from .system_contacts import (
     _ensure_columns_exist as _sys_ensure_columns_exist,
-    sync_assistant_contact as _sys_sync_assistant_contact,
-    sync_user_contact as _sys_sync_user_contact,
+    provision_assistant_contact as _sys_provision_assistant_contact,
+    provision_user_contact as _sys_provision_user_contact,
 )
 from .custom_columns import (
     create_custom_column as _cc_create,
@@ -1137,8 +1137,8 @@ class ContactManager(BaseContactManager):
         }
         assistant_log = logs_by_contact_id.get(0)
         user_log = logs_by_contact_id.get(1)
-        _sys_sync_assistant_contact(self, assistant_log)
-        _sys_sync_user_contact(self, user_log)
+        _sys_provision_assistant_contact(self, assistant_log)
+        _sys_provision_user_contact(self, user_log)
 
     # Validation / sanitization
     def _allowed_fields(self) -> list[str]:
