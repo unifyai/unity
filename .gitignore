@@ -19,6 +19,7 @@ test.py
 .env.clean
 dump.rdb
 *venv/
+.venv
 .hypothesis
 .async_trace.html
 .unity_plans
