@@ -563,7 +563,10 @@ run_cmd() {
   # This ensures tmux commands target the correct isolated server
   # Note: LC_ALL=en_US.UTF-8 is required for Unicode emoji support in tmux session names
   # Note: Log paths are now auto-derived by conftest.py using UNITY_TEST_SOCKET + semantic naming
-  inner=$(printf '%s; cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
+  # Inner command runs inside tmux session after pytest completes.
+  # The rename-session uses "|| true" to gracefully handle race conditions
+  # where multiple sessions complete simultaneously or external agents interfere.
+  inner=$(printf '%s; cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base" 2>/dev/null || true; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -608,6 +611,40 @@ unique_session_name() {
 
   # Return with original prefix (if any)
   printf "%s%s" "$prefix" "$candidate"
+}
+
+# Rename session with retry on "duplicate session" errors.
+# Race conditions (e.g., multiple agents, fast-completing tests) can cause
+# the unique_session_name check to pass but the rename to fail. This helper
+# retries with incrementing suffixes until success or max retries.
+rename_session_with_retry() {
+  local sid="$1"
+  local target_name="$2"
+  local max_retries=3
+  local attempt=0
+  local current_name="$target_name"
+
+  while (( attempt < max_retries )); do
+    if tmux_cmd rename-session -t "$sid" "$current_name" 2>/dev/null; then
+      printf "%s" "$current_name"
+      return 0
+    fi
+    # Rename failed - likely duplicate. Add/increment suffix and retry.
+    ((attempt++))
+    # Strip any existing retry suffix and add new one
+    local base="${target_name%-dup[0-9]*}"
+    current_name="${base}-dup${attempt}"
+    sleep 0.1  # Brief delay before retry
+  done
+
+  # All retries failed - log warning but don't crash the script.
+  # The session exists (with unprefixed name), tests will still run.
+  echo "Warning: rename-session failed after $max_retries retries for $target_name" >&2
+  # Return the session's current name (query it since rename failed)
+  local actual_name
+  actual_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "$target_name")
+  printf "%s" "$actual_name"
+  return 0  # Don't fail the script
 }
 
 # Count currently pending (running) sessions in our socket
@@ -977,9 +1014,9 @@ for target in "${files[@]}"; do
   # Capture session ID to track this specific run robustly
   sid=$(tmux_cmd new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
 
+  # Rename to pending state with retry logic for race conditions
   pending_name="$(unique_session_name "r ⏳ $session")"
-  tmux_cmd rename-session -t "$sid" "$pending_name"
-  session="$pending_name"
+  session="$(rename_session_with_retry "$sid" "$pending_name")"
 
   # Print session as it's created (drip-feed)
   echo "  - $session"
