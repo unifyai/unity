@@ -35,4 +35,4 @@ assets/
 discord_messages.md
 .cursor/debug.log
 pytest_logs/
-.llm_io_debug/
+llm_io_debug/

@@ -1,4 +1,4 @@
 # Override .gitignore patterns to include these directories in Cursor indexing
 # These are excluded from git but useful for AI context when debugging tests
 !pytest_logs/
-!.llm_io_debug/
+!llm_io_debug/

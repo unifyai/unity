@@ -1,10 +1,10 @@
 ---
-description: How to navigate gitignored directories like pytest_logs/
+description: How to navigate gitignored directories like pytest_logs/ and llm_io_debug/
 globs: ["**/*"]
 alwaysApply: true
 ---
 
-# Navigating Gitignored Directories (pytest_logs/, .llm_io_debug/)
+# Navigating Gitignored Directories (pytest_logs/, llm_io_debug/)
 
 ## Tool Behavior Summary
 
@@ -46,7 +46,7 @@ The `Read` tool works perfectly for gitignored files - use it directly once you 
 | Directory | Purpose |
 |-----------|---------|
 | `pytest_logs/` | Test output logs (datetime-prefixed subdirs per run) |
-| `.llm_io_debug/` | Raw LLM request/response traces |
+| `llm_io_debug/` | Raw LLM request/response traces |
 
 ## Example: Debugging a Test Failure
 

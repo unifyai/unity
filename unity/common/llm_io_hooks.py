@@ -8,7 +8,7 @@ that is sent to the chat completions endpoint or read from cache.
 Install via :pyfunc:`install_llm_io_hooks` early at startup (called
 automatically from ``unity/__init__.py`` when ``LLM_IO_DEBUG`` is enabled).
 
-The captured payloads are written to ``.llm_io_debug/<session>/`` as text files.
+The captured payloads are written to ``llm_io_debug/<session>/`` as text files.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def _ensure_io_dir() -> str | None:
     """Ensure the per-session LLM I/O debug directory exists.
 
     Directory structure:
-        .llm_io_debug/{datetime}_{socket_name}/{session_id}/
+        llm_io_debug/{datetime}_{socket_name}/{session_id}/
     """
     global _LLM_IO_DIR
     if _LLM_IO_DIR is not None:
@@ -112,7 +112,7 @@ def _ensure_io_dir() -> str | None:
     try:
         # Socket-scoped subdirectory for terminal isolation
         socket_subdir = _get_socket_subdir()
-        root = _get_repo_root() / ".llm_io_debug" / socket_subdir
+        root = _get_repo_root() / "llm_io_debug" / socket_subdir
         root.mkdir(parents=True, exist_ok=True)
         session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", str(SESSION_ID))
         session_dir = root / session_safe
