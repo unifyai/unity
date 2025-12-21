@@ -2844,6 +2844,19 @@ def start_async_tool_loop(
           - False: no logging
           - True: log everything except system messages
           - "full": log everything including system messages
+
+    timeout : int | None, default 300
+        Activity-based timeout in seconds. The timer resets after each
+        observable event (LLM response, tool completion, interjection).
+        This timeout guards against hung user-defined tools, NOT slow LLM
+        inference. LLM providers have their own timeout mechanisms; if an
+        LLM call is in-flight, the loop will wait for it to complete before
+        checking the timeout. When ``None``, no timeout is enforced.
+
+    raise_on_limit : bool, default False
+        If ``True``, raises ``asyncio.TimeoutError`` or ``RuntimeError``
+        when the timeout or max_steps limit is exceeded. If ``False``,
+        the loop terminates gracefully with a summary message.
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
     loop_id = loop_id if loop_id is not None else short_id()

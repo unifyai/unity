@@ -322,6 +322,19 @@ async def async_tool_loop_inner(
           • ``True``  – log everything except system messages
           • ``"full"`` – log everything including system messages
 
+    timeout : ``int | None``, default ``None``
+        Activity-based timeout in seconds. The timer resets after each
+        observable event (LLM response, tool completion, interjection).
+        This timeout guards against hung user-defined tools, NOT slow LLM
+        inference. LLM providers have their own timeout mechanisms; if an
+        LLM call is in-flight, the loop will wait for it to complete before
+        checking the timeout. When ``None``, no timeout is enforced.
+
+    raise_on_limit : ``bool``, default ``False``
+        If ``True``, raises ``asyncio.TimeoutError`` or ``RuntimeError``
+        when the timeout or max_steps limit is exceeded. If ``False``,
+        the loop terminates gracefully with a summary message.
+
     Returns
     -------
     str
@@ -2666,6 +2679,12 @@ async def async_tool_loop_inner(
 
             msg = client.messages[-1]
             await to_event_bus(msg, cfg)
+
+            # LLM responded - reset the activity-based timeout. The timeout is
+            # designed to catch hung tools, not slow LLM inference. LLM providers
+            # have their own timeout mechanisms; our timeout only guards against
+            # user-defined tools that may hang indefinitely.
+            timer.reset()
 
             if log_steps:
                 with suppress(Exception):
