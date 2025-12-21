@@ -201,10 +201,10 @@ def pytest_addoption(parser):
         "leaving LLM calls intact.",
     )
     parser.addoption(
-        "--no-reuse-scenario",
+        "--overwrite-scenarios",
         action="store_true",
         default=False,
-        help="Force fresh scenario creation.",
+        help="Delete and recreate all test scenarios from scratch.",
     )
     parser.addoption(
         "--test-tags",
