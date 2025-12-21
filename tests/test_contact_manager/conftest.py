@@ -124,10 +124,10 @@ def _setup_scenario(
     ContextRegistry.clear()
     os.environ["TQDM_DISABLE"] = "1"
 
-    no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
+    overwrite_scenarios = request.config.getoption("--overwrite-scenarios")
 
-    # If --no-reuse-scenario is explicitly set, delete existing contexts
-    if no_reuse_scenario:
+    # If --overwrite-scenarios is set, delete existing contexts first
+    if overwrite_scenarios:
         existing_contexts = unify.get_contexts(prefix=ctx)
         for ctx_name in existing_contexts.keys():
             unify.delete_context(ctx_name)

@@ -122,10 +122,10 @@ def task_scenario(request: pytest.FixtureRequest):
     ctx = "tests/test_task_scheduler/Scenario"
     unify.set_context(ctx, relative=False)
     existing_contexts = unify.get_contexts(prefix=ctx)
-    no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
+    overwrite_scenarios = request.config.getoption("--overwrite-scenarios")
 
-    # If --no-reuse-scenario is explicitly set, override reuse_scenario
-    if no_reuse_scenario:
+    # If --overwrite-scenarios is set, delete and recreate scenarios
+    if overwrite_scenarios:
         reuse_scenario = False
     else:
         reuse_scenario = True

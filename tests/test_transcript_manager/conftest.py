@@ -349,10 +349,10 @@ def tm_scenario(request: pytest.FixtureRequest):
     os.environ["TQDM_DISABLE"] = "1"
 
     ctx = "tests/test_transcript_manager/Scenario"
-    no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
+    overwrite_scenarios = request.config.getoption("--overwrite-scenarios")
 
-    # If --no-reuse-scenario is explicitly set, delete existing contexts first
-    if no_reuse_scenario:
+    # If --overwrite-scenarios is set, delete existing contexts first
+    if overwrite_scenarios:
         existing_contexts = unify.get_contexts(prefix=ctx)
         existing_context_names = list(existing_contexts.keys())
         if existing_context_names:
