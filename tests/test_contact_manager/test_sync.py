@@ -78,25 +78,24 @@ def test_dummy_assistant(monkeypatch):
 
 @_handle_project
 def test_real_assistant(monkeypatch):
-    """If exactly one assistant is returned by the API, its details should populate contact ID 0."""
+    """If a real assistant is configured, its details should populate contact ID 0."""
+    from unity.session_details import SESSION_DETAILS
 
-    sample_info = [
-        {
-            "agent_id": "123",
-            "first_name": "Alice",
-            "surname": "Smith",
-            "phone": "+15551234567",
-            "email": "alice.smith@example.com",
-            "about": "Helpful assistant",
-            "region": "North America",
-        },
-    ]
+    sample_record = {
+        "agent_id": "123",
+        "first_name": "Alice",
+        "surname": "Smith",
+        "phone": "+15551234567",
+        "email": "alice.smith@example.com",
+        "about": "Helpful assistant",
+        "region": "North America",
+    }
 
-    monkeypatch.setattr(
-        "unity.contact_manager.system_contacts._list_assistants",
-        lambda self: sample_info,
-        raising=True,
-    )
+    # Simulate a real session with an assistant record.
+    # This is how production works: unity.init() sets assistant_record,
+    # which _resolve_assistant_details() then uses to populate the contact.
+    monkeypatch.setattr(SESSION_DETAILS, "_initialized", True)
+    monkeypatch.setattr(SESSION_DETAILS, "assistant_record", sample_record)
 
     cm = ContactManager()
 
