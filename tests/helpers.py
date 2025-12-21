@@ -510,17 +510,24 @@ def rebuild_id_mapping(
 def is_scenario_seeded(
     cm: "ContactManager",
     contact_defs: list[dict],
+    transcript_context: str | None = None,
 ) -> bool:
     """
-    Check if scenario contacts already exist (seeded by another process).
+    Check if scenario data already exists (seeded by another process).
+
+    Checks both contacts AND transcripts to avoid race conditions where
+    contacts are created but transcript seeding is still in progress.
 
     Args:
         cm: ContactManager instance to query
         contact_defs: List of contact definitions to check
+        transcript_context: Optional transcript context path to check for logs
 
     Returns:
-        True if at least one expected contact exists
+        True if scenario appears to be seeded (contacts AND transcripts exist)
     """
+    # Check for contacts
+    contacts_exist = False
     for c in contact_defs:
         email = c.get("email_address")
         if email:
@@ -528,5 +535,20 @@ def is_scenario_seeded(
                 filter=f"email_address == '{email}'",
             )["contacts"]
             if existing:
-                return True
-    return False
+                contacts_exist = True
+                break
+
+    if not contacts_exist:
+        return False
+
+    # If no transcript context specified, just check contacts
+    if not transcript_context:
+        return True
+
+    # Check for transcripts - scenario is only fully seeded if both exist
+    try:
+        logs = unify.get_logs(context=transcript_context, limit=1)
+        return bool(logs)
+    except Exception:
+        # If we can't check transcripts, fall back to contacts-only check
+        return True
