@@ -133,7 +133,7 @@ class ScenarioBuilderContacts:
                         # If name_key already exists, append contact_id to ensure uniqueness
                         _ID_BY_NAME_CONTACTS[f"{name_key}_{contact_id}"] = contact_id
 
-            except ValueError as e:
+            except Exception as e:
                 print(
                     f"Warning: Could not create contact {contact_data.get('first_name')} due to: {e}",
                 )
