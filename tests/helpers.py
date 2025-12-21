@@ -4,6 +4,7 @@ import inspect
 import sys
 import time
 import traceback
+import os
 from os import sep
 from pathlib import Path
 from typing import Any, Callable, List
@@ -435,6 +436,10 @@ async def capture_events(
 # These helpers enable safe parallel execution of tests that share scenario
 # data. The approach is simple: make individual operations idempotent rather
 # than using distributed locks.
+#
+# - get_or_create_contact: Handles race conditions at the contact level
+# - rebuild_id_mapping: Reconstructs local state from existing shared data
+# - is_scenario_seeded: Checks if scenario data already exists
 # --------------------------------------------------------------------------
 
 
@@ -448,17 +453,21 @@ def get_or_create_contact(
     Idempotent contact creation - handles parallel race conditions.
 
     Strategy: Check first (fast path), then try create. If creation fails
-    due to unique constraint (another process won), query again.
+    due to unique constraint (another process won the race), query again.
+    This is race-safe because the unique constraint is enforced by the DB.
 
     Args:
-        cm: ContactManager instance
-        email_address: Unique email for deduplication
+        cm: ContactManager instance to use
+        email_address: Unique email for the contact (used for deduplication)
         **fields: Additional contact fields (first_name, surname, etc.)
 
     Returns:
-        The contact_id (existing or newly created)
+        The contact_id (either existing or newly created)
+
+    Raises:
+        Exception: If creation fails for reasons other than unique constraint
     """
-    # Fast path: check if exists
+    # Fast path: check if it already exists
     existing = cm.filter_contacts(
         filter=f"email_address == '{email_address}'",
     )["contacts"]
@@ -471,7 +480,8 @@ def get_or_create_contact(
         return result["details"]["contact_id"]
     except (ValueError, Exception) as e:
         # Unique constraint violation - another process won the race
-        if "unique" in str(e).lower() or "already exists" in str(e).lower():
+        err_str = str(e).lower()
+        if "unique" in err_str or "already exists" in err_str:
             existing = cm.filter_contacts(
                 filter=f"email_address == '{email_address}'",
             )["contacts"]
@@ -487,9 +497,12 @@ def rebuild_id_mapping(
     """
     Rebuild first_name -> contact_id mapping from existing contacts.
 
+    Used by processes that find the scenario already seeded and need to
+    reconstruct consistent ID mappings to work with the shared data.
+
     Args:
         cm: ContactManager instance to query
-        contact_defs: List of contact definitions (with email_address, first_name)
+        contact_defs: List of contact definitions (dicts with email_address, first_name)
 
     Returns:
         Dict mapping lowercase first_name to contact_id
@@ -515,8 +528,8 @@ def is_scenario_seeded(
     """
     Check if scenario data already exists (seeded by another process).
 
-    Checks both contacts AND transcripts to avoid race conditions where
-    contacts are created but transcript seeding is still in progress.
+    Checks both contacts AND transcripts (if specified) to avoid race conditions
+    where contacts are created but transcript seeding is still in progress.
 
     Args:
         cm: ContactManager instance to query
@@ -552,3 +565,50 @@ def is_scenario_seeded(
     except Exception:
         # If we can't check transcripts, fall back to contacts-only check
         return True
+
+
+# ---------- File-Based Scenario Lock for Parallel Tests ----------
+#
+# For scenarios with high data volume or no unique constraints (like transcript
+# messages), use this file lock to coordinate seeding across parallel processes.
+# Only one process seeds while others wait, then all rebuild local state.
+#
+# For scenarios with low volume and DB-level uniqueness (like contacts), the
+# simpler idempotent check-before-create pattern works fine without a lock.
+# --------------------------------------------------------------------------
+
+import fcntl
+import tempfile
+from contextlib import contextmanager
+
+
+@contextmanager
+def scenario_file_lock(lock_name: str):
+    """
+    File-based lock for coordinating parallel test scenario seeding.
+
+    Use this when seeding involves high data volume or resources without
+    unique constraints (e.g., transcript messages). All parallel processes
+    block on this lock, ensuring only one seeds at a time.
+
+    Args:
+        lock_name: Unique name for this scenario's lock file.
+                   Will be created in system temp directory.
+
+    Example:
+        with scenario_file_lock("tm_scenario"):
+            if is_scenario_seeded(cm, CONTACTS, transcript_context=ctx):
+                # Rebuild local state
+                ids = rebuild_id_mapping(cm, CONTACTS)
+            else:
+                # Seed the scenario
+                seed_all_data()
+    """
+    lock_path = os.path.join(tempfile.gettempdir(), f"unity_{lock_name}.lock")
+    lock_file = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
