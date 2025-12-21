@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-import asyncio
 import pytest
 import pytest_asyncio
 from typing import List, Dict, Tuple, Any
 import os
-import functools
 
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
+from tests.helpers import (
+    get_or_create_contact,
+    rebuild_id_mapping,
+    is_scenario_seeded,
+    scenario_file_lock,
+)
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -51,92 +55,48 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
 _ID_BY_NAME_CONTACTS: Dict[str, int] = {}
 
 
-class ScenarioBuilderContacts:
-    """Populates Unify with initial contacts for ContactManager testing."""
+def _make_name_key(contact_data: Dict[str, Any]) -> str:
+    """Generate a unique key for contact lookup."""
+    name_key = contact_data["first_name"].lower()
+    if contact_data.get("email_address"):
+        name_key = f"{name_key}_{contact_data['email_address']}"
+    elif contact_data.get("surname"):
+        name_key = f"{name_key}_{contact_data['surname'].lower()}"
+    return name_key
 
-    def __init__(self):
-        self.cm = ContactManager()
-        self._populate_id_mapping()
 
-    def _populate_id_mapping(self):
-        """Populate _ID_BY_NAME_CONTACTS by searching for existing contacts."""
-        global _ID_BY_NAME_CONTACTS
-        _ID_BY_NAME_CONTACTS.clear()
-
-        def search_and_map_contact(contact_data):
-            """Helper function to search for a contact and return mapping tuple."""
-            if not contact_data.get("email_address"):
-                return None
-
-            existing_contacts = self.cm.filter_contacts(
-                filter=f"email_address == '{contact_data['email_address']}'",
-            )["contacts"]
-            if existing_contacts:
-                contact_id = existing_contacts[0].contact_id
-                name_key = contact_data["first_name"].lower()
-                name_key = f"{name_key}_{contact_data['email_address']}"
-                return (name_key, contact_id)
-            return None
-
-        # Wrap each contact_data dict in a tuple to avoid unify.map treating dict keys as kwargs
-        contact_data_tuples = [(contact_data,) for contact_data in _CONTACTS_DATA]
-
-        results = unify.map(
-            search_and_map_contact,
-            contact_data_tuples,
-            mode="asyncio",
-        )
-
-        for result in results:
-            if result is not None:
-                name_key, contact_id = result
-                _ID_BY_NAME_CONTACTS[name_key] = contact_id
-
-    @classmethod
-    async def create(cls) -> "ScenarioBuilderContacts":
-        self = cls()
-        await self._seed_contacts()
-        return self
-
-    async def _seed_contacts(self) -> None:
-        """Create contacts if they don't already exist."""
-        for contact_data in _CONTACTS_DATA:
-            # Check if contact already exists
-            if contact_data.get("email_address"):
-                existing_contacts = self.cm.filter_contacts(
-                    filter=f"email_address == '{contact_data['email_address']}'",
-                )["contacts"]
-                if existing_contacts:
-                    continue  # Contact already exists, skip
-
-            # Create a copy to avoid modifying the original list dicts
+def _seed_contacts(cm: ContactManager) -> Dict[str, int]:
+    """Create contacts using race-safe idempotent helper. Returns id mapping."""
+    id_mapping: Dict[str, int] = {}
+    for contact_data in _CONTACTS_DATA:
+        email = contact_data.get("email_address")
+        if email:
+            # Use race-safe helper that handles parallel creation
             data_to_create = {k: v for k, v in contact_data.items() if v is not None}
-            try:
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    functools.partial(self.cm._create_contact, **data_to_create),
-                )
-                contact_id = response["details"]["contact_id"]
+            contact_id = get_or_create_contact(cm, **data_to_create)
+            name_key = _make_name_key(contact_data)
+            id_mapping[name_key] = contact_id
+    return id_mapping
 
-                if contact_data.get("first_name"):
-                    # Create a unique key if names are not unique, e.g., by adding email
-                    name_key = contact_data["first_name"].lower()
-                    if contact_data.get("email_address"):
-                        name_key = f"{name_key}_{contact_data['email_address']}"
-                    elif contact_data.get("surname"):
-                        name_key = f"{name_key}_{contact_data['surname'].lower()}"
 
-                    if name_key not in _ID_BY_NAME_CONTACTS:
-                        _ID_BY_NAME_CONTACTS[name_key] = contact_id
-                    else:
-                        # If name_key already exists, append contact_id to ensure uniqueness
-                        _ID_BY_NAME_CONTACTS[f"{name_key}_{contact_id}"] = contact_id
+def _rebuild_commit_hashes(ctx_prefix: str) -> None:
+    """Rebuild SCENARIO_COMMIT_HASHES from existing context commits."""
+    existing_contexts = unify.get_contexts(prefix=ctx_prefix)
+    for ctx_name in existing_contexts.keys():
+        history = unify.get_context_commits(ctx_name)
+        if history:
+            SCENARIO_COMMIT_HASHES[ctx_name] = history[0]["commit_hash"]
 
-            except Exception as e:
-                print(
-                    f"Warning: Could not create contact {contact_data.get('first_name')} due to: {e}",
-                )
+
+def _commit_contexts_for_rollback(ctx_prefix: str) -> None:
+    """Commit all contexts under prefix and store hashes for rollback."""
+    existing_contexts = unify.get_contexts(prefix=ctx_prefix)
+    for ctx_name in existing_contexts.keys():
+        commit_info = unify.commit_context(
+            name=ctx_name,
+            commit_message="Initial seed data for contact manager tests",
+        )
+        SCENARIO_COMMIT_HASHES[ctx_name] = commit_info["commit_hash"]
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -146,84 +106,47 @@ async def contact_scenario(
     """
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data. Build scenario once and reuse across tests.
+
+    Uses file lock to coordinate parallel test processes - only one process
+    seeds while others wait, then all rebuild local state from shared data.
     """
     ManagerRegistry.clear()
     ContextRegistry.clear()
-
     os.environ["TQDM_DISABLE"] = "1"
 
     ctx = "tests/test_contact/Scenario"
-    unify.create_context(ctx)  # exist_ok=True by default
-    unify.set_context(ctx, relative=False)
-    existing_contexts = unify.get_contexts(prefix=ctx)
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
-    # If --no-reuse-scenario is explicitly set, override reuse_scenario
+    # If --no-reuse-scenario is explicitly set, delete existing contexts
     if no_reuse_scenario:
-        reuse_scenario = False
-    else:
-        reuse_scenario = True
+        existing_contexts = unify.get_contexts(prefix=ctx)
+        for ctx_name in existing_contexts.keys():
+            unify.delete_context(ctx_name)
 
-    if not reuse_scenario:
-        # delete all contexts to freshly create the new scenario
-        def recreate_contexts(ctx):
-            unify.delete_context(ctx)
-            unify.create_context(ctx)
+    # Set context before any operations
+    unify.create_context(ctx)  # exist_ok=True by default
+    unify.set_context(ctx, relative=False)
 
-        existing_ctx_names = list(existing_contexts.keys())
-        if existing_ctx_names:
-            unify.map(
-                recreate_contexts,
-                existing_ctx_names,
-                mode="asyncio",
-            )
+    # Create manager
+    cm = ContactManager()
 
-    if reuse_scenario and not SCENARIO_COMMIT_HASHES:
-
-        def get_context_commits_and_rollback(ctx):
-            history = unify.get_context_commits(ctx)
-            if history:
-                unify.rollback_context(
-                    name=ctx,
-                    commit_hash=history[0]["commit_hash"],
-                )
-                SCENARIO_COMMIT_HASHES[ctx] = history[0]["commit_hash"]
-
-        existing_ctx_names = list(existing_contexts.keys())
-        if existing_ctx_names:
-            unify.map(
-                get_context_commits_and_rollback,
-                existing_ctx_names,
-                mode="asyncio",
-            )
-
-    # --- One-time setup (per session) ---
-    builder = ScenarioBuilderContacts()
-    existing_contexts = unify.get_contexts(
-        prefix=ctx,
-    )  # fetch newly created contexts by builder
-
-    if not SCENARIO_COMMIT_HASHES:
-        print("Seeding contact manager scenario...")
-        await builder.create()
-
-        def commit_context_and_store(ctx):
-            commit_info = unify.commit_context(
-                name=ctx,
-                commit_message="Initial seed data for contact manager tests",
-            )
-            SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
-
-        existing_ctx_names = list(existing_contexts.keys())
-        if existing_ctx_names:
-            unify.map(
-                commit_context_and_store,
-                existing_ctx_names,
-                mode="asyncio",
-            )
+    # Use file lock to coordinate seeding across parallel processes
+    with scenario_file_lock("cm_scenario"):
+        if is_scenario_seeded(cm, _CONTACTS_DATA):
+            # Scenario exists - just rebuild local state
+            print("Scenario already seeded, rebuilding local state...")
+            ids = rebuild_id_mapping(cm, _CONTACTS_DATA)
+            _ID_BY_NAME_CONTACTS.update(ids)
+            _rebuild_commit_hashes(ctx)
+        else:
+            # Scenario not seeded - seed it
+            print("Seeding contact manager scenario...")
+            ids = _seed_contacts(cm)
+            _ID_BY_NAME_CONTACTS.update(ids)
+            _commit_contexts_for_rollback(ctx)
 
     unify.unset_context()
-    return builder.cm, _ID_BY_NAME_CONTACTS
+    return cm, dict(_ID_BY_NAME_CONTACTS)
 
 
 @pytest.fixture(scope="function")
