@@ -151,6 +151,10 @@ SYMBOLIC_ONLY=0
 # With --repeat N: run each test N times (useful for eval tests)
 REPEAT_COUNT=1
 
+# Overwrite scenarios flag
+# With --overwrite-scenarios: delete and recreate test scenarios from scratch
+OVERWRITE_SCENARIOS=0
+
 # Maximum concurrent sessions (default 40 for balanced parallelism)
 # With -j/--jobs N: limit to N concurrent running sessions
 # Use -j 0 (or -j none/unlimited) for no limit (not recommended for large test suites)
@@ -219,6 +223,10 @@ while (( "$#" )); do
         exit 2
       fi
       ;;
+    --overwrite-scenarios)
+      OVERWRITE_SCENARIOS=1
+      shift
+      ;;
     --tags)
       if [[ -n "${2-}" ]]; then
         # Split on comma and add each tag to TAGS array
@@ -264,6 +272,7 @@ while (( "$#" )); do
       echo "  --symbolic-only      Run only non-eval tests"
       echo "  --repeat N           Run each test N times"
       echo "  --tags TAG           Tag runs for filtering (repeatable)"
+      echo "  --overwrite-scenarios  Delete and recreate test scenarios"
       echo "  -h, --help           Show this help"
       echo ""
       echo "Examples:"
@@ -523,12 +532,16 @@ run_cmd() {
   if [[ -n "$user_overrides" ]]; then
     env_exports="$env_exports$user_overrides"
   fi
-  # Build pytest command with optional marker filter
+  # Build pytest command with optional marker filter and scenario overwrite
   local pytest_cmd
+  local extra_args=""
+  if (( OVERWRITE_SCENARIOS )); then
+    extra_args="--overwrite-scenarios"
+  fi
   if [[ -n "$marker_arg" ]]; then
-    pytest_cmd=$(printf '%q -m pytest %s %q' "$VENV_PY" "$marker_arg" "$target")
+    pytest_cmd=$(printf '%q -m pytest %s %s %q' "$VENV_PY" "$marker_arg" "$extra_args" "$target")
   else
-    pytest_cmd=$(printf '%q -m pytest %q' "$VENV_PY" "$target")
+    pytest_cmd=$(printf '%q -m pytest %s %q' "$VENV_PY" "$extra_args" "$target")
   fi
   # Build inner command with socket name directly interpolated (not via env var)
   # This ensures tmux commands target the correct isolated server
@@ -984,6 +997,7 @@ echo "  • Multiple tags:                         ./parallel_run.sh --tags \"mo
 echo "  • Run only eval tests:                   ./parallel_run.sh --eval-only tests"
 echo "  • Run only symbolic tests:               ./parallel_run.sh --symbolic-only tests"
 echo "  • Repeat tests for sampling:             ./parallel_run.sh --repeat 5 --eval-only tests"
+echo "  • Overwrite cached scenarios:            ./parallel_run.sh --overwrite-scenarios tests/test_contact_manager"
 echo
 echo "Observe (this terminal's sessions only):"
 echo "  • Watch sessions:  tests/watch_tests.sh"
