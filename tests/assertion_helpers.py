@@ -9,7 +9,7 @@ as well as reusable prompt formatting assertions for system messages.
 
 import json
 import re
-from typing import Any, List, Dict, Optional, Callable, Type
+from typing import Any, List, Dict, Optional, Callable, Type, Tuple
 from itertools import zip_longest
 
 
@@ -32,6 +32,57 @@ def format_reasoning_steps(reasoning: List[Dict[str, Any]]) -> str:
     formatted_reasoning = formatted_reasoning.replace("\\n", "\n")
 
     return formatted_reasoning
+
+
+def find_tool_calls_and_results(
+    messages: List[Dict[str, Any]],
+    tool_name: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Find all tool calls with the given name and their corresponding results.
+
+    Handles both sync (direct) and async (check_status_*) tool patterns:
+    - Sync: tool result has tool_call_id == original call id
+    - Async: tool result has tool_call_id == original call id + "_completed"
+
+    Parameters
+    ----------
+    messages : List[Dict[str, Any]]
+        The messages list from an LLM tool loop (e.g., from handle.result()).
+    tool_name : str
+        The name of the tool to find (e.g., "ask_image", "filter_contacts").
+
+    Returns
+    -------
+    Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
+        A tuple of (tool_calls, tool_results) where tool_calls are the assistant's
+        invocations and tool_results are the corresponding results.
+    """
+    # Find all tool_calls with the given name
+    tool_calls = []
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            if (tc.get("function") or {}).get("name") == tool_name:
+                tool_calls.append(tc)
+
+    # Find corresponding tool results by matching tool_call_id
+    tool_results = []
+    for tc in tool_calls:
+        call_id = tc.get("id")
+        if not call_id:
+            continue
+        # Look for tool result with matching id (sync) or id_completed (async)
+        for m in messages:
+            if m.get("role") != "tool":
+                continue
+            result_id = m.get("tool_call_id", "")
+            if result_id == call_id or result_id == f"{call_id}_completed":
+                tool_results.append(m)
+                break
+
+    return tool_calls, tool_results
 
 
 def assertion_failed(
