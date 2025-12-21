@@ -68,12 +68,12 @@ def test_dummy_assistant(monkeypatch):
     assert a.email_address == DEFAULT_ASSISTANT_EMAIL
     assert a.phone_number == DEFAULT_ASSISTANT_PHONE
     # System contact timezone should be hard-coded to UTC for now
-    assert a.utc_offset_hours == 0.0
+    assert a.timezone == "UTC"
 
     # Default user (id 1) should also have UTC for now
     users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert users, "Default user should exist"
-    assert users[0].utc_offset_hours == 0.0
+    assert users[0].timezone == "UTC"
 
 
 @_handle_project
@@ -110,8 +110,8 @@ def test_real_assistant(monkeypatch):
     assert a.email_address == "alice.smith@example.com"
     assert a.phone_number == "+15551234567"
     # System contact timezone should be hard-coded to UTC for now
-    assert a.utc_offset_hours == 0.0
+    assert a.timezone == "UTC"
 
     users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert users, "Default user should exist"
-    assert users[0].utc_offset_hours == 0.0
+    assert users[0].timezone == "UTC"

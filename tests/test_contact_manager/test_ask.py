@@ -233,13 +233,13 @@ async def test_ask_time_check(
     """If it's 17:00 UTC and the contact is at UTC+9, local time is ~02:00 → not sensible."""
     cm, _ = contact_manager_scenario
 
-    # Ensure Bob Johnson has a timezone of UTC+9.0 (02:00 local when 17:00 UTC)
+    # Ensure Bob Johnson has a timezone of Asia/Tokyo (UTC+9, so 02:00 local when 17:00 UTC)
     results = cm.filter_contacts(filter="email_address == 'bobbyj@example.net'")[
         "contacts"
     ]
     assert results, "Bob Johnson must exist for this test"
     bob_id = results[0].contact_id
-    cm.update_contact(contact_id=bob_id, utc_offset_hours=9.0)
+    cm.update_contact(contact_id=bob_id, timezone="Asia/Tokyo")
 
     # Ask the high-level question; include the UTC time in the user message
     question = (
