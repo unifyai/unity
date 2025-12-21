@@ -192,6 +192,53 @@ class ScenarioBuilder:
             ],
         )
 
+        # E5: Dan–Julia "basketball" phone call (latest Dan-Julia phone call)
+        t_basketball = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
+        self._log(
+            5,
+            "phone_call",
+            [
+                (
+                    dan_id,
+                    julia_id,
+                    t_basketball,
+                    "Hey Julia, did you catch the basketball game last night? "
+                    "The Lakers vs Celtics final was incredible!",
+                ),
+                (
+                    julia_id,
+                    dan_id,
+                    t_basketball + timedelta(seconds=30),
+                    "Absolutely – that last-minute three-pointer was unbelievable! "
+                    "We should watch the next game together.",
+                ),
+            ],
+        )
+
+        # E6: Dan–Julia "holiday planning" email (for clarification test)
+        t_holiday_email = datetime(2025, 5, 25, 20, 0, tzinfo=timezone.utc)
+        self._log(
+            6,
+            "email",
+            [
+                (
+                    dan_id,
+                    julia_id,
+                    t_holiday_email,
+                    "Subject: Summer holiday plans\n\n"
+                    "Hi Julia,\nWhen are you next going on holiday? "
+                    "I'm thinking of booking something for August.",
+                ),
+                (
+                    julia_id,
+                    dan_id,
+                    t_holiday_email + timedelta(hours=2),
+                    "Hi Dan! I'm hoping to go in August too, "
+                    "but let's see what my boss says about the timing.",
+                ),
+            ],
+        )
+
     # --------------------------------------------------------------------- #
     def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
         """Adds irrelevant chatter so filtering matters."""
