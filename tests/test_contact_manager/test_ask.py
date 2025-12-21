@@ -6,13 +6,11 @@ import json
 import re
 from typing import List, Dict, Any, Optional
 
-import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
 from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed, find_tool_calls_and_results
 from tests.helpers import _handle_project
-from tests.settings import SETTINGS
 
 # All tests in this file exercise end-to-end LLM reasoning for contact retrieval
 pytestmark = pytest.mark.eval
@@ -231,14 +229,9 @@ async def test_ask_time_check(
     """If it's 17:00 UTC and the contact is at UTC+9, local time is ~02:00 → not sensible."""
     cm, _ = contact_manager_scenario
 
-    # Ensure Bob Johnson has a timezone of Asia/Tokyo (UTC+9, so 02:00 local when 17:00 UTC)
-    results = cm.filter_contacts(filter="email_address == 'bobbyj@example.net'")[
-        "contacts"
-    ]
-    assert results, "Bob Johnson must exist for this test"
-    bob_id = results[0].contact_id
-    cm.update_contact(contact_id=bob_id, timezone="Asia/Tokyo")
-
+    # Bob Johnson has timezone="Asia/Tokyo" (UTC+9) in seed data,
+    # so 17:00 UTC → 02:00 local time
+    #
     # Ask the high-level question; include the UTC time in the user message
     question = (
         "It's 17:00 UTC now. I'd like to send an email to Bob Johnson. "
