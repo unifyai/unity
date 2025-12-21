@@ -6,7 +6,7 @@ RAG System Semantic Evaluation
 This script runs comprehensive semantic evaluation of the RAG system including:
 - QA pairs from qa_pairs.json
 - HTTP endpoint evaluation with semantic validation
-- LLM-based validation using o4-mini for semantic accuracy
+- LLM-based validation for semantic accuracy
 - Detailed reasoning and analysis for each question
 - Extensible prompt system with dependency injection
 - Comprehensive JSON results with statistics and per-question analysis
@@ -20,7 +20,7 @@ Options:
     --api-url           API base URL for HTTP evaluation (default: http://0.0.0.0:8000)
     --max-concurrent    Maximum concurrent HTTP requests (default: 5)
     --timeout           HTTP timeout in seconds (default: 600)
-    --validator-model   Model for semantic validation (default: o4-mini@openai)
+    --validator-model   Model for semantic validation (default: SETTINGS.UNIFY_MODEL)
     --output-dir        Output directory for results (default: intranet/evals)
     --examples-count    Number of validation examples to generate (default: 4)
 """
@@ -47,6 +47,7 @@ from intranet.core.evaluation_results import (
     EvaluationResults,
     QuestionEvaluation,
 )
+from unity.settings import SETTINGS
 
 
 async def run_semantic_evaluation(
@@ -55,7 +56,7 @@ async def run_semantic_evaluation(
     api_url="http://0.0.0.0:8000",
     max_concurrent=5,
     timeout=600,
-    validator_model="o4-mini@openai",
+    validator_model: str | None = None,
     output_dir="intranet/evals",
     examples_count=4,
     batch_size: int | None = 1,
@@ -527,8 +528,8 @@ def main():
     parser.add_argument(
         "--validator-model",
         type=str,
-        default="o4-mini@openai",
-        help="Model for semantic validation (default: o4-mini@openai)",
+        default=None,
+        help=f"Model for semantic validation (default: {SETTINGS.UNIFY_MODEL})",
     )
     parser.add_argument(
         "--output-dir",

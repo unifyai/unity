@@ -26,6 +26,7 @@ from unity.task_scheduler.types.priority import Priority
 from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.status import Status
 from unity.common.llm_helpers import _dumps
+from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed
 from tests.settings import SETTINGS
 
@@ -145,10 +146,7 @@ def _llm_assert_correct(
     message to aid debugging.
     """
 
-    judge = unify.Unify(
-        "o4-mini@openai",
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    judge = new_llm_client(async_client=False)
     judge.set_system_message(
         "You are a strict unit-test judge. "
         "You will be given a question, a ground-truth answer derived directly "

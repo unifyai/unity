@@ -10,7 +10,8 @@ import json
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import unify
-from unity.common.llm_client import get_cache_setting
+from unity.common.llm_client import get_cache_setting, new_llm_client
+from unity.settings import SETTINGS
 
 
 @dataclass
@@ -67,7 +68,7 @@ class SemanticValidator:
 
     def __init__(
         self,
-        model_name: str = "gpt-4o-mini@openai",
+        model_name: str | None = None,
         prompt_template: Optional[str] = None,
         examples: Optional[List[Dict[str, Any]]] = None,
     ):
@@ -75,15 +76,12 @@ class SemanticValidator:
         Initialize the semantic validator.
 
         Args:
-            model_name: Unify model name to use for validation
+            model_name: Unify model name to use for validation (defaults to SETTINGS.UNIFY_MODEL)
             prompt_template: Custom prompt template (optional)
             examples: Example QA pairs to include in prompt (optional)
         """
-        self.model_name = model_name
-        self.client = unify.AsyncUnify(
-            model_name,
-            cache=get_cache_setting(),
-        )
+        self.model_name = model_name or SETTINGS.UNIFY_MODEL
+        self.client = new_llm_client(model=self.model_name)
 
         # Set up extensible prompt system
         self.prompt_template = prompt_template or self._get_default_prompt_template()

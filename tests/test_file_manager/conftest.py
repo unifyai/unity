@@ -11,6 +11,7 @@ from typing import Any, Dict
 from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.simulated import SimulatedFileManager
+from unity.common.llm_client import new_llm_client
 
 from tests.settings import SETTINGS
 
@@ -74,10 +75,7 @@ Parsed HTML:
 
 Your response:"""
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=SETTINGS.UNIFY_CACHE,
-        )
+        client = new_llm_client()
         client.set_system_message(system_prompt)
         result = await client.generate(user_prompt)
 

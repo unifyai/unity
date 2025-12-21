@@ -1,5 +1,6 @@
 import asyncio
 import unify
+from unity.common.llm_client import new_llm_client
 from sandboxes.utils import (
     build_cli_parser,
     speak,
@@ -55,7 +56,7 @@ def make_agent(
     user_number,
     assistant_behaviour,
 ):
-    client = unify.AsyncUnify(endpoint="gpt-4.1@openai")
+    client = new_llm_client()
     return {
         "job": job,
         "user_name": user_name,

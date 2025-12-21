@@ -1,4 +1,4 @@
-import unify
+from unity.common.llm_client import new_llm_client
 
 
 async def ask_judge(
@@ -9,7 +9,7 @@ async def ask_judge(
     file_content: str | dict | None = None,
 ) -> str:
     """Asks an LLM judge to evaluate if a file manager operation was successful."""
-    client = unify.AsyncUnify("gpt-4o-mini@openai", stateful=False)
+    client = new_llm_client(stateful=False)
 
     prompt = "You are a test evaluator. Your task is to determine if a file management operation was successful based on the provided information.\n\n"
     prompt += f'Initial instruction:\n"{instruction}"\n\n'

@@ -28,6 +28,7 @@ import unify
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.common.llm_helpers import _dumps
+from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
 from tests.settings import SETTINGS
@@ -173,10 +174,7 @@ def _llm_assert_correct(
     multiple_answers: bool = False,
 ) -> None:
     """LLM-based validation with stricter or fuzzier rubric per question."""
-    judge = unify.Unify(
-        "o4-mini@openai",
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    judge = new_llm_client(async_client=False)
 
     if _is_summary_q(question):
         system_msg = (
@@ -428,10 +426,7 @@ async def test_clarification_request(
     ]
 
     async def _clarification_worker() -> None:
-        clarifier = unify.Unify(
-            "o4-mini@openai",
-            cache=SETTINGS.UNIFY_CACHE,
-        )
+        clarifier = new_llm_client(async_client=False)
         clarifier.set_system_message(
             "You are a helpful assistant that answers clarification questions succinctly. "
             "You know about two possible conversations: a basketball phone call on 2025-05-20 (exchange 123), "
@@ -499,10 +494,7 @@ async def test_clarification_request(
     # ── 9.  Evaluate – should return the correct date 2025-05-20 ───────────
     expected = "2025-05-20"
 
-    judge = unify.Unify(
-        "o4-mini@openai",
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    judge = new_llm_client(async_client=False)
     judge.set_system_message(
         'Answer strictly with JSON: {"correct": true|false} – '
         "true iff the candidate contains the exact date 2025-05-20, "

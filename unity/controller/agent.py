@@ -19,6 +19,7 @@ from .sys_msgs import (
 )
 from ..constants import LOGGER
 from ..common.llm_client import new_llm_client
+from ..settings import SETTINGS
 
 client = new_llm_client(
     async_client=False,
@@ -764,7 +765,7 @@ def text_to_browser_action(
     )
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
-        client.set_endpoint("o4-mini@openai")
+        client.set_endpoint(SETTINGS.UNIFY_MODEL)
         history_msg = (
             "\n\nThe low-level action history (most recent first) is as follows:\n"
             + "\n".join(f"{r['timestamp']:.0f}: {r['command']}" for r in history[-20:])
@@ -822,7 +823,7 @@ def text_to_browser_action(
             return response_format.model_validate(ret).model_dump()
 
         # decide among the candidate actions
-        client.set_endpoint("o4-mini@openai")
+        client.set_endpoint(SETTINGS.UNIFY_MODEL)
         client.set_system_message(
             PRIMITIVE_TO_BROWSER_ACTION + history_msg + state_msg,
         )
@@ -868,7 +869,7 @@ def text_to_browser_action(
         lines += [_format_action(a) for a in valid_actions]
         sys_prompt = "\n".join(lines)
 
-        client.set_endpoint("o4-mini@openai")
+        client.set_endpoint(SETTINGS.UNIFY_MODEL)
         client.set_system_message(sys_prompt)
         client.set_response_format(response_format)
 

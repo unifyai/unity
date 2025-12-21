@@ -17,6 +17,7 @@ from unity.common.llm_io_hooks import (
     _write_llm_io,
     install_llm_io_hooks,
 )
+from unity.settings import SETTINGS
 
 
 # --------------------------------------------------------------------------- #
@@ -287,12 +288,12 @@ async def test_hooks_capture_request_and_response(tmp_path, monkeypatch):
         monkeypatch.setattr(AsyncUnify, "_generate_non_stream", wrapped_for_test)
 
         # Create client and make a call
-        client = AsyncUnify("gpt-4@openai")
+        client = AsyncUnify(SETTINGS.UNIFY_MODEL)
         client._messages = [{"role": "user", "content": "What is 2+3?"}]
 
         # The actual call
         await client._generate_non_stream(
-            "gpt-4@openai",
+            SETTINGS.UNIFY_MODEL,
             None,  # prompt object
             use_custom_keys=False,
             tags=None,
