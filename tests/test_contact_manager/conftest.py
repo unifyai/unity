@@ -153,6 +153,7 @@ async def contact_scenario(
     os.environ["TQDM_DISABLE"] = "1"
 
     ctx = "tests/test_contact/Scenario"
+    unify.create_context(ctx)  # exist_ok=True by default
     unify.set_context(ctx, relative=False)
     existing_contexts = unify.get_contexts(prefix=ctx)
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
