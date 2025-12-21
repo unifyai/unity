@@ -16,6 +16,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
+from tests.helpers import get_or_create_contact
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -85,22 +86,12 @@ class ScenarioBuilder:
 
     # --------------------------------------------------------------------- #
     def _seed_contacts(self) -> None:
-        """Create contacts if they don't already exist (idempotent for parallel runs)."""
+        """Create contacts using race-safe idempotent helper."""
         for c in _CONTACTS:
-            # Check if contact already exists by email (unique field)
-            if c.get("email_address"):
-                existing_contacts = self.cm.filter_contacts(
-                    filter=f"email_address == '{c['email_address']}'",
-                )["contacts"]
-                if existing_contacts:
-                    # Contact already exists, just record the ID mapping
-                    assigned_id = existing_contacts[0].contact_id
-                    _ID_BY_NAME[c["first_name"].lower()] = assigned_id
-                    continue
-
-            outcome = self.cm._create_contact(**c)
-            assigned_id = outcome["details"]["contact_id"]
-            _ID_BY_NAME[c["first_name"].lower()] = assigned_id
+            email = c.get("email_address")
+            if email:
+                contact_id = get_or_create_contact(self.cm, **c)
+                _ID_BY_NAME[c["first_name"].lower()] = contact_id
 
     # --------------------------------------------------------------------- #
     def _seed_key_exchanges(self) -> None:
