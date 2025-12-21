@@ -607,3 +607,39 @@ def scenario_file_lock(lock_name: str):
     finally:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         lock_file.close()
+
+
+@contextmanager
+def mutation_test_lock(lock_name: str):
+    """
+    File-based lock for serializing mutation tests in parallel execution.
+
+    When tests run via parallel_run.sh (per-test concurrency), tests that
+    mutate shared context data can race with each other's rollbacks. This
+    lock ensures only one mutation test runs at a time, preventing:
+
+    1. Test A updates data
+    2. Test B starts and rolls back (wiping A's changes)
+    3. Test A's verification fails
+
+    Read-only tests don't need this lock and can run fully in parallel.
+
+    Args:
+        lock_name: Unique name for this lock (e.g., "cm_mutation").
+                   Will be created in system temp directory.
+
+    Example:
+        @pytest.fixture
+        def mutation_scenario(base_scenario):
+            cm, id_map = base_scenario
+            with mutation_test_lock("cm_mutation"):
+                yield cm, id_map
+    """
+    lock_path = os.path.join(tempfile.gettempdir(), f"unity_{lock_name}.lock")
+    lock_file = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()

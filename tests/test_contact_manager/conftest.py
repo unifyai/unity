@@ -14,11 +14,15 @@ from tests.helpers import (
     rebuild_id_mapping,
     is_scenario_seeded,
     scenario_file_lock,
+    mutation_test_lock,
 )
 
-SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
+# Separate commit hash storage for read vs mutation contexts
+# This ensures rollbacks in one context don't affect the other
+_READ_SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
+_MUTATION_SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
-# Initial contact data for seeding
+# Initial contact data for seeding (shared by both scenarios)
 _CONTACTS_DATA: List[Dict[str, str | None]] = [
     {
         "first_name": "Alice",
@@ -52,8 +56,6 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
     },
 ]
 
-_ID_BY_NAME_CONTACTS: Dict[str, int] = {}
-
 
 def _make_name_key(contact_data: Dict[str, Any]) -> str:
     """Generate a unique key for contact lookup."""
@@ -79,16 +81,22 @@ def _seed_contacts(cm: ContactManager) -> Dict[str, int]:
     return id_mapping
 
 
-def _rebuild_commit_hashes(ctx_prefix: str) -> None:
-    """Rebuild SCENARIO_COMMIT_HASHES from existing context commits."""
+def _rebuild_commit_hashes(
+    ctx_prefix: str,
+    commit_hashes: Dict[str, Any],
+) -> None:
+    """Rebuild commit hashes from existing context commits."""
     existing_contexts = unify.get_contexts(prefix=ctx_prefix)
     for ctx_name in existing_contexts.keys():
         history = unify.get_context_commits(ctx_name)
         if history:
-            SCENARIO_COMMIT_HASHES[ctx_name] = history[0]["commit_hash"]
+            commit_hashes[ctx_name] = history[0]["commit_hash"]
 
 
-def _commit_contexts_for_rollback(ctx_prefix: str) -> None:
+def _commit_contexts_for_rollback(
+    ctx_prefix: str,
+    commit_hashes: Dict[str, Any],
+) -> None:
     """Commit all contexts under prefix and store hashes for rollback."""
     existing_contexts = unify.get_contexts(prefix=ctx_prefix)
     for ctx_name in existing_contexts.keys():
@@ -96,25 +104,25 @@ def _commit_contexts_for_rollback(ctx_prefix: str) -> None:
             name=ctx_name,
             commit_message="Initial seed data for contact manager tests",
         )
-        SCENARIO_COMMIT_HASHES[ctx_name] = commit_info["commit_hash"]
+        commit_hashes[ctx_name] = commit_info["commit_hash"]
 
 
-@pytest_asyncio.fixture(scope="session")
-async def contact_scenario(
+def _setup_scenario(
     request: pytest.FixtureRequest,
+    ctx: str,
+    lock_name: str,
+    commit_hashes: Dict[str, Any],
 ) -> Tuple[ContactManager, Dict[str, int]]:
     """
-    Create (and later clean up) a versioned context so that *all* tests share the
-    same seeded data. Build scenario once and reuse across tests.
+    Common setup logic for seeding a contact manager scenario.
 
-    Uses file lock to coordinate parallel test processes - only one process
-    seeds while others wait, then all rebuild local state from shared data.
+    Creates/reuses a versioned context, seeds contacts if needed,
+    and returns the manager + id mapping.
     """
     ManagerRegistry.clear()
     ContextRegistry.clear()
     os.environ["TQDM_DISABLE"] = "1"
 
-    ctx = "tests/test_contact/Scenario"
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
     # If --no-reuse-scenario is explicitly set, delete existing contexts
@@ -129,43 +137,152 @@ async def contact_scenario(
 
     # Create manager
     cm = ContactManager()
+    id_mapping: Dict[str, int] = {}
 
     # Use file lock to coordinate seeding across parallel processes
-    with scenario_file_lock("cm_scenario"):
+    with scenario_file_lock(lock_name):
         if is_scenario_seeded(cm, _CONTACTS_DATA):
             # Scenario exists - just rebuild local state
-            print("Scenario already seeded, rebuilding local state...")
-            ids = rebuild_id_mapping(cm, _CONTACTS_DATA)
-            _ID_BY_NAME_CONTACTS.update(ids)
-            _rebuild_commit_hashes(ctx)
+            print(f"Scenario already seeded ({ctx}), rebuilding local state...")
+            id_mapping = rebuild_id_mapping(cm, _CONTACTS_DATA)
+            _rebuild_commit_hashes(ctx, commit_hashes)
         else:
             # Scenario not seeded - seed it
-            print("Seeding contact manager scenario...")
-            ids = _seed_contacts(cm)
-            _ID_BY_NAME_CONTACTS.update(ids)
-            _commit_contexts_for_rollback(ctx)
+            print(f"Seeding contact manager scenario ({ctx})...")
+            id_mapping = _seed_contacts(cm)
+            _commit_contexts_for_rollback(ctx, commit_hashes)
 
     unify.unset_context()
-    return cm, dict(_ID_BY_NAME_CONTACTS)
+    return cm, id_mapping
+
+
+# ---------------------------------------------------------------------------
+# READ-ONLY SCENARIO (for test_ask.py, test_semantic.py, etc.)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(scope="session")
+async def contact_read_scenario(
+    request: pytest.FixtureRequest,
+) -> Tuple[ContactManager, Dict[str, int]]:
+    """
+    Session-scoped scenario for READ-ONLY tests.
+
+    Uses context: tests/test_contact/ReadScenario
+
+    Read-only tests can run fully in parallel since they only read data
+    and their rollbacks don't affect mutation tests (separate context).
+    """
+    return _setup_scenario(
+        request,
+        ctx="tests/test_contact/ReadScenario",
+        lock_name="cm_read_scenario",
+        commit_hashes=_READ_SCENARIO_COMMIT_HASHES,
+    )
 
 
 @pytest.fixture(scope="function")
-def contact_manager_scenario(contact_scenario):
+def contact_manager_scenario(contact_read_scenario):
     """
-    Per-test fixture that provides fresh scenario data by rolling back to
-    the committed state before each test and after each test completes.
+    Per-test fixture for READ-ONLY tests (e.g., test_ask.py, test_semantic.py).
+
+    Rolls back to committed state before each test. These tests can run
+    fully in parallel since they use a separate context from mutation tests.
     """
-    cm, id_map = contact_scenario
+    cm, id_map = contact_read_scenario
 
     def rollback_context(ctx):
         unify.rollback_context(
             name=ctx,
-            commit_hash=SCENARIO_COMMIT_HASHES[ctx],
+            commit_hash=_READ_SCENARIO_COMMIT_HASHES[ctx],
         )
 
     # Rollback to clean state before test
-    ctx_names = list(SCENARIO_COMMIT_HASHES.keys())
+    ctx_names = list(_READ_SCENARIO_COMMIT_HASHES.keys())
     if ctx_names:
         unify.map(rollback_context, ctx_names, mode="asyncio")
 
     yield cm, id_map
+
+
+# ---------------------------------------------------------------------------
+# MUTATION SCENARIO (for test_update.py, etc.)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(scope="session")
+async def contact_mutation_scenario(
+    request: pytest.FixtureRequest,
+) -> Tuple[ContactManager, Dict[str, int]]:
+    """
+    Session-scoped scenario for MUTATION tests.
+
+    Uses context: tests/test_contact/MutationScenario
+
+    Mutation tests use a separate context from read-only tests, ensuring
+    that read tests' rollbacks cannot interfere with mutation operations.
+    """
+    return _setup_scenario(
+        request,
+        ctx="tests/test_contact/MutationScenario",
+        lock_name="cm_mutation_scenario",
+        commit_hashes=_MUTATION_SCENARIO_COMMIT_HASHES,
+    )
+
+
+@pytest.fixture(scope="function")
+def contact_manager_mutation_scenario(contact_mutation_scenario):
+    """
+    Per-test fixture for tests that MUTATE contact data (create, update, delete).
+
+    Uses a SEPARATE context from read-only tests, plus a file lock to serialize
+    mutation tests among themselves. This ensures:
+
+    1. Read tests' rollbacks cannot affect mutation tests (different context)
+    2. Mutation tests don't race with each other (serialized via lock)
+    3. The full sequence (rollback → mutate → verify) is atomic
+
+    This allows running `parallel_run.sh test_contact_manager` safely:
+    - Read tests run fully in parallel (their own context)
+    - Mutation tests run serially (shared context + lock)
+    """
+    cm, id_map = contact_mutation_scenario
+
+    def rollback_context(ctx):
+        unify.rollback_context(
+            name=ctx,
+            commit_hash=_MUTATION_SCENARIO_COMMIT_HASHES[ctx],
+        )
+
+    with mutation_test_lock("cm_mutation"):
+        # Rollback INSIDE the lock to prevent other mutation tests
+        # from rolling back while this test is running
+        ctx_names = list(_MUTATION_SCENARIO_COMMIT_HASHES.keys())
+        if ctx_names:
+            unify.map(rollback_context, ctx_names, mode="asyncio")
+
+        yield cm, id_map
+
+
+# ---------------------------------------------------------------------------
+# BACKWARDS COMPATIBILITY
+# ---------------------------------------------------------------------------
+# Keep the old fixture name as an alias for tests that haven't been updated
+
+
+@pytest_asyncio.fixture(scope="session")
+async def contact_scenario(
+    request: pytest.FixtureRequest,
+) -> Tuple[ContactManager, Dict[str, int]]:
+    """
+    DEPRECATED: Use contact_read_scenario or contact_mutation_scenario instead.
+
+    This alias exists for backwards compatibility with tests that directly
+    depend on contact_scenario. It maps to the read scenario.
+    """
+    return _setup_scenario(
+        request,
+        ctx="tests/test_contact/ReadScenario",
+        lock_name="cm_read_scenario",
+        commit_hashes=_READ_SCENARIO_COMMIT_HASHES,
+    )

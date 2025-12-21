@@ -102,10 +102,10 @@ async def test_selects_move_to_blacklist(identify_by: str):
 @_handle_project
 @pytest.mark.asyncio
 async def test_create_new(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test creating a new contact using the update method via natural language."""
-    cm, _ = contact_manager_scenario
+    cm, _ = contact_manager_mutation_scenario
     command = (
         "Add a new contact: Eve Adams, email eve@paradise.com, "
         "phone 7770001111, bio 'Digital nomad and writer'."
@@ -131,10 +131,10 @@ async def test_create_new(
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_existing_details(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test updating an existing contact's details via natural language."""
-    cm, id_map = contact_manager_scenario
+    cm, id_map = contact_manager_mutation_scenario
 
     # Robustly get Alice Smith's ID
     alice_email_key = "alice_alice.smith@example.com"
@@ -166,10 +166,10 @@ async def test_existing_details(
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_with_parent_context(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test update with parent context to identify the contact."""
-    cm, id_map = contact_manager_scenario
+    cm, id_map = contact_manager_mutation_scenario
     charlie_email_key = (
         "charlie_goodgrief@example.org"  # Key used in conftest for Charlie Brown
     )
@@ -208,7 +208,7 @@ async def test_with_parent_context(
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_with_clarification(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test update requiring clarification when multiple contacts match.
 
@@ -216,7 +216,7 @@ async def test_with_clarification(
     clarification agent that answers any number of clarification requests with a
     consistent intent: we mean Alice Wonder (email alice.wonder@example.com).
     """
-    cm, _ = contact_manager_scenario
+    cm, _ = contact_manager_mutation_scenario
     # Two "Alice" contacts exist from the fixture data.
 
     clar_up_q = asyncio.Queue()
@@ -295,10 +295,10 @@ async def test_with_clarification(
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_interjection(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test interjecting to modify details during an update operation."""
-    cm, _ = contact_manager_scenario
+    cm, _ = contact_manager_mutation_scenario
     command = "Create a contact for Frank Castle, email frank@punisher.net."
 
     handle = await cm.update(command)
@@ -317,10 +317,10 @@ async def test_interjection(
 @_handle_project
 @pytest.mark.asyncio
 async def test_stop(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test stopping an update operation."""
-    cm, _ = contact_manager_scenario
+    cm, _ = contact_manager_mutation_scenario
     handle = await cm.update(
         "Create a very detailed contact for Professor Charles Xavier, email prox@xmen.com, phone 123-PROF-X, with notes about his telepathic abilities and founder of the X-Men.",
     )
@@ -342,10 +342,10 @@ async def test_stop(
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_add_bio(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Add or change the *bio* field on an existing contact."""
-    cm, _ = contact_manager_scenario
+    cm, _ = contact_manager_mutation_scenario
 
     # Pick Bob Johnson
     bob = cm.filter_contacts(filter="first_name == 'Bob' and surname == 'Johnson'")[
@@ -371,13 +371,13 @@ async def test_add_bio(
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_set_timezone_hint(
-    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Ensure the assistant can set the timezone field based on a location hint.
 
     We use a stable, non-DST example (Mumbai, India → Asia/Kolkata) to avoid ambiguity.
     """
-    cm, _ = contact_manager_scenario
+    cm, _ = contact_manager_mutation_scenario
 
     # Find Diana Prince
     rows = cm.filter_contacts(filter="email_address == 'diana@themyscira.com'")[
