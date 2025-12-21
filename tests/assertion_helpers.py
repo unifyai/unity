@@ -73,14 +73,30 @@ def find_tool_calls_and_results(
         call_id = tc.get("id")
         if not call_id:
             continue
+
         # Look for tool result with matching id (sync) or id_completed (async)
+        # Prefer the _completed version since async tools emit both:
+        # 1. A placeholder with tool_call_id == call_id (contains _placeholder status)
+        # 2. The actual result with tool_call_id == call_id + "_completed"
+        completed_id = f"{call_id}_completed"
+        sync_result = None
+        async_result = None
+
         for m in messages:
             if m.get("role") != "tool":
                 continue
             result_id = m.get("tool_call_id", "")
-            if result_id == call_id or result_id == f"{call_id}_completed":
-                tool_results.append(m)
-                break
+            if result_id == completed_id:
+                async_result = m
+                break  # _completed is definitive, stop searching
+            if result_id == call_id and sync_result is None:
+                sync_result = m
+                # Don't break - keep looking for _completed version
+
+        # Prefer the async (_completed) result over the sync placeholder
+        result = async_result or sync_result
+        if result is not None:
+            tool_results.append(result)
 
     return tool_calls, tool_results
 
