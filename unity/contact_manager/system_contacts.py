@@ -43,19 +43,24 @@ def sync_assistant_contact(self, assistant_log) -> None:
     """Ensure assistant contact (id == 0) exists and is correct."""
     from ..session_details import SESSION_DETAILS
 
-    # 1) Prefer the assistant provided by unity.init
-    if SESSION_DETAILS.assistant_record is not None:
-        selected = SESSION_DETAILS.assistant_record
-    else:
-        # 2) Otherwise map the active context (if numeric) onto the list index
-        assistants = fetch_assistant_info(self)
-        ctxs = unify.get_active_context()
-        read_ctx = ctxs.get("read")
-        try:
-            idx = int(read_ctx) if read_ctx is not None else 0
-        except (TypeError, ValueError):
-            idx = 0
-        selected = assistants[idx] if idx < len(assistants) else None
+    # Determine which assistant record to use
+    selected = None
+
+    if SESSION_DETAILS.is_initialized:
+        # 1) Prefer the assistant provided by unity.init
+        if SESSION_DETAILS.assistant_record is not None:
+            selected = SESSION_DETAILS.assistant_record
+        else:
+            # 2) Otherwise map the active context (if numeric) onto the list index
+            assistants = fetch_assistant_info(self)
+            ctxs = unify.get_active_context()
+            read_ctx = ctxs.get("read")
+            try:
+                idx = int(read_ctx) if read_ctx is not None else 0
+            except (TypeError, ValueError):
+                idx = 0
+            selected = assistants[idx] if idx < len(assistants) else None
+    # If SESSION_DETAILS not initialized (e.g., tests), selected stays None → defaults
 
     # Build the canonical assistant record (real or dummy)
     if selected is not None:
@@ -123,7 +128,23 @@ def sync_assistant_contact(self, assistant_log) -> None:
 
 
 def fetch_user_info(self) -> Dict[str, Any]:
-    """Return basic information for the authenticated human user."""
+    """Return basic information for the authenticated human user.
+
+    When SESSION_DETAILS has not been initialized (e.g., during tests),
+    returns default user info to avoid calling real APIs.
+    """
+    from ..session_details import SESSION_DETAILS
+
+    # If SESSION_DETAILS hasn't been initialized, use defaults.
+    # This ensures tests don't call real APIs for user info.
+    if not SESSION_DETAILS.is_initialized:
+        return {
+            "first_name": DEFAULT_USER_FIRST_NAME,
+            "last_name": DEFAULT_USER_SURNAME,
+            "email": DEFAULT_USER_EMAIL,
+        }
+
+    # In production (SESSION_DETAILS initialized), fetch real user info
     user_info: Dict[str, Any] = {}
     data: Any = unify.get_user_basic_info()
     mapped: Dict[str, Any] = {
@@ -132,8 +153,6 @@ def fetch_user_info(self) -> Dict[str, Any]:
         "email": data.get("email"),
     }
     user_info.update({k: v for k, v in mapped.items() if v is not None})
-
-    from ..session_details import SESSION_DETAILS
 
     if SESSION_DETAILS.assistant_record is not None:
         phone = SESSION_DETAILS.assistant_record.get("user_phone")
