@@ -4,7 +4,9 @@ Global fixtures & shared data usable from any test module.
 
 from __future__ import annotations
 
+import fcntl
 import random
+import tempfile
 from datetime import datetime, timezone
 from datetime import timedelta
 from typing import List, Dict, Any
@@ -302,10 +304,8 @@ def tm_scenario(request: pytest.FixtureRequest):
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data.
 
-    Uses idempotent seeding - each operation handles its own race conditions:
-    - Contacts are created with get_or_create_contact (race-safe)
-    - If contacts already exist, we just rebuild the ID mapping
-    - No distributed locks needed
+    Uses a file lock to coordinate parallel test processes - only one process
+    seeds the scenario, others wait and then rebuild local state from existing data.
     """
     ManagerRegistry.clear()
     ContextRegistry.clear()
@@ -330,29 +330,41 @@ def tm_scenario(request: pytest.FixtureRequest):
 
     # Create managers
     cm = ContactManager()
-
-    # Check if scenario is already seeded (by another parallel process)
-    # Must check BOTH contacts AND transcripts to avoid race where contacts exist
-    # but transcript seeding is still in progress
     transcript_ctx = f"{ctx}/Transcripts"
-    if is_scenario_seeded(cm, _CONTACTS, transcript_context=transcript_ctx):
-        # Scenario exists - just rebuild local state
-        print("Scenario already seeded, rebuilding local state...")
-        tm = TranscriptManager(contact_manager=cm)
-        ids = rebuild_id_mapping(cm, _CONTACTS)
-        _ID_BY_NAME.update(ids)
-        _rebuild_commit_hashes(ctx)
-    else:
-        # Scenario not seeded - seed it (using idempotent helpers internally)
-        print("Seeding transcript manager scenario...")
-        sb = ScenarioBuilder()
-        sb.cm = cm  # Use the ContactManager we already created
-        sb.tm = TranscriptManager(contact_manager=cm)
-        sb._seed_contacts()  # Uses get_or_create_contact - race safe
-        sb._seed_key_exchanges()
-        sb._seed_filler()
-        tm = sb.tm
-        _commit_contexts_for_rollback(ctx)
+
+    # Use file lock to coordinate seeding across parallel processes
+    # All processes on the same machine will block on this lock
+    lock_path = os.path.join(tempfile.gettempdir(), "unity_tm_scenario.lock")
+    lock_file = open(lock_path, "w")
+    try:
+        print("Acquiring scenario lock...")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        print("Lock acquired.")
+
+        # Now we have exclusive access - check if scenario is already seeded
+        if is_scenario_seeded(cm, _CONTACTS, transcript_context=transcript_ctx):
+            # Scenario exists - just rebuild local state
+            print("Scenario already seeded, rebuilding local state...")
+            tm = TranscriptManager(contact_manager=cm)
+            ids = rebuild_id_mapping(cm, _CONTACTS)
+            _ID_BY_NAME.update(ids)
+            _rebuild_commit_hashes(ctx)
+        else:
+            # Scenario not seeded - seed it
+            print("Seeding transcript manager scenario...")
+            sb = ScenarioBuilder()
+            sb.cm = cm
+            sb.tm = TranscriptManager(contact_manager=cm)
+            sb._seed_contacts()
+            sb._seed_key_exchanges()
+            sb._seed_filler()
+            tm = sb.tm
+            _commit_contexts_for_rollback(ctx)
+    finally:
+        # Release the lock so other processes can proceed
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+        print("Lock released.")
 
     yield tm, dict(_ID_BY_NAME)
 
