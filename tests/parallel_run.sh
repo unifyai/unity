@@ -166,6 +166,9 @@ declare -a ENV_OVERRIDES=()
 # Tags (accumulated via --tags, shorthand for UNIFY_TEST_TAGS)
 declare -a TAGS=()
 
+# Extra pytest arguments (passed through via -- separator)
+declare -a PYTEST_EXTRA_ARGS=()
+
 # Resolve repo root (parent of this script's directory)
 # SCRIPT_DIR is already set by sourcing _shell_common.sh
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -274,6 +277,7 @@ while (( "$#" )); do
       echo "  --tags TAG           Tag runs for filtering (repeatable)"
       echo "  --overwrite-scenarios  Delete and recreate test scenarios"
       echo "  -h, --help           Show this help"
+      echo "  --                   Pass remaining args directly to pytest"
       echo ""
       echo "Examples:"
       echo "  parallel_run.sh tests/                    # Run all tests"
@@ -283,7 +287,13 @@ while (( "$#" )); do
       echo "  parallel_run.sh -j 8 tests/              # Limit to 8 concurrent"
       echo "  parallel_run.sh --eval-only tests/       # Only eval tests"
       echo "  parallel_run.sh -e UNIFY_CACHE=false tests/"
+      echo "  parallel_run.sh tests/ -- -v --tb=short  # Pass args to pytest"
       exit 0
+      ;;
+    --)
+      shift
+      PYTEST_EXTRA_ARGS=("$@")
+      break
       ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
@@ -532,11 +542,17 @@ run_cmd() {
   if [[ -n "$user_overrides" ]]; then
     env_exports="$env_exports$user_overrides"
   fi
-  # Build pytest command with optional marker filter and scenario overwrite
+  # Build pytest command with optional marker filter, scenario overwrite, and extra args
   local pytest_cmd
   local extra_args=""
   if (( OVERWRITE_SCENARIOS )); then
     extra_args="--overwrite-scenarios"
+  fi
+  # Append any extra pytest args passed via --
+  if (( ${#PYTEST_EXTRA_ARGS[@]} > 0 )); then
+    for arg in "${PYTEST_EXTRA_ARGS[@]}"; do
+      extra_args="$extra_args $(printf '%q' "$arg")"
+    done
   fi
   if [[ -n "$marker_arg" ]]; then
     pytest_cmd=$(printf '%q -m pytest %s %s %q' "$VENV_PY" "$marker_arg" "$extra_args" "$target")
@@ -998,6 +1014,7 @@ echo "  • Run only eval tests:                   ./parallel_run.sh --eval-only
 echo "  • Run only symbolic tests:               ./parallel_run.sh --symbolic-only tests"
 echo "  • Repeat tests for sampling:             ./parallel_run.sh --repeat 5 --eval-only tests"
 echo "  • Overwrite cached scenarios:            ./parallel_run.sh --overwrite-scenarios tests/test_contact_manager"
+echo "  • Pass extra args to pytest:             ./parallel_run.sh tests/ -- -v --tb=short --pdb"
 echo
 echo "Observe (this terminal's sessions only):"
 echo "  • Watch sessions:  tests/watch_tests.sh"

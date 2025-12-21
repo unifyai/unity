@@ -177,6 +177,26 @@ parallel_run --overwrite-scenarios tests/test_contact_manager
 
 Use this when scenario seed data has changed (e.g., new contacts, updated transcript exchanges) and you need to regenerate the cached scenario state.
 
+### Pass extra args to pytest
+
+Use `--` to pass any additional arguments directly to pytest:
+
+```bash
+# Verbose output with short tracebacks
+parallel_run tests/ -- -v --tb=short
+
+# Drop into debugger on first failure
+parallel_run tests/ -- --pdb -x
+
+# Re-run only last failed tests
+parallel_run tests/ -- --lf
+
+# Combine with parallel_run flags
+parallel_run -w --overwrite-scenarios tests/test_contact_manager -- -v
+```
+
+Any pytest option or custom conftest option (like `--unify-stub`) can be passed this way.
+
 ---
 
 ## Parallel Runner Quick Reference
@@ -197,6 +217,11 @@ parallel_run --eval-only tests/                  # Only eval tests
 parallel_run --env KEY=VALUE tests/              # Set environment variable
 parallel_run --repeat 5 tests/                   # Run each test 5 times
 parallel_run --overwrite-scenarios tests/        # Delete and recreate test scenarios
+
+# Pass extra args directly to pytest (after --)
+parallel_run tests/ -- -v --tb=short            # Verbose with short tracebacks
+parallel_run tests/ -- --pdb                    # Drop into debugger on failure
+parallel_run tests/ -- --lf                     # Re-run last failed tests
 ```
 
 See [Parallel Runner Guide](docs/parallel-runner.md) for full documentation.
