@@ -187,13 +187,34 @@ def _derive_log_name_from_args(args: list) -> str:
     return _derive_multi_target_name(paths)
 
 
+def _derive_socket_name() -> str:
+    """Derive a unique socket name from the terminal's TTY device.
+
+    Mirrors the logic in tests/_shell_common.sh::_derive_socket_name() to ensure
+    consistent naming whether tests are run via parallel_run.sh or directly via pytest.
+
+    Returns:
+        - 'unity_dev_ttysXXX' if running in a TTY (e.g., terminal session)
+        - 'unity_pidXXX' if not running in a TTY (e.g., background process)
+    """
+    try:
+        # Try to get the TTY device path (e.g., '/dev/ttys042')
+        tty_path = os.ttyname(sys.stdout.fileno())
+        # Sanitize: /dev/ttys042 -> unity_dev_ttys042
+        tty_id = tty_path.replace("/", "_")
+        return f"unity{tty_id}"
+    except (OSError, AttributeError):
+        # Not a TTY (e.g., piped output, background process)
+        return f"unity_pid{os.getpid()}"
+
+
 def _get_log_subdir() -> str:
     """Determine the log subdirectory for pytest logs.
 
     Returns a datetime-prefixed directory name for natural time-based ordering:
         - UNITY_LOG_SUBDIR if set (e.g., '2025-12-05T14-30-45_unity_dev_ttys042')
         - Falls back to UNITY_TEST_SOCKET for legacy compatibility
-        - 'standalone' for direct pytest invocations outside parallel_run.sh
+        - Derives terminal ID for direct pytest invocations (same as parallel_run.sh would)
     """
     # Prefer the datetime-prefixed log subdir if available
     log_subdir = os.environ.get("UNITY_LOG_SUBDIR", "").strip()
@@ -203,7 +224,9 @@ def _get_log_subdir() -> str:
     socket = os.environ.get("UNITY_TEST_SOCKET", "").strip()
     if socket:
         return socket
-    return "standalone"
+    # Derive terminal ID (same logic as _shell_common.sh) for direct pytest invocations
+    socket_name = _derive_socket_name()
+    return f"{datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}_{socket_name}"
 
 
 def _get_log_root(config_rootpath: Path) -> Path:
@@ -392,14 +415,8 @@ def pytest_sessionstart(session):
             except FileExistsError:
                 suffix_index += 1
 
-    # Build the log filename
-    # For datetime-prefixed directories (UNITY_LOG_SUBDIR set), use just semantic name
-    # For standalone (no parallel_run.sh), add timestamp to distinguish runs
-    if subdir == "standalone":
-        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        base_path = logs_dir / f"{semantic_name}_{ts}.txt"
-    else:
-        base_path = logs_dir / f"{semantic_name}.txt"
+    # Build the log filename (subdir is always datetime-prefixed now)
+    base_path = logs_dir / f"{semantic_name}.txt"
     log_path, fh = _open_unique(base_path)
 
     global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR
