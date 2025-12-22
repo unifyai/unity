@@ -312,39 +312,6 @@ class VerificationAssessment(BaseModel):
         None,
         description="The specific question to ask the user if status is 'request_clarification'.",
     )
-    # refinements: Optional[List["FunctionPatch"]] = Field(
-    #     None,
-    #     description="Optional list of functions (self or children) to refine. Use this to suggest improvements to docstrings or implementation based on an inefficient execution trajectory, even if the overall status is 'ok'.",
-    # )
-
-
-# TODO: DEPRECATED
-class CourseCorrectionDecision(BaseModel):
-    """A structured decision on whether course correction is needed."""
-
-    correction_needed: bool = Field(
-        ...,
-        description="True if the current state deviates from the expected state and a correction script is required.",
-    )
-    reason: str = Field(
-        ...,
-        description="A brief explanation of why correction is or is not needed.",
-    )
-    correction_code: Optional[str] = Field(
-        None,
-        description="A short, self-contained Python script using the 'computer_primitives' to restore the browser state. This should only be provided if correction_needed is True. The script must be a single code block and contain no functions, only a sequence of `await computer_primitives...` calls.",
-    )
-
-
-# TODO: DEPRECATED
-class StateVerificationDecision(BaseModel):
-    """A structured decision on whether the current state matches the required precondition."""
-
-    matches: bool = Field(
-        ...,
-        description="True if the current browser state satisfies the function's precondition. False otherwise.",
-    )
-    reason: str = Field(..., description="A brief explanation for the decision.")
 
 
 class ImplementationDecision(BaseModel):
@@ -2400,18 +2367,6 @@ async def main_plan():
             raise ValueError(
                 f"Unknown ImplementationDecision action: {decision.action}",
             )
-
-    # TODO: DEPRECATED
-    def _get_unimplemented_function_name(self) -> str:
-        """
-        Inspects the traceback to find the name of the unimplemented function.
-
-        Returns:
-            The name of the function that raised NotImplementedError.
-        """
-        _, _, exc_tb = sys.exc_info()
-        frame_summary = traceback.extract_tb(exc_tb)[-1]
-        return frame_summary.name
 
     def _get_main_function_name(self) -> str | None:
         """
@@ -4842,122 +4797,6 @@ class HierarchicalActor(BaseActor):
         except Exception as e:
             logger.warning(f"Failed to inject venv function proxies: {e}")
 
-    async def _verify_and_correct_state(
-        self,
-        plan: HierarchicalActorHandle,
-        target_precondition: dict,
-        context_label: str,
-    ):
-        """
-        A reusable helper to verify the current browser state against a target
-        precondition and execute a correction script if they do not match.
-        """
-        computer_primitives = plan._get_computer_primitives()
-
-        try:
-            screenshot = await computer_primitives.browser.get_screenshot()
-            verification_prompt = prompt_builders.build_state_verification_prompt(
-                precondition=target_precondition,
-            )
-            plan.verification_client.set_response_format(StateVerificationDecision)
-            try:
-                decision_str = await llm_call(
-                    plan.verification_client,
-                    verification_prompt,
-                    screenshot=screenshot,
-                )
-                verification_decision = StateVerificationDecision.model_validate_json(
-                    decision_str,
-                )
-            finally:
-                plan.verification_client.reset_response_format()
-
-            if verification_decision.matches:
-                logger.info(
-                    f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
-                )
-                plan.action_log.append(
-                    f"PRECONDITION MET for '{context_label}': {verification_decision.reason}",
-                )
-                return
-
-            logger.warning(
-                f"STATE DRIFT for '{context_label}': {verification_decision.reason}. Generating correction script.",
-            )
-            plan.action_log.append(
-                f"STATE DRIFT for '{context_label}': {verification_decision.reason}",
-            )
-
-            current_url = await computer_primitives.browser.get_current_url()
-            correction_prompt = prompt_builders.build_proactive_correction_prompt(
-                precondition=target_precondition,
-                current_url=current_url,
-                tools=self.tools,
-            )
-            plan.course_correction_client.set_response_format(CourseCorrectionDecision)
-            try:
-                correction_str = await llm_call(
-                    plan.course_correction_client,
-                    correction_prompt,
-                    screenshot=screenshot,
-                )
-                correction_decision = CourseCorrectionDecision.model_validate_json(
-                    correction_str,
-                )
-            finally:
-                plan.course_correction_client.reset_response_format()
-
-            if (
-                correction_decision.correction_needed
-                and correction_decision.correction_code
-            ):
-                plan.action_log.append(
-                    f"PROACTIVE CORRECTION for '{context_label}': Running script.",
-                )
-                await self._execute_course_correction(
-                    plan,
-                    correction_decision.correction_code,
-                )
-                logger.info(
-                    f"Proactive course correction for '{context_label}' completed.",
-                )
-            else:
-                logger.warning(
-                    f"State drift for '{context_label}' detected, but no correction was generated.",
-                )
-
-        except Exception as e:
-            logger.error(
-                f"Error during state verification/correction for '{context_label}': {e}",
-                exc_info=True,
-            )
-
-    async def _ensure_precondition(
-        self,
-        plan: HierarchicalActorHandle,
-        function_name: str,
-    ) -> None:
-        """
-        Checks and enforces the precondition for a function before execution.
-        """
-        precondition = self.function_manager.get_precondition(
-            function_name=function_name,
-        )
-
-        if not precondition or precondition.get("status") == "not_applicable":
-            return
-
-        computer_primitives = plan._get_computer_primitives()
-
-        if isinstance(computer_primitives.browser.backend, MagnitudeBrowserBackend):
-            await computer_primitives.browser.backend.barrier()
-
-        await self._verify_and_correct_state(
-            plan=plan,
-            target_precondition=precondition,
-            context_label=f"function '{function_name}'",
-        )
-
     async def _run_course_correction_agent(
         self,
         plan: HierarchicalActorHandle,
@@ -5937,73 +5776,6 @@ class HierarchicalActor(BaseActor):
             )
         finally:
             plan.verification_client.reset_response_format()
-
-    # TODO: DEPRECATED
-    async def _execute_course_correction(
-        self,
-        plan: HierarchicalActorHandle,
-        code: str,
-    ):
-        """
-        Executes a dynamically generated script to correct the browser state.
-        Runs under the current plan's run_id so tool calls are not blocked by the proxy.
-        """
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        failed_function_name = (
-            plan.call_stack[-1] if plan.call_stack else "unknown_function"
-        )
-        correction_filename = f"correction_for_{failed_function_name}_{timestamp}.py"
-        plans_dir = Path.cwd() / ".unity_plans"
-        plans_dir.mkdir(exist_ok=True)
-        correction_file_path = plans_dir / correction_filename
-        correction_file_path.write_text(code)
-        logger.info(
-            f"Executing course correction script. See '{correction_file_path}' for details.",
-        )
-
-        wrapped_code = "async def __hp_course_correction():\n" + textwrap.indent(
-            code,
-            "    ",
-        )
-        local_namespace: dict = {}
-        exec(wrapped_code, plan.execution_namespace, local_namespace)
-        correction_func = local_namespace["__hp_course_correction"]
-
-        run_id_token = current_run_id_var.set(plan.run_id)
-        invoc_id_token = current_invocation_id_var.set(
-            f"course_correction_{uuid.uuid4().hex[:8]}",
-        )
-        interaction_sink: list = []
-        sink_token = current_interaction_sink_var.set(interaction_sink)
-
-        frame_token = plan.runtime.push_frame(plan.run_id, "__course_correction__")
-        plan.call_stack.append("__course_correction__")
-
-        try:
-            await correction_func()
-            if hasattr(plan, "cumulative_interactions"):
-                plan.cumulative_interactions.extend(interaction_sink)
-
-        except asyncio.CancelledError:
-            logger.warning("Course correction was cancelled.")
-            raise
-        except Exception as e:
-            logger.error(
-                f"Course correction script failed to execute: {e}",
-                exc_info=True,
-            )
-            raise
-        finally:
-            try:
-                current_interaction_sink_var.reset(sink_token)
-                current_invocation_id_var.reset(invoc_id_token)
-                current_run_id_var.reset(run_id_token)
-            except Exception:
-                pass
-
-            plan.runtime.pop_frame(plan.run_id, frame_token)
-            if plan.call_stack and plan.call_stack[-1] == "__course_correction__":
-                plan.call_stack.pop()
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
