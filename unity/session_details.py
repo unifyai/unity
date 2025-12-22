@@ -121,6 +121,7 @@ class SessionDetails:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     voice_call: VoiceCallConfig = field(default_factory=VoiceCallConfig)
     unify_key: str = ""
+    shared_unify_key: str = ""
 
     # Raw assistant record from Unify API (for contexts that need the full dict)
     assistant_record: dict | None = field(default=None, repr=False)
@@ -210,6 +211,7 @@ class SessionDetails:
         self.voice = VoiceConfig()
         self.voice_call = VoiceCallConfig()
         self.unify_key = ""
+        self.shared_unify_key = ""
         self.assistant_record = None
         self._initialized = False
 
@@ -286,6 +288,9 @@ class SessionDetails:
             self.voice_call.contact_json = val
         if val := os.environ.get("BOSS"):
             self.voice_call.boss_json = val
+        # General config
+        if val := os.environ.get("SHARED_UNIFY_KEY"):
+            self.shared_unify_key = val
         self._initialized = True
 
     def get_subprocess_env(self, **overrides: str) -> dict[str, str]:
