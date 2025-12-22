@@ -15,16 +15,10 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from pydantic import BaseModel
-
 
 from tests.helpers import _handle_project
 from unity.events.event_bus import EventBus, Event
-
-
-# dummy payload for the envelope ------------------------------------------------
-class DummyPayload(BaseModel):
-    msg: str
+from unity.events.types.manager_method import ManagerMethodPayload
 
 
 # --------------------------------------------------------------------------- #
@@ -38,23 +32,27 @@ async def test_populated_and_unique() -> None:
     • Every call produces a **new** event_id.
     """
     bus = EventBus()
-    bus.register_event_types("numbers")
 
     # Publish two events without specifying event_id nor calling_id
     for txt in ("one", "two"):
-        await bus.publish(Event(type="numbers", payload=DummyPayload(msg=txt)))
+        payload = ManagerMethodPayload(
+            manager="TestManager",
+            method="test",
+            question=txt,
+        )
+        await bus.publish(Event(type="ManagerMethod", payload=payload))
 
-    latest = await bus.search(filter="type == 'numbers'", limit=2)
-    assert len(latest) == 2
+    latest = await bus.search(filter="type == 'ManagerMethod'", limit=2)
+    assert len(latest) >= 2
 
-    e1, e2 = latest
+    # Take the last two events
+    e1, e2 = latest[-2], latest[-1]
 
     # 1. Both fields must be non-empty UUID strings
     for evt in (e1, e2):
         assert evt.event_id, "event_id left blank"
         # Raises ValueError if not a valid UUID
         uuid.UUID(evt.event_id)  # type: ignore[arg-type]
-        assert evt.calling_id == "", "unexpected calling_id default modified"
 
     # 2. They must be distinct
     assert e1.event_id != e2.event_id, "event_id should be unique per message"

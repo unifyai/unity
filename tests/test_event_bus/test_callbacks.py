@@ -1,7 +1,7 @@
 # Verifies the two trigger-mechanisms implemented by EventBus.register_callback:
 #
-#   • frequency-based (“every N events”)
-#   • time-based (“every X seconds”)
+#   • frequency-based ("every N events")
+#   • time-based ("every X seconds")
 #
 # Each mechanism is tested
 #   1. inside a single EventBus lifetime (no persistence required)
@@ -11,8 +11,13 @@
 # published events contribute towards the trigger counter / timer.
 #
 # The tests rely on the Subscription state being persisted to the dedicated
-# “…/Events/_callbacks” context (created by the patched EventBus) and on
+# "…/Events/_callbacks" context (created by the patched EventBus) and on
 # auto-incremented `row_id` / timestamp metadata coming back from Unify.
+#
+# Uses different event types for test isolation:
+#   - Frequency tests: Comms
+#   - Time tests: ToolLoop
+#   - Filter tests: ManagerMethod
 #
 # --------------------------------------------------------------------------- #
 
@@ -25,6 +30,18 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.events.event_bus import EventBus, Event
+from unity.events.types.comms import CommsPayload
+from unity.events.types.tool_loop import ToolLoopPayload
+from unity.events.types.manager_method import ManagerMethodPayload
+
+
+def _get_seq(payload) -> int:
+    """Extract seq from payload, handling both Pydantic models and dicts."""
+    if hasattr(payload, "seq"):
+        return payload.seq
+    if isinstance(payload, dict):
+        return payload.get("seq")
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -50,17 +67,17 @@ async def test_frequency_single_session() -> None:
 
     async def cb(events):  # noqa: ANN001
         # store the seq of the event that caused the trigger
-        triggered.append(events[0].payload["seq"])
+        triggered.append(_get_seq(events[0].payload))
 
     await bus.register_callback(
-        event_type="Freq",
+        event_type="Comms",
         callback=cb,
         every_n=3,
     )
 
     # Publish five events → expect one trigger at seq==2
     for seq in range(5):
-        await bus.publish(Event(type="Freq", payload={"seq": seq}))
+        await bus.publish(Event(type="Comms", payload=CommsPayload(seq=seq)))
     bus.join_published()
     await asyncio.sleep(0.05)
 
@@ -80,17 +97,17 @@ async def test_frequency_across_sessions() -> None:
     trig1: list[int] = []
 
     async def cb1(events):  # noqa: ANN001
-        trig1.append(events[0].payload["seq"])
+        trig1.append(_get_seq(events[0].payload))
 
     await bus1.register_callback(
-        event_type="FreqCross",
+        event_type="Comms",
         callback=cb1,
         every_n=3,
     )
 
     # Publish first three → one trigger
     for seq in range(3):
-        await bus1.publish(Event(type="FreqCross", payload={"seq": seq}))
+        await bus1.publish(Event(type="Comms", payload=CommsPayload(seq=seq)))
     bus1.join_published()
     await asyncio.sleep(0.05)
     assert trig1 == [2]
@@ -100,31 +117,31 @@ async def test_frequency_across_sessions() -> None:
     trig2: list[int] = []
 
     async def cb2(events):  # noqa: ANN001
-        trig2.append(events[0].payload["seq"])
+        trig2.append(_get_seq(events[0].payload))
 
     # Re-register identical subscription → attaches to persisted state
     await bus2.register_callback(
-        event_type="FreqCross",
+        event_type="Comms",
         callback=cb2,
         every_n=3,
     )
 
     # Two more events: not enough yet
     for seq in range(3, 5):
-        await bus2.publish(Event(type="FreqCross", payload={"seq": seq}))
+        await bus2.publish(Event(type="Comms", payload=CommsPayload(seq=seq)))
     bus2.join_published()
     await asyncio.sleep(0.05)
     assert trig2 == []  # threshold not reached
 
-    # Third additional event reaches “next 3” ⇒ second trigger
-    await bus2.publish(Event(type="FreqCross", payload={"seq": 5}))
+    # Third additional event reaches "next 3" ⇒ second trigger
+    await bus2.publish(Event(type="Comms", payload=CommsPayload(seq=5)))
     bus2.join_published()
     await asyncio.sleep(0.05)
     assert trig2 == [5]
 
 
 # --------------------------------------------------------------------------- #
-#  3. time-based trigger, single session                                      #
+#  3. time-based trigger, single session (uses ToolLoop for isolation)        #
 # --------------------------------------------------------------------------- #
 
 
@@ -135,10 +152,10 @@ async def test_time_single_session() -> None:
     triggered: list[int] = []
 
     async def cb(events):  # noqa: ANN001
-        triggered.append(events[0].payload["seq"])
+        triggered.append(_get_seq(events[0].payload))
 
     await bus.register_callback(
-        event_type="Timer",
+        event_type="ToolLoop",
         callback=cb,
         every_seconds=2,
     )
@@ -148,13 +165,43 @@ async def test_time_single_session() -> None:
     #   t0+1s → no trigger
     #   t0+3s → Δ=3 ≥ 2s → second trigger
     await bus.publish(
-        Event(type="Timer", timestamp=ts(0), payload={"seq": 0}),
+        Event(
+            type="ToolLoop",
+            timestamp=ts(0),
+            payload=ToolLoopPayload(
+                message={"role": "user"},
+                method="test",
+                hierarchy=[],
+                hierarchy_label="",
+                seq=0,
+            ),
+        ),
     )
     await bus.publish(
-        Event(type="Timer", timestamp=ts(1), payload={"seq": 1}),
+        Event(
+            type="ToolLoop",
+            timestamp=ts(1),
+            payload=ToolLoopPayload(
+                message={"role": "user"},
+                method="test",
+                hierarchy=[],
+                hierarchy_label="",
+                seq=1,
+            ),
+        ),
     )
     await bus.publish(
-        Event(type="Timer", timestamp=ts(3), payload={"seq": 2}),
+        Event(
+            type="ToolLoop",
+            timestamp=ts(3),
+            payload=ToolLoopPayload(
+                message={"role": "user"},
+                method="test",
+                hierarchy=[],
+                hierarchy_label="",
+                seq=2,
+            ),
+        ),
     )
     bus.join_published()
     await asyncio.sleep(0.05)
@@ -163,7 +210,7 @@ async def test_time_single_session() -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  4. time-based trigger, across sessions (timestamp sync)                    #
+#  4. time-based trigger, across sessions (uses ToolLoop for isolation)       #
 # --------------------------------------------------------------------------- #
 
 
@@ -175,16 +222,26 @@ async def test_time_across_sessions() -> None:
     trig1: list[int] = []
 
     async def cb1(events):  # noqa: ANN001
-        trig1.append(events[0].payload["seq"])
+        trig1.append(_get_seq(events[0].payload))
 
     await bus1.register_callback(
-        event_type="TimerCross",
+        event_type="ToolLoop",
         callback=cb1,
         every_seconds=2,
     )
 
     await bus1.publish(
-        Event(type="TimerCross", timestamp=ts(0), payload={"seq": 0}),
+        Event(
+            type="ToolLoop",
+            timestamp=ts(0),
+            payload=ToolLoopPayload(
+                message={"role": "user"},
+                method="test",
+                hierarchy=[],
+                hierarchy_label="",
+                seq=0,
+            ),
+        ),
     )  # triggers
     bus1.join_published()
     await asyncio.sleep(0.05)
@@ -195,21 +252,41 @@ async def test_time_across_sessions() -> None:
     trig2: list[int] = []
 
     async def cb2(events):  # noqa: ANN001
-        trig2.append(events[0].payload["seq"])
+        trig2.append(_get_seq(events[0].payload))
 
     await bus2.register_callback(
-        event_type="TimerCross",
+        event_type="ToolLoop",
         callback=cb2,
         every_seconds=2,
     )
 
-    # Event within 1 s of last trigger → shouldn’t fire
+    # Event within 1 s of last trigger → shouldn't fire
     await bus2.publish(
-        Event(type="TimerCross", timestamp=ts(1), payload={"seq": 1}),
+        Event(
+            type="ToolLoop",
+            timestamp=ts(1),
+            payload=ToolLoopPayload(
+                message={"role": "user"},
+                method="test",
+                hierarchy=[],
+                hierarchy_label="",
+                seq=1,
+            ),
+        ),
     )
     # Event 3 s later → should fire
     await bus2.publish(
-        Event(type="TimerCross", timestamp=ts(3), payload={"seq": 2}),
+        Event(
+            type="ToolLoop",
+            timestamp=ts(3),
+            payload=ToolLoopPayload(
+                message={"role": "user"},
+                method="test",
+                hierarchy=[],
+                hierarchy_label="",
+                seq=2,
+            ),
+        ),
     )
     bus2.join_published()
     await asyncio.sleep(0.05)
@@ -217,18 +294,32 @@ async def test_time_across_sessions() -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  5–8.  same four scenarios but with a payload-filter                        #
+#  5–8.  same four scenarios but with a payload-filter (uses ManagerMethod)   #
 # --------------------------------------------------------------------------- #
 
 
 def _mk_msg(sender: int, receiver: int, seq: int) -> Event:
     return Event(
-        type="Chat",
-        payload={"sender_id": sender, "receiver_ids": [receiver], "seq": seq},
+        type="ManagerMethod",
+        payload=ManagerMethodPayload(
+            manager="Test",
+            method="filter_test",
+            sender_id=sender,
+            receiver_ids=[receiver],
+            seq=seq,
+        ),
     )
 
 
-FILTER = 'evt.payload["sender_id"] == 1 and evt.payload["receiver_ids"] == [2]'
+FILTER = "evt.payload.sender_id == 1 and evt.payload.receiver_ids == [2]"
+
+
+def _get_sender_id(payload) -> int:
+    if hasattr(payload, "sender_id"):
+        return payload.sender_id
+    if isinstance(payload, dict):
+        return payload.get("sender_id")
+    return None
 
 
 @pytest.mark.asyncio
@@ -238,10 +329,10 @@ async def test_frequency_single_session_with_filter() -> None:
     trig: list[int] = []
 
     async def cb(evts):  # noqa: ANN001
-        trig.append(evts[0].payload["seq"])
+        trig.append(_get_seq(evts[0].payload))
 
     await bus.register_callback(
-        event_type="Chat",
+        event_type="ManagerMethod",
         callback=cb,
         every_n=2,
         filter=FILTER,
@@ -264,7 +355,7 @@ async def test_frequency_across_sessions_with_filter() -> None:
     # Session 1
     bus1 = EventBus()
     await bus1.register_callback(
-        event_type="Chat",
+        event_type="ManagerMethod",
         callback=lambda _: None,  # dummy
         every_n=2,
         filter=FILTER,
@@ -279,10 +370,10 @@ async def test_frequency_across_sessions_with_filter() -> None:
     trig: list[int] = []
 
     async def cb(evts):  # noqa: ANN001
-        trig.append(evts[0].payload["seq"])
+        trig.append(_get_seq(evts[0].payload))
 
     await bus2.register_callback(
-        event_type="Chat",
+        event_type="ManagerMethod",
         callback=cb,
         every_n=2,
         filter=FILTER,
@@ -302,10 +393,10 @@ async def test_time_single_session_with_filter() -> None:
     trig: list[int] = []
 
     async def cb(evts):  # noqa: ANN001
-        trig.append(evts[0].payload["seq"])
+        trig.append(_get_seq(evts[0].payload))
 
     await bus.register_callback(
-        event_type="ChatTime",
+        event_type="ManagerMethod",
         callback=cb,
         every_seconds=2,
         filter=FILTER,
@@ -313,23 +404,41 @@ async def test_time_single_session_with_filter() -> None:
 
     await bus.publish(
         Event(
-            type="ChatTime",
+            type="ManagerMethod",
             timestamp=ts(0),
-            payload={"sender_id": 1, "receiver_ids": [2], "seq": 0},
+            payload=ManagerMethodPayload(
+                manager="Test",
+                method="filter_test",
+                sender_id=1,
+                receiver_ids=[2],
+                seq=0,
+            ),
         ),
     )  # trigger
     await bus.publish(
         Event(
-            type="ChatTime",
+            type="ManagerMethod",
             timestamp=ts(1),
-            payload={"sender_id": 1, "receiver_ids": [2], "seq": 1},
+            payload=ManagerMethodPayload(
+                manager="Test",
+                method="filter_test",
+                sender_id=1,
+                receiver_ids=[2],
+                seq=1,
+            ),
         ),
     )  # ignore (Δ=1)
     await bus.publish(
         Event(
-            type="ChatTime",
+            type="ManagerMethod",
             timestamp=ts(3),
-            payload={"sender_id": 1, "receiver_ids": [2], "seq": 2},
+            payload=ManagerMethodPayload(
+                manager="Test",
+                method="filter_test",
+                sender_id=1,
+                receiver_ids=[2],
+                seq=2,
+            ),
         ),
     )  # trigger (Δ=3)
     bus.join_published()
@@ -343,16 +452,22 @@ async def test_time_across_sessions_with_filter() -> None:
     # First run
     bus1 = EventBus()
     await bus1.register_callback(
-        event_type="ChatTimeX",
+        event_type="ManagerMethod",
         callback=lambda _: None,
         every_seconds=2,
         filter=FILTER,
     )
     await bus1.publish(
         Event(
-            type="ChatTimeX",
+            type="ManagerMethod",
             timestamp=ts(0),
-            payload={"sender_id": 1, "receiver_ids": [2], "seq": 0},
+            payload=ManagerMethodPayload(
+                manager="Test",
+                method="filter_test",
+                sender_id=1,
+                receiver_ids=[2],
+                seq=0,
+            ),
         ),
     )  # trigger
     bus1.join_published()
@@ -363,10 +478,10 @@ async def test_time_across_sessions_with_filter() -> None:
     trig: list[int] = []
 
     async def cb(evts):  # noqa: ANN001
-        trig.append(evts[0].payload["seq"])
+        trig.append(_get_seq(evts[0].payload))
 
     await bus2.register_callback(
-        event_type="ChatTimeX",
+        event_type="ManagerMethod",
         callback=cb,
         every_seconds=2,
         filter=FILTER,
@@ -374,16 +489,28 @@ async def test_time_across_sessions_with_filter() -> None:
 
     await bus2.publish(
         Event(
-            type="ChatTimeX",
+            type="ManagerMethod",
             timestamp=ts(1),
-            payload={"sender_id": 1, "receiver_ids": [2], "seq": 1},
+            payload=ManagerMethodPayload(
+                manager="Test",
+                method="filter_test",
+                sender_id=1,
+                receiver_ids=[2],
+                seq=1,
+            ),
         ),
     )  # too soon
     await bus2.publish(
         Event(
-            type="ChatTimeX",
+            type="ManagerMethod",
             timestamp=ts(3),
-            payload={"sender_id": 1, "receiver_ids": [2], "seq": 2},
+            payload=ManagerMethodPayload(
+                manager="Test",
+                method="filter_test",
+                sender_id=1,
+                receiver_ids=[2],
+                seq=2,
+            ),
         ),
     )  # Δ=3 ⇒ trigger
     bus2.join_published()

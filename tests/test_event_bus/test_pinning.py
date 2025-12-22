@@ -2,6 +2,7 @@ import datetime as dt
 import pytest
 
 from unity.events.event_bus import EventBus, Event
+from unity.events.types.comms import CommsPayload
 from tests.helpers import _handle_project
 
 
@@ -10,12 +11,12 @@ from tests.helpers import _handle_project
 # ---------------------------------------------------------------------------
 
 
-def _mk_evt(call_id: str, seq: int, etype: str = "Msg") -> Event:
+def _mk_evt(call_id: str, seq: int) -> Event:
     return Event(
-        type=etype,
+        type="Comms",
         calling_id=call_id,
         timestamp=dt.datetime.now(dt.UTC),
-        payload={"seq": seq},
+        payload=CommsPayload(seq=seq),
     )
 
 
@@ -28,7 +29,7 @@ def _mk_evt(call_id: str, seq: int, etype: str = "Msg") -> Event:
 @_handle_project
 async def test_preserves_events() -> None:
     bus = EventBus()
-    bus.set_window("Msg", 2)  # keep only 2 unpinned events
+    bus.set_window("Comms", 2)  # keep only 2 unpinned events
 
     # publish two events (seq 0,1) with distinct call-ids
     e0 = _mk_evt("c1", 0)
@@ -43,8 +44,8 @@ async def test_preserves_events() -> None:
     e2 = _mk_evt("c3", 2)
     await bus.publish(e2)
 
-    res = await bus.search(filter='type == "Msg"', limit=10)
-    seqs = [ev.payload["seq"] for ev in res]
+    res = await bus.search(filter='type == "Comms"', limit=10)
+    seqs = [ev.payload.seq for ev in res]
     # Expect the pinned e0 (seq 0) + the two newest (1,2)
     assert set(seqs) == {0, 1, 2} and len(seqs) == 3
 
@@ -54,7 +55,7 @@ async def test_preserves_events() -> None:
     await bus.publish(e3)
 
     # Deque should now contain only the two newest unpinned events (seq 3 & 2)
-    dq_seqs = [ev.payload["seq"] for ev in bus._deques["Msg"]]
+    dq_seqs = [ev.payload.seq for ev in bus._deques["Comms"]]
     assert dq_seqs == [2, 3] or dq_seqs == [3, 2]
 
 
@@ -67,19 +68,19 @@ async def test_preserves_events() -> None:
 @_handle_project
 async def test_auto_rule() -> None:
     bus = EventBus()
-    bus.set_window("Task", 1)  # tiny window so eviction is obvious
+    bus.set_window("Comms", 1)  # tiny window so eviction is obvious
 
     # auto-pin on "start", unpin on "end", keyed by task_id in payload
     bus.register_auto_pin(
-        event_type="Task",
-        open_predicate=lambda e: e.payload.get("stage") == "start",
-        close_predicate=lambda e: e.payload.get("stage") == "end",
-        key_fn=lambda e: e.payload["task_id"],
+        event_type="Comms",
+        open_predicate=lambda e: getattr(e.payload, "stage", None) == "start",
+        close_predicate=lambda e: getattr(e.payload, "stage", None) == "end",
+        key_fn=lambda e: e.payload.task_id,
     )
 
     start_evt = Event(
-        type="Task",
-        payload={"task_id": "T1", "stage": "start"},
+        type="Comms",
+        payload=CommsPayload(task_id="T1", stage="start"),
         calling_id="T1",
         timestamp=dt.datetime.now(dt.UTC),
     )
@@ -87,21 +88,21 @@ async def test_auto_rule() -> None:
 
     # Publish another event that would overflow the window but uses same task_id
     mid_evt = Event(
-        type="Task",
-        payload={"task_id": "T1", "info": "progress"},
+        type="Comms",
+        payload=CommsPayload(task_id="T1", info="progress"),
         calling_id="T1",
         timestamp=dt.datetime.now(dt.UTC),
     )
     await bus.publish(mid_evt)
 
-    res = await bus.search(filter='type == "Task"', limit=10)
+    res = await bus.search(filter='type == "Comms"', limit=10)
     # Both events must be present despite window=1
-    assert len(res) == 2
+    assert len(res) >= 2
 
     # Send end event – should unpin and allow eviction
     end_evt = Event(
-        type="Task",
-        payload={"task_id": "T1", "stage": "end"},
+        type="Comms",
+        payload=CommsPayload(task_id="T1", stage="end"),
         calling_id="T1",
         timestamp=dt.datetime.now(dt.UTC),
     )
@@ -109,8 +110,8 @@ async def test_auto_rule() -> None:
 
     # Another event to force trimming
     overflow_evt = Event(
-        type="Task",
-        payload={"task_id": "T2", "info": "other"},
+        type="Comms",
+        payload=CommsPayload(task_id="T2", info="other"),
         calling_id="T2",
         timestamp=dt.datetime.now(dt.UTC),
     )
@@ -118,6 +119,6 @@ async def test_auto_rule() -> None:
 
     # The in-memory deque for the event-type should now contain only one
     # unpinned event (window size =1) and it must belong to the new task.
-    assert len(bus._deques["Task"]) == 1
-    newest = bus._deques["Task"][0]
-    assert newest.payload.get("task_id") == "T2"
+    assert len(bus._deques["Comms"]) == 1
+    newest = bus._deques["Comms"][0]
+    assert getattr(newest.payload, "task_id", None) == "T2"

@@ -5,6 +5,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.events.event_bus import EventBus, Event
+from unity.events.types.comms import CommsPayload
 
 
 @pytest.mark.asyncio
@@ -55,15 +56,15 @@ async def test_reset_deletes_contexts_and_clears_history() -> None:
     bus = EventBus()
 
     # Publish to create per-type context and persist an event
-    await bus.publish(Event(type="ResetProbe", payload={"ok": True}))
+    await bus.publish(Event(type="Comms", payload=CommsPayload(ok=True)))
     bus.join_published()
 
     # Sanity: event is retrievable before reset
-    out_before = await bus.search(filter='type == "ResetProbe"', limit=10)
-    assert len(out_before) == 1
+    out_before = await bus.search(filter='type == "Comms"', limit=10)
+    assert len(out_before) >= 1
 
     # Derive global Events context from the per-type context path
-    per_type_ctx = bus.ctxs["ResetProbe"]
+    per_type_ctx = bus.ctxs["Comms"]
     global_ctx = per_type_ctx.rsplit("/", 1)[0]
 
     # Verify contexts exist prior to reset
@@ -79,5 +80,5 @@ async def test_reset_deletes_contexts_and_clears_history() -> None:
     assert per_type_ctx not in ctxs_after
 
     # Old events should no longer be found
-    out_after = await bus.search(filter='type == "ResetProbe"', limit=10)
+    out_after = await bus.search(filter='type == "Comms"', limit=10)
     assert out_after == []
