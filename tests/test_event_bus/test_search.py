@@ -34,11 +34,12 @@ async def test_deque_only():
     await bus.publish(mk_evt(level="INFO", msg="one"))
     await bus.publish(mk_evt(level="WARN", msg="two"))
     res = await bus.search(
-        filter='type == "Comms" and payload.level == "WARN"',
+        filter='type == "Comms" and payload["level"] == "WARN"',
         limit=5,
     )
     assert len(res) == 1
-    assert res[0].payload.msg == "two"
+    # Access payload via getattr for compatibility with both Pydantic and dict
+    assert getattr(res[0].payload, "msg", None) == "two"
 
 
 @pytest.mark.asyncio
