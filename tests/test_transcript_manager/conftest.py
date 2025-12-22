@@ -362,7 +362,8 @@ def tm_scenario(request: pytest.FixtureRequest):
                 mode="asyncio",
             )
 
-    # Set context before any operations
+    # Set context before any operations (create first like ContactManager does)
+    unify.create_context(ctx)  # exist_ok=True by default
     unify.set_context(ctx, relative=False)
 
     # Create managers
@@ -386,6 +387,9 @@ def tm_scenario(request: pytest.FixtureRequest):
             sb._seed_key_exchanges()
             sb._seed_filler()
             _commit_contexts_for_rollback(ctx)
+
+    # Unset context after setup, like ContactManager does
+    unify.unset_context()
 
     yield tm, dict(_ID_BY_NAME)
 
