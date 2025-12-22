@@ -2,8 +2,13 @@
 Utility functions for embedding-based vector search through the logs.
 """
 
+import fcntl
+import hashlib
+import os
+import tempfile
 import unify
 import threading
+from contextlib import contextmanager
 
 # Model to use for text embeddings
 EMBED_MODEL = "text-embedding-3-small"
@@ -25,6 +30,31 @@ def _get_column_lock(context: str, key: str) -> threading.Lock:
             lock = threading.Lock()
             _COLUMN_LOCKS[lk_key] = lock
         return lock
+
+
+@contextmanager
+def _cross_process_column_lock(context: str, key: str):
+    """
+    Cross-process file lock for column creation.
+
+    Provides coordination across parallel test processes that share the same
+    Unify backend. Uses a file lock in the temp directory keyed by a hash of
+    (context, key) to avoid filename length issues.
+
+    The overhead is ~12μs per lock acquisition - negligible compared to the
+    ~500ms+ embedding operations being protected.
+    """
+    # Hash the key to avoid filesystem issues with long/special characters
+    lock_id = hashlib.sha1(f"{context}:{key}".encode()).hexdigest()[:16]
+    lock_path = os.path.join(tempfile.gettempdir(), f"unity_col_{lock_id}.lock")
+
+    lock_file = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
 
 
 def list_private_fields(context: str) -> list[str]:
@@ -76,57 +106,60 @@ def ensure_derived_column(
         # If introspection fails, fall through to locked creation
         pass
 
-    # Attempt creation under a process-local lock to avoid races. We do a
-    # second existence check once inside the critical section (double-checked locking).
-    lock = _get_column_lock(context, key)
-    with lock:
-        # Early return if the column already exists and
-        # we are not doing targeted derived logs creation using from_ids
-        # We intentionally do this to avoid redundant calls to create
-        # duplicate embeddings that will get rejected by the backend
-        # due to duplication constraint
-        existing = unify.get_fields(context=context)
-        if key in existing and not from_ids:
-            return
-
-        try:
-            try:
-                fields = unify.get_fields(context=context)
-                if key in fields and not from_ids:
-                    return
-            except Exception:
-                pass
-
-            referenced_logs = {}
-            if from_ids:
-                # Instruct backend to scope the operation to a subset of log entries
-                referenced_logs = {
-                    "lg": list(from_ids),
-                }
-            else:
-                referenced_logs = {
-                    "lg": {"context": referenced_logs_context or context},
-                }
-
-            response = unify.create_derived_logs(
-                context=context,
-                key=key,
-                equation=equation,
-                referenced_logs=referenced_logs,
-                derived=derived,
-            )
-            # Be quiet in normal operation; tests assert no failure logs appear.
-            # print(f"{response}")
-        except unify.RequestError as e:
-            body = getattr(e.response, "text", "") or ""
-            # Treat duplicate/exists as success and do not emit error output
-            if (
-                "already exists" in body
-                or "duplicate key value violates unique constraint" in body
-            ):
+    # Attempt creation under both a cross-process file lock (for parallel test
+    # isolation) and a process-local thread lock (for in-process concurrency).
+    # The file lock coordinates across parallel pytest sessions; the thread lock
+    # handles concurrent async tasks within a single process.
+    thread_lock = _get_column_lock(context, key)
+    with _cross_process_column_lock(context, key):
+        with thread_lock:
+            # Early return if the column already exists and
+            # we are not doing targeted derived logs creation using from_ids
+            # We intentionally do this to avoid redundant calls to create
+            # duplicate embeddings that will get rejected by the backend
+            # due to duplication constraint
+            existing = unify.get_fields(context=context)
+            if key in existing and not from_ids:
                 return
-            # For other errors, re-raise
-            raise e
+
+            try:
+                try:
+                    fields = unify.get_fields(context=context)
+                    if key in fields and not from_ids:
+                        return
+                except Exception:
+                    pass
+
+                referenced_logs = {}
+                if from_ids:
+                    # Instruct backend to scope the operation to a subset of log entries
+                    referenced_logs = {
+                        "lg": list(from_ids),
+                    }
+                else:
+                    referenced_logs = {
+                        "lg": {"context": referenced_logs_context or context},
+                    }
+
+                response = unify.create_derived_logs(
+                    context=context,
+                    key=key,
+                    equation=equation,
+                    referenced_logs=referenced_logs,
+                    derived=derived,
+                )
+                # Be quiet in normal operation; tests assert no failure logs appear.
+                # print(f"{response}")
+            except unify.RequestError as e:
+                body = getattr(e.response, "text", "") or ""
+                # Treat duplicate/exists as success and do not emit error output
+                if (
+                    "already exists" in body
+                    or "duplicate key value violates unique constraint" in body
+                ):
+                    return
+                # For other errors, re-raise
+                raise e
 
 
 def ensure_vector_column(
