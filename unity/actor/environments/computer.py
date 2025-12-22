@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+import inspect
+from typing import Any, Dict
+
+from unity.actor.environments.base import BaseEnvironment, ToolMetadata
+from unity.function_manager.primitives import ComputerPrimitives
+
+
+class ComputerEnvironment(BaseEnvironment):
+    """Computer (browser/desktop) control environment backed by `ComputerPrimitives`.
+
+    Exposes browser control methods like `computer_primitives.act(instruction)` for use inside
+    generated plan code.
+    """
+
+    def __init__(self, computer_primitives: ComputerPrimitives):
+        self._computer_primitives = computer_primitives
+
+    @property
+    def namespace(self) -> str:
+        return "computer_primitives"
+
+    def get_instance(self) -> ComputerPrimitives:
+        return self._computer_primitives
+
+    def get_tools(self) -> Dict[str, ToolMetadata]:
+        # Explicit categorization avoids brittle substring heuristics.
+        # (This list should track the actual public methods exposed on ComputerPrimitives.)
+        impure = {"navigate", "act"}
+        steerable = (
+            set()
+        )  # browser primitives sometimes return handles, but actor proxies detect dynamically
+
+        tool_names = [
+            "navigate",
+            "act",
+            "observe",
+            "query",
+            "get_links",
+            "get_content",
+            "reason",
+        ]
+
+        tools: Dict[str, ToolMetadata] = {}
+        for name in tool_names:
+            if not hasattr(self._computer_primitives, name):
+                continue
+            fn = getattr(self._computer_primitives, name)
+            if not callable(fn):
+                continue
+
+            try:
+                signature = str(inspect.signature(fn))
+            except Exception:
+                signature = None
+
+            tools[f"{self.namespace}.{name}"] = ToolMetadata(
+                name=f"{self.namespace}.{name}",
+                is_impure=name in impure,
+                is_steerable=name in steerable,
+                docstring=getattr(fn, "__doc__", None),
+                signature=signature,
+            )
+
+        return tools
+
+    async def capture_state(self) -> Dict[str, Any]:
+        """Captures visual browser state (screenshot + URL)."""
+        try:
+            screenshot = await self._computer_primitives.browser.get_screenshot()
+            url = await self._computer_primitives.browser.get_current_url()
+            return {
+                "type": "visual",
+                "screenshot": screenshot,
+                "url": url,
+            }
+        except Exception as e:
+            return {
+                "type": "visual",
+                "error": str(e),
+            }

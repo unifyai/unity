@@ -9,7 +9,7 @@ The Actor owns proxying/caching/logging behavior.
 """
 
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
-from unity.actor.environments.browser import ComputerEnvironment
+from unity.actor.environments.computer import ComputerEnvironment
 from unity.actor.environments.state_managers import StateManagerEnvironment
 
 __all__ = [
