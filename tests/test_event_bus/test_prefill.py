@@ -45,7 +45,7 @@ async def test_prefill_on_new_instance():
 
     # Create a *new* EventBus that should preload from persisted logs
     bus2 = EventBus()
-    bus2.set_window("messages", window)
+    bus2.set_window("Message", window)
 
     latest = await bus2.search(filter="type == 'Message'", limit=window)
 

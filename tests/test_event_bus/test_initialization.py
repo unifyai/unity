@@ -1,5 +1,4 @@
 import time
-import unify
 
 import pytest
 
@@ -45,12 +44,14 @@ async def test_join_idempotent() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_reset_deletes_contexts_and_clears_history() -> None:
-    """reset(delete_contexts=True) must drop per-type contexts and clear history.
+async def test_reset_clears_history() -> None:
+    """reset(delete_contexts=True) must clear event history.
 
-    After publishing an event to create the per-type context, calling reset should
-    remove that context from Unify and re-initialise the in-memory state so that
-    subsequent searches return no results for the old event-type.
+    After publishing an event, calling reset should re-initialise the in-memory
+    state so that subsequent searches return no results for the old events.
+
+    Note: With eager context creation for known types, contexts may be recreated
+    after clear(), but the event data within them should be deleted.
     """
 
     bus = EventBus()
@@ -63,22 +64,9 @@ async def test_reset_deletes_contexts_and_clears_history() -> None:
     out_before = await bus.search(filter='type == "Comms"', limit=10)
     assert len(out_before) >= 1
 
-    # Derive global Events context from the per-type context path
-    per_type_ctx = bus.ctxs["Comms"]
-    global_ctx = per_type_ctx.rsplit("/", 1)[0]
-
-    # Verify contexts exist prior to reset
-    ctxs_before = set(unify.get_contexts(prefix=global_ctx))
-    assert per_type_ctx in ctxs_before
-    assert any(c.endswith("/_callbacks") for c in ctxs_before)
-
     # Reset: delete contexts and re-initialise this instance in-place
     bus.clear(delete_contexts=True)
 
-    # After reset, the specific per-type context must be gone
-    ctxs_after = set(unify.get_contexts(prefix=global_ctx))
-    assert per_type_ctx not in ctxs_after
-
-    # Old events should no longer be found
+    # Old events should no longer be found (contexts may be recreated but empty)
     out_after = await bus.search(filter='type == "Comms"', limit=10)
     assert out_after == []
