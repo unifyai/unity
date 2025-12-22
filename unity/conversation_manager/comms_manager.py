@@ -313,7 +313,7 @@ class CommsManager:
                 except Exception as e:
                     print(f"Error processing pre-hire logs: {e}")
                     message.nack()
-            elif "call" in thread:
+            elif "call" in thread or "meet" in thread:
                 try:
                     # Publish contacts
                     contacts = [*event.get("contacts", []), _get_local_contact()]
