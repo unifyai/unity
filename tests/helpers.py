@@ -574,11 +574,41 @@ def is_scenario_seeded(
 
 import fcntl
 import tempfile
+import time
 from contextlib import contextmanager
 
 
+def _acquire_file_lock_with_timeout(
+    lock_file,
+    timeout: float,
+    lock_name: str,
+) -> None:
+    """
+    Acquire a file lock with timeout to prevent indefinite hangs.
+
+    Uses non-blocking lock attempts with polling to implement a timeout.
+    If the timeout is exceeded, raises TimeoutError with a descriptive message.
+
+    This prevents a hung process from blocking all other parallel tests
+    indefinitely - instead, waiting tests will fail with a clear error.
+    """
+    start = time.monotonic()
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return  # Successfully acquired lock
+        except BlockingIOError:
+            elapsed = time.monotonic() - start
+            if elapsed >= timeout:
+                raise TimeoutError(
+                    f"Timeout after {timeout}s waiting for lock '{lock_name}'. "
+                    f"Another test process may be hung while holding this lock.",
+                )
+            time.sleep(0.1)  # Brief sleep before retry
+
+
 @contextmanager
-def scenario_file_lock(lock_name: str):
+def scenario_file_lock(lock_name: str, timeout: float = 600.0):
     """
     File-based lock for coordinating parallel test scenario seeding.
 
@@ -589,6 +619,12 @@ def scenario_file_lock(lock_name: str):
     Args:
         lock_name: Unique name for this scenario's lock file.
                    Will be created in system temp directory.
+        timeout: Maximum seconds to wait for the lock (default 600s / 10 min).
+                 Scenario seeding can be slow, especially under heavy parallel load.
+
+    Raises:
+        TimeoutError: If the lock cannot be acquired within the timeout.
+            This indicates another process is hung while holding the lock.
 
     Example:
         with scenario_file_lock("tm_scenario"):
@@ -602,7 +638,7 @@ def scenario_file_lock(lock_name: str):
     lock_path = os.path.join(tempfile.gettempdir(), f"unity_{lock_name}.lock")
     lock_file = open(lock_path, "w")
     try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        _acquire_file_lock_with_timeout(lock_file, timeout, lock_name)
         yield
     finally:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
@@ -610,7 +646,7 @@ def scenario_file_lock(lock_name: str):
 
 
 @contextmanager
-def mutation_test_lock(lock_name: str):
+def mutation_test_lock(lock_name: str, timeout: float = 600.0):
     """
     File-based lock for serializing mutation tests in parallel execution.
 
@@ -627,6 +663,12 @@ def mutation_test_lock(lock_name: str):
     Args:
         lock_name: Unique name for this lock (e.g., "cm_mutation").
                    Will be created in system temp directory.
+        timeout: Maximum seconds to wait for the lock (default 600s / 10 min).
+                 Tests with multiple LLM calls can be slow under heavy parallel load.
+
+    Raises:
+        TimeoutError: If the lock cannot be acquired within the timeout.
+            This indicates another process is hung while holding the lock.
 
     Example:
         @pytest.fixture
@@ -638,7 +680,7 @@ def mutation_test_lock(lock_name: str):
     lock_path = os.path.join(tempfile.gettempdir(), f"unity_{lock_name}.lock")
     lock_file = open(lock_path, "w")
     try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        _acquire_file_lock_with_timeout(lock_file, timeout, lock_name)
         yield
     finally:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
