@@ -27,20 +27,29 @@ Each terminal session (including each Cursor agent) automatically gets its own *
 
 ### Choosing the Right Command
 
-**CRITICAL: Always use `--wait` to block until tests complete. NEVER run `parallel_run.sh` in background mode and then poll for results - that defeats the purpose of `--wait`.**
+There are two modes for running tests: **blocking** and **non-blocking**.
+
+#### Blocking Mode (small/simple runs)
+
+Use `--wait` to block until all tests complete:
 
 | Scenario | Command |
 |----------|---------|
-| **Default** (most cases) | `tests/parallel_run.sh --wait [path]` |
+| **Default** (small runs) | `tests/parallel_run.sh --wait [path]` |
 | **Serial mode** (one session per file) | `tests/parallel_run.sh -s --wait [path]` |
-| **With timeout** (useful for long-running tests) | `tests/parallel_run.sh --wait 300 [path]` |
+| **With timeout** | `tests/parallel_run.sh --wait 300 [path]` |
 
-**Why `--wait` matters:**
 - `--wait` blocks until all tests complete, then reports success (exit 0), failure (exit 1), or timeout (exit 2).
-- `--wait N` adds a timeout of N seconds - useful when you want to cap how long to wait.
-- Do NOT run with `is_background: true` - this defeats the purpose as the command returns immediately.
+- `--wait N` adds a timeout of N seconds.
 
-**Default behavior (per-test parallelism):**
+#### Non-Blocking Mode (larger runs, early analysis)
+
+For larger test suites, run without `--wait` and analyze failures incrementally as they appear. Tests run in tmux sessions and write to `pytest_logs/` as they complete—you can read and analyze early failures while remaining tests are still running.
+
+See `parallelize-test-analysis.mdc` for the full workflow.
+
+#### Parallelism Behavior
+
 - By default: One tmux session per *test*. All tests run concurrently (maximum speed).
 - With `-s`: One tmux session per *file*. Tests within a file run serially.
 
