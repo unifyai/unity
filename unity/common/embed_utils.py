@@ -33,7 +33,7 @@ def _get_column_lock(context: str, key: str) -> threading.Lock:
 
 
 @contextmanager
-def _cross_process_column_lock(context: str, key: str):
+def _cross_process_column_lock(context: str, key: str, timeout: float = 600.0):
     """
     Cross-process file lock for column creation.
 
@@ -43,14 +43,41 @@ def _cross_process_column_lock(context: str, key: str):
 
     The overhead is ~12μs per lock acquisition - negligible compared to the
     ~500ms+ embedding operations being protected.
+
+    Parameters
+    ----------
+    context : str
+        The Unify context name.
+    key : str
+        The column key being created.
+    timeout : float, default 600.0
+        Maximum seconds to wait for the lock (10 minutes). If exceeded, raises TimeoutError.
+        This prevents indefinite hangs if another process holds the lock and is
+        stuck (e.g., hung API call).
     """
+    import time
+
     # Hash the key to avoid filesystem issues with long/special characters
     lock_id = hashlib.sha1(f"{context}:{key}".encode()).hexdigest()[:16]
     lock_path = os.path.join(tempfile.gettempdir(), f"unity_col_{lock_id}.lock")
 
     lock_file = open(lock_path, "w")
     try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        # Try non-blocking acquisition with timeout to avoid indefinite hangs
+        start = time.monotonic()
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break  # Successfully acquired lock
+            except BlockingIOError:
+                elapsed = time.monotonic() - start
+                if elapsed >= timeout:
+                    lock_file.close()
+                    raise TimeoutError(
+                        f"Timeout after {timeout}s waiting for column lock: "
+                        f"context={context}, key={key}. Another process may be hung.",
+                    )
+                time.sleep(0.1)  # Brief sleep before retry
         yield
     finally:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
