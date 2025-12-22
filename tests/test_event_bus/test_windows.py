@@ -2,6 +2,7 @@ import datetime as dt
 import pytest
 import random
 from collections import deque
+from unittest.mock import patch, MagicMock
 
 from unity.events.event_bus import EventBus, Event
 from unity.transcript_manager.types.message import Message
@@ -11,22 +12,21 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_cache_is_faster():
-    """When more than *window* events are published, the oldest should fall off."""
-    window = 3
+async def test_cache_only_skips_backend():
+    """When cache has enough events for a type, backend should not be called for that type."""
+    window = 5
     bus = EventBus()
     bus.set_window("Message", window)
 
-    # Start from a known clean state for this type (harmless use of a private attr)
+    # Start from a known clean state for this type
     bus._deques.setdefault(
         "Message",
         bus._deques.get("Message", deque(maxlen=window)),
     ).clear()
 
-    # Publish window + 1 events with ascending timestamps
-    event_ids = []
+    # Publish events to fill the cache
     base_ts = dt.datetime.now(dt.UTC)
-    for i in range(window + 1):
+    for i in range(window):
         evt = Event(
             type="Message",
             timestamp=base_ts + dt.timedelta(seconds=i),
@@ -39,21 +39,29 @@ async def test_cache_is_faster():
                 exchange_id=0,
             ),
         )
-        event_ids.append(evt.event_id)
         await bus.publish(evt, blocking=True)
 
-    # Time fetching just from cache vs having to hit backend
-    await bus.search(filter="type == 'Message'", limit=4)  # warm up
-    t0 = dt.datetime.now(dt.UTC)
-    await bus.search(filter="type == 'Message'", limit=3)
-    t1 = dt.datetime.now(dt.UTC)
-    await bus.search(filter="type == 'Message'", limit=4)
-    t2 = dt.datetime.now(dt.UTC)
+    # Use a spy to track get_logs calls
+    original_get_logs = __import__("unify").get_logs
+    spy = MagicMock(side_effect=original_get_logs)
 
-    cache_time = (t1 - t0).total_seconds()
-    backend_time = (t2 - t1).total_seconds()
-    # Cache should generally be faster than backend, but allow for timing variability
-    # The original 2x assertion was too strict and caused flaky failures
+    with patch("unify.get_logs", spy):
+        # Search for fewer events than cache holds
+        results = await bus.search(filter="type == 'Message'", limit=3)
+
+    # Verify we got the expected results from cache
+    assert len(results) == 3
+    contents = [r.payload.get("content") for r in results]
+    assert contents == ["4", "3", "2"]
+
+    # Verify no backend call was made for Message type specifically
+    # The filter arg starts with 'type == "Message"' when fetching Message events
+    # (Other types like ToolLoop/Comms may be fetched but won't match our filter)
+    message_fetch_calls = [
+        call
+        for call in spy.call_args_list
+        if call.kwargs.get("filter", "").startswith('type == "Message"')
+    ]
     assert (
-        cache_time < backend_time * 1.5
-    ), f"Cache ({cache_time:.3f}s) should be faster than backend ({backend_time:.3f}s)"
+        len(message_fetch_calls) == 0
+    ), f"Backend was called for Message type when cache should have been sufficient: {message_fetch_calls}"
