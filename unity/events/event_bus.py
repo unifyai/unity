@@ -1193,6 +1193,39 @@ class EventBus:
         type(self).__init__(self)
 
     # ------------------------------------------------------------------
+    async def ajoin_callbacks(
+        self,
+        *,
+        cascade: bool = True,
+    ) -> None:
+        """Async version of join_callbacks for use in async contexts.
+
+        Use this instead of join_callbacks when calling from async code to avoid
+        deadlocks with nest_asyncio.
+        """
+        cutoff = self._callback_seq
+
+        while True:
+            to_await: list[asyncio.Future] = [
+                t
+                for t in list(self._callback_futures)
+                if getattr(
+                    t,
+                    "_eb_root_seq" if cascade else "_eb_seq",
+                    0,
+                )
+                <= cutoff
+            ]
+
+            if not to_await:
+                return
+
+            await asyncio.gather(*to_await, return_exceptions=True)
+
+            if not cascade:
+                return
+
+    # ------------------------------------------------------------------
     def join_callbacks(
         self,
         *,
