@@ -1,7 +1,7 @@
 # Cursor Cloud Agent Dockerfile
 # Uses shared system deps script to stay in sync with production Dockerfile.
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Install system dependencies from shared script (minimal set for testing)
 COPY scripts/install-system-deps.sh /tmp/
