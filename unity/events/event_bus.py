@@ -133,16 +133,25 @@ class Event(BaseModel):
 
         expected_model = PAYLOAD_REGISTRY[self.type]
 
-        # If payload is already the correct model, we're done
+        # If payload is already the correct model or a subclass, we're done
         if isinstance(self.payload, expected_model):
             pass
+        elif isinstance(self.payload, BaseModel):
+            # Already a Pydantic model (possibly from a different registry entry
+            # like Message which is re-exported as MessagePayload) - keep as-is
+            pass
         elif isinstance(self.payload, dict):
-            # Coerce dict → model for validation
-            object.__setattr__(
-                self,
-                "payload",
-                expected_model.model_validate(self.payload),
-            )
+            # Try to coerce dict → model. On validation failure (e.g. missing
+            # required fields when rehydrating from backend), keep the dict.
+            try:
+                object.__setattr__(
+                    self,
+                    "payload",
+                    expected_model.model_validate(self.payload),
+                )
+            except ValidationError:
+                # Keep dict payload when validation fails (backward compat)
+                pass
         else:
             raise ValueError(
                 f"Payload for event type '{self.type}' must be a dict or "
