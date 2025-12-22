@@ -425,12 +425,12 @@ def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_on_pending_enqueue_returns_text_only():
+async def test_ask_on_pending_enqueue_returns_text_only(static_now):
     im = ImageManager()
     [h] = im.add_images(
         [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": static_now,
                 "caption": "ask",
                 "data": PNG_RED_B64,
             },
