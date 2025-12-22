@@ -3,12 +3,15 @@ from __future__ import annotations
 import inspect
 import textwrap
 import json
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional, Mapping, TYPE_CHECKING
 from unity.common.llm_helpers import (
     class_api_overview,
     get_type_hints,
 )
 from unity.common.async_tool_loop import SteerableToolHandle
+
+if TYPE_CHECKING:
+    from unity.actor.environments.base import BaseEnvironment
 
 
 def _build_verification_static_prefix() -> str:
@@ -2638,7 +2641,7 @@ def build_verification_prompt(
     function_docstring: str | None,
     scoped_context: str,
     interactions: list,
-    has_browser_screenshot: bool,
+    evidence: Dict[str, Any],
     function_return_value: Any | None,
     clarification_question: Optional[str] = None,
     clarification_answer: Optional[str] = None,
@@ -2658,7 +2661,11 @@ def build_verification_prompt(
         function_docstring: The docstring of the function.
         scoped_context: The scoped context of the function (parent, current, and child function source code).
         interactions: A log of tool interactions made.
-        has_browser_screenshot: Whether a screenshot of the browser is provided.
+        evidence: Dictionary of evidence from all active environments.
+            Dynamically builds evidence sections based on available evidence types:
+            - Visual evidence (browser screenshots)
+            - Return value evidence (state manager operations)
+            - Mixed evidence (both)
         clarification_question: An optional question that was previously asked.
         clarification_answer: An optional answer that was received.
 
@@ -2687,7 +2694,7 @@ def build_verification_prompt(
 
     interactions_log = (
         "\n".join(formatted_interactions)
-        or "No browser actions were logged for this step."
+        or "No tool actions were logged for this step."
     )
 
     agent_trace_section = "No low-level agent trace was recorded for this step."
@@ -2697,21 +2704,65 @@ def build_verification_prompt(
             f"""
         ---
         ### 🔬 Low-Level Agent Trace (Ground Truth)
-        This is the detailed "thought process" from the underlying browser agent as it performed the actions. **This is your most important source of truth.** It reveals *why* an action was taken and what the agent observed at a micro-level. Analyze it carefully to understand the root cause of any success or failure.
+        This is the detailed low-level tool trace captured during execution. **This is your most important source of truth.** It reveals *why* actions were taken and what the agent observed at a micro-level across whatever tool domains were used (browser, state managers, etc.). Analyze it carefully to understand the root cause of any success or failure.
 
         {traces_joined}
         ---
         """,
         )
-    screenshot_context_section = ""
-    if has_browser_screenshot:
-        screenshot_context_section = textwrap.dedent(
-            """
-            ---
-            ### 📸 Visual Evidence (Screenshot)
-            You have been provided a **screenshot** of the browser's final state. Use this to visually confirm the outcome described in the agent trace.
-            """,
+
+    # Build evidence sections dynamically based on what's available.
+    evidence_sections: list[str] = []
+
+    # Visual evidence (browser).
+    browser_evidence = evidence.get("computer_primitives")
+    if isinstance(browser_evidence, dict):
+        if "screenshot" in browser_evidence and "error" not in browser_evidence:
+            url = browser_evidence.get("url", "N/A")
+            evidence_sections.append(
+                textwrap.dedent(
+                    f"""
+                    ---
+                    ### 📸 Visual Evidence (Browser)
+                    You have been provided a **screenshot** of the browser's final state.
+                    - **URL**: {url}
+                    - Use the screenshot to visually confirm the outcome described in the agent trace.
+                    """,
+                ),
+            )
+        elif "error" in browser_evidence:
+            evidence_sections.append(
+                textwrap.dedent(
+                    f"""
+                    ---
+                    ### ⚠️ Browser Evidence Unavailable
+                    Could not capture browser state: {browser_evidence.get('error')}
+                    """,
+                ),
+            )
+
+    # State manager evidence (return values).
+    primitives_evidence = evidence.get("primitives")
+    if (
+        isinstance(primitives_evidence, dict)
+        and primitives_evidence.get("type") == "return_value"
+    ):
+        evidence_sections.append(
+            textwrap.dedent(
+                """
+                ---
+                ### 📊 System State Evidence (Return Values)
+                For state manager operations, the **return value** is the primary evidence.
+                - If the function returned a success message or data, that confirms the operation succeeded.
+                - If the function returned an error or unexpected value, that indicates failure.
+                - Analyze the return value in the "Function Return Value" section below.
+                """,
+            ),
         )
+
+    evidence_context_section = (
+        "\n".join(evidence_sections).strip() if evidence_sections else ""
+    )
     return_value_log = f"```\n{repr(function_return_value)}\n```"
 
     source_code_section = f"""
@@ -2772,7 +2823,7 @@ for understanding the current execution context.
 
         {source_code_section}
         {agent_trace_section}
-        {screenshot_context_section}
+        {evidence_context_section}
         {clarification_section}
         {transcript_section}
         {chat_context_section}
