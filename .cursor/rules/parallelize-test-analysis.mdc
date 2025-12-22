@@ -1,0 +1,55 @@
+---
+description: Analyze test failures incrementally while tests are still running
+globs: ["tests/**/*"]
+alwaysApply: true
+---
+
+# Parallelize Test Analysis
+
+Tests run asynchronously in tmux sessions. Use this to your advantage: analyze early failures **while remaining tests are still running** rather than blocking until completion.
+
+## The Mental Model
+
+When you run `parallel_run.sh`, each test spawns in its own tmux session and writes results to `pytest_logs/` as it completes. The `--wait` flag is just a convenience that blocks until all sessions finish—but **tests keep running whether you're watching or not**.
+
+This means you can:
+1. Start tests (non-blocking)
+2. Read log files as they appear in `pytest_logs/`
+3. Analyze failures immediately
+4. Return later to check for additional results
+
+## When to Use Non-Blocking Mode
+
+| Scenario | Approach |
+|----------|----------|
+| Small/fast test run (1-3 tests) | Blocking (`--wait`) is fine |
+| Larger suite or slow tests | Non-blocking, analyze incrementally |
+| Early failure is likely actionable | Non-blocking, investigate immediately |
+
+## Workflow
+
+```bash
+# 1. Start tests without --wait (or with is_background: true)
+tests/parallel_run.sh tests/test_some_module/
+
+# 2. Check what logs exist (tests write here as they complete)
+ls pytest_logs/<latest-run-dir>/
+
+# 3. Read and analyze any failures that have appeared
+# (Use the Read tool on specific log files)
+
+# 4. Continue reasoning about the failure while tests run
+# 5. Check back later for more results if needed
+```
+
+## The Principle: Time-to-Solution Over Turns
+
+Prioritize **minimizing time to find a solution** rather than minimizing turns or waiting for "complete" information. Early failures often provide enough signal to begin investigation. You can always check for additional failures later—the tests haven't stopped, they're async.
+
+This doesn't mean being hasty or sacrificing thoroughness. It means: **don't wait for information you don't need yet**.
+
+## Relationship to Other Rules
+
+- **`surgical-verification-before-tests.mdc`**: Covers *pre-test* optimization (quick verification scripts)
+- **This rule**: Covers *mid-test* optimization (incremental analysis)
+- **`gitignored-directory-access.mdc`**: Explains how to read from `pytest_logs/` (use Shell for `ls`, Read tool for file contents)
