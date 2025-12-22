@@ -642,7 +642,9 @@ class EventBus:
             else Event._to_python(event.payload)
         )
 
-        # Log to global event table
+        # Log to global event table (payload stored as single JSON column to avoid
+        # cross-type schema conflicts when different event types have fields with
+        # the same name but different types)
         self._get_logger().log_create(
             project=unify.active_project(),
             context=self._global_ctx,
@@ -654,7 +656,7 @@ class EventBus:
                 "event_timestamp": event.timestamp.isoformat(),
                 "payload_cls": event.payload_cls,
                 "type": event.type,
-                **payload_dict,
+                "payload_json": json.dumps(payload_dict),
             },
         )
 
