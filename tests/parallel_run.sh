@@ -630,7 +630,7 @@ rename_session_with_retry() {
       return 0
     fi
     # Rename failed - likely duplicate. Add/increment suffix and retry.
-    ((attempt++))
+    ((attempt++)) || true
     # Strip any existing retry suffix and add new one
     local base="${target_name%-dup[0-9]*}"
     current_name="${base}-dup${attempt}"
@@ -652,7 +652,7 @@ count_pending_sessions() {
   local count=0
   while IFS= read -r name; do
     if [[ "$name" == "r"* ]]; then
-      ((count++))
+      ((count++)) || true
     fi
   done < <(tmux_cmd list-sessions -F "#{session_name}" 2>/dev/null || true)
   echo "$count"
@@ -1076,7 +1076,7 @@ if (( WAIT_FOR_COMPLETION )); then
       current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
       # Look for "r" prefix to detect pending state (r ⏳)
       if [[ "$current_name" == "r"* ]]; then
-        ((pending_count++))
+        ((pending_count++)) || true
       fi
     done
 
