@@ -385,6 +385,8 @@ async def test_ask_interjection():
 
     # Store some data first
     handle = await km.update("Unit 42 weighs 30 kilograms.")
+    await handle.result()
+
     handle = await km.update("Unit 42 is stored in Bay A.")
     await handle.result()
 
