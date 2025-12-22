@@ -19,7 +19,11 @@ import base64
 import inspect
 
 
-async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
+async def _make_ordered_queue(
+    ts: TaskScheduler,
+    names: list[str],
+    start_at=datetime.now(timezone.utc),
+) -> list[int]:
     ids: list[int] = []
     qid = ts._allocate_new_queue_id()
     for n in names:
@@ -33,7 +37,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
             ]["task_id"],
         )  # type: ignore[index]
     ts._set_queue(queue_id=qid, order=ids)
-    ts._update_task(task_id=ids[0], start_at=datetime.now(timezone.utc))
+    ts._update_task(task_id=ids[0], start_at=start_at)
     return ids
 
 
@@ -219,6 +223,7 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
 @_handle_project
 async def test_execute_then_defer_on_second_stops_queue_and_reinstate(
     monkeypatch,
+    static_now,
 ):
     # Steps-based actor: each task completes after a single interject
     class _Short(SimulatedActor):  # type: ignore[misc]
@@ -237,7 +242,7 @@ async def test_execute_then_defer_on_second_stops_queue_and_reinstate(
     )
 
     ts = TaskScheduler()
-    a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
+    a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"], start_at=static_now)  # type: ignore[misc]
 
     # Deterministic steering: only defer when the message requests "next week"
     async def force_defer(message: str, parent_chat_context=None):  # type: ignore[override]
