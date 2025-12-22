@@ -48,6 +48,15 @@ The `Read` tool works perfectly for gitignored files - use it directly once you 
 | `pytest_logs/` | Test output logs (datetime-prefixed subdirs per run) |
 | `llm_io_debug/` | Raw LLM request/response traces |
 
+## Worktree Symlinks
+
+In worktrees, the `pytest_logs/` and `llm_io_debug/` directories contain a `_root` symlink pointing to the main repository's corresponding log folder. Use this when looking for logs from tests run in the main repo rather than the worktree.
+
+```bash
+# List main repo's logs from a worktree
+ls pytest_logs/_root/
+```
+
 ## Example: Debugging a Test Failure
 
 ```bash

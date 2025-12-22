@@ -1,5 +1,7 @@
 {
   "setup-worktree": [
-    "cp \"$ROOT_WORKTREE_PATH/.env\" .env"
+    "cp \"$ROOT_WORKTREE_PATH/.env\" .env",
+    "mkdir -p pytest_logs && ln -sf \"$ROOT_WORKTREE_PATH/pytest_logs\" pytest_logs/_root",
+    "mkdir -p llm_io_debug && ln -sf \"$ROOT_WORKTREE_PATH/llm_io_debug\" llm_io_debug/_root"
   ]
 }
