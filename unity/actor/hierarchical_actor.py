@@ -1878,6 +1878,26 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self.can_compose = can_compose
         self.can_store = can_store
 
+        # Plan-local environments map (used for proxy injection + verification evidence).
+        # This must reflect the plan's dedicated computer primitives (when provided),
+        # rather than the actor's shared browser session.
+        self.environments: dict[str, BaseEnvironment] = {}
+        try:
+            if hasattr(actor, "environments") and isinstance(actor.environments, dict):
+                # Shallow copy is fine: environments are lightweight descriptors.
+                self.environments = dict(actor.environments)
+        except Exception:
+            self.environments = {}
+
+        if self.dedicated_computer_primitives is not None:
+            # Only override the browser environment when a dedicated session is used.
+            # This ensures env.capture_state() reflects the dedicated session.
+            from unity.actor.environments import ComputerEnvironment
+
+            self.environments["computer_primitives"] = ComputerEnvironment(
+                self.dedicated_computer_primitives,
+            )
+
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
         self.runtime = PlanRuntime()
@@ -1981,13 +2001,6 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             service_tier=None,
         )
         self.summarization_client: unify.AsyncUnify = new_llm_client(
-            "gemini-2.5-pro@vertex-ai",
-            return_full_completion=True,
-            reasoning_effort=None,
-            service_tier=None,
-        )
-        # TODO: DEPRECATED
-        self.course_correction_client: unify.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
@@ -4192,6 +4205,7 @@ class HierarchicalActor(BaseActor):
         connect_now: bool = False,
         can_compose: bool = True,
         can_store: bool = True,
+        environments: Optional[list["BaseEnvironment"]] = None,
     ):
         """
         Initializes the HierarchicalActor.
@@ -4213,6 +4227,8 @@ class HierarchicalActor(BaseActor):
             can_store: When True (default), allows verified functions to be persisted
                 to the FunctionManager as reusable skills. When False, functions are
                 executed but not stored.
+            environments: Optional list of execution environments. If None, defaults to
+                [ComputerEnvironment, StateManagerEnvironment].
         """
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
