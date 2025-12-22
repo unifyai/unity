@@ -1738,6 +1738,48 @@ class _ComputerPrimitivesProxy:
         return async_wrapper if inspect.iscoroutinefunction(real_attr) else sync_wrapper
 
 
+class _PrimitivesProxy:
+    """Proxy for `unity.function_manager.primitives.Primitives`.\n\n    Exposes managers under `primitives.<manager>` and wraps each manager with\n    `_ToolProviderProxy` to ensure calls are logged/cached/handle-tracked.\n\n    Special-case: `primitives.computer` returns the already-injected\n    `computer_primitives` proxy so browser tools remain properly proxied.\n"""
+
+    def __init__(self, real_primitives: Any, plan: "HierarchicalActorHandle"):
+        self._real_primitives = real_primitives
+        self._plan = plan
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "computer":
+            # Ensure browser operations remain proxied even if plan uses primitives.computer.
+            cp = self._plan.execution_namespace.get("computer_primitives")
+            if cp is not None:
+                return cp
+        real_attr = getattr(self._real_primitives, name)
+        # Wrap managers (they are objects with .ask/.update/... methods).
+        if name in {
+            "contacts",
+            "transcripts",
+            "knowledge",
+            "tasks",
+            "secrets",
+            "guidance",
+            "web",
+            "skills",
+        }:
+            env = None
+            if hasattr(self._plan, "environments") and isinstance(
+                getattr(self._plan, "environments", None),
+                dict,
+            ):
+                env = self._plan.environments.get("primitives")
+            elif hasattr(self._plan.actor, "environments"):
+                env = self._plan.actor.environments.get("primitives")
+            return _ToolProviderProxy(
+                real_instance=real_attr,
+                plan=self._plan,
+                namespace=f"primitives.{name}",
+                environment=env,
+            )
+        return real_attr
+
+
 class _VenvFunctionProxy:
     """
     A proxy that wraps venv functions as atomic, opaque callables.
@@ -4711,7 +4753,23 @@ class HierarchicalActor(BaseActor):
         plan.execution_namespace.update(sandbox_globals)
         plan.execution_namespace["_cp"] = plan.runtime.checkpoint
 
-        computer_primitives = plan._get_computer_primitives()
+        # Determine active environments (plan-local overrides actor defaults).
+        active_envs: dict[str, BaseEnvironment] = {}
+        if hasattr(plan, "environments") and isinstance(
+            getattr(plan, "environments", None),
+            dict,
+        ):
+            active_envs = plan.environments
+        elif hasattr(self, "environments") and isinstance(
+            getattr(self, "environments", None),
+            dict,
+        ):
+            active_envs = self.environments
+
+        computer_primitives: ComputerPrimitives | None = None
+        if "computer_primitives" in active_envs:
+            # Only resolve when actually configured; avoids implicit browser deps.
+            computer_primitives = plan._get_computer_primitives()
 
         async def _int(func_name: str):
             req = plan.interruption_request
@@ -4734,12 +4792,57 @@ class HierarchicalActor(BaseActor):
 
         plan.execution_namespace["_around_cp"] = _around_cp
 
+        primitives_real: Any = None
+        if "primitives" in active_envs:
+            primitives_real = active_envs["primitives"].get_instance()
+
+        # Inject all environment instances into the sandbox.
+        # IMPORTANT: `computer_primitives` must come from the plan (it may be dedicated),
+        # even if the actor has an environment instance for it.
+        injected_namespaces: set[str] = set()
+
+        if active_envs:
+            for env_namespace, env in active_envs.items():
+                if env_namespace == "computer_primitives":
+                    if computer_primitives is None:
+                        continue
+                    plan.execution_namespace[env_namespace] = _ToolProviderProxy(
+                        real_instance=computer_primitives,
+                        plan=plan,
+                        namespace=env_namespace,
+                        environment=env,
+                    )
+                    injected_namespaces.add(env_namespace)
+                    continue
+                if env_namespace == "primitives":
+                    # Keep the raw instance available for internal plumbing (e.g. venv calls),
+                    # but expose only the proxied surface to plan code.
+                    if primitives_real is not None:
+                        plan.execution_namespace["_primitives"] = primitives_real
+                        plan.execution_namespace[env_namespace] = _PrimitivesProxy(
+                            primitives_real,
+                            plan,
+                        )
+                        injected_namespaces.add(env_namespace)
+                    continue
+
+                # Future environments: inject via the unified tool-provider proxy.
+                try:
+                    plan.execution_namespace[env_namespace] = _ToolProviderProxy(
+                        real_instance=env.get_instance(),
+                        plan=plan,
+                        namespace=env_namespace,
+                        environment=env,
+                    )
+                    injected_namespaces.add(env_namespace)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to inject environment '{env_namespace}' into execution namespace: {e}",
+                    )
+
+        # Keep existing helper injections (request_clarification, verify, etc.)
         plan.execution_namespace.update(
             {
-                "computer_primitives": _ComputerPrimitivesProxy(
-                    computer_primitives,
-                    plan,
-                ),
                 "request_clarification": request_clarification_primitive,
                 "runtime": plan.runtime,
                 "verify": self._create_verify_decorator(plan),
