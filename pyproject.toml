@@ -7,7 +7,7 @@ name = "unity"
 version = "0.1.0"
 description = "Framework for building AI agents with browser automation capabilities"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.8.0",
     "anticaptchaofficial>=1.0.69",
