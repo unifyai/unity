@@ -1,6 +1,5 @@
 import pytest
 import random
-import asyncio
 import datetime as dt
 
 from unity.events.event_bus import EventBus, Event
@@ -40,8 +39,8 @@ async def test_prefill_on_new_instance():
         published.append(evt)
         await bus1.publish(evt)
 
-    # Give the async logger a brief moment (usually unnecessary, but harmless)
-    await asyncio.sleep(0.05)
+    # Ensure all events are persisted before creating a new EventBus
+    bus1.join_published()
 
     # Create a *new* EventBus that should preload from persisted logs
     bus2 = EventBus()

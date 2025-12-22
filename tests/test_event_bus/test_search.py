@@ -38,8 +38,8 @@ async def test_deque_only():
         limit=5,
     )
     assert len(res) == 1
-    # Access payload via getattr for compatibility with both Pydantic and dict
-    assert getattr(res[0].payload, "msg", None) == "two"
+    # Payload is always a dict
+    assert res[0].payload.get("msg") == "two"
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_hybrid_reads():
         limit=3,
         filter='type == "Comms"',
     )
-    assert [e.payload.seq for e in out] == [3, 2, 1]
+    assert [e.payload.get("seq") for e in out] == [3, 2, 1]
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_with_offset_across_backend():
         filter='type == "Comms"',
     )
 
-    assert [e.payload.seq for e in out] == [2, 1]
+    assert [e.payload.get("seq") for e in out] == [2, 1]
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_flat_ordering():
     bus.join_published()
 
     out = await bus.search(limit=2)  # flat list
-    assert [(e.type, getattr(e.payload, "seq", None)) for e in out] == [
+    assert [(e.type, e.payload.get("seq")) for e in out] == [
         ("Comms", 0),
         ("ManagerMethod", None),
     ]

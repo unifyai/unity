@@ -27,7 +27,6 @@ from typing import (
 # Context propagation helper for callback cascades
 import contextvars
 
-from importlib import import_module
 from pydantic import (
     BaseModel,
     Field,
@@ -120,7 +119,15 @@ class Event(BaseModel):
 
     @model_validator(mode="after")
     def _validate_and_coerce_payload(self):
-        """Validate payload against known type schema and auto-set payload_cls."""
+        """Validate payload against known type schema and convert to dict.
+
+        After validation, payloads are always stored as plain dicts. This ensures
+        a consistent interface for consumers (always use .get() or ["key"]).
+
+        The Pydantic models serve two purposes:
+        1. Validation at publish time (correctness enforced)
+        2. Schema generation for eager field creation (type-safe DB fields)
+        """
         from .types import PAYLOAD_REGISTRY
 
         # Enforce known event types only
@@ -132,39 +139,45 @@ class Event(BaseModel):
             )
 
         expected_model = PAYLOAD_REGISTRY[self.type]
+        validated_model: BaseModel | None = None
 
-        # If payload is already the correct model or a subclass, we're done
+        # Validate and coerce to model first
         if isinstance(self.payload, expected_model):
-            pass
+            validated_model = self.payload
         elif isinstance(self.payload, BaseModel):
             # Already a Pydantic model (possibly from a different registry entry
-            # like Message which is re-exported as MessagePayload) - keep as-is
-            pass
+            # like Message which is re-exported as MessagePayload)
+            validated_model = self.payload
         elif isinstance(self.payload, dict):
-            # Try to coerce dict → model. On validation failure (e.g. missing
-            # required fields when rehydrating from backend), keep the dict.
+            # Try to validate dict against expected model
             try:
-                object.__setattr__(
-                    self,
-                    "payload",
-                    expected_model.model_validate(self.payload),
-                )
+                validated_model = expected_model.model_validate(self.payload)
             except ValidationError:
-                # Keep dict payload when validation fails (backward compat)
-                pass
+                # Validation failed (e.g. rehydrating incomplete data) - keep dict
+                validated_model = None
         else:
             raise ValueError(
                 f"Payload for event type '{self.type}' must be a dict or "
                 f"{expected_model.__name__}, got {type(self.payload).__name__}",
             )
 
-        # Auto-set payload_cls from the validated model
-        if not self.payload_cls and isinstance(self.payload, BaseModel):
+        # Auto-set payload_cls from the validated model (before converting to dict)
+        if validated_model is not None and not self.payload_cls:
             object.__setattr__(
                 self,
                 "payload_cls",
-                f"{self.payload.__class__.__module__}.{self.payload.__class__.__name__}",
+                f"{validated_model.__class__.__module__}.{validated_model.__class__.__name__}",
             )
+
+        # Convert validated model to dict for consistent consumer interface
+        if validated_model is not None:
+            object.__setattr__(
+                self,
+                "payload",
+                validated_model.model_dump(mode="python"),
+            )
+        # If validation failed and payload was already a dict, it stays a dict
+
         return self
 
     # ────────────────────────────────────────────────
@@ -1332,6 +1345,9 @@ class EventBus:
         The logic was previously duplicated in several places (prefill, search
         fetch, baseline computation). Centralising it greatly reduces code
         repetition and ensures consistent behaviour.
+
+        Payloads are always returned as dicts - the Event validator will attempt
+        to validate against the expected Pydantic model but stores as dict.
         """
         entries = row.copy()
         row_id = entries.pop("row_id", None)
@@ -1346,39 +1362,23 @@ class EventBus:
         # Prefer non-flattened payload when available (newer schema)
         payload_json_str = entries.pop("payload_json", None)
 
-        # Attempt to rehydrate structured payloads
-        Model: type[BaseModel] | None = None
-        if cls_path:
-            try:
-                mod, name = cls_path.rsplit(".", 1)
-                Model = getattr(import_module(mod), name)
-            except (ModuleNotFoundError, AttributeError, ValueError):
-                Model = None
-
-        # Determine the payload dict to validate/use: prefer JSON blob when present
+        # Determine the payload dict: prefer JSON blob when present
         if payload_json_str is not None:
             try:
-                parsed_payload = json.loads(payload_json_str)
+                payload_dict = json.loads(payload_json_str)
             except Exception:
-                parsed_payload = entries
+                payload_dict = entries
         else:
-            parsed_payload = entries
+            payload_dict = entries
 
-        if Model is not None:
-            try:
-                payload_obj = Model.model_validate(parsed_payload)
-            except ValidationError:
-                payload_obj = parsed_payload
-        else:
-            payload_obj = parsed_payload
-
+        # Pass dict payload - Event validator handles validation and keeps as dict
         return Event(
             event_id=event_id,
             row_id=row_id,
             calling_id=calling_id,
             type=etype,
             timestamp=timestamp,
-            payload=payload_obj,
+            payload=payload_dict,
             payload_cls=cls_path or "",
         )
 
