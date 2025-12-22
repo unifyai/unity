@@ -25,6 +25,7 @@ RUN mkdir -p /opt/novnc && \
     unzip master.zip && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
+COPY desktop/novnc/custom.html /opt/novnc/custom.html
 
 # Desktop script
 COPY desktop/ /app/desktop/
