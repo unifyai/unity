@@ -1268,12 +1268,9 @@ class _SteerableToolHandleProxy:
                 if interactions_log is not None:
                     interactions_log.append(initial_interaction)
 
-                try:
-                    url = (
-                        await self._plan._get_computer_primitives().browser.get_current_url()
-                    )
-                except Exception:
-                    url = None
+                # URL capture happens at the tool-call proxy level, not at the handle
+                # method level (which may be domain-agnostic and not have browser access).
+                url = None
 
                 meta = {
                     "call_stack": cache_key[0],
@@ -1304,12 +1301,9 @@ class _SteerableToolHandleProxy:
                 if interactions_log is not None:
                     interactions_log.append(interaction_to_cache)
 
-                try:
-                    url = (
-                        await self._plan._get_computer_primitives().browser.get_current_url()
-                    )
-                except Exception:
-                    url = None
+                # URL capture happens at the tool-call proxy level, not at the handle
+                # method level (which may be domain-agnostic and not have browser access).
+                url = None
 
                 meta = {
                     "call_stack": cache_key[0],
@@ -1386,31 +1380,57 @@ class _SteerableToolHandleProxy:
         )
 
 
-class _ComputerPrimitivesProxy:
+class _ToolProviderProxy:
     """
-    A generic proxy that wraps the real ComputerPrimitives to intercept all tool
-    calls, apply idempotency caching, and log them for verification.
+    Generic proxy for any tool provider (browser, state managers, and future custom
+    environments).
+
+    Intercepts tool calls to apply:
+    - idempotency caching (multi-dimensional: stack/loop/path/step)
+    - interaction logging for verification
+    - steerable handle tracking
+    - run-id gating to prevent stale calls
+
+    Browser-specific features are conditionally enabled when the provided
+    `environment` looks like a `ComputerEnvironment`:
+    - Magnitude log capture (if the browser backend is `MagnitudeBrowserBackend`)
+    - `wait`/`context` kwargs injection
+    - URL + post-action screenshot capture for cache metadata
+    - scoped context injection into the `reason` tool
     """
 
     def __init__(
         self,
-        real_computer_primitives: ComputerPrimitives,
+        real_instance: Any,
         plan: "HierarchicalActorHandle",
+        namespace: str,
+        environment: BaseEnvironment | None = None,
     ):
-        self._real_computer_primitives = real_computer_primitives
+        self._real_instance = real_instance
         self._plan = plan
+        self._namespace = namespace
+        self._environment = environment
+        self._is_browser_env = (
+            environment is not None
+            and environment.__class__.__name__ == "ComputerEnvironment"
+        )
+
+    def _handle_name_for_tool(self, tool_method_name: str) -> str:
+        # Preserve historical naming for browser primitives and manager primitives.
+        if self._is_browser_env:
+            return f"{tool_method_name}_handle"
+        manager_name = self._namespace.split(".")[-1]
+        return f"{manager_name}_{tool_method_name}_handle"
 
     def __getattr__(self, name: str) -> Any:
-        """
-        This magic method is called whenever an attribute (like a tool method)
-        is accessed on the proxy instance.
-        """
-        real_attr = getattr(self._real_computer_primitives, name)
+        real_attr = getattr(self._real_instance, name)
+
+        # Special-case: the conversation manager handle must remain steerable and tracked.
         if name == "conversation_manager" and isinstance(
             real_attr,
             ConversationManagerHandle,
         ):
-            handle_id = f"cm_handle"
+            handle_id = "cm_handle"
             if handle_id not in self._plan.live_handles:
                 self._plan.live_handles[handle_id] = real_attr
             return _SteerableToolHandleProxy(
@@ -1424,7 +1444,8 @@ class _ComputerPrimitivesProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
-            if name == "reason":
+            # Browser-only: inject scoped local context into reason() calls.
+            if self._is_browser_env and name == "reason":
                 try:
                     scoped_context_dict = (
                         self._plan.actor._get_scoped_context_from_plan_state(self._plan)
@@ -1450,22 +1471,27 @@ class _ComputerPrimitivesProxy:
                         f"Failed to inject scoped context into 'reason' tool: {e}",
                     )
 
-            wait = kwargs.pop("wait", True)
+            # Browser-only: support `wait=` without polluting cache keys.
+            wait = True
+            if self._is_browser_env:
+                wait = kwargs.pop("wait", True)
+
             ctx_run_id = current_run_id_var.get()
             plan_run_id = self._plan.run_id
             if ctx_run_id != plan_run_id:
                 logger.warning(
-                    f"Blocked stale tool call to '{name}' "
+                    f"Blocked stale tool call to '{self._namespace}.{name}' "
                     f"(context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 self._plan.action_log.append(
-                    f"Blocked stale tool call to '{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
+                    f"Blocked stale tool call to '{self._namespace}.{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
 
             interactions_log = current_interaction_sink_var.get()
             self._plan.runtime.action_counter += 1
-            tool_name = f"computer_primitives.{name}"
+
+            tool_name = f"{self._namespace}.{name}"
 
             if DIAGNOSTIC_MODE:
                 run_id = current_run_id_var.get()
@@ -1476,12 +1502,12 @@ class _ComputerPrimitivesProxy:
 
             call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
             if diag_prefix:
-                logger.info(
-                    f"{diag_prefix} 🐍 PYTHON: Executing {call_repr} (wait={wait})",
-                )
-
-            func_name = self._plan.call_stack[-1] if self._plan.call_stack else "global"
-            context = {"function_name": func_name, "run_id": self._plan.run_id}
+                if self._is_browser_env:
+                    logger.info(
+                        f"{diag_prefix} 🐍 PYTHON: Executing {call_repr} (wait={wait})",
+                    )
+                else:
+                    logger.info(f"{diag_prefix} 🐍 PYTHON: Executing {call_repr}")
 
             cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
@@ -1495,71 +1521,100 @@ class _ComputerPrimitivesProxy:
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
 
-                if len(cached_interaction) < 4:
+                if (
+                    self._is_browser_env
+                    and isinstance(cached_interaction, tuple)
+                    and len(cached_interaction) < 4
+                ):
                     cached_interaction = (*cached_interaction, [])
 
                 self._plan.action_log.append(
-                    f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
+                    (
+                        f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}"
+                        if diag_prefix
+                        else f"CACHE HIT: Using cached result for {call_repr}"
+                    ),
                 )
                 logger.debug(f"{diag_prefix} CACHE HIT for key: {cache_key}")
-                interactions_log.append(cached_interaction)
+                if interactions_log is not None:
+                    interactions_log.append(cached_interaction)
 
                 if (
-                    cached_interaction[0] == "tool_call"
-                    and "Returned handle" in cached_interaction[2]
+                    isinstance(cached_interaction, tuple)
+                    and len(cached_interaction) >= 3
+                    and cached_interaction[0] == "tool_call"
+                    and "Returned handle" in str(cached_interaction[2])
                 ):
                     real_handle = self._plan.live_handles.get(cached_result_id)
                     if not real_handle:
                         raise RuntimeError(
                             f"Cache consistency error: Could not find live handle for ID {cached_result_id}",
                         )
-                    handle_name = f"{name}_handle"
+                    handle_name = self._handle_name_for_tool(name)
                     return _SteerableToolHandleProxy(
                         real_handle,
                         self._plan,
                         handle_name,
                         cached_result_id,
                     )
+
                 return cached_result_id
 
             if self._plan.runtime.cache_miss_counter:
                 self._plan.runtime.cache_miss_counter[-1] += 1
             self._plan.action_log.append(
-                f"{diag_prefix} CACHE MISS: Executing {call_repr}",
+                (
+                    f"{diag_prefix} CACHE MISS: Executing {call_repr}"
+                    if diag_prefix
+                    else f"CACHE MISS: Executing {call_repr}"
+                ),
             )
             logger.debug(f"{diag_prefix} CACHE MISS for key: {cache_key}")
 
-            backend = self._real_computer_primitives.browser.backend
-            is_magnitude = isinstance(backend, MagnitudeBrowserBackend)
-            magnitude_logs = []
+            magnitude_logs: list[Any] = []
+            backend = None
+            is_magnitude = False
 
-            if is_magnitude:
+            if self._is_browser_env:
+                try:
+                    backend = self._real_instance.browser.backend
+                    is_magnitude = isinstance(backend, MagnitudeBrowserBackend)
+                except Exception:
+                    backend = None
+                    is_magnitude = False
+
+            if is_magnitude and backend is not None:
                 capture_q = asyncio.Queue()
                 backend._current_capture_queue = capture_q
+            else:
+                capture_q = None
 
             try:
-                # Skip passing tracking context dict and wait for 'reason' - it has different signature
-                if name == "reason":
-                    tool_output = await real_attr(*args, **kwargs)
-                else:
+                if self._is_browser_env and name != "reason":
+                    func_name = (
+                        self._plan.call_stack[-1] if self._plan.call_stack else "global"
+                    )
+                    context = {"function_name": func_name, "run_id": self._plan.run_id}
                     tool_output = await real_attr(
                         *args,
                         wait=wait,
                         context=context,
                         **kwargs,
                     )
+                else:
+                    tool_output = await real_attr(*args, **kwargs)
             except BrowserAgentError as e:
-                if e.error_type == "cancelled":
+                if self._is_browser_env and e.error_type == "cancelled":
                     logger.info(
                         f"🔴 Action interrupted by immediate pause: {call_repr}",
                     )
-
                     raise _ControlledInterruptionException(
                         f"Action '{call_repr}' interrupted by immediate pause.",
                     )
                 raise
             finally:
-                if is_magnitude:
+                if is_magnitude and backend is not None and capture_q is not None:
+                    # Allow final logs to flush into the capture queue.
                     await asyncio.sleep(0.25)
 
                     backend._current_capture_queue = None
@@ -1571,7 +1626,7 @@ class _ComputerPrimitivesProxy:
             interaction_str = str(tool_output)
 
             if isinstance(tool_output, SteerableToolHandle):
-                handle_name = f"{name}_handle"
+                handle_name = self._handle_name_for_tool(name)
                 handle_id = str(uuid.uuid4())
                 self._plan.live_handles[handle_id] = tool_output
                 result_to_cache = handle_id
@@ -1583,35 +1638,47 @@ class _ComputerPrimitivesProxy:
                     handle_id,
                 )
 
-            interaction_to_cache = (
-                "tool_call",
-                call_repr,
-                interaction_str,
-                magnitude_logs,
-            )
+            if self._is_browser_env:
+                interaction_to_cache = (
+                    "tool_call",
+                    call_repr,
+                    interaction_str,
+                    magnitude_logs,
+                )
+            else:
+                interaction_to_cache = ("tool_call", call_repr, interaction_str)
+
             if interactions_log is not None:
                 interactions_log.append(interaction_to_cache)
 
-            try:
-                url = await self._real_computer_primitives.browser.get_current_url()
-            except Exception:
-                url = None
+            url = None
+            if self._is_browser_env:
+                try:
+                    url = await self._real_instance.browser.get_current_url()
+                except Exception:
+                    url = None
 
-            meta = {
+            meta_impure = False
+            try:
+                meta_obj = self._plan.actor.tool_metadata.get(tool_name)
+                if meta_obj is not None:
+                    meta_impure = bool(getattr(meta_obj, "is_impure", False))
+            except Exception:
+                pass
+
+            meta: dict[str, Any] = {
                 "call_stack": cache_key[0],
                 "path": cache_key[1],
                 "function": cache_key[0][-1] if cache_key[0] else None,
                 "step": self._plan.runtime.action_counter,
                 "tool": tool_name,
                 "url": url,
-                "impure": tool_name.endswith((".navigate", ".act")),
+                "impure": meta_impure,
             }
 
-            if meta["impure"]:
+            if meta["impure"] and self._is_browser_env:
                 try:
-                    post_screenshot = (
-                        await self._real_computer_primitives.browser.get_screenshot()
-                    )
+                    post_screenshot = await self._real_instance.browser.get_screenshot()
                     meta["post_state_screenshot"] = post_screenshot
                 except Exception as e:
                     logger.warning(f"Failed to capture post-action screenshot: {e}")
@@ -1630,17 +1697,17 @@ class _ComputerPrimitivesProxy:
             plan_run_id = self._plan.run_id
             if ctx_run_id != plan_run_id:
                 logger.warning(
-                    f"Blocked stale tool call to '{name}' "
+                    f"Blocked stale tool call to '{self._namespace}.{name}' "
                     f"(context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 self._plan.action_log.append(
-                    f"Blocked stale tool call to '{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
+                    f"Blocked stale tool call to '{self._namespace}.{name}' (context run_id={ctx_run_id} != plan run_id={plan_run_id}).",
                 )
                 raise asyncio.CancelledError("Stale tool call blocked by run_id gate.")
 
             interactions_log = current_interaction_sink_var.get()
             self._plan.runtime.action_counter += 1
-            tool_name = f"computer_primitives.{name}"
+            tool_name = f"{self._namespace}.{name}"
 
             if DIAGNOSTIC_MODE:
                 run_id = current_run_id_var.get()
@@ -1665,21 +1732,28 @@ class _ComputerPrimitivesProxy:
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
-                    f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}",
+                    (
+                        f"{diag_prefix} CACHE HIT: Using cached result for {call_repr}"
+                        if diag_prefix
+                        else f"CACHE HIT: Using cached result for {call_repr}"
+                    ),
                 )
                 logger.debug(f"{diag_prefix} CACHE HIT for key: {cache_key}")
-                interactions_log.append(cached_interaction)
+                if interactions_log is not None:
+                    interactions_log.append(cached_interaction)
 
                 if (
-                    cached_interaction[0] == "tool_call"
-                    and "Returned handle" in cached_interaction[2]
+                    isinstance(cached_interaction, tuple)
+                    and len(cached_interaction) >= 3
+                    and cached_interaction[0] == "tool_call"
+                    and "Returned handle" in str(cached_interaction[2])
                 ):
                     real_handle = self._plan.live_handles.get(cached_result_id)
                     if not real_handle:
                         raise RuntimeError(
                             f"Cache consistency error: Could not find live handle for ID {cached_result_id}",
                         )
-                    handle_name = f"{name}_handle"
+                    handle_name = self._handle_name_for_tool(name)
                     return _SteerableToolHandleProxy(
                         real_handle,
                         self._plan,
@@ -1691,7 +1765,11 @@ class _ComputerPrimitivesProxy:
             if self._plan.runtime.cache_miss_counter:
                 self._plan.runtime.cache_miss_counter[-1] += 1
             self._plan.action_log.append(
-                f"{diag_prefix} CACHE MISS: Executing {call_repr}",
+                (
+                    f"{diag_prefix} CACHE MISS: Executing {call_repr}"
+                    if diag_prefix
+                    else f"CACHE MISS: Executing {call_repr}"
+                ),
             )
             logger.debug(f"{diag_prefix} CACHE MISS for key: {cache_key}")
 
@@ -1702,7 +1780,7 @@ class _ComputerPrimitivesProxy:
             interaction_str = str(result)
 
             if isinstance(result, SteerableToolHandle):
-                handle_name = f"{name}_handle"
+                handle_name = self._handle_name_for_tool(name)
                 handle_id = str(uuid.uuid4())
                 self._plan.live_handles[handle_id] = result
                 result_to_cache = handle_id
@@ -1715,7 +1793,16 @@ class _ComputerPrimitivesProxy:
                 )
 
             interaction_to_cache = ("tool_call", call_repr, interaction_str)
-            interactions_log.append(interaction_to_cache)
+            if interactions_log is not None:
+                interactions_log.append(interaction_to_cache)
+
+            meta_impure = False
+            try:
+                meta_obj = self._plan.actor.tool_metadata.get(tool_name)
+                if meta_obj is not None:
+                    meta_impure = bool(getattr(meta_obj, "is_impure", False))
+            except Exception:
+                pass
 
             meta = {
                 "call_stack": cache_key[0],
@@ -1724,7 +1811,7 @@ class _ComputerPrimitivesProxy:
                 "step": self._plan.runtime.action_counter,
                 "tool": tool_name,
                 "url": None,
-                "impure": tool_name.endswith((".navigate", ".act")),
+                "impure": meta_impure,
             }
 
             self._plan.idempotency_cache[cache_key] = {
