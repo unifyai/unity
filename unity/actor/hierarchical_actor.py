@@ -2062,11 +2062,16 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         )
 
     def _get_computer_primitives(self) -> ComputerPrimitives:
-        return (
+        cp = (
             self.dedicated_computer_primitives
             if self.dedicated_computer_primitives is not None
-            else self.actor.computer_primitives
+            else getattr(self.actor, "computer_primitives", None)
         )
+        if cp is None:
+            raise RuntimeError(
+                "computer_primitives is not available: this actor/plan was configured without a browser environment.",
+            )
+        return cp
 
     def _set_final_result(self, result: str):
         """Sets the final result and the completion event."""
@@ -2631,15 +2636,22 @@ async def main_plan():
             and routes the result to the appropriate handler.
             """
             try:
+                computer_primitives: ComputerPrimitives | None = None
+                try:
+                    computer_primitives = self._get_computer_primitives()
+                except Exception:
+                    computer_primitives = None
+
                 if (
                     item.start_seq >= 0
                     and item.exit_seq > item.start_seq
+                    and computer_primitives is not None
                     and isinstance(
-                        self.actor.computer_primitives.browser.backend,
+                        computer_primitives.browser.backend,
                         MagnitudeBrowserBackend,
                     )
                 ):
-                    backend = self.actor.computer_primitives.browser.backend
+                    backend = computer_primitives.browser.backend
                     current_seq_cursor = item.start_seq + 1
 
                     for idx, interaction in enumerate(item.interactions):
@@ -2673,8 +2685,16 @@ async def main_plan():
                         new_screenshot = await backend.get_screenshot()
                         new_url = await backend.get_current_url()
 
-                        item.post_state["screenshot"] = new_screenshot
-                        item.post_state["url"] = new_url
+                        # Refresh evidence from browser environment after barrier.
+                        # (The work item stores evidence per-environment namespace.)
+                        if "computer_primitives" in item.post_state and isinstance(
+                            item.post_state["computer_primitives"],
+                            dict,
+                        ):
+                            item.post_state["computer_primitives"][
+                                "screenshot"
+                            ] = new_screenshot
+                            item.post_state["computer_primitives"]["url"] = new_url
                     except Exception as e:
                         logger.warning(f"Failed to refresh post-state after sync: {e}")
 
@@ -2685,15 +2705,24 @@ async def main_plan():
                         reason="Skipped verification for fully cached replay step.",
                     )
                 else:
-                    computer_primitives = self._get_computer_primitives()
-                    if isinstance(
+                    # Only attempt browser barriers when a browser environment is active.
+                    computer_primitives: ComputerPrimitives | None = None
+                    if (
+                        "computer_primitives" in (self.actor.environments or {})
+                        and getattr(self.actor, "computer_primitives", None) is not None
+                    ):
+                        try:
+                            computer_primitives = self._get_computer_primitives()
+                        except Exception:
+                            computer_primitives = None
+
+                    if computer_primitives is not None and isinstance(
                         computer_primitives.browser.backend,
                         MagnitudeBrowserBackend,
                     ):
                         await computer_primitives.browser.backend.barrier(
                             up_to_seq=item.exit_seq,
                         )
-                    post_state_screenshot = item.post_state.get("screenshot")
 
                     assessment = await self.actor._check_state_against_goal(
                         plan=self,
@@ -2701,7 +2730,7 @@ async def main_plan():
                         function_docstring=item.docstring,
                         function_source_code=item.func_source,
                         interactions=item.interactions,
-                        screenshot=post_state_screenshot,
+                        evidence=item.post_state,
                         function_return_value=item.return_value_repr,
                     )
 
@@ -2709,22 +2738,6 @@ async def main_plan():
                     await self._on_verification_success(item, assessment)
                 else:
                     await self._on_verification_failure(item, assessment)
-
-                # TODO: DEPRECATED - Remove this if we no longer use it
-                # if assessment.refinements:
-                #     logger.info(
-                #         f"Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
-                #     )
-                #     self.action_log.append(
-                #         f"SELF-IMPROVEMENT: Applying {len(assessment.refinements)} refinement(s) to child functions.",
-                #     )
-
-                #     async with self._interject_lock:
-                #         for patch in assessment.refinements:
-                #             self._update_plan_with_new_code(
-                #                 patch.function_name,
-                #                 patch.new_code,
-                #             )
 
             except asyncio.CancelledError:
                 logger.warning(
@@ -2768,8 +2781,15 @@ async def main_plan():
         )
 
         self.last_verified_function_name = item.function_name
-        self.last_verified_url = item.post_state["url"]
-        self.last_verified_screenshot = item.post_state["screenshot"]
+
+        # Extract browser evidence if available (post-state is per-environment evidence).
+        browser_evidence = item.post_state.get("computer_primitives")
+        if isinstance(browser_evidence, dict):
+            self.last_verified_url = browser_evidence.get("url")
+            self.last_verified_screenshot = browser_evidence.get("screenshot")
+        else:
+            self.last_verified_url = None
+            self.last_verified_screenshot = None
 
         if hasattr(self, "cumulative_interactions"):
             self.cumulative_interactions.extend(item.interactions)
@@ -2815,15 +2835,27 @@ async def main_plan():
                         item.interactions,
                         indent=2,
                     ),
-                    has_entry_screenshot=item.pre_state["screenshot"] is not None,
+                    has_entry_screenshot=bool(
+                        isinstance(item.pre_state.get("computer_primitives"), dict)
+                        and item.pre_state.get("computer_primitives", {}).get(
+                            "screenshot",
+                        )
+                        is not None,
+                    ),
+                    environments=self.actor.environments,
                 )
 
                 self.summarization_client.set_response_format(PreconditionDecision)
                 try:
+                    entry_screenshot = None
+                    entry_browser_evidence = item.pre_state.get("computer_primitives")
+                    if isinstance(entry_browser_evidence, dict):
+                        entry_screenshot = entry_browser_evidence.get("screenshot")
+
                     decision_str = await llm_call(
                         self.summarization_client,
                         precondition_prompt,
-                        screenshot=item.pre_state["screenshot"],
+                        screenshot=entry_screenshot,
                     )
                     precondition_data = PreconditionDecision.model_validate_json(
                         decision_str,
@@ -3011,13 +3043,18 @@ async def main_plan():
                 self._execution_task,
                 f"verification failure targeting '{target_function_name_override}'",
             )
-            await self._clear_browser_queue_for_run(run_id_being_cancelled)
-            computer_primitives = self._get_computer_primitives()
-            if hasattr(
-                computer_primitives.browser.backend,
-                "interrupt_current_action",
+            # Browser interruption is only applicable when a browser environment is active.
+            if (
+                "computer_primitives" in (self.actor.environments or {})
+                and getattr(self.actor, "computer_primitives", None) is not None
             ):
-                await computer_primitives.browser.backend.interrupt_current_action()
+                await self._clear_browser_queue_for_run(run_id_being_cancelled)
+                computer_primitives = self._get_computer_primitives()
+                if hasattr(
+                    computer_primitives.browser.backend,
+                    "interrupt_current_action",
+                ):
+                    await computer_primitives.browser.backend.interrupt_current_action()
 
             await self._handle_dynamic_implementation(
                 function_name=target_function_name_override,
@@ -5824,7 +5861,7 @@ class HierarchicalActor(BaseActor):
         function_docstring: str | None,
         function_source_code: str | None,
         interactions: list,
-        screenshot: bytes | str | None = None,
+        evidence: dict[str, Any],
         function_return_value: Any = None,
         clarification_question: Optional[str] = None,
         clarification_answer: Optional[str] = None,
@@ -5838,8 +5875,10 @@ class HierarchicalActor(BaseActor):
             function_docstring: The docstring of the function.
             function_source_code: The source code of the function.
             interactions: A log of interactions that occurred.
+            evidence: Dictionary of evidence from all active environments.
+                Keys are environment namespaces (e.g., "computer_primitives", "primitives").
+                Values are evidence dicts returned by env.capture_state().
             function_return_value: The return value of the function.
-            screenshot: The screenshot of the current state of the browser.
             clarification_question: An optional question that was previously asked.
             clarification_answer: An optional answer that was received.
 
@@ -5859,13 +5898,19 @@ class HierarchicalActor(BaseActor):
         context_dict = self._get_scoped_context_from_plan_state(plan)
         scoped_context_str = self._format_scoped_context_for_prompt(context_dict)
 
+        # Extract screenshot for the LLM call if available (backward-compatible image input).
+        screenshot = None
+        browser_evidence = evidence.get("computer_primitives")
+        if isinstance(browser_evidence, dict) and "screenshot" in browser_evidence:
+            screenshot = browser_evidence.get("screenshot")
+
         static_prompt, dynamic_prompt = prompt_builders.build_verification_prompt(
             goal=plan.goal,
             function_name=function_name,
             function_docstring=function_docstring,
             scoped_context=scoped_context_str,
             interactions=interactions,
-            has_browser_screenshot=screenshot is not None,
+            evidence=evidence,
             function_return_value=function_return_value,
             recent_transcript=recent_transcript,
             parent_chat_context=plan.parent_chat_context,
@@ -5901,5 +5946,6 @@ class HierarchicalActor(BaseActor):
         plan: HierarchicalActorHandle = None
         for plan in self._plan_handles:
             await plan.stop()
-        self.computer_primitives.browser.stop()
+        if self.computer_primitives is not None:
+            self.computer_primitives.browser.stop()
         self._plan_handles.clear()
