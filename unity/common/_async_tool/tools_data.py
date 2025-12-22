@@ -23,7 +23,7 @@ from .messages import (
     forward_handle_call,
 )
 from ..tool_spec import normalise_tools
-from ..llm_helpers import method_to_schema
+from ..llm_helpers import method_to_schema, short_id
 from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
 from contextlib import suppress
 
@@ -664,7 +664,7 @@ class ToolsData:
                             # Already skipped replay; do not synthesize mirrors either
                             continue
                         # Build assistant message with a single tool_call
-                        call_id = f"mirror_{int(time.perf_counter()*1000)}"
+                        call_id = f"mirror_{short_id(6)}"
                         args_json = {}
                         if base == "interject":
                             msg = (kwargs or {}).get("message") or (kwargs or {}).get(
