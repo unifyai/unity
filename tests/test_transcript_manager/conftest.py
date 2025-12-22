@@ -7,8 +7,9 @@ from __future__ import annotations
 import random
 from datetime import datetime, timezone
 from datetime import timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import pytest
+import pytest_asyncio
 import os
 import unify
 from unity.contact_manager.contact_manager import ContactManager
@@ -192,53 +193,6 @@ class ScenarioBuilder:
             ],
         )
 
-        # E5: Dan–Julia "basketball" phone call (latest Dan-Julia phone call)
-        t_basketball = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
-        self._log(
-            5,
-            "phone_call",
-            [
-                (
-                    dan_id,
-                    julia_id,
-                    t_basketball,
-                    "Hey Julia, did you catch the basketball game last night? "
-                    "The Lakers vs Celtics final was incredible!",
-                ),
-                (
-                    julia_id,
-                    dan_id,
-                    t_basketball + timedelta(seconds=30),
-                    "Absolutely – that last-minute three-pointer was unbelievable! "
-                    "We should watch the next game together.",
-                ),
-            ],
-        )
-
-        # E6: Dan–Julia "holiday planning" email (for clarification test)
-        t_holiday_email = datetime(2025, 5, 25, 20, 0, tzinfo=timezone.utc)
-        self._log(
-            6,
-            "email",
-            [
-                (
-                    dan_id,
-                    julia_id,
-                    t_holiday_email,
-                    "Subject: Summer holiday plans\n\n"
-                    "Hi Julia,\nWhen are you next going on holiday? "
-                    "I'm thinking of booking something for August.",
-                ),
-                (
-                    julia_id,
-                    dan_id,
-                    t_holiday_email + timedelta(hours=2),
-                    "Hi Dan! I'm hoping to go in August too, "
-                    "but let's see what my boss says about the timing.",
-                ),
-            ],
-        )
-
     # --------------------------------------------------------------------- #
     def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
         """Adds irrelevant chatter so filtering matters."""
@@ -335,8 +289,10 @@ def _rebuild_commit_hashes(ctx_prefix: str) -> None:
             pass
 
 
-@pytest.fixture(scope="session")
-def tm_scenario(request: pytest.FixtureRequest):
+@pytest_asyncio.fixture(scope="session")
+async def tm_scenario(
+    request: pytest.FixtureRequest,
+) -> Tuple[TranscriptManager, Dict[str, int]]:
     """
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data.
@@ -349,10 +305,10 @@ def tm_scenario(request: pytest.FixtureRequest):
     os.environ["TQDM_DISABLE"] = "1"
 
     ctx = "tests/test_transcript_manager/Scenario"
-    overwrite_scenarios = request.config.getoption("--overwrite-scenarios")
+    no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
-    # If --overwrite-scenarios is set, delete existing contexts first
-    if overwrite_scenarios:
+    # If --no-reuse-scenario is explicitly set, delete existing contexts first
+    if no_reuse_scenario:
         existing_contexts = unify.get_contexts(prefix=ctx)
         existing_context_names = list(existing_contexts.keys())
         if existing_context_names:
@@ -391,7 +347,7 @@ def tm_scenario(request: pytest.FixtureRequest):
     # Unset context after setup, like ContactManager does
     unify.unset_context()
 
-    yield tm, dict(_ID_BY_NAME)
+    return tm, dict(_ID_BY_NAME)
 
 
 @pytest.fixture(scope="function")
