@@ -7,6 +7,7 @@ from uuid import uuid4
 import json
 
 from ..events.event_bus import EVENT_BUS, Event
+from ..events.types.manager_method import ManagerMethodPayload
 from ..common.async_tool_loop import SteerableToolHandle
 
 __all__ = [
@@ -32,21 +33,24 @@ async def publish_manager_method_event(  # noqa: D401 – imperative name
     method_name: str,
     *,
     source: str | None = None,
-    **payload: Any,
+    **extra: Any,
 ) -> None:
     """
     Thin wrapper around :pyfunc:`EVENT_BUS.publish` for *ManagerMethod* events.
+
+    Uses the typed ManagerMethodPayload model for schema consistency.
     """
+    payload = ManagerMethodPayload(
+        manager=manager_name,
+        method=method_name,
+        source=source,
+        **extra,
+    )
     await EVENT_BUS.publish(
         Event(
             type="ManagerMethod",
             calling_id=call_id,
-            payload={
-                "manager": manager_name,
-                "method": method_name,
-                **({"source": source} if source is not None else {}),
-                **payload,
-            },
+            payload=payload,
         ),
     )
 
