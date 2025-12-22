@@ -43,6 +43,7 @@ from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.model_to_fields import model_to_fields
 
 # ---------------------------------------------------------------------------
 # Context-variable to track the *root* sequence number of a callback cascade.
@@ -118,7 +119,37 @@ class Event(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _auto_payload_cls(self):
+    def _validate_and_coerce_payload(self):
+        """Validate payload against known type schema and auto-set payload_cls."""
+        from .types import PAYLOAD_REGISTRY
+
+        # Enforce known event types only
+        if self.type not in PAYLOAD_REGISTRY:
+            raise ValueError(
+                f"Unknown event type '{self.type}'. "
+                f"Known types: {list(PAYLOAD_REGISTRY.keys())}. "
+                f"Define a Pydantic payload model in unity/events/types/.",
+            )
+
+        expected_model = PAYLOAD_REGISTRY[self.type]
+
+        # If payload is already the correct model, we're done
+        if isinstance(self.payload, expected_model):
+            pass
+        elif isinstance(self.payload, dict):
+            # Coerce dict → model for validation
+            object.__setattr__(
+                self,
+                "payload",
+                expected_model.model_validate(self.payload),
+            )
+        else:
+            raise ValueError(
+                f"Payload for event type '{self.type}' must be a dict or "
+                f"{expected_model.__name__}, got {type(self.payload).__name__}",
+            )
+
+        # Auto-set payload_cls from the validated model
         if not self.payload_cls and isinstance(self.payload, BaseModel):
             object.__setattr__(
                 self,
@@ -314,6 +345,9 @@ class EventBus:
         # Manual per-event-type row_id counters (initialised during hydration)
         self._next_row_ids: Dict[str, int] = {}
 
+        # Eagerly create contexts with pre-defined field schemas for all known types
+        self._ensure_known_contexts()
+
         # ---------------- Pinning support ----------------
         # Call-IDs (typically tool handles) that are currently **open** and whose
         # related events must stay resident regardless of the window size.
@@ -353,6 +387,60 @@ class EventBus:
             pass
         else:
             self._prefill_task = loop.create_task(self._async_initial_hydration())
+
+    # ------------------------------------------------------------------
+    # Known event type context creation
+    # ------------------------------------------------------------------
+
+    # Common fields present on all events (from Event envelope)
+    _COMMON_EVENT_FIELDS: Dict[str, Dict[str, Any]] = {
+        "row_id": {"type": "int", "mutable": False},
+        "event_id": {"type": "str", "mutable": False},
+        "calling_id": {"type": "str", "mutable": False},
+        "event_timestamp": {"type": "datetime", "mutable": False},
+        "payload_cls": {"type": "str", "mutable": False},
+    }
+
+    def _ensure_known_contexts(self) -> None:
+        """Create type-specific contexts with pre-defined field schemas.
+
+        For each known event type in PAYLOAD_REGISTRY, this method:
+        1. Creates the context if it doesn't exist
+        2. Creates fields from the Pydantic payload model using model_to_fields
+        3. Registers the context in _specific_ctxs
+
+        This ensures fields exist before any logs are written, preventing
+        type inference issues from the first log value.
+        """
+        from .types import PAYLOAD_REGISTRY
+
+        for event_type, payload_model in PAYLOAD_REGISTRY.items():
+            ctx_name = f"{self._global_ctx}/{event_type}"
+
+            # Skip if already registered
+            if event_type in self._specific_ctxs:
+                continue
+
+            # Create context
+            try:
+                unify.create_context(ctx_name)
+            except unify.RequestError as e:
+                body = getattr(e.response, "text", "") or str(e)
+                if "already exists" not in body.lower():
+                    raise
+
+            # Create fields from Pydantic model + common event fields
+            try:
+                payload_fields = model_to_fields(payload_model)
+                all_fields = {**self._COMMON_EVENT_FIELDS, **payload_fields}
+                unify.create_fields(all_fields, context=ctx_name)
+            except Exception:
+                # Fields may already exist or context may have issues; proceed
+                pass
+
+            # Register in our tracking dicts
+            self._specific_ctxs[event_type] = ctx_name
+            self._window_sizes.setdefault(event_type, self._default_window)
 
     # ------------------------------------------------------------------
     # Public readonly state helpers
@@ -581,26 +669,24 @@ class EventBus:
     # Public API
     # ------------------------------------------------------------------
     def register_event_types(self, event_types: Union[str, List[str]]) -> None:
+        """Validate that event types are known and ensure row_id counters exist.
+
+        Known event types have their contexts created eagerly in __init__ via
+        _ensure_known_contexts(). This method validates that the requested types
+        are in the registry and initializes row_id counters.
+        """
+        from .types import PAYLOAD_REGISTRY
+
         if isinstance(event_types, str):
             event_types = [event_types]
-        for event_type in event_types:
-            # Populate _window_sizes first so concurrent publish() calls that
-            # skip register_event_types (because _specific_ctxs already has the
-            # key) can still access the window size without a KeyError.
-            if event_type not in self._window_sizes:
-                self._window_sizes[event_type] = self._default_window
 
-            if event_type not in self._specific_ctxs:
-                full_ctx = f"{self._global_ctx}/{event_type}"
-                self._specific_ctxs[event_type] = full_ctx
-                # Create the context without any server-side auto-increment so
-                # we can fully control the sequence from the client.
-                try:
-                    unify.create_context(full_ctx)
-                except unify.RequestError as e:
-                    body = getattr(e.response, "text", "") or str(e)
-                    if "already exists" not in body.lower():
-                        raise
+        for event_type in event_types:
+            if event_type not in PAYLOAD_REGISTRY:
+                raise ValueError(
+                    f"Unknown event type '{event_type}'. "
+                    f"Known types: {list(PAYLOAD_REGISTRY.keys())}. "
+                    f"Define a Pydantic payload model in unity/events/types/.",
+                )
 
             # Ensure a local counter exists for this event-type
             self._next_row_ids.setdefault(event_type, 0)
@@ -618,8 +704,8 @@ class EventBus:
                 elif _rule["open_pred"](event):
                     self.pin_call_id(key)
 
-        if event.type not in self._specific_ctxs:
-            self.register_event_types(event.type)
+        # Known event types are registered eagerly in __init__ via _ensure_known_contexts.
+        # Unknown types are rejected by Event validation, so this should always exist.
         window = self._window_sizes[event.type]
         async with self._lock:
             # ── Assign and increment the manual row_id counter ───────────────
@@ -889,8 +975,7 @@ class EventBus:
         Change the *in-memory* history window for ``event_type`` to
         ``new_size`` events.
 
-        • Creates the event-type on-the-fly if not registered yet
-          (mirrors :pymeth:`register_event_types` behaviour).
+        • Validates that event_type is a known registered type.
         • Rebuilds the internal :class:`collections.deque` so the new
           ``maxlen`` takes effect immediately, keeping **the most recent**
           messages up to *new_size*.
@@ -898,9 +983,8 @@ class EventBus:
         if new_size <= 0:
             raise ValueError("new_size must be a positive integer")
 
-        # Ensure bookkeeping structures exist
-        if event_type not in self._specific_ctxs:
-            self.register_event_types(event_type)
+        # Validate known event type (raises ValueError if unknown)
+        self.register_event_types(event_type)
 
         self._window_sizes[event_type] = new_size
 
@@ -1053,14 +1137,7 @@ class EventBus:
 
     def set_default_window(self, new_size: int) -> None:
         """
-        Change the *in-memory* history window for ``event_type`` to
-        ``new_size`` events.
-
-        • Creates the event-type on-the-fly if not registered yet
-          (mirrors :pymeth:`register_event_types` behaviour).
-        • Rebuilds the internal :class:`collections.deque` so the new
-          ``maxlen`` takes effect immediately, keeping **the most recent**
-          messages up to *new_size*.
+        Change the default *in-memory* history window size for all event types.
         """
         self._default_window = new_size
 
