@@ -19,6 +19,6 @@ chmod 600 "${PASSFILE}"
 
 # Restart x11vnc to pick up new password
 pkill x11vnc || true
-nohup x11vnc -display :99 -rfbauth "${PASSFILE}" -forever -shared -bg -rfbport 5900 -rfbportv6 0 -noxdamage -nowf -nocursorshape -cursor arrow -nodpms >/dev/null 2>&1 &
+nohup x11vnc -display :99 -rfbauth "${PASSFILE}" -forever -shared -bg -rfbport 5900 -rfbportv6 0 -noxdamage -nowf -nodpms >/dev/null 2>&1 &
 
 echo "[update_vnc_password] VNC password updated and x11vnc restarted"
