@@ -285,15 +285,25 @@ class EventBus:
                 # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
                 pass
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
-        unify.create_context(self._global_ctx)
+        try:
+            unify.create_context(self._global_ctx)
+        except unify.RequestError as e:
+            body = getattr(e.response, "text", "") or str(e)
+            if "already exists" not in body.lower():
+                raise
 
         # Persisted subscription metadata lives here
         self._callbacks_ctx = f"{self._global_ctx}/_callbacks"
-        unify.create_context(
-            self._callbacks_ctx,
-            unique_keys={"row_id": "int"},
-            auto_counting={"row_id": None},
-        )
+        try:
+            unify.create_context(
+                self._callbacks_ctx,
+                unique_keys={"row_id": "int"},
+                auto_counting={"row_id": None},
+            )
+        except unify.RequestError as e:
+            body = getattr(e.response, "text", "") or str(e)
+            if "already exists" not in body.lower():
+                raise
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
@@ -585,7 +595,12 @@ class EventBus:
                 self._specific_ctxs[event_type] = full_ctx
                 # Create the context without any server-side auto-increment so
                 # we can fully control the sequence from the client.
-                unify.create_context(full_ctx)
+                try:
+                    unify.create_context(full_ctx)
+                except unify.RequestError as e:
+                    body = getattr(e.response, "text", "") or str(e)
+                    if "already exists" not in body.lower():
+                        raise
 
             # Ensure a local counter exists for this event-type
             self._next_row_ids.setdefault(event_type, 0)
