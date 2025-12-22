@@ -4,7 +4,7 @@ import traceback
 import json
 import ast
 from contextlib import redirect_stdout, redirect_stderr
-from typing import Any, Dict, Optional, Callable, Awaitable, Type
+from typing import Any, Dict, Optional, Callable, Awaitable, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
 from unity.actor.base import BaseActor
@@ -15,29 +15,42 @@ from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
+if TYPE_CHECKING:
+    from unity.actor.environments.base import BaseEnvironment
+
 
 def build_code_act_system_prompt(
-    computer_primitives: ComputerPrimitives,
+    environments: Dict[str, "BaseEnvironment"],
 ) -> str:
     """Builds the rich system prompt for the CodeActActor with enhanced quality."""
 
-    rules_and_examples = _build_code_act_rules_and_examples(computer_primitives)
+    rules_and_examples = _build_code_act_rules_and_examples(environments=environments)
 
     execute_tool = {
         "execute_python_code": {
             "signature": "async def execute_python_code(thought: str, code: str) -> Any",
             "docstring": (
                 "Executes a block of Python code in a stateful sandbox and returns the result.\n"
-                "You have access to an `computer_primitives` object to control a web browser and send communications.\n"
-                "All variables are preserved between calls. The sandbox is asynchronous - use await for all computer_primitives methods."
+                "You have access to environment globals injected into the sandbox (e.g. `computer_primitives`, `primitives`).\n"
+                "All variables are preserved between calls. The sandbox is asynchronous - use await for all async methods."
             ),
         },
     }
     execute_tool_reference = json.dumps(execute_tool, indent=4)
 
+    has_browser_env = "computer_primitives" in environments
+    role_line = "You are an expert agent that solves tasks by writing and executing Python code."
+    capabilities_line = (
+        "Your primary tool is a stateful code execution sandbox where you can control browsers, "
+        "send communications, and perform complex automation tasks."
+        if has_browser_env
+        else "Your primary tool is a stateful code execution sandbox where you can use whatever tool "
+        "domains are available via injected environment globals (e.g. state managers, and optionally browser/desktop)."
+    )
+
     return f"""
 ### Your Role: Code-First Automation Agent
-You are an expert agent that solves tasks by writing and executing Python code. Your primary tool is a stateful code execution sandbox where you can control browsers, send communications, and perform complex automation tasks.
+{role_line} {capabilities_line}
 
 ### Primary Execution Tool
 ```json
@@ -56,24 +69,78 @@ class CodeExecutionSandbox:
     capturing stdout, stderr, return values, and exceptions in a structured format.
     """
 
-    def __init__(self, computer_primitives: Optional[ComputerPrimitives] = None):
+    def __init__(
+        self,
+        computer_primitives: Optional[ComputerPrimitives] = None,
+        environments: Optional[Dict[str, "BaseEnvironment"]] = None,
+    ):
         """
         Initializes the sandbox.
 
         Args:
             computer_primitives: An instance of ComputerPrimitives to be injected into the
                              sandbox's global state, making browser tools available.
+            environments: Optional mapping of environment namespaces to environments. If
+                provided, each environment instance is injected into the sandbox globals.
         """
         from unity.function_manager.execution_env import create_execution_globals
 
         self.global_state: Dict[str, Any] = create_execution_globals()
-        if computer_primitives:
-            self.global_state["computer_primitives"] = computer_primitives
+        self._browser_used: bool = False
+
+        class _UsageTrackingProxy:
+            def __init__(self, target: Any, on_use: Callable[[], None]):
+                self._target = target
+                self._on_use = on_use
+
+            def __getattr__(self, name: str) -> Any:
+                # Treat any access as potential "use" since callers may invoke nested objects
+                # like `computer_primitives.browser.get_screenshot()`.
+                self._on_use()
+                attr = getattr(self._target, name)
+                if callable(attr):
+
+                    async def _async_wrapper(*args, **kwargs):
+                        self._on_use()
+                        return await attr(*args, **kwargs)
+
+                    def _sync_wrapper(*args, **kwargs):
+                        self._on_use()
+                        return attr(*args, **kwargs)
+
+                    # Preserve sync vs async callable behavior.
+                    if asyncio.iscoroutinefunction(attr):
+                        return _async_wrapper
+                    return _sync_wrapper
+                return attr
+
+        def _mark_browser_used() -> None:
+            self._browser_used = True
+
+        if environments:
+            for namespace, env in environments.items():
+                try:
+                    instance = env.get_instance()
+                    if namespace == "computer_primitives":
+                        instance = _UsageTrackingProxy(instance, _mark_browser_used)
+                    self.global_state[namespace] = instance
+                except Exception:
+                    # Keep sandbox usable even if a non-critical environment fails to inject.
+                    continue
+
+        # Backward-compat: allow direct injection when environments weren't provided.
+        if computer_primitives and "computer_primitives" not in self.global_state:
+            self.global_state["computer_primitives"] = _UsageTrackingProxy(
+                computer_primitives,
+                _mark_browser_used,
+            )
 
     async def execute(self, code: str) -> Dict[str, Any]:
         """
         Executes a string of Python code within the sandbox's stateful environment.
         """
+        # Reset per-execution usage flags.
+        self._browser_used = False
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
         result = None
@@ -141,6 +208,7 @@ class CodeExecutionSandbox:
             "stderr": stderr_capture.getvalue(),
             "result": result,
             "error": error,
+            "browser_used": self._browser_used,
         }
 
 
@@ -159,6 +227,7 @@ class CodeActActor(BaseActor):
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
         computer_primitives: Optional["ComputerPrimitives"] = None,
+        environments: Optional[list["BaseEnvironment"]] = None,
     ):
         """
         Initializes the CodeActActor.
@@ -166,19 +235,47 @@ class CodeActActor(BaseActor):
         Args:
             computer_primitives: Optional existing ComputerPrimitives instance to reuse.
                            If provided, other browser-related params are ignored.
+            environments: Optional list of execution environments. If None, defaults to
+                [ComputerEnvironment, StateManagerEnvironment].
         """
-        if computer_primitives is not None:
-            self._computer_primitives = computer_primitives
-        else:
-            self._computer_primitives = ComputerPrimitives(
-                session_connect_url=session_connect_url,
-                headless=headless,
-                browser_mode=browser_mode,
-                agent_mode=agent_mode,
-                agent_server_url=agent_server_url,
-            )
+        from unity.actor.environments import (
+            ComputerEnvironment,
+            StateManagerEnvironment,
+        )
+        from unity.function_manager.primitives import Primitives
+
+        if environments is None:
+            if computer_primitives is not None:
+                _computer_primitives = computer_primitives
+            else:
+                _computer_primitives = ComputerPrimitives(
+                    session_connect_url=session_connect_url,
+                    headless=headless,
+                    browser_mode=browser_mode,
+                    agent_mode=agent_mode,
+                    agent_server_url=agent_server_url,
+                )
+            primitives = Primitives()
+            environments = [
+                ComputerEnvironment(_computer_primitives),
+                StateManagerEnvironment(primitives),
+            ]
+
+        self.environments: Dict[str, "BaseEnvironment"] = {
+            env.namespace: env for env in environments
+        }
+        self._computer_primitives = None
+        if "computer_primitives" in self.environments:
+            try:
+                self._computer_primitives = self.environments[
+                    "computer_primitives"
+                ].get_instance()
+            except Exception:
+                self._computer_primitives = None
+
         self._sandbox = CodeExecutionSandbox(
             computer_primitives=self._computer_primitives,
+            environments=self.environments,
         )
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
@@ -192,6 +289,8 @@ class CodeActActor(BaseActor):
 
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ComputerPrimitives."""
+        if not self._computer_primitives:
+            return {}
         return {
             "navigate": self._computer_primitives.navigate,
             "act": self._computer_primitives.act,
@@ -230,12 +329,13 @@ class CodeActActor(BaseActor):
             if not text_summary:
                 text_summary = "Code executed successfully with no output."
 
-            browser_action_keywords = [
-                "navigate",
-                "act",
-                "observe",
-            ]
-            if any(keyword in code for keyword in browser_action_keywords):
+            # Only append browser state when a browser environment is active.
+            # Avoid any heuristics based on code substring matching.
+            if (
+                "computer_primitives" in self.environments
+                and self._computer_primitives is not None
+                and execution_result.get("browser_used")
+            ):
                 try:
                     url = await self._computer_primitives.browser.get_current_url()
                     screenshot_b64 = (
@@ -245,7 +345,11 @@ class CodeActActor(BaseActor):
                     browser_state_summary = f"--- BROWSER STATE ---\nURL: {url}"
                     text_summary += f"\n\n{browser_state_summary}"
 
-                    return {"summary": text_summary, "image": screenshot_b64}
+                    # Only attach an image if we received non-empty base64.
+                    # Some providers reject empty image payloads.
+                    if screenshot_b64:
+                        return {"summary": text_summary, "image": screenshot_b64}
+                    return {"summary": text_summary}
                 except Exception as e:
                     text_summary += f"\n\n--- BROWSER STATE ERROR ---\nCould not retrieve browser state: {e}"
 
@@ -277,7 +381,7 @@ class CodeActActor(BaseActor):
             "wait for the user to provide instructions via interjection."
         )
         system_prompt = build_code_act_system_prompt(
-            self._computer_primitives,
+            self.environments,
         )
         handle = ActorHandle(
             task_description=description or initial_prompt,
