@@ -25,6 +25,7 @@ RUN mkdir -p /opt/novnc && \
     unzip master.zip && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
+COPY desktop/novnc/custom.html /opt/novnc/custom.html
 
 # Dependencies for virtual camera (currently disabled)
 # RUN apt-get update && apt-get install -y \

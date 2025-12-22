@@ -19,7 +19,7 @@ Watch these videos for [setup](https://www.loom.com/share/ad1a9b9c4e6e4de1a9b501
 
 - Build: `docker build -t unity-desktop -f desktop/Dockerfile .`
 - Run: `docker run --rm -p 6080:6080 -p 5900:5900 -p 3000:3000 --env-file .env unity-desktop`
-- Open `http://localhost:6080/vnc.html?resize=scale&autoconnect=1&autoreconnect=1` to view the desktop
+- Open `http://localhost:6080/custom.html` to view the desktop (clean UI, no sidebar/logo)
 - Control: You can now run the Actor/Controller locally with `agent_mode="desktop"` (e.g., `HierarchicalActor(agent_mode="desktop")` or `Browser(mode="magnitude", agent_mode="desktop")`)
 
 ### Troubleshooting
