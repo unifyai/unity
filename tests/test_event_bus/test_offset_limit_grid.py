@@ -86,7 +86,7 @@ async def test_int_offset_int_limit() -> None:
     )
 
     out = await bus.search(offset=1, limit=2)
-    ids = [getattr(e.payload, "idx", None) for e in out]
+    ids = [e.payload.get("idx") for e in out]
 
     # Newest-first across the combined stream after applying the global offset
     assert ids == ["c1", "m0"]
@@ -133,8 +133,8 @@ async def test_dict_offset_dict_limit() -> None:
     )
 
     assert set(out) == {"Comms", "ManagerMethod"}
-    assert [e.payload.seq for e in out["Comms"]] == [1, 0]
-    assert [e.payload.seq for e in out["ManagerMethod"]] == [2, 1]
+    assert [e.payload.get("seq") for e in out["Comms"]] == [1, 0]
+    assert [e.payload.get("seq") for e in out["ManagerMethod"]] == [2, 1]
 
 
 # --------------------------------------------------------------------------- #
@@ -181,7 +181,7 @@ async def test_dict_offset_int_limit() -> None:
         )
 
     out = await bus.search(offset={"Comms": 1}, limit=4)
-    typ_seq = [(e.type, e.payload.seq) for e in out]
+    typ_seq = [(e.type, e.payload.get("seq")) for e in out]
 
     assert typ_seq == [
         ("ManagerMethod", 1),
@@ -232,5 +232,5 @@ async def test_int_offset_dict_limit() -> None:
 
     assert set(out) == {"Comms", "ManagerMethod"}
     # newest-first within each list, after skipping one
-    assert [e.payload.seq for e in out["Comms"]] == [1, 0]
-    assert [e.payload.seq for e in out["ManagerMethod"]] == [1, 0]
+    assert [e.payload.get("seq") for e in out["Comms"]] == [1, 0]
+    assert [e.payload.get("seq") for e in out["ManagerMethod"]] == [1, 0]

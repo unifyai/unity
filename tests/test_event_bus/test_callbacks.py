@@ -36,12 +36,8 @@ from unity.events.types.manager_method import ManagerMethodPayload
 
 
 def _get_seq(payload) -> int:
-    """Extract seq from payload, handling both Pydantic models and dicts."""
-    if hasattr(payload, "seq"):
-        return payload.seq
-    if isinstance(payload, dict):
-        return payload.get("seq")
-    return None
+    """Extract seq from payload (always a dict)."""
+    return payload.get("seq")
 
 
 # --------------------------------------------------------------------------- #
@@ -311,15 +307,12 @@ def _mk_msg(sender: int, receiver: int, seq: int) -> Event:
     )
 
 
-FILTER = "evt.payload.sender_id == 1 and evt.payload.receiver_ids == [2]"
+FILTER = "evt.payload.get('sender_id') == 1 and evt.payload.get('receiver_ids') == [2]"
 
 
 def _get_sender_id(payload) -> int:
-    if hasattr(payload, "sender_id"):
-        return payload.sender_id
-    if isinstance(payload, dict):
-        return payload.get("sender_id")
-    return None
+    """Extract sender_id from payload (always a dict)."""
+    return payload.get("sender_id")
 
 
 @pytest.mark.asyncio

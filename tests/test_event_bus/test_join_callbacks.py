@@ -56,7 +56,7 @@ async def test_ignores_future() -> None:
     done_second = asyncio.Event()
 
     async def cb(evts):  # noqa: ANN001
-        seq = getattr(evts[0].payload, "seq", None)
+        seq = evts[0].payload.get("seq")
         if seq == 1:
             await asyncio.sleep(0.05)  # short – should be awaited by join
             done_first.set()

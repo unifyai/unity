@@ -198,12 +198,8 @@ async def test_rehydration_from_payload_json():
     assert len(results) == 1
     retrieved = results[0]
 
-    # Payload should be correctly rehydrated as dict (or model)
-    if isinstance(retrieved.payload, ToolLoopPayload):
-        assert retrieved.payload.method == "test_rehydration"
-        assert retrieved.payload.hierarchy == ["level1", "level2"]
-    else:
-        # May be rehydrated as dict depending on context
-        assert retrieved.payload["method"] == "test_rehydration"
+    # Payload is always a dict after validation
+    assert retrieved.payload["method"] == "test_rehydration"
+    assert retrieved.payload["hierarchy"] == ["level1", "level2"]
 
     assert retrieved.event_id == event.event_id

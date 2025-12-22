@@ -45,7 +45,7 @@ async def test_preserves_events() -> None:
     await bus.publish(e2)
 
     res = await bus.search(filter='type == "Comms"', limit=10)
-    seqs = [ev.payload.seq for ev in res]
+    seqs = [ev.payload.get("seq") for ev in res]
     # Expect the pinned e0 (seq 0) + the two newest (1,2)
     assert set(seqs) == {0, 1, 2} and len(seqs) == 3
 
@@ -55,7 +55,7 @@ async def test_preserves_events() -> None:
     await bus.publish(e3)
 
     # Deque should now contain only the two newest unpinned events (seq 3 & 2)
-    dq_seqs = [ev.payload.seq for ev in bus._deques["Comms"]]
+    dq_seqs = [ev.payload.get("seq") for ev in bus._deques["Comms"]]
     assert dq_seqs == [2, 3] or dq_seqs == [3, 2]
 
 
@@ -73,9 +73,9 @@ async def test_auto_rule() -> None:
     # auto-pin on "start", unpin on "end", keyed by task_id in payload
     bus.register_auto_pin(
         event_type="Comms",
-        open_predicate=lambda e: getattr(e.payload, "stage", None) == "start",
-        close_predicate=lambda e: getattr(e.payload, "stage", None) == "end",
-        key_fn=lambda e: e.payload.task_id,
+        open_predicate=lambda e: e.payload.get("stage") == "start",
+        close_predicate=lambda e: e.payload.get("stage") == "end",
+        key_fn=lambda e: e.payload.get("task_id"),
     )
 
     start_evt = Event(
@@ -121,4 +121,4 @@ async def test_auto_rule() -> None:
     # unpinned event (window size =1) and it must belong to the new task.
     assert len(bus._deques["Comms"]) == 1
     newest = bus._deques["Comms"][0]
-    assert getattr(newest.payload, "task_id", None) == "T2"
+    assert newest.payload.get("task_id") == "T2"
