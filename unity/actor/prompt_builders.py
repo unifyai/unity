@@ -181,7 +181,10 @@ def _build_verification_static_prefix() -> str:
     ).strip()
 
 
-def _build_dynamic_implement_static_prefix(tools: Dict[str, Callable]) -> str:
+def _build_dynamic_implement_static_prefix(
+    tools: Dict[str, Callable],
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
+) -> str:
     """
     Builds the static, cacheable prefix for dynamic implementation prompts.
     Args:
@@ -191,12 +194,21 @@ def _build_dynamic_implement_static_prefix(tools: Dict[str, Callable]) -> str:
         Static prefix string for implementation prompts (≥2,048 tokens)
     """
     strategy_instruction = _build_shared_strategy_principles()
-    tool_usage_instruction = "Use the `computer_primitives` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    if environments:
+        namespaces = ", ".join(f"`{ns}`" for ns in environments.keys())
+        tool_usage_instruction = (
+            "Use the injected global objects (namespaces) to interact with the environment. "
+            f"Available namespaces: {namespaces}."
+        )
+    else:
+        tool_usage_instruction = "Use the injected global objects (namespaces) to interact with the environment."
     rules_and_examples = _build_dynamic_implement_rules_and_examples(
         tools,
         strategy_instruction,
         tool_usage_instruction,
+        environments,
     )
+    env_context_str = _format_environment_contexts(environments)
 
     return textwrap.dedent(
         f"""
@@ -210,6 +222,7 @@ def _build_dynamic_implement_static_prefix(tools: Dict[str, Callable]) -> str:
         4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
 
         {rules_and_examples}
+        {f"\n\n---\n\n{env_context_str}" if env_context_str else ""}
 
         ---
 
@@ -219,7 +232,10 @@ def _build_dynamic_implement_static_prefix(tools: Dict[str, Callable]) -> str:
     ).strip()
 
 
-def _build_interjection_static_prefix(tools: Dict[str, Callable]) -> str:
+def _build_interjection_static_prefix(
+    tools: Dict[str, Callable],
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
+) -> str:
     """
     Builds the static, cacheable prefix for interjection prompts.
     Args:
@@ -228,9 +244,10 @@ def _build_interjection_static_prefix(tools: Dict[str, Callable]) -> str:
     Returns:
         Static prefix string for interjection prompts (≥2,048 tokens)
     """
-    tool_reference = _build_tool_signatures(tools)
+    tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
     strategy_principles = _build_shared_strategy_principles()
+    env_context_str = _format_environment_contexts(environments)
 
     return textwrap.dedent(
         f"""
@@ -258,29 +275,29 @@ def _build_interjection_static_prefix(tools: Dict[str, Callable]) -> str:
             **Golden Rule of Replay:** After you submit your patches, the plan **always restarts execution from the beginning of `main_plan`**. Your task is to craft a cache invalidation plan that makes this replay as fast as possible by preserving all valid caches.
 
             **Scenario 1: Invalidating Downstream Dependencies (`invalidate_functions`)**
-            * **Situation:** The plan is `A_login() -> B_fetch_user_data("123") -> C_generate_report(...)`. The correctness of `C` depends on the data fetched in `B`. The user interjects: "Sorry, I meant user ID `'456'`."
-            * **Analysis:** Changing the `user_id` in `B` will cause it to navigate to a new page and fetch different data. Because `C` relies on this data, its previous cached result is now invalid and must also be cleared. `A_login`, however, is unaffected.
+            * **Situation:** The plan is `A_authenticate() -> B_fetch_data(id="123") -> C_process_results(...)`. The correctness of `C` depends on the data fetched in `B`. The user interjects: "Sorry, I meant ID `'456'`."
+            * **Analysis:** Changing the `id` in `B` will cause it to fetch different data. Because `C` relies on this data, its previous cached result is now invalid and must also be cleared. `A_authenticate`, however, is unaffected.
             * **Correct `modify_task` Response:**
                 ```json
                 {{
                     "action": "modify_task",
-                    "reason": "User changed the target user ID. This invalidates both the data fetching step (B) and the report generation step (C) which depends on it.",
+                    "reason": "User changed the target ID. This invalidates both the data fetching step (B) and the processing step (C) which depends on it.",
                     "patches": [
                         {{
                             "function_name": "main_plan",
-                            "new_code": "async def main_plan():\\n    await A_login()\\n    user_data = await B_fetch_user_data(user_id='456')\\n    await C_generate_report(user_data)"
+                            "new_code": "async def main_plan():\\n    await A_authenticate()\\n    data = await B_fetch_data(id='456')\\n    await C_process_results(data)"
                         }}
                     ],
                     "cache": {{
-                        "invalidate_functions": ["B_fetch_user_data", "C_generate_report"]
+                        "invalidate_functions": ["B_fetch_data", "C_process_results"]
                     }}
                 }}
                 ```
             * **Replay Analysis:**
                 1.  Execution starts at `main_plan`.
-                2.  `await A_login()` runs. **Result: CACHE HIT**.
-                3.  `await B_fetch_user_data(user_id='456')` runs. **Result: CACHE MISS**. It executes for real.
-                4.  `await C_generate_report(...)` runs. **Result: CACHE MISS**. It executes for real with the new data from `B`.
+                2.  `await A_authenticate()` runs. **Result: CACHE HIT**.
+                3.  `await B_fetch_data(id='456')` runs. **Result: CACHE MISS**. It executes for real.
+                4.  `await C_process_results(...)` runs. **Result: CACHE MISS**. It executes for real with the new data from `B`.
 
             ---
 
@@ -295,7 +312,7 @@ def _build_interjection_static_prefix(tools: Dict[str, Callable]) -> str:
                     "patches": [
                         {{
                             "function_name": "B",
-                            "new_code": "async def B(parameter: str):\\n    # step 1\\n    await computer_primitives.act('Step B1')\\n    # step 2\\n    await computer_primitives.act('Step B2')\\n    # new step 2.5\\n    await computer_primitives.act('Newly added Step B2.5')\\n    # step 3\\n    await computer_primitives.act('Step B3')\\n    # ..."
+                            "new_code": "async def B(parameter: str):\\n    # step 1\\n    await namespace.tool('Step B1')\\n    # step 2\\n    await namespace.tool('Step B2')\\n    # new step 2.5\\n    await namespace.tool('Newly added Step B2.5')\\n    # step 3\\n    await namespace.tool('Step B3')\\n    # ..."
                         }}
                     ],
                     "cache": {{
@@ -445,6 +462,8 @@ def _build_interjection_static_prefix(tools: Dict[str, Callable]) -> str:
         **Handle APIs:**
         {handle_apis}
 
+        {f"\n\n---\n\n{env_context_str}" if env_context_str else ""}
+
         ---
 
         ### Current Situation
@@ -464,6 +483,91 @@ def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
             "signature": f"{prefix}{name}{inspect.signature(fn)}",
             "docstring": inspect.getdoc(fn) or "No docstring available.",
         }
+    return json.dumps(tool_info, indent=4)
+
+
+def _format_environment_contexts(
+    environments: Mapping[str, "BaseEnvironment"] | None,
+) -> str:
+    """Collects environment-provided prompt contexts into a single markdown block."""
+    if not environments:
+        return ""
+
+    env_contexts: list[str] = []
+    for namespace, env in environments.items():
+        try:
+            ctx = env.get_prompt_context()
+        except Exception:
+            ctx = ""
+        if not ctx or not ctx.strip():
+            continue
+        env_contexts.append(f"### {namespace} Environment\n{ctx.strip()}")
+
+    if not env_contexts:
+        return ""
+
+    return "\n\n---\n\n".join(env_contexts).strip()
+
+
+def _group_tools_by_namespace(
+    tools: Dict[str, Callable],
+    environments: Mapping[str, "BaseEnvironment"] | None,
+) -> dict[str, Dict[str, Callable]]:
+    """
+    Groups fully-qualified tool names into their owning namespaces.
+
+    Tool names produced by the actor are expected to be fully-qualified
+    (e.g. \"computer_primitives.navigate\", \"primitives.contacts.ask\").
+    """
+    groups: dict[str, Dict[str, Callable]] = {}
+    known_namespaces = set(environments.keys()) if environments else set()
+
+    for tool_name, fn in tools.items():
+        if "." in tool_name:
+            ns = tool_name.split(".", 1)[0]
+        else:
+            ns = "global"
+        if known_namespaces and ns not in known_namespaces and ns != "global":
+            ns = "other"
+        groups.setdefault(ns, {})[tool_name] = fn
+
+    # Stable ordering: known namespaces first, then global/other.
+    if not known_namespaces:
+        return groups
+
+    ordered: dict[str, Dict[str, Callable]] = {}
+    for ns in environments.keys():
+        if ns in groups:
+            ordered[ns] = groups[ns]
+    for ns in ("global", "other"):
+        if ns in groups:
+            ordered[ns] = groups[ns]
+    # Include any remaining namespaces deterministically.
+    for ns in sorted(set(groups.keys()) - set(ordered.keys())):
+        ordered[ns] = groups[ns]
+    return ordered
+
+
+def _build_tool_reference_by_namespace(
+    tools: Dict[str, Callable],
+    environments: Mapping[str, "BaseEnvironment"] | None,
+) -> str:
+    """Build a nested tool reference JSON grouped by environment namespace."""
+    grouped = _group_tools_by_namespace(tools, environments)
+    tool_info: dict[str, Any] = {}
+    for ns, ns_tools in grouped.items():
+        ns_info: dict[str, Any] = {}
+        for fq_name, fn in ns_tools.items():
+            # Inner key is the tool name without the leading namespace prefix.
+            inner_name = (
+                fq_name[len(ns) + 1 :] if fq_name.startswith(f"{ns}.") else fq_name
+            )
+            prefix = "async def " if inspect.iscoroutinefunction(fn) else "def "
+            ns_info[inner_name] = {
+                "signature": f"{prefix}{fq_name}{inspect.signature(fn)}",
+                "docstring": inspect.getdoc(fn) or "No docstring available.",
+            }
+        tool_info[ns] = ns_info
     return json.dumps(tool_info, indent=4)
 
 
@@ -501,7 +605,14 @@ def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
         signature = func_data.get("argspec", "()")
         docstring = func_data.get("docstring", "No docstring available.")
         implementation = func_data.get("implementation", "")
-        prefix = "async def" if "async def" in implementation.lstrip()[:10] else "def"
+        if implementation is None:
+            implementation = ""
+        prefix = (
+            "async def"
+            if isinstance(implementation, str)
+            and "async def" in implementation.lstrip()[:10]
+            else "def"
+        )
         summary = (
             f"{prefix} {name}{signature}:\n"
             f'    """\n'
@@ -597,9 +708,9 @@ def _build_shared_strategy_principles() -> str:
         ### 🧠 Strategic Principles for Automation
         To succeed, you must follow these core principles when writing or modifying code.
 
-        1.  **Trust the Agent's Autonomy**: The `act` tool is autonomous. Give it high-level goals describing the desired outcome. Instead of "click username field," then "type username," then "click login," a single step is better: `await computer_primitives.act("Log in with username 'test' and password 'pass123'")`.
-        2.  **Describe Visually and Functionally**: All browser tools operate on what is *visible*. Describe elements by their text, appearance, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes which you cannot see.
-        3.  **Use `observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `observe` with a Pantic `response_format`. This is the most reliable way to gather information before acting.
+        1.  **Trust Tool Autonomy**: When a tool is autonomous, give it a high-level goal describing the desired outcome. Avoid brittle, overly granular instructions.
+        2.  **Ground in Observable State**: Base decisions on observable state (tool return values, logs, screenshots, or other evidence), not assumptions.
+        3.  **Prefer Structured Extraction When Available**: If a tool supports structured outputs (e.g., via Pydantic schemas), use them for complex data extraction to reduce ambiguity.
         4.  **Isolate Core Logic**: When refactoring, identify the central, repeatable process. Omit one-time setup steps (like "open a new tab") from the generalized helper function. The goal is to create a function that represents a meaningful, reusable skill.
         5.  **Write General, Parameterized Functions**: Functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or credentials) as parameters. Function names should describe the *process*, not the data (e.g., `process_user(username: str)` is better than `process_user_smith()`).
         6.  **Use Fallbacks**: If a website's feature is unreliable (e.g., a buggy serving size calculator), create a fallback. First, try the website feature. If it fails, use the `reason` tool or pure Python to perform the calculation or transformation yourself. This makes your plan robust.
@@ -607,8 +718,8 @@ def _build_shared_strategy_principles() -> str:
     )
 
 
-def _build_code_act_rules_and_examples(computer_primitives) -> str:
-    """Builds the reusable block of core rules and examples for CodeActActor."""
+def _build_browser_rules_and_examples(computer_primitives) -> str:
+    """Builds the browser-centric rules/examples block (legacy CodeAct content)."""
     all_tools = {}
 
     browser_tools = {
@@ -964,16 +1075,207 @@ Some tools return "handle" objects for ongoing interaction. Available methods:
 """
 
 
+def _build_generic_execution_rules() -> str:
+    """Domain-agnostic execution rules for code-first actors."""
+    return textwrap.dedent(
+        """
+        ### 🎯 CRITICAL RULES FOR CODE EXECUTION
+
+        1. **Stateful Execution**: Your code runs in a persistent, stateful REPL-like environment. Variables, functions, and imports defined in one turn are available in subsequent turns.
+
+        2. **Use `await`**: The execution sandbox is asynchronous. You **MUST** use `await` for any async calls.
+
+        3. **Imports Inside Code**: All necessary imports must be included in the code you provide.
+
+        4. **Pydantic for Structured Data (When Supported)**: If a tool supports structured outputs via a `response_format` or schema, define Pydantic models inside the code and call `model_rebuild()` on the outermost model.
+
+        5. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
+
+        6. **Final Answer Rule**:
+           - When the user's request has been fully addressed, you **MUST** provide the final answer directly as a tool-less assistant message.
+           - Do not call a tool to print the final answer.
+        """,
+    ).strip()
+
+
+def _build_state_manager_rules_and_examples() -> str:
+    """Rules/examples for the `primitives` state manager environment."""
+    return textwrap.dedent(
+        """
+        ### 🧩 State Manager Rules & Examples (`primitives`)
+
+        - **Read vs write**:
+          - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
+          - `await primitives.<manager>.update(...)`, `await primitives.<manager>.execute(...)`, `await primitives.<manager>.refactor(...)` are **impure** (they mutate state or start work).
+
+        - **Prefer return values as evidence**: treat return values from state managers as the primary ground truth; log/print them and propagate them up to `main_plan` where appropriate.
+
+        - **Steerable handles**: some calls (notably execution) may return handles. Capture them and await their results.
+
+        Examples:
+        ```python
+        # Pure query
+        contact = await primitives.contacts.ask("Find John Doe and return the best matching contact.")
+
+        # Mutation
+        updated = await primitives.contacts.update("Add a new contact for John Doe with email john@example.com.")
+
+        # Durable execution (may return a handle)
+        task_handle = await primitives.tasks.execute("Draft an email to John Doe confirming our meeting next week.")
+        task_result = await task_handle.result()
+        ```
+        """,
+    ).strip()
+
+
+def _build_code_act_rules_and_examples(
+    computer_primitives=None,
+    *,
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
+) -> str:
+    """
+    Builds the reusable rules/examples block for CodeAct-style execution.
+
+    Backward compatibility:
+    - If called with a single positional argument, treat it as legacy `computer_primitives`.
+    - New preferred usage passes `environments=...` for environment-aware composition.
+    """
+    if environments is None:
+        # Legacy: browser-only content.
+        return _build_browser_rules_and_examples(computer_primitives)
+
+    parts: list[str] = []
+
+    # Always include domain-agnostic execution rules first.
+    parts.append(_build_generic_execution_rules())
+
+    cp = None
+    if "computer_primitives" in environments:
+        try:
+            cp = environments["computer_primitives"].get_instance()
+        except Exception:
+            cp = None
+    if cp is not None:
+        parts.append(_build_browser_rules_and_examples(cp))
+
+    if "primitives" in environments:
+        parts.append(_build_state_manager_rules_and_examples())
+
+    return "\n\n---\n\n".join(p for p in parts if p and p.strip()).strip()
+
+
 def _build_initial_plan_rules_and_examples(
     tools: Dict[str, Callable],
     strategy_instruction: str,
     tool_usage_instruction: str,
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> str:
     """Builds the reusable block of core rules and examples for initial planning."""
-    tool_reference = _build_tool_signatures(tools)
+    tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
 
     shared_principles = _build_shared_strategy_principles()
+    has_browser = environments is None or "computer_primitives" in environments
+    has_primitives = environments is not None and "primitives" in environments
+
+    primitives_examples_section = ""
+    if has_primitives:
+        mixed_example = ""
+        if has_browser:
+            mixed_example = textwrap.dedent(
+                """
+                **Mixed Example: Browser + State Managers**
+                ```python
+                @verify
+                async def browse_for_current_role(name: str) -> dict:
+                    \"\"\"Browse for current role/company info for a person (implementation deferred).\"\"\"
+                    raise NotImplementedError("Browse and extract current role/company for the person")
+
+                @verify
+                async def main_plan():
+                    \"\"\"Example main plan showing `primitives` usage even when browser tools exist.\"\"\"
+                    existing = await primitives.contacts.ask("Find John Doe and return the best match.")
+                    role_info = await browse_for_current_role("John Doe")
+                    updated = await primitives.contacts.update("Update John Doe with confirmed company and title.")
+                    return {"existing": existing, "role_info": role_info, "updated": updated}
+                ```
+                """,
+            ).strip()
+
+        primitives_examples_section = textwrap.dedent(
+            f"""
+            ---
+            ### Additional Examples: State Managers (`primitives`)
+            { _build_state_manager_rules_and_examples()}
+
+            {mixed_example}
+            """,
+        ).strip()
+
+    if (not has_browser) and has_primitives:
+        instructions_and_rules = textwrap.dedent(
+            """
+            ### 🎯 CRITICAL RULES FOR INITIAL PLAN CREATION
+
+            1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
+
+            2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
+
+            3.  **Scope and Imports**: ALL imports must be placed **inside** functions, never at the top level.
+
+            4.  **Decomposition:** Break complex tasks into smaller, focused functions.
+
+            5.  **Confidence-Based Stubbing**:
+                - Implement steps you are confident about.
+                - Stub uncertain steps with a pure `raise NotImplementedError(\"...\")` (docstring + raise only).
+
+            6.  **Async All The Way**: ALL functions must be `async def`.
+
+            7.  **Await Keyword**: ALWAYS `await` any async call, including state manager calls like:
+                - `await primitives.contacts.ask(...)`
+                - `await primitives.contacts.update(...)`
+                - `await primitives.tasks.execute(...)`
+
+            8.  **Requesting Clarification**:
+                Call `request_clarification(\"...\")` as a global function when needed.
+
+            9.  **Return the Final Value**: If the last step returns a value, capture and return it from `main_plan`.
+            """,
+        ).strip()
+
+        namespaces = (
+            ", ".join(f"`{ns}`" for ns in environments.keys())
+            if environments
+            else "`primitives`"
+        )
+
+        return textwrap.dedent(
+            f"""
+            ---
+            ### Core Instructions & Rules
+            {instructions_and_rules}
+
+            ---
+            ### Strategy & Tool Usage
+            {strategy_instruction}
+            ---
+            {shared_principles}
+            {tool_usage_instruction}
+
+            ---
+            ### Tools Reference
+            You have access to the following global objects (namespaces) inside plan code: {namespaces}
+            ```json
+            {tool_reference}
+            ```
+
+            ---
+            ### Handle APIs
+            Some tools return a \"handle\" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+
+            {handle_apis}
+            """,
+        ).strip()
     strategy_instruction += textwrap.dedent(
         f"""\n
         ---
@@ -1100,10 +1402,13 @@ def _build_initial_plan_rules_and_examples(
                 pass
             ```
 
-        8.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `computer_primitives` methods AND any helper functions or skills you call.
+        8.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes browser tools (e.g. `computer_primitives.*`), state manager tools (e.g. `primitives.*`), AND any helper functions or skills you call.
             ```python
             # ✅ CORRECT: Awaiting an computer_primitives method
             await computer_primitives.navigate("https://example.com")
+
+            # ✅ CORRECT: Awaiting a primitives state manager method
+            contact = await primitives.contacts.ask("Find John Doe")
 
             # ✅ CORRECT: Awaiting a helper function/skill from the library
             result = await helper_func_1("arg1", "arg2")
@@ -1173,7 +1478,7 @@ def _build_initial_plan_rules_and_examples(
 
         11. **Action Provider Usage:**
             ```python
-            # ❌ WRONG: Don't create or import ComputerPrimitives
+            # ❌ WRONG: Don't create or import tool providers
             from some_module import ComputerPrimitives
             computer_primitives = ComputerPrimitives()
 
@@ -1181,9 +1486,10 @@ def _build_initial_plan_rules_and_examples(
             def my_func(computer_primitives: ComputerPrimitives):
                 pass
 
-            # ✅ CORRECT: Use it directly as a global
+            # ✅ CORRECT: Use injected globals directly
             async def my_func():
                 await computer_primitives.navigate("...")
+                _ = await primitives.contacts.ask("Find John Doe")
             ```
 
          12. **Requesting Clarification:**
@@ -1226,7 +1532,7 @@ def _build_initial_plan_rules_and_examples(
 
         ---
         ### Tools Reference
-        You have access to a global `computer_primitives` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to global objects (namespaces) for your active environments. Tools are grouped by namespace below; you MUST call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -1796,6 +2102,7 @@ def _build_initial_plan_rules_and_examples(
             print(f"Searching for hotels in {{details['city']}} from {{details['check_in']}} to {{details['check_out']}}.")
             return f"Search initiated for {{details['city']}}."
         ```
+        {primitives_examples_section}
     """,
     )
 
@@ -1804,10 +2111,116 @@ def _build_dynamic_implement_rules_and_examples(
     tools: Dict[str, Callable],
     strategy_instruction: str,
     tool_usage_instruction: str,
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> str:
     """Builds the reusable block of core rules and examples for dynamic implementation."""
-    tool_reference = _build_tool_signatures(tools)
+    tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
+
+    has_browser = environments is None or "computer_primitives" in environments
+    has_primitives = environments is not None and "primitives" in environments
+
+    primitives_appendix = ""
+    if has_primitives:
+        mixed_impl_example = ""
+        if has_browser:
+            mixed_impl_example = textwrap.dedent(
+                """
+                **Example (Mixed): Use both browser tools and state managers**
+                ```python
+                async def enrich_contact_from_browser(name: str) -> dict:
+                    \"\"\"Find a person's current role in the browser and persist it to contacts.\"\"\"
+                    await computer_primitives.navigate("https://www.google.com")
+                    await computer_primitives.act(f"Search for '{name} current job title company'")
+                    from pydantic import BaseModel, Field
+                    from typing import Optional
+
+                    class RoleInfo(BaseModel):
+                        title: Optional[str] = Field(default=None, description="Current job title")
+                        company: Optional[str] = Field(default=None, description="Current company")
+
+                    RoleInfo.model_rebuild()
+
+                    info = await computer_primitives.observe(
+                        f"Extract {name}'s current job title and company from the visible results.",
+                        response_format=RoleInfo,
+                    )
+
+                    await primitives.contacts.update(
+                        f"Update {name} with title '{info.title}' and company '{info.company}'."
+                    )
+                    return info.model_dump()
+                ```
+                """,
+            ).strip()
+
+        primitives_appendix = textwrap.dedent(
+            f"""
+            ---
+            ### State Manager Guidance (`primitives`)
+            { _build_state_manager_rules_and_examples()}
+
+            **Example (Primitives-only): Create or update a contact**
+            ```python
+            async def ensure_contact_exists(name: str, email: str | None = None) -> dict:
+                \"\"\"Ensure a contact exists; create or update via state managers.\"\"\"
+                contact = await primitives.contacts.ask(f\"Find the best matching contact for: {{name}}\")
+                if email:
+                    await primitives.contacts.update(f\"Update {{name}} with email {{email}}\")
+                return {{"contact": contact, "email": email}}
+            ```
+
+            {mixed_impl_example}
+            """,
+        ).strip()
+
+    if (not has_browser) and has_primitives:
+        instructions_and_rules = textwrap.dedent(
+            """
+            ### 🎯 CRITICAL RULES FOR DYNAMIC FUNCTION IMPLEMENTATION
+
+            1.  **Single Code Block:** Respond with a single `async def ...` function implementation only (no extra code blocks).
+
+            2.  **Scope and Imports:** ALL imports must be inside the function.
+
+            3.  **No Decorators:** Do not include `@verify` or other decorators.
+
+            4.  **Async All The Way:** The function MUST be async.
+
+            5.  **Await Keyword:** ALWAYS `await` any async call, including state manager calls (e.g. `await primitives.contacts.ask(...)`).
+
+            6.  **Robust Error Handling:** Log errors but ALWAYS re-raise.
+
+            7.  **Use injected globals directly:** Use `primitives` as a global. Do not import or instantiate it, and do not type-hint it.
+
+            8.  **Requesting Clarification:** Call `request_clarification(\"...\")` as a global function when needed.
+            """,
+        ).strip()
+
+        return textwrap.dedent(
+            f"""
+            ---
+            ### Core Instructions & Rules
+            {instructions_and_rules}
+            ---
+            ### Strategy & Tool Usage
+            {strategy_instruction}
+            {tool_usage_instruction}
+
+            ---
+            ### Tools Reference
+            Tools are grouped by namespace below; you MUST call them with the correct arguments as specified here.
+            ```json
+            {tool_reference}
+            ```
+
+            ---
+            ### Handle APIs
+            Some tools return a \"handle\" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+
+            {handle_apis}
+            """,
+        ).strip()
 
     instructions_and_rules = textwrap.dedent(
         """
@@ -1879,6 +2292,9 @@ def _build_dynamic_implement_rules_and_examples(
             ```python
             # ✅ CORRECT: Awaiting an computer_primitives method
             await computer_primitives.navigate("https://example.com")
+
+            # ✅ CORRECT: Awaiting a primitives state manager method
+            contact = await primitives.contacts.ask("Find John Doe")
 
             # ✅ CORRECT: Awaiting a helper function/skill from the library
             result = await helper_func_1("arg1", "arg2")
@@ -1960,10 +2376,11 @@ def _build_dynamic_implement_rules_and_examples(
             # ❌ WRONG: Creating ComputerPrimitives instance
             computer_primitives = ComputerPrimitives()
 
-            # ✅ CORRECT: Use directly as if it exists globally
+            # ✅ CORRECT: Use injected globals directly
             async def my_func():
                 result = await computer_primitives.navigate("https://example.com")
                 data = await computer_primitives.observe("Get page title")
+                _ = await primitives.contacts.ask("Find John Doe")
             ```
 
         9. **Requesting Clarification:**
@@ -1989,7 +2406,7 @@ def _build_dynamic_implement_rules_and_examples(
 
         ---
         ### Tools Reference
-        You have access to a global `computer_primitives` object with the following methods. You must call them with the correct arguments as specified here.
+        Tools are grouped by namespace below; you MUST call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -2384,6 +2801,7 @@ def _build_dynamic_implement_rules_and_examples(
             "clarification_question": "I see two 'Continue' buttons on the page. Should I click the one in the 'Order Summary' section or the one at the very bottom of the page?"
         }}
         ```
+        {primitives_appendix}
     """,
     )
 
@@ -2394,6 +2812,7 @@ def build_initial_plan_prompt(
     retry_msg: str,
     *,
     tools: Dict[str, Callable],
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
     images: Optional[dict[str, Any]] = None,
 ) -> str:
     """
@@ -2402,12 +2821,21 @@ def build_initial_plan_prompt(
     formatted_functions = _format_existing_functions(existing_functions)
     image_context_str = _format_images_for_prompt(images)
 
-    tool_usage_instruction = "Use the `computer_primitives` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    env_context_str = _format_environment_contexts(environments)
+    if environments:
+        namespaces = ", ".join(f"`{ns}`" for ns in environments.keys())
+        tool_usage_instruction = (
+            "Use the injected global objects (namespaces) to interact with the environment. "
+            f"Available namespaces: {namespaces}."
+        )
+    else:
+        tool_usage_instruction = "Use the injected global objects (namespaces) to interact with the environment."
 
     rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
         "",
         tool_usage_instruction,
+        environments,
     )
 
     library_instruction = textwrap.dedent(
@@ -2429,6 +2857,7 @@ def build_initial_plan_prompt(
 
         **Primary Goal:** "{goal}"
         {rules_and_examples}
+        {f"\n\n---\n\n{env_context_str}" if env_context_str else ""}
         ---
         {library_instruction}
         ---
@@ -2450,9 +2879,11 @@ def build_dynamic_implement_prompt(
     clarification_question: str | None,
     clarification_answer: str | None,
     replan_context: str,
+    has_browser_screenshot: bool = True,
     *,
     tools: Dict[str, Callable],
     existing_functions: Dict[str, Any],
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
     images: Optional[dict[str, Any]] = None,
@@ -2566,12 +2997,15 @@ def build_dynamic_implement_prompt(
         """,
         )
 
-    browser_context_section = textwrap.dedent(
-        """
-        **Current Browser View (Screenshot):**
-        An image of the current browser page has been provided. Analyze it carefully to inform your implementation or modification. Use it as the primary source of truth for the visual state.
-        """,
-    )
+    browser_context_section = ""
+    has_browser_env = environments is None or "computer_primitives" in environments
+    if has_browser_env and has_browser_screenshot:
+        browser_context_section = textwrap.dedent(
+            """
+            **Current Browser View (Screenshot):**
+            An image of the current browser page has been provided. Analyze it carefully to inform your implementation or modification. Use it as the primary source of truth for the visual state.
+            """,
+        )
 
     call_stack_str = (
         " -> ".join(call_stack)
@@ -2592,7 +3026,7 @@ def build_dynamic_implement_prompt(
     """,
     )
 
-    static_prefix = _build_dynamic_implement_static_prefix(tools)
+    static_prefix = _build_dynamic_implement_static_prefix(tools, environments)
 
     dynamic_content = textwrap.dedent(
         f"""
@@ -2624,7 +3058,6 @@ def build_dynamic_implement_prompt(
         **Function to Address:** `async def {function_name}{function_sig}`
         **Purpose of this Function:** "{function_docstring}"
         {browser_context_section or "No browser state available."}
-        A screenshot of the current browser page has been provided. **Use it as the primary source of truth.**
 
         {image_context_str}
 
@@ -2852,6 +3285,7 @@ def build_interjection_prompt(
     idempotency_cache: Dict[tuple, Any],
     *,
     tools: Dict[str, Callable],
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
     images: Optional[dict[str, Any]] = None,
 ) -> tuple[str, str]:
     """
@@ -2874,7 +3308,7 @@ def build_interjection_prompt(
         else "No prior conversation."
     )
 
-    static_prefix = _build_interjection_static_prefix(tools)
+    static_prefix = _build_interjection_static_prefix(tools, environments)
 
     dynamic_content = textwrap.dedent(
         f"""
@@ -2904,6 +3338,8 @@ def build_ask_prompt(
     call_stack: str,
     context_log: str,
     question: str,
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
+    has_visual_evidence: bool = False,
 ) -> str:
     """
     Builds the system prompt for answering questions about the plan's state.
@@ -2914,22 +3350,44 @@ def build_ask_prompt(
         call_stack: The current function call stack.
         context_log: A log of recent actions.
         question: The user's question.
+        environments: The active environments for conditional prompt sections.
+        has_visual_evidence: Whether visual evidence (screenshot) is currently available.
 
     Returns:
         The complete prompt string.
     """
-    return textwrap.dedent(
-        f"""
-        You are an AI assistant who is actively performing a web automation task. The user has paused to ask you a question. Your persona is that of the one performing the work. Speak in the first person ("I am doing...", "I just finished...").
+    has_browser = "computer_primitives" in (environments or {})
 
-        You have been provided with a complete picture of your current situation:
-        1. **Current Goal:** This is your primary objective. It may have been updated by the user.
+    # Only use browser-specific language when we actually have visual evidence
+    show_browser_view = has_browser and has_visual_evidence
+
+    # Build conditional context items list
+    if show_browser_view:
+        task_type = "web automation task"
+        context_items = """1. **Current Goal:** This is your primary objective. It may have been updated by the user.
         2. **Full Action Log:** This is a chronological history of everything that has happened, including your actions, verifications, and any user interjections or clarifications. This is your memory.
         3. **Current Browser View:** A screenshot of what you see on the screen RIGHT NOW. This is your most important source of truth for visual questions.
         4. **Call Stack:** Shows which part of your plan you are currently executing.
-        5. **Tools:** You have access to one tool: `query_browser`. This tool allows you to ask questions about the parent agent's memory, including its past actions and observations.
+        5. **Tools:** You have access to one tool: `query`. This tool allows you to ask questions about the parent agent's memory, including its past actions and observations."""
+        visual_context_note = "and paying close attention to the **Action Log** for recent user updates and the **Browser View** for the current visual state"
+    else:
+        task_type = "task"
+        context_items = """1. **Current Goal:** This is your primary objective. It may have been updated by the user.
+        2. **Full Action Log:** This is a chronological history of everything that has happened, including your actions, verifications, and any user interjections or clarifications. This is your memory.
+        3. **Call Stack:** Shows which part of your plan you are currently executing.
+        4. **Tools:** You have access to one tool: `query`. This tool allows you to ask questions about the parent agent's memory, including its past actions and observations."""
+        visual_context_note = (
+            "and paying close attention to the **Action Log** for recent user updates"
+        )
 
-        First, carefully review the context of the parent agent provided below. Then, formulate a plan to answer the user's question. This may involve one or more calls to the `query_browser` tool. Once you have gathered enough information, provide a final, concise answer to the user.
+    return textwrap.dedent(
+        f"""
+        You are an AI assistant who is actively performing a {task_type}. The user has paused to ask you a question. Your persona is that of the one performing the work. Speak in the first person ("I am doing...", "I just finished...").
+
+        You have been provided with a complete picture of your current situation:
+        {context_items}
+
+        First, carefully review the context of the parent agent provided below. Then, formulate a plan to answer the user's question. This may involve one or more calls to the `query` tool. Once you have gathered enough information, provide a final, concise answer to the user.
         **Current Goal:** {goal}
         **Current State:** {state}
         **Current Call Stack:** {call_stack}
@@ -2938,152 +3396,11 @@ def build_ask_prompt(
         {context_log}
         --- END LOG ---
 
-        Based on all of this information, and paying close attention to the **Action Log** for recent user updates and the **Browser View** for the current visual state, answer the user's question.
+        Based on all of this information, {visual_context_note}, answer the user's question.
 
         **User's Question:** "{question}"
         **Your Answer:**
     """,
-    )
-
-
-def build_trace_summary_prompt(
-    goal: str,
-    action_log: str,
-) -> str:
-    """
-    Builds the prompt for the Trace Summary LLM.
-
-    Args:
-        goal: The original high-level goal of the plan.
-        action_log: The detailed execution trace from plan.action_log.
-
-    Returns:
-        The complete prompt string for the summarization call.
-    """
-    return textwrap.dedent(
-        f"""
-        You are an expert debugging analyst for an autonomous web agent.
-        The following is a detailed action log from a failed plan execution. Your task is to read the entire trace and produce a concise, high-level summary of the strategic error.
-
-        **Original Goal:** "{goal}"
-
-        **Execution Trace / Action Log:**
-        ```
-        {action_log}
-        ```
-
-        **Your Analysis Task:**
-        1.  Identify the root cause of the failure. Do not focus on the final error message, but on the sequence of events that led to it.
-        2.  Explain the flaw in the plan's original strategy (e.g., "The plan incorrectly assumed X," or "The plan failed to perform step Y before Z").
-        3.  Provide a clear, actionable recommendation for a new strategy that would avoid this failure.
-
-        Respond with only the summary of your analysis. This summary will be used to rewrite the entire plan from scratch.
-        """,
-    )
-
-
-# TODO: DEPRECATED
-def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
-    """Builds a streamlined set of rules for simple, non-decomposed scripts."""
-    tool_reference = _build_tool_signatures(tools)
-    rules = textwrap.dedent(
-        f"""
-        ### 🎯 CRITICAL RULES FOR SCRIPTING
-        1.  **Sequence of Calls**: Your code must be a simple sequence of `await` calls on the `computer_primitives`. Do not define new functions.
-        2.  **Await Keyword**: You MUST `await` all `async` tool calls (like `navigate`, `act`, `observe`).
-        3.  **Action Provider**: Use the `computer_primitives` object directly as if it's a global variable. Do not import or define it.
-
-        ### Tools Reference
-        You have access to a global `computer_primitives` object with the following methods.
-        ```json
-        {tool_reference}
-        ```
-
-        ### Examples of Correction Scripts
-
-        # ---
-        # Example 1: The agent navigated to the wrong page ('/settings') instead of the user's profile.
-        # Goal: Get back to the correct user profile page.
-            await computer_primitives.navigate("https://example.com/user/123/profile")
-
-        # ---
-        # Example 2: The agent opened an unwanted "Share" popup that is now obscuring the page content.
-        # Goal: Close the popup to restore view of the underlying page.
-        await computer_primitives.act("Click the 'X' or 'Close' button on the 'Share this article' popup")
-
-        # ---
-        # Example 3: The agent typed the wrong address into a form field.
-        # Goal: Clear the incorrect text from the 'Street Address' field.
-        # Note: The next implementation will handle typing the correct text. This script ONLY restores the state.
-        await computer_primitives.act("Clear the text in the 'Street Address' field")
-
-    """,
-    )
-    return rules
-
-
-# TODO: DEPRECATED
-def build_course_correction_prompt(
-    last_verified_function_name: str,
-    last_verified_url: str,
-    current_url: str,
-    failed_function_name: str,
-    failed_function_docstring: str,
-    verification_reason: str,
-    *,
-    tools: Dict[str, Callable],
-) -> str:
-    """
-    Builds the prompt for the course correction LLM.
-    """
-    scripting_rules = _build_simple_script_rules(tools)
-
-    return textwrap.dedent(
-        f"""
-        You are a state recovery specialist for an autonomous web agent.
-
-        A function just failed, and the browser may have been left in a corrupted state. Your task is to compare the state of the browser BEFORE the failure to its state AFTER the failure and decide if a course-correction script is needed.
-
-        ---
-        ### State Analysis
-
-         **1. Reason for Failure (from Verification):** CRITICAL: The verification step determined the function failed for the following reason. Use this as your primary guide.
-        "{verification_reason}"
-
-        **2. The "Last Known Good" State (BEFORE the failure):**
-        This is the state after the function `{last_verified_function_name}` completed successfully.
-        - **URL:** `{last_verified_url}`
-        - **Screenshot:** A screenshot of this state is provided. (1st image)
-
-        **3. The "Current / Corrupted" State (AFTER the failure):**
-        This is the state where the function `{failed_function_name}` (Purpose: "{failed_function_docstring}") failed.
-        - **URL:** `{current_url}`
-        - **Screenshot:** A screenshot of this current state is also provided. (2nd image)
-
-        ---
-        ### Your Task
-
-        1.  **Analyze the Failure.** Did the failed function navigate away to a completely wrong page, or did it just fail an *interaction* on the correct page (e.g., couldn't click a button, a popup appeared)?
-        2.  **Decide if Correction is Needed.**
-            - If the browser is on a **completely irrelevant page**, set `correction_needed` to `true` and write code to navigate back to the "Last Known Good" state.
-            - **IMPORTANT:** If the browser is still on the **correct page** and the failure was just a faulty interaction, the best course of action is often **no correction**. Set `correction_needed` to `false`. This allows the actor to immediately retry implementing the function on the correct page without wasting a navigation step.
-            - If a popup or modal appeared that needs to be closed, set `correction_needed` to `true` and write a script to close it.
-        3.  **If correction is needed, write `correction_code`.**
-            - This must be a simple, self-contained Python script.
-            - Use `computer_primitives.navigate` or `computer_primitives.act`.
-            - **Goal:** Get from the "Current" state back to the "Last Known Good" state.
-            - **Example:** If the agent is on the wrong page, the script might be `await computer_primitives.navigate('{last_verified_url}')`.
-            - **Example:** If a popup is open, the script might be `await computer_primitives.act("Click the 'Close' button on the popup")`.
-            - **Keep it simple!** Do not try to re-run the failed function. Only restore the state.
-
-        ---
-        ### Scripting Rules & Tool Reference
-        You MUST follow these rules when writing the `correction_code`.
-        {scripting_rules}
-        ---
-
-        Respond with ONLY the JSON object matching the `CourseCorrectionDecision` schema.
-        """,
     )
 
 
@@ -3093,7 +3410,12 @@ def build_sandbox_merge_prompt(
     sandbox_goal: str,
     sandbox_result: str,
 ) -> str:
-    """Builds the prompt for the sandbox merge decision LLM."""
+    """
+    Builds the prompt for the sandbox merge decision LLM.
+
+    NOTE: This prompt is already domain-agnostic and works for browser,
+    state manager, and mixed-modality workflows without modification.
+    """
     return textwrap.dedent(
         f"""
     You are a strategic assistant for an autonomous agent. A "sandbox" task was just completed, and you must decide if its findings should be used to modify the main plan.
@@ -3124,9 +3446,10 @@ def build_refactor_prompt(
     monolithic_code: str,
     generalization_request: str,
     action_log: str,
-    current_url: str,
+    current_url: str | None,
     *,
     tools: Dict[str, Callable],
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> str:
     """
     Builds the prompt for refactoring a monolithic plan into modular functions,
@@ -3143,12 +3466,96 @@ def build_refactor_prompt(
         The complete prompt string for the refactoring LLM call.
     """
     strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
-    tool_usage_instruction = "Use the `computer_primitives` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    tool_usage_instruction = (
+        "Use the injected global objects (namespaces) to interact with the environment. "
+        "Available tools and their handle APIs have been described in the rules below."
+    )
     rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
         strategy_instruction,
         tool_usage_instruction,
+        environments=environments,
     )
+    browser_context = f"- **Current URL:** `{current_url}`\n" if current_url else ""
+
+    # Build example section - use browser example if URL is available, otherwise generic state-manager example
+    if current_url:
+        example_section = textwrap.dedent(
+            """
+            ---
+            ### Example of the Expected Output
+
+            **Scenario:**
+            - **Taught Process:** The user guided the agent to go to an e-commerce site, search for "laptops", and add the first result to the cart. The plan ended on the product detail page for a specific laptop.
+            - **Current URL:** `https://shop.example.com/products/laptop-xyz`
+            - **Generalization Request:** "Great. Now do the same for 'keyboards'."
+
+            **Your Correct Output (a single Python code block):**
+            ```python
+            # Part 1: The refactored helper functions (the "skills")
+            @verify
+            async def search_for_item(item_name: str):
+                \"\"\"Searches for a given item on the site.\"\"\"
+                # This skill assumes the browser is on the homepage to find the search bar.
+                await computer_primitives.act(f"Type '{item_name}' into the search bar and press Enter")
+
+            @verify
+            async def add_first_item_to_cart():
+                \"\"\"Clicks the 'Add to Cart' button for the first search result.\"\"\"
+                await computer_primitives.act("Click the 'Add to Cart' button for the first item in the list")
+
+            # Part 2: The intelligent `main_plan` orchestrator
+            @verify
+            async def main_plan():
+                \"\"\"
+                Orchestrates the process of searching for and adding 'keyboards' to the cart.
+                It handles resetting the browser state as its first step.
+                \"\"\"
+                # CRITICAL: The agent is on a product page, but `search_for_item`
+                # needs to be on the homepage. This is the state-bridging step.
+                print("State correction: Navigating back to the homepage to start a new search.")
+                await computer_primitives.navigate("https://shop.example.com/home")
+
+                # Now, execute the generalized workflow.
+                await search_for_item("keyboards")
+                await add_first_item_to_cart()
+                print("Successfully added keyboards to the cart.")
+
+            ```
+            """,
+        ).strip()
+    else:
+        example_section = textwrap.dedent(
+            """
+            ---
+            ### Example of the Expected Output
+
+            **Scenario:**
+            - **Taught Process:** The user guided the agent to query contact "Alice Smith" and update her job title.
+            - **Generalization Request:** "Great. Now do the same for 'Bob Johnson' with title 'Manager'."
+
+            **Your Correct Output (a single Python code block):**
+            ```python
+            # Part 1: The refactored helper functions (the "skills")
+            @verify
+            async def update_contact_title(name: str, title: str):
+                \"\"\"Queries a contact and updates their job title.\"\"\"
+                contact_info = await primitives.contacts.ask(f"Find contact named {name}")
+                await primitives.contacts.update(f"Update {name}'s job title to {title}")
+                return contact_info
+
+            # Part 2: The intelligent `main_plan` orchestrator
+            @verify
+            async def main_plan():
+                \"\"\"
+                Orchestrates the process of updating Bob Johnson's title to Manager.
+                \"\"\"
+                result = await update_contact_title("Bob Johnson", "Manager")
+                print(f"Successfully updated contact: {result}")
+
+            ```
+            """,
+        ).strip()
 
     return textwrap.dedent(
         f"""
@@ -3156,7 +3563,7 @@ def build_refactor_prompt(
 
         ### Full Context
         - **User's Generalization Request:** "{generalization_request}"
-        - **Browser's Current URL:** `{current_url}`
+        {browser_context.strip() if browser_context else ""}
         - **Full Execution Action Log (for context):**
         ```
         {action_log}
@@ -3179,50 +3586,11 @@ def build_refactor_prompt(
         - Its purpose is to execute the user's immediate `generalization_request` by calling the helper functions you just created.
         - **CRITICAL STATE-AWARE LOGIC:**
             1.  **Analyze the Start State:** Look at the `action_log` to determine what the initial state of the *original* taught process was (e.g., it started on the homepage at "https://shop.example.com").
-            2.  **Compare with Current State:** Compare that required start state with the `Browser's Current URL`. They will likely be different.
-            3.  **Bridge the Gap:** Your `main_plan` must **bridge this state gap**. The very first step in your `main_plan` must be an `computer_primitives` call to get the browser from its current state to the necessary starting state for your helper functions. This is your "course correction" step.
+            2.  **Compare with Current State:** Compare that required start state with the current system state available to you (e.g., a URL if present, a task context, or other environment state).
+            3.  **Bridge the Gap:** Your `main_plan` must **bridge this state gap**. The very first step in your `main_plan` must use the appropriate environment namespace/tool(s) to get from the current state to the necessary starting state for your helper functions. This is your "course correction" step.
             4.  **Execute the Goal:** After the state-setting step, `main_plan` should then call your helper functions in the correct order to fulfill the user's request.
 
-        ---
-        ### Example of the Expected Output
-
-        **Scenario:**
-        - **Taught Process:** The user guided the agent to go to an e-commerce site, search for "laptops", and add the first result to the cart. The plan ended on the product detail page for a specific laptop.
-        - **Current URL:** `https://shop.example.com/products/laptop-xyz`
-        - **Generalization Request:** "Great. Now do the same for 'keyboards'."
-
-        **Your Correct Output (a single Python code block):**
-        ```python
-        # Part 1: The refactored helper functions (the "skills")
-        @verify
-        async def search_for_item(item_name: str):
-            \"\"\"Searches for a given item on the site.\"\"\"
-            # This skill assumes the browser is on the homepage to find the search bar.
-            await computer_primitives.act(f"Type '{{item_name}}' into the search bar and press Enter")
-
-        @verify
-        async def add_first_item_to_cart():
-            \"\"\"Clicks the 'Add to Cart' button for the first search result.\"\"\"
-            await computer_primitives.act("Click the 'Add to Cart' button for the first item in the list")
-
-        # Part 2: The intelligent `main_plan` orchestrator
-        @verify
-        async def main_plan():
-            \"\"\"
-            Orchestrates the process of searching for and adding 'keyboards' to the cart.
-            It handles resetting the browser state as its first step.
-            \"\"\"
-            # CRITICAL: The agent is on a product page, but `search_for_item`
-            # needs to be on the homepage. This is the state-bridging step.
-            print("State correction: Navigating back to the homepage to start a new search.")
-            await computer_primitives.navigate("https://shop.example.com/home")
-
-            # Now, execute the generalized workflow.
-            await search_for_item("keyboards")
-            await add_first_item_to_cart()
-            print("Successfully added keyboards to the cart.")
-
-        ```
+        {example_section}
 
         {rules_and_examples}
 
@@ -3235,6 +3603,7 @@ def build_precondition_prompt(
     function_source_code: str,
     interactions_log: str,
     has_entry_screenshot: bool,
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> str:
     """
     Builds the prompt to determine the precondition for a function to run.
@@ -3242,24 +3611,54 @@ def build_precondition_prompt(
     Args:
         function_source_code: The source code of the function.
         interactions_log: A JSON string of the tool interactions during the function's run.
-        has_entry_screenshot: Whether a screenshot of the browser is provided.
+        has_entry_screenshot: Whether a screenshot or visual evidence is provided.
+        environments: The active environments for conditional examples and language.
     """
+    has_browser = "computer_primitives" in (environments or {})
+
     screenshot_section = ""
     if has_entry_screenshot:
+        evidence_type = (
+            "the execution environment" if not has_browser else "the browser"
+        )
         screenshot_section = textwrap.dedent(
-            """
+            f"""
             ---
             ### CRITICAL: Visual Context (Entry Screenshot)
-            You have been provided with a screenshot of the browser's state at the moment this function was called.
+            You have been provided with a screenshot of {evidence_type}'s state at the moment this function was called.
             - **Use this image as the primary source of truth** to determine the necessary starting conditions.
-            - Analyze the image to describe the required visible elements (dialogs, buttons, forms, etc.).
+            - Analyze the image to describe the required visible elements.
             """,
         )
 
+    # Conditional examples and language based on environment
+    if has_browser:
+        agent_description = "an autonomous web agent"
+        function_description = "A function that interacts with a web browser"
+        state_basis = "Based on the function's first few actions and the visual screenshot, what *must* be true about the page for this function to succeed?"
+        url_guidance = """3.  **Prioritize Description Over Specific URLs.**
+            * If the function's purpose is generic (like extracting search results or items from a list), the **URL is incidental**. The important precondition is the *type* of page. In this case, provide a `description` like "A search results page must be visible" or "A product listing page must be displayed." **Do not include a specific URL.**
+            * If the function's purpose is tied to a **specific, static page** (like a homepage, a login page, or a settings dashboard), then the **URL is essential**. Provide the `url` in the precondition. A `description` can still be added for clarity (e.g., "The main login form must be visible")."""
+        examples = """**Examples:**
+        * **Good (Generic):** `{ "status": "ok", "description": "A list of search results for a recipe is displayed." }`
+        * **Good (Specific):** `{ "status": "ok", "url": "https://example.com/login", "description": "The main login form is visible." }`
+        * **Bad (Too Rigid):** `{ "status": "ok", "url": "https://example.com/search?q=laptops" }` (This is not reusable for other searches)."""
+    else:
+        agent_description = "an autonomous agent"
+        function_description = "A function"
+        state_basis = "Based on the function's first few actions and any provided evidence, what *must* be true about the system state for this function to succeed?"
+        url_guidance = """3.  **Prioritize Description Over Specific Identifiers.**
+            * If the function's purpose is generic, describe the *type* of state required.
+            * If the function's purpose is tied to a specific resource, include identifiers when necessary."""
+        examples = """**Examples:**
+        * **Good:** `{ "status": "ok", "description": "Contact 'Alice Smith' exists in the system." }`
+        * **Good:** `{ "status": "ok", "description": "Task queue contains at least one pending task." }`
+        * **Bad:** `{ "status": "ok", "description": "The system is running." }` (Too vague, not verifiable)."""
+
     return textwrap.dedent(
         f"""
-        You are a state analysis expert for an autonomous web agent.
-        A function that interacts with a web browser has just executed successfully. Your task is to describe the necessary **precondition** for this function to run correctly. A good precondition is general enough to be reusable but specific enough to ensure the function works.
+        You are a state analysis expert for {agent_description}.
+        {function_description} has just executed successfully. Your task is to describe the necessary **precondition** for this function to run correctly. A good precondition is general enough to be reusable but specific enough to ensure the function works.
 
         **Function Source Code:**
         ```python
@@ -3274,17 +3673,12 @@ def build_precondition_prompt(
         {screenshot_section}
 
         **Your Task & Reasoning Framework:**
-        1.  **Analyze the function's purpose.** What is the core task? (e.g., "extracting search results", "clicking the main login button", "navigating to a specific settings page").
-        2.  **Determine the required state.** Based on the function's first few actions and the visual screenshot, what *must* be true about the page for this function to succeed?
-        3.  **Prioritize Description Over Specific URLs.**
-            * If the function's purpose is generic (like extracting search results or items from a list), the **URL is incidental**. The important precondition is the *type* of page. In this case, provide a `description` like "A search results page must be visible" or "A product listing page must be displayed." **Do not include a specific URL.**
-            * If the function's purpose is tied to a **specific, static page** (like a homepage, a login page, or a settings dashboard), then the **URL is essential**. Provide the `url` in the precondition. A `description` can still be added for clarity (e.g., "The main login form must be visible").
-        4.  **Be concise and verifiable.** The description should be a simple statement about the visual state of the page.
+        1.  **Analyze the function's purpose.** What is the core task?
+        2.  **Determine the required state.** {state_basis}
+        {url_guidance}
+        4.  **Be concise and verifiable.** The description should be a simple statement about the required state.
 
-        **Examples:**
-        * **Good (Generic):** `{{ "status": "ok", "description": "A list of search results for a recipe is displayed." }}`
-        * **Good (Specific):** `{{ "status": "ok", "url": "https://example.com/login", "description": "The main login form is visible." }}`
-        * **Bad (Too Rigid):** `{{ "status": "ok", "url": "https://example.com/search?q=laptops" }}` (This is not reusable for other searches).
+        {examples}
 
         Respond with ONLY the JSON object matching the `PreconditionDecision` schema.
         """,
