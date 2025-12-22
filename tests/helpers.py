@@ -417,11 +417,9 @@ async def capture_events(
         # This avoids race conditions where the test asserts on 'captured'
         # while the EventBus is still processing the last publication.
         #
-        # We wrap in suppress() because join_callbacks is an async method
-        # on the real EventBus but might be missing on mocks if they aren't
-        # fully compliant (though our conftest mock likely needs it).
+        # Use ajoin_callbacks (async version) to avoid deadlocks with nest_asyncio.
         try:
-            await EVENT_BUS.join_callbacks()
+            await EVENT_BUS.ajoin_callbacks()
         except Exception:
             pass
 
