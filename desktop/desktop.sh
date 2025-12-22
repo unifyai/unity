@@ -8,7 +8,6 @@ printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
 
 # Start window manager, VNC server and noVNC proxy
 fluxbox 2>/dev/null &
-DISPLAY=:99 xsetroot -cursor_name left_ptr
 # Ensure VNC auth file exists (initialize with random password)
 mkdir -p /root/.vnc
 if [ ! -f /root/.vnc/passwd ]; then
