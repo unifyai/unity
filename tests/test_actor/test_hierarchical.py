@@ -42,7 +42,6 @@ from unity.actor.hierarchical_actor import (
     HierarchicalActorHandle,
     ImplementationDecision,
     InterjectionDecision,
-    StateVerificationDecision,
     VerificationAssessment,
     _HierarchicalHandleState,
 )
@@ -135,12 +134,6 @@ class SimpleMockVerificationClient:
         pass
 
     async def _side_effect(self, *args, **kwargs):
-        if self._current_format.__name__ == "StateVerificationDecision":
-            return StateVerificationDecision(
-                matches=True,
-                reason="Mock: precondition satisfied.",
-            ).model_dump_json()
-
         return VerificationAssessment(
             status="ok",
             reason="Mock verification success.",
@@ -221,13 +214,6 @@ class ConfigurableMockVerificationClient:
                         prompt += block["text"]
                     elif isinstance(block, str):
                         prompt += block
-
-        # Handle StateVerificationDecision (precondition checks)
-        if self._current_format.__name__ == "StateVerificationDecision":
-            return StateVerificationDecision(
-                matches=True,
-                reason="Mock: precondition satisfied.",
-            ).model_dump_json()
 
         # Extract function name from prompt
         func_name = None
@@ -1565,13 +1551,13 @@ async def _test_non_blocking_and_success(actor):
         # Make verifications slow to prove non-blocking behavior
         mock_client.set_behavior(
             "step_A_navigate",
-            delay=2,
+            2,  # delay
             status="ok",
             reason="Mock OK",
         )
         mock_client.set_behavior(
             "step_B_search",
-            delay=2,
+            2,  # delay
             status="ok",
             reason="Mock OK",
         )
@@ -1653,14 +1639,14 @@ async def _test_failure_and_cancellation(actor):
         mock_client = ConfigurableMockVerificationClient()
         mock_client.set_behavior(
             "step_A_navigate",
-            delay=0.1,
+            0.1,  # delay
             status="ok",
             reason="Mock success",
         )
         # This step will fail once, then succeed
         mock_client.set_behavior(
             "step_B_fail_verification",
-            delay=0.1,
+            0.1,  # delay
             status="ok",
             reason="Recovered",
             sequence=[
@@ -1671,7 +1657,7 @@ async def _test_failure_and_cancellation(actor):
         # This step's verification should be cancelled
         mock_client.set_behavior(
             "step_C_will_be_cancelled",
-            delay=10,
+            10,  # delay
             status="ok",
             reason="This should not be seen",
         )
@@ -3525,13 +3511,13 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
         mock_v_client = ConfigurableMockVerificationClient()
         mock_v_client.set_behavior(
             "parent_skill",
-            delay=0.1,
+            0.1,  # delay
             status="ok",
             reason="Parent skill looks fine.",
         )
         mock_v_client.set_behavior(
             "_nested_child_fails_verification",
-            delay=2.0,  # CRITICAL: This delay ensures the main plan finishes before this failure is processed.
+            2.0,  # CRITICAL: This delay ensures the main plan finishes before this failure is processed.
             status="replan_parent",
             reason="Mocked strategic failure in nested child.",
         )
