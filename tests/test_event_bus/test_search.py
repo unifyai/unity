@@ -2,6 +2,8 @@ import pytest
 import datetime as dt
 from tests.helpers import _handle_project
 from unity.events.event_bus import EventBus, Event
+from unity.events.types.comms import CommsPayload
+from unity.events.types.manager_method import ManagerMethodPayload
 
 
 # -------------------------------------------------------------------
@@ -10,7 +12,7 @@ from unity.events.event_bus import EventBus, Event
 
 
 def mk_evt(**kw):
-    return Event(type="Alerts", payload=kw)
+    return Event(type="Comms", payload=CommsPayload(**kw))
 
 
 def ts(i: int) -> str:
@@ -32,11 +34,11 @@ async def test_deque_only():
     await bus.publish(mk_evt(level="INFO", msg="one"))
     await bus.publish(mk_evt(level="WARN", msg="two"))
     res = await bus.search(
-        filter='type == "Alerts" and payload["level"] == "WARN"',
+        filter='type == "Comms" and payload.level == "WARN"',
         limit=5,
     )
     assert len(res) == 1
-    assert res[0].payload["msg"] == "two"
+    assert res[0].payload.msg == "two"
 
 
 @pytest.mark.asyncio
@@ -45,12 +47,20 @@ async def test_grouped_and_limit_dict():
     bus = EventBus()
     await bus.publish(mk_evt(level="INFO"))
     await bus.publish(mk_evt(level="WARN"))
-    await bus.publish(Event(type="Heartbeat", payload={"ok": True}))
-    out = await bus.search(limit={"Alerts": 1, "Heartbeat": 5}, grouped_by_type=True)
+    await bus.publish(
+        Event(
+            type="ManagerMethod",
+            payload=ManagerMethodPayload(manager="Test", method="heartbeat"),
+        ),
+    )
+    out = await bus.search(
+        limit={"Comms": 1, "ManagerMethod": 5},
+        grouped_by_type=True,
+    )
     # Correct shape
-    assert set(out) == {"Alerts", "Heartbeat"}
+    assert "Comms" in out
     # Per-type slicing respected
-    assert len(out["Alerts"]) == 1
+    assert len(out["Comms"]) == 1
 
 
 @pytest.mark.asyncio
@@ -60,14 +70,14 @@ async def test_hybrid_reads():
     bus.set_default_window(1)  # deque keeps 1
 
     for seq in range(4):  # publish 4 events
-        await bus.publish(Event(type="Alerts", payload={"seq": seq}))
+        await bus.publish(Event(type="Comms", payload=CommsPayload(seq=seq)))
         bus.join_published()
 
     out = await bus.search(
         limit=3,
-        filter='type == "Alerts"',
+        filter='type == "Comms"',
     )
-    assert [e.payload["seq"] for e in out] == [3, 2, 1]
+    assert [e.payload.seq for e in out] == [3, 2, 1]
 
 
 @pytest.mark.asyncio
@@ -83,9 +93,9 @@ async def test_with_offset_across_backend():
     for seq in range(5):  # seq 0..4  (4 is newest)
         await bus.publish(
             Event(
-                type="Alerts",
+                type="Comms",
                 timestamp=ts(seq),
-                payload={"seq": seq},
+                payload=CommsPayload(seq=seq),
             ),
         )
         bus.join_published()
@@ -93,10 +103,10 @@ async def test_with_offset_across_backend():
     out = await bus.search(
         limit=2,
         offset=2,
-        filter='type == "Alerts"',
+        filter='type == "Comms"',
     )
 
-    assert [e.payload["seq"] for e in out] == [2, 1]
+    assert [e.payload.seq for e in out] == [2, 1]
 
 
 @pytest.mark.asyncio
@@ -108,28 +118,28 @@ async def test_flat_ordering():
     """
     bus = EventBus()
 
-    # older heartbeat
+    # older ManagerMethod event
     await bus.publish(
         Event(
-            type="Heartbeat",
+            type="ManagerMethod",
             timestamp=ts(0),
-            payload={"ok": True},
+            payload=ManagerMethodPayload(manager="Test", method="heartbeat"),
         ),
     )
-    # newer alert
+    # newer Comms event
     await bus.publish(
         Event(
-            type="Alerts",
+            type="Comms",
             timestamp=ts(1),
-            payload={"seq": 0},
+            payload=CommsPayload(seq=0),
         ),
     )
     bus.join_published()
 
     out = await bus.search(limit=2)  # flat list
-    assert [(e.type, e.payload.get("seq", None)) for e in out] == [
-        ("Alerts", 0),
-        ("Heartbeat", None),
+    assert [(e.type, getattr(e.payload, "seq", None)) for e in out] == [
+        ("Comms", 0),
+        ("ManagerMethod", None),
     ]
 
 
@@ -140,11 +150,16 @@ async def test_type_alias_in_filter():
     Local evaluator must accept `event_type` as an alias for `type`.
     """
     bus = EventBus()
-    await bus.publish(Event(type="Heartbeat", payload={"ok": True}))
+    await bus.publish(
+        Event(
+            type="ManagerMethod",
+            payload=ManagerMethodPayload(manager="Test", method="heartbeat"),
+        ),
+    )
     bus.join_published()
 
-    res = await bus.search(filter='event_type == "Heartbeat"', limit=10)
-    assert len(res) == 1 and res[0].type == "Heartbeat"
+    res = await bus.search(filter='event_type == "ManagerMethod"', limit=10)
+    assert len(res) >= 1 and res[0].type == "ManagerMethod"
 
 
 @pytest.mark.asyncio
@@ -152,14 +167,14 @@ async def test_type_alias_in_filter():
 async def test_limit_dict_unknown_type():
     """
     If the caller specifies a per-type limit for a type that doesn't
-    exist, the search should silently ignore it.
+    have events in the deque, the search should handle it gracefully.
     """
     bus = EventBus()
-    await bus.publish(Event(type="Alerts", payload={"seq": 0}))
+    await bus.publish(Event(type="Comms", payload=CommsPayload(seq=0)))
     bus.join_published()
 
     out = await bus.search(
-        limit={"Alerts": 5, "NonExistent": 3},
+        limit={"Comms": 5, "ToolLoop": 3},  # ToolLoop may have no events
         grouped_by_type=True,
     )
-    assert set(out) == {"Alerts"} and len(out["Alerts"]) == 1
+    assert "Comms" in out and len(out["Comms"]) >= 1

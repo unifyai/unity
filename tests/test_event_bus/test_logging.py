@@ -125,16 +125,16 @@ async def test_sanitizes_iterable_answer():
     events = [
         e
         for e in captured_events
-        if e.payload.get("manager") == "UnitTestManager"
-        and e.payload.get("method") == "ask"
-        and e.payload.get("phase") == "outgoing"
+        if getattr(e.payload, "manager", None) == "UnitTestManager"
+        and getattr(e.payload, "method", None) == "ask"
+        and getattr(e.payload, "phase", None) == "outgoing"
     ]
 
     assert len(events) == 1
     evt = events[0]
     # The logged answer must be a string (sanitized from a list/tuple return)
-    assert isinstance(evt.payload.get("answer"), str)
-    assert evt.payload.get("answer") == "OK"
+    assert isinstance(getattr(evt.payload, "answer", None), str)
+    assert getattr(evt.payload, "answer", None) == "OK"
 
 
 # ----------------------------------------------------------------------------
@@ -428,9 +428,9 @@ async def test_logs_custom_method_calls():
     events = [
         e
         for e in captured_events
-        if e.payload.get("manager") == "UnitTestManager"
-        and e.payload.get("method") == "execute"
-        and e.payload.get("action") == "ping"
+        if getattr(e.payload, "manager", None) == "UnitTestManager"
+        and getattr(e.payload, "method", None) == "execute"
+        and getattr(e.payload, "action", None) == "ping"
     ]
 
     assert len(events) == 1

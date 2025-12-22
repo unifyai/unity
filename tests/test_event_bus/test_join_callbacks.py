@@ -5,6 +5,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.events.event_bus import EventBus, Event
+from unity.events.types.comms import CommsPayload
 
 
 @pytest.mark.asyncio
@@ -20,15 +21,15 @@ async def test_waits_for_pending() -> None:
         await asyncio.sleep(0.05)
         done_evt.set()
 
-    # Trigger on every event of type Pending
+    # Trigger on every event of type Comms
     await bus.register_callback(
-        event_type="Pending",
+        event_type="Comms",
         callback=cb,
         every_n=1,
     )
 
     # Publish one event → schedules the callback above
-    await bus.publish(Event(type="Pending", payload={}))
+    await bus.publish(Event(type="Comms", payload=CommsPayload()))
     bus.join_published()
 
     # `join_callbacks` is now a synchronous, blocking method – run it in a
@@ -55,7 +56,7 @@ async def test_ignores_future() -> None:
     done_second = asyncio.Event()
 
     async def cb(evts):  # noqa: ANN001
-        seq = evts[0].payload.get("seq")
+        seq = getattr(evts[0].payload, "seq", None)
         if seq == 1:
             await asyncio.sleep(0.05)  # short – should be awaited by join
             done_first.set()
@@ -64,13 +65,13 @@ async def test_ignores_future() -> None:
             done_second.set()
 
     await bus.register_callback(
-        event_type="Future",
+        event_type="Comms",
         callback=cb,
         every_n=1,
     )
 
     # -- first event (seq=1) -------------------------------------------------
-    await bus.publish(Event(type="Future", payload={"seq": 1}))
+    await bus.publish(Event(type="Comms", payload=CommsPayload(seq=1)))
     bus.join_published()
 
     # Invoke join_callbacks while first callback is still running
@@ -82,7 +83,7 @@ async def test_ignores_future() -> None:
     await asyncio.sleep(0.01)
 
     # -- second event (seq=2) ------------------------------------------------
-    await bus.publish(Event(type="Future", payload={"seq": 2}))
+    await bus.publish(Event(type="Comms", payload=CommsPayload(seq=2)))
     bus.join_published()
 
     # Wait for join – should not wait for the second long callback
@@ -110,7 +111,12 @@ async def test_ignores_future() -> None:
 @_handle_project
 async def test_waits_for_cascade() -> None:
     """join_callbacks() must wait for callbacks spawned *within* other
-    callbacks (same root-sequence) but still ignore unrelated fresh activity."""
+    callbacks (same root-sequence) but still ignore unrelated fresh activity.
+
+    Note: This test uses ManagerMethod for the derived event to have a
+    different type for the second-level callback.
+    """
+    from unity.events.types.manager_method import ManagerMethodPayload
 
     bus = EventBus()
 
@@ -124,7 +130,7 @@ async def test_waits_for_cascade() -> None:
         done_high.set()
 
     await bus.register_callback(
-        event_type="Derived",
+        event_type="ManagerMethod",
         callback=high_cb,
         every_n=1,
     )
@@ -132,7 +138,12 @@ async def test_waits_for_cascade() -> None:
     # ----------------- first-level callback ---------------------------------
     async def low_cb(_):  # noqa: ANN001 – payload unused
         # Fire an event that should trigger *high_cb*
-        await bus.publish(Event(type="Derived", payload={}))
+        await bus.publish(
+            Event(
+                type="ManagerMethod",
+                payload=ManagerMethodPayload(manager="Test", method="cascade"),
+            ),
+        )
         bus.join_published()
 
         # Short delay to allow high_cb to start running
@@ -140,7 +151,7 @@ async def test_waits_for_cascade() -> None:
         done_low.set()
 
     await bus.register_callback(
-        event_type="Base",
+        event_type="Comms",
         callback=low_cb,
         every_n=1,
     )
@@ -149,7 +160,7 @@ async def test_waits_for_cascade() -> None:
     #  Publish the triggering event and ensure callbacks are scheduled
     # ----------------------------------------------------------------------
 
-    await bus.publish(Event(type="Base", payload={}))
+    await bus.publish(Event(type="Comms", payload=CommsPayload()))
     bus.join_published()
 
     # ----------------------------------------------------------------------
