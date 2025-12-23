@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import unify
+from unify.utils.http import RequestError
 
 from ..knowledge_manager.types import ColumnType
 from ..session_details import (
@@ -191,6 +192,12 @@ def provision_assistant_contact(self, assistant_log) -> None:
             pass
         else:
             raise
+    except RequestError as e:
+        # Backend returned 500 due to DB-level race condition – contact exists
+        if e.response is not None and e.response.status_code == 500:
+            pass
+        else:
+            raise
 
 
 def provision_user_contact(self, user_log) -> None:
@@ -260,6 +267,12 @@ def provision_user_contact(self, user_log) -> None:
     except ValueError as e:
         if "unique fields" in str(e):
             # Another process created the contact concurrently – that's fine
+            pass
+        else:
+            raise
+    except RequestError as e:
+        # Backend returned 500 due to DB-level race condition – contact exists
+        if e.response is not None and e.response.status_code == 500:
             pass
         else:
             raise
