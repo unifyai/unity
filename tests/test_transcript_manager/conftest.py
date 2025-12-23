@@ -77,6 +77,7 @@ class ScenarioBuilder:
     def __init__(self, cm: ContactManager, tm: TranscriptManager) -> None:
         self.cm = cm
         self.tm = tm
+        self._message_counter = 0  # For explicit message_id assignment
 
     def _seed_contacts(self) -> None:
         """Create contacts using race-safe idempotent helper."""
@@ -284,8 +285,10 @@ class ScenarioBuilder:
         medium: str,
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
-        self.tm.log_messages(
-            [
+        # Build messages with explicit message_id for ordering
+        messages = []
+        for s, r, ts, txt in msgs:
+            messages.append(
                 Message(
                     medium=medium,
                     sender_id=s,
@@ -293,11 +296,16 @@ class ScenarioBuilder:
                     timestamp=ts,
                     content=txt,
                     exchange_id=ex_id,
-                )
-                for s, r, ts, txt in msgs
-            ],
-            synchronous=True,
-        )
+                    message_id=self._message_counter,
+                ),
+            )
+            self._message_counter += 1
+
+        # Async logging - fire and forget (ordering guaranteed by explicit message_id)
+        self.tm.log_messages(messages, synchronous=False)
+
+    def finalize(self) -> None:
+        """Wait for all async log operations to complete."""
         self.tm.join_published()
 
 
@@ -392,6 +400,7 @@ def _setup_tm_scenario(
             sb._seed_contacts()
             sb._seed_key_exchanges()
             sb._seed_filler()
+            sb.finalize()  # Wait for all async log operations to complete
             _commit_contexts_for_rollback(ctx)
 
     # Unset context after setup, like ContactManager does
