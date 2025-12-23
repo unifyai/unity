@@ -606,7 +606,7 @@ def _acquire_file_lock_with_timeout(
 
 
 @contextmanager
-def scenario_file_lock(lock_name: str, timeout: float = 300.0):
+def scenario_file_lock(lock_name: str, timeout: float = 600.0):
     """
     File-based lock for coordinating parallel test scenario seeding.
 
