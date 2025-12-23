@@ -336,16 +336,17 @@ def _rebuild_commit_hashes(ctx_prefix: str) -> None:
             pass
 
 
-@pytest_asyncio.fixture(scope="session")
-async def tm_scenario(
+def _setup_tm_scenario(
     request: pytest.FixtureRequest,
 ) -> Tuple[TranscriptManager, Dict[str, int]]:
     """
-    Create (and later clean up) a versioned context so that *all* tests share the
-    same seeded data.
+    Synchronous setup logic for the transcript manager scenario.
 
-    Uses a file lock to coordinate parallel test processes - only one process
-    seeds the scenario, others wait and then rebuild local state from existing data.
+    Creates/reuses a versioned context, seeds data if needed,
+    and returns the manager + id mapping.
+
+    Note: This is intentionally synchronous to avoid blocking the event loop
+    when using file locks. The async fixture wrapper just calls this.
     """
     ManagerRegistry.clear()
     ContextRegistry.clear()
@@ -372,9 +373,9 @@ async def tm_scenario(
     # Create managers
     cm = ContactManager()
     transcript_ctx = f"{ctx}/Transcripts"
+    tm = TranscriptManager(contact_manager=cm)
 
     # Use file lock to coordinate seeding across parallel processes
-    tm = TranscriptManager(contact_manager=cm)
     with scenario_file_lock("tm_scenario"):
         seeded = is_scenario_seeded(cm, _CONTACTS, transcript_context=transcript_ctx)
         if seeded:
@@ -396,6 +397,20 @@ async def tm_scenario(
     unify.unset_context()
 
     return tm, dict(_ID_BY_NAME)
+
+
+@pytest_asyncio.fixture(scope="session")
+async def tm_scenario(
+    request: pytest.FixtureRequest,
+) -> Tuple[TranscriptManager, Dict[str, int]]:
+    """
+    Create (and later clean up) a versioned context so that *all* tests share the
+    same seeded data.
+
+    Uses a file lock to coordinate parallel test processes - only one process
+    seeds the scenario, others wait and then rebuild local state from existing data.
+    """
+    return _setup_tm_scenario(request)
 
 
 @pytest.fixture(scope="function")
