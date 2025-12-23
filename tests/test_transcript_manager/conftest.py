@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 import os
 import unify
+
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
@@ -302,7 +303,8 @@ class ScenarioBuilder:
             self._message_counter += 1
 
         # Async logging - fire and forget (ordering guaranteed by explicit message_id)
-        self.tm.log_messages(messages, synchronous=False)
+        # Skip EventBus to avoid cross-loop issues during fixture setup
+        self.tm.log_messages(messages, synchronous=False, _skip_event_bus=True)
 
     def finalize(self) -> None:
         """Wait for all async log operations to complete."""
