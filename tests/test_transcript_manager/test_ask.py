@@ -24,14 +24,13 @@ pytestmark = pytest.mark.eval
 
 import pytest
 import asyncio
-import unify
+
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.common.llm_helpers import _dumps
 from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
-from tests.settings import SETTINGS
 
 
 # --------------------------------------------------------------------------- #

@@ -306,6 +306,7 @@ class TranscriptManager(BaseTranscriptManager):
             List[Union[Dict[str, Any], Message]],
         ],
         synchronous: bool = False,
+        _skip_event_bus: bool = False,
     ) -> List[Message]:
         """
         Insert one or more messages into the backing store.
@@ -518,13 +519,14 @@ class TranscriptManager(BaseTranscriptManager):
 
             created_messages.append(created_msg)
 
-            try:
-                # If we're inside an event-loop schedule the coroutine there …
-                loop = asyncio.get_running_loop()
-                loop.create_task(_publish_message(created_msg))
-            except RuntimeError:
-                # … otherwise create a *temporary* loop so the event isn't lost.
-                asyncio.run(_publish_message(created_msg))
+            if not _skip_event_bus:
+                try:
+                    # If we're inside an event-loop schedule the coroutine there …
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_publish_message(created_msg))
+                except RuntimeError:
+                    # … otherwise create a *temporary* loop so the event isn't lost.
+                    asyncio.run(_publish_message(created_msg))
 
         # ── 5. Ensure Exchanges rows exist for any newly seen exchange_ids ──
         try:
