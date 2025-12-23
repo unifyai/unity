@@ -483,25 +483,39 @@ class TranscriptManager(BaseTranscriptManager):
         for entries, _orig_msg in zip(msg_entries, normalised_messages):
             # Ensure correct creation order by performing contact creation *before*
             # the logger call (already satisfied above).  Now we can log safely.
-            log = unity_log(
-                context=self._transcripts_ctx,
-                **entries,
-                new=True,
-                mutable=True,
-                add_to_all_context=self.include_in_multi_assistant_table,
-            )
+            if synchronous:
+                # Sync path: block until backend responds, get assigned IDs
+                log = unity_log(
+                    context=self._transcripts_ctx,
+                    **entries,
+                    new=True,
+                    mutable=True,
+                    add_to_all_context=self.include_in_multi_assistant_table,
+                )
 
-            # Build a Message directly from the POST response
-            persisted_payload = {
-                k: log.entries.get(k) for k in Message.model_fields.keys()
-            }
-            # Remove any None values for id fields so the validator can apply sentinel if needed
-            if persisted_payload.get("message_id") is None:
-                persisted_payload.pop("message_id", None)
-            if persisted_payload.get("exchange_id") is None:
-                persisted_payload.pop("exchange_id", None)
+                # Build a Message directly from the POST response
+                persisted_payload = {
+                    k: log.entries.get(k) for k in Message.model_fields.keys()
+                }
+                # Remove any None values for id fields so the validator can apply sentinel if needed
+                if persisted_payload.get("message_id") is None:
+                    persisted_payload.pop("message_id", None)
+                if persisted_payload.get("exchange_id") is None:
+                    persisted_payload.pop("exchange_id", None)
 
-            created_msg = Message(**persisted_payload)
+                created_msg = Message(**persisted_payload)
+            else:
+                # Async path: fire-and-forget, don't block on network I/O
+                self._get_logger().log_create(
+                    project=unify.active_project(),
+                    context=self._transcripts_ctx,
+                    params={},
+                    entries=entries,
+                )
+                # In async mode, we don't wait for the response, so use the
+                # original message (IDs may not be assigned yet)
+                created_msg = _orig_msg
+
             created_messages.append(created_msg)
 
             try:
