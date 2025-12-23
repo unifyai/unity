@@ -284,8 +284,8 @@ class ScenarioBuilder:
         medium: str,
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
-        [
-            self.tm.log_messages(
+        self.tm.log_messages(
+            [
                 Message(
                     medium=medium,
                     sender_id=s,
@@ -293,10 +293,11 @@ class ScenarioBuilder:
                     timestamp=ts,
                     content=txt,
                     exchange_id=ex_id,
-                ),
-            )
-            for s, r, ts, txt in msgs
-        ]
+                )
+                for s, r, ts, txt in msgs
+            ],
+            synchronous=True,
+        )
         self.tm.join_published()
 
 
