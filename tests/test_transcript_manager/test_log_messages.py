@@ -68,3 +68,59 @@ def test_missing_id_raises_error():
     msg = str(exc.value)
     assert "exchange_id" in msg
     assert "log_first_message_in_new_exchange" in msg
+
+
+@_handle_project
+def test_async_mode_uses_async_logger(monkeypatch):
+    """
+    With synchronous=False, log_messages should use the async logger
+    (AsyncLoggerManager.log_create) rather than blocking unify.log.
+    """
+    import unify
+
+    tm = TranscriptManager()
+
+    # Track which logging path is used
+    sync_log_calls = []
+    async_log_create_calls = []
+
+    original_unify_log = unify.log
+    original_log_create = TranscriptManager._LOGGER.log_create
+
+    def mock_unify_log(*args, **kwargs):
+        sync_log_calls.append((args, kwargs))
+        return original_unify_log(*args, **kwargs)
+
+    def mock_log_create(*args, **kwargs):
+        async_log_create_calls.append((args, kwargs))
+        return original_log_create(*args, **kwargs)
+
+    monkeypatch.setattr(unify, "log", mock_unify_log)
+    monkeypatch.setattr(TranscriptManager._LOGGER, "log_create", mock_log_create)
+
+    message = {
+        "medium": VALID_MEDIA[0],
+        "sender_id": 0,
+        "receiver_ids": [1],
+        "timestamp": datetime.now(UTC),
+        "content": "async test message",
+        "exchange_id": 99999,
+    }
+
+    # Clear any setup-related calls
+    sync_log_calls.clear()
+    async_log_create_calls.clear()
+
+    tm.log_messages(message, synchronous=False)
+
+    # With synchronous=False, the async logger (log_create) should be used,
+    # NOT the blocking unify.log
+    assert (
+        len(async_log_create_calls) > 0
+    ), "synchronous=False should use AsyncLoggerManager.log_create, but it wasn't called"
+    assert len(sync_log_calls) == 0, (
+        f"synchronous=False should NOT call unify.log for message persistence, "
+        f"but it was called {len(sync_log_calls)} time(s)"
+    )
+
+    tm.join_published()
