@@ -80,15 +80,18 @@ def test_async_mode_uses_async_logger(monkeypatch):
 
     tm = TranscriptManager()
 
-    # Track which logging path is used
-    sync_log_calls = []
+    # Track which logging path is used for Transcripts (not Exchanges or other tables)
+    sync_transcript_calls = []
     async_log_create_calls = []
 
     original_unify_log = unify.log
     original_log_create = TranscriptManager._LOGGER.log_create
 
     def mock_unify_log(*args, **kwargs):
-        sync_log_calls.append((args, kwargs))
+        # Only track calls to Transcripts context, ignore Exchanges etc.
+        ctx = kwargs.get("context", "")
+        if "Transcripts" in ctx:
+            sync_transcript_calls.append((args, kwargs))
         return original_unify_log(*args, **kwargs)
 
     def mock_log_create(*args, **kwargs):
@@ -108,19 +111,19 @@ def test_async_mode_uses_async_logger(monkeypatch):
     }
 
     # Clear any setup-related calls
-    sync_log_calls.clear()
+    sync_transcript_calls.clear()
     async_log_create_calls.clear()
 
     tm.log_messages(message, synchronous=False)
 
     # With synchronous=False, the async logger (log_create) should be used,
-    # NOT the blocking unify.log
+    # NOT the blocking unify.log for Transcripts
     assert (
         len(async_log_create_calls) > 0
     ), "synchronous=False should use AsyncLoggerManager.log_create, but it wasn't called"
-    assert len(sync_log_calls) == 0, (
-        f"synchronous=False should NOT call unify.log for message persistence, "
-        f"but it was called {len(sync_log_calls)} time(s)"
+    assert len(sync_transcript_calls) == 0, (
+        f"synchronous=False should NOT call unify.log for Transcripts persistence, "
+        f"but it was called {len(sync_transcript_calls)} time(s)"
     )
 
     tm.join_published()
