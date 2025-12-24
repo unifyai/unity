@@ -2,8 +2,7 @@
 Integration tests for TaskScheduler.ask
 ================================================
 
-Identical content moved from test_ask.py to avoid module-name collision with
-TranscriptManager tests.
+These are read-only tests that use the shared task_read_scenario from conftest.
 """
 
 # pylint: disable=duplicate-code
@@ -13,93 +12,16 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime, timezone
-import os
 
 import pytest
 
 pytestmark = pytest.mark.eval
-import unify
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.task_scheduler.types.priority import Priority
-from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.status import Status
 from unity.common.llm_helpers import _dumps
 from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed
-from tests.settings import SETTINGS
-
-
-class ScenarioBuilder:
-    """Populate Unify with a small, meaningful task list."""
-
-    def __init__(self) -> None:
-        self.ts = TaskScheduler()
-        self._seed_tasks()
-
-    def _create_if_missing(
-        self,
-        *,
-        name: str,
-        description: str,
-        status: str,
-        schedule: Schedule | None = None,
-        priority: Priority | None = None,
-    ) -> None:
-        """Idempotent create: only add when a task with the same name is absent."""
-        try:
-            existing = self.ts._filter_tasks(filter=f"name == {name!r}", limit=1)
-        except Exception:
-            existing = []
-        if existing:
-            return
-        kwargs = {"name": name, "description": description, "status": status}
-        if schedule is not None:
-            kwargs["schedule"] = schedule
-        if priority is not None:
-            kwargs["priority"] = priority
-        self.ts._create_task(**kwargs)
-
-    def _seed_tasks(self) -> None:
-        """Create five tasks with various states for robust querying."""
-
-        self._create_if_missing(  # Active
-            name="Write quarterly report",
-            description="Compile and draft the Q2 report for management.",
-            status="primed",
-        )
-
-        self._create_if_missing(  # Queued
-            name="Prepare slide deck",
-            description="Create slides for the upcoming board meeting.",
-            status="queued",
-        )
-
-        sched = Schedule(  # Scheduled
-            prev_task=None,
-            next_task=None,
-            start_at=datetime(2050, 6, 1, 9, 0, tzinfo=timezone.utc),
-        )
-        self._create_if_missing(
-            name="Client meeting",
-            description="Meet with ABC Corp for contract renewal.",
-            status="scheduled",
-            schedule=sched,
-        )
-
-        self._create_if_missing(  # Paused
-            name="Deploy new release",
-            description="Roll out version 2.0 to production servers.",
-            status="paused",
-        )
-
-        self._create_if_missing(  # High-priority queued
-            name="Hotfix security vulnerability",
-            description="Apply CVE-2025-1234 patch to all services.",
-            status="queued",
-            priority=Priority.high,
-        )
 
 
 # ---------------- Ground-truth helpers ---------------- #
@@ -110,18 +32,11 @@ def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     tasks = ts._filter_tasks()
 
     if "currently primed" in q:
-        return next(t for t in tasks if t.status == Status.primed).name
+        primed = [t for t in tasks if t.status == Status.primed]
+        return primed[0].name if primed else "N/A"
 
     if "tasks are queued" in q:
         return str(sum(1 for t in tasks if t.status == Status.queued))
-
-    if "client meeting" in q and "scheduled" in q:
-        mtg = next(t for t in tasks if "client meeting" in t.name.lower())
-        return mtg.schedule.start_at.isoformat().split("T")[0]
-
-    if "priority" in q and "hotfix" in q:
-        hotfix = next(t for t in tasks if "hotfix" in t.name.lower())
-        return str(hotfix.priority)
 
     return "N/A"
 
@@ -129,8 +44,6 @@ def _answer_semantic(ts: TaskScheduler, question: str) -> str:
 QUESTIONS = [
     "Which task is currently primed?",
     "How many tasks are queued at the moment?",
-    "When is the client meeting scheduled for?",
-    "What is the priority level of the hotfix task?",
 ]
 
 
@@ -177,41 +90,21 @@ def _llm_assert_correct(
     )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_session_context():
-    """Set up a session-wide context for all tests in this module."""
-    file_path = __file__
-    ctx = "/".join(file_path.split("/tests/")[1].split("/"))[:-3]
-    unify.delete_context(ctx)
-    with unify.Context(ctx):
-        unify.set_trace_context("Traces")
-        yield
-
-    if os.environ.get("UNIFY_DELETE_CONTEXT_ON_EXIT", "false").lower() == "true":
-        unify.delete_context(ctx)
-
-
-@pytest.fixture(scope="session")
-def ts_scenario(
-    setup_session_context,
-) -> TaskScheduler:  # noqa: D401 – fixture, not function
-    return ScenarioBuilder().ts
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
 @pytest.mark.timeout(300)
 async def test_ask_semantic_with_llm_judgement(
     question: str,
-    ts_scenario: TaskScheduler,
+    task_scheduler_read_scenario: tuple[TaskScheduler, list[int]],
 ) -> None:
+    ts, _ = task_scheduler_read_scenario
     try:
-        handle = await ts_scenario.ask(
+        handle = await ts.ask(
             text=question,
             _return_reasoning_steps=True,
         )
         candidate, steps = await handle.result()
-        expected = _answer_semantic(ts_scenario, question)
+        expected = _answer_semantic(ts, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as exc:
         raise exc
@@ -219,11 +112,14 @@ async def test_ask_semantic_with_llm_judgement(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
+async def test_ask_with_interjection(
+    task_scheduler_read_scenario: tuple[TaskScheduler, list[int]],
+) -> None:
     """Ask a question, interject with a follow-up, and ensure the final answer covers both."""
+    ts, _ = task_scheduler_read_scenario
     try:
         # 1) Initial question ⇢ primed task name
-        handle = await ts_scenario.ask(
+        handle = await ts.ask(
             text="Which task is currently primed?",
             _return_reasoning_steps=True,
         )
@@ -233,11 +129,8 @@ async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
 
         # 3) Await combined answer
         answer, steps = await handle.result()
-        primed_task = _answer_semantic(
-            ts_scenario,
-            QUESTIONS[0],
-        )  # "Write quarterly report"
-        queued_cnt = _answer_semantic(ts_scenario, QUESTIONS[1])  # e.g. "2"
+        primed_task = _answer_semantic(ts, QUESTIONS[0])  # "Write quarterly report"
+        queued_cnt = _answer_semantic(ts, QUESTIONS[1])  # e.g. "2" or "3"
 
         # 4) Assert presence of both pieces of information
         assert primed_task.lower() in answer.lower(), assertion_failed(
@@ -258,11 +151,14 @@ async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
+async def test_ask_stop(
+    task_scheduler_read_scenario: tuple[TaskScheduler, list[int]],
+) -> None:
     """Test that we can stop the conversation mid-way."""
+    ts, _ = task_scheduler_read_scenario
     try:
         # Start with a request that would take some time to complete
-        handle = await ts_scenario.ask(
+        handle = await ts.ask(
             text="List all tasks, then summarize each one in detail.",
         )
 
@@ -278,10 +174,11 @@ async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 async def test_ask_uses_reduce_for_numeric_aggregation(
-    ts_scenario: TaskScheduler,
+    task_scheduler_read_scenario: tuple[TaskScheduler, list[int]],
 ) -> None:
     """Verify LLM uses reduce tool for numeric aggregation questions."""
-    handle = await ts_scenario.ask(
+    ts, _ = task_scheduler_read_scenario
+    handle = await ts.ask(
         text="What is the sum of all task_id values?",
         _return_reasoning_steps=True,
     )

@@ -21,9 +21,9 @@ from tests.assertion_helpers import (
 from unity.task_scheduler.prompt_builders import build_ask_prompt, build_update_prompt
 
 
-def test_ask_system_prompt_formatting(basic_task_scenario):
+def test_ask_system_prompt_formatting(task_scheduler_read_scenario):
     """Test ask prompt structure with dynamically extracted tools."""
-    ts, _ = basic_task_scenario
+    ts, _ = task_scheduler_read_scenario
     tools = dict(ts.get_tools("ask"))
     num_tasks = ts._num_tasks()
 
@@ -82,9 +82,9 @@ def test_ask_system_prompt_formatting(basic_task_scenario):
     assert_time_footer(prompt, "Current UTC time is ")
 
 
-def test_update_system_prompt_formatting(basic_task_scenario):
+def test_update_system_prompt_formatting(task_scheduler_read_scenario):
     """Test update prompt structure with dynamically extracted tools."""
-    ts, _ = basic_task_scenario
+    ts, _ = task_scheduler_read_scenario
     tools = dict(ts.get_tools("update"))
     num_tasks = ts._num_tasks()
 
@@ -164,7 +164,12 @@ def _build_prompt_in_subprocess(method: str) -> str:
         sys.stdout.write(prompt)
         """,
     )
-    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return proc.stdout
 
 
@@ -174,7 +179,7 @@ def test_ask_prompt_is_stable_across_serial_builds():
     p2 = _build_prompt_in_subprocess("ask")
     if p1 != p2:
         raise AssertionError(
-            "Ask prompt changed between sessions.\n\n" + first_diff_block(p1, p2)
+            "Ask prompt changed between sessions.\n\n" + first_diff_block(p1, p2),
         )
 
 
@@ -184,5 +189,5 @@ def test_update_prompt_is_stable_across_serial_builds():
     p2 = _build_prompt_in_subprocess("update")
     if p1 != p2:
         raise AssertionError(
-            "Update prompt changed between sessions.\n\n" + first_diff_block(p1, p2)
+            "Update prompt changed between sessions.\n\n" + first_diff_block(p1, p2),
         )

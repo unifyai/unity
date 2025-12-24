@@ -683,3 +683,60 @@ def mutation_test_lock(lock_name: str, timeout: float = 300.0):
     finally:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         lock_file.close()
+
+
+# --------------------------------------------------------------------------
+# TaskScheduler scenario helpers
+# --------------------------------------------------------------------------
+
+
+def is_task_scenario_seeded(ts: "TaskScheduler", task_defs: list[dict]) -> bool:
+    """
+    Check if task scenario data already exists (seeded by another process).
+
+    Args:
+        ts: TaskScheduler instance to query
+        task_defs: List of task definitions to check (each has 'name' key)
+
+    Returns:
+        True if all expected tasks exist
+    """
+    if not task_defs:
+        return False
+
+    # Check if at least one expected task exists
+    first_task_name = task_defs[0]["name"]
+    try:
+        existing = ts._filter_tasks(filter=f"name == {first_task_name!r}", limit=1)
+        return len(existing) > 0
+    except Exception:
+        return False
+
+
+def rebuild_task_id_mapping(
+    ts: "TaskScheduler",
+    task_defs: list[dict],
+) -> list[int]:
+    """
+    Rebuild task ID list from existing shared scenario data.
+
+    Used when scenario was seeded by another parallel process and we need
+    to reconstruct the local ID list.
+
+    Args:
+        ts: TaskScheduler instance to query
+        task_defs: List of task definitions (each has 'name' key)
+
+    Returns:
+        List of task IDs in the same order as task_defs
+    """
+    id_list: list[int] = []
+    for task_data in task_defs:
+        name = task_data["name"]
+        try:
+            existing = ts._filter_tasks(filter=f"name == {name!r}", limit=1)
+            if existing:
+                id_list.append(existing[0].task_id)
+        except Exception:
+            pass
+    return id_list
