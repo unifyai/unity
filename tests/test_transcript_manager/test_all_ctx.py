@@ -12,6 +12,44 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 
 
+@_handle_project
+def test_async_log_messages_mirrors_to_all_contexts():
+    """Async log_messages (synchronous=False) should also mirror to aggregation contexts."""
+    tm = TranscriptManager()
+
+    msg = Message(
+        medium="email",
+        sender_id=0,
+        receiver_ids=[1],
+        timestamp=datetime.now(UTC),
+        content="Async mirror test message",
+        exchange_id=0,
+    )
+    # Use async path (synchronous=False is default)
+    tm.log_messages(msg, synchronous=False)
+
+    # Wait for async logger to flush
+    tm.join_published()
+
+    # Verify message exists in primary context
+    result = tm._filter_messages(filter="content == 'Async mirror test message'")
+    messages = result["messages"]
+    assert len(messages) >= 1, "Message should exist in manager's context"
+    message_id = messages[0].message_id
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(tm._transcripts_ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify it was mirrored to both aggregation contexts
+    for all_ctx in all_ctxs:
+        all_logs = unify.get_logs(
+            context=all_ctx,
+            filter=f"message_id == {message_id}",
+        )
+        assert len(all_logs) >= 1, f"Async log should be mirrored to {all_ctx}"
+
+
 def _get_raw_log_by_message_id(ctx: str, message_id: int):
     """Get raw log entry including private fields."""
     logs = unify.get_logs(
