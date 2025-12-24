@@ -352,7 +352,7 @@ async def async_tool_loop_inner(
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # ── Model family detection (centralized) ──────────────────────────────────────
-    _model_name = str(getattr(client, "model", "") or "")
+    _model_name = str(getattr(client, "_model", "") or "")
     _model_base = _model_name.split("@")[0]
     _is_claude = _model_base.startswith("claude")
 
