@@ -77,7 +77,7 @@ async def notify_parent(
 # ──────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_notification_bubbles_up_two_tiers() -> None:
+async def test_notification_bubbles_up_two_tiers(model) -> None:
     """
     Verifies that notifications emitted by a running tool are surfaced upstream
     and allow the assistant to react; the tool then completes successfully.
@@ -129,6 +129,7 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         "2) Do not produce a normal assistant message while work is pending; use tools only.\n"
         "3) Avoid starting unrelated tools while the original call is in progress.\n"
         "4) Once the email has been sent, produce a single, concise assistant message that includes the word 'sent' (e.g., 'Email sent.').",
+        model=model,
     )
 
     outer_tools = {
@@ -266,7 +267,7 @@ async def delegating_tool(
 # regression test
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_notification_bubbles_through_returned_handle() -> None:
+async def test_notification_bubbles_through_returned_handle(model) -> None:
     """Notification raised inside the returned handle must still reach the user."""
 
     outer_llm = make_llm(
@@ -276,6 +277,7 @@ async def test_notification_bubbles_through_returned_handle() -> None:
         "Do not invent status; only reflect actual notifications.\n"
         "When the inner work completes, end your final assistant message by including the word 'finished'. "
         "Keep responses concise.",
+        model=model,
     )
 
     handle = start_async_tool_loop(
