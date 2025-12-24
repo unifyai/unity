@@ -44,7 +44,59 @@ def test_delete_system_raises():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 3.  Natural-language deletion via update()                                 #
+# 3.  Guard against deleting is_system=True contacts (org members, etc.)     #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_delete_is_system_contact_raises():
+    """Contacts with is_system=True cannot be deleted."""
+    cm = ContactManager()
+
+    # Create a contact with is_system=True (simulating org member)
+    cid = cm._create_contact(
+        first_name="OrgMember",
+        email_address="orgmember-delete-test@test.com",
+        is_system=True,
+    )["details"]["contact_id"]
+
+    # Verify it exists with is_system=True
+    contacts = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    assert len(contacts) == 1
+    assert contacts[0].is_system is True
+
+    # Attempt to delete should raise
+    with pytest.raises(RuntimeError, match="Cannot delete system contact"):
+        cm._delete_contact(contact_id=cid)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 4.  Regular contacts (is_system=False) can be deleted                       #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_delete_regular_contact_succeeds():
+    """Contacts without is_system=True can be deleted normally."""
+    cm = ContactManager()
+
+    # Create a regular contact (is_system defaults to False)
+    cid = cm._create_contact(
+        first_name="Regular",
+        email_address="regular-delete-test@test.com",
+    )["details"]["contact_id"]
+
+    # Verify is_system is False
+    contacts = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    assert len(contacts) == 1
+    assert contacts[0].is_system is False
+
+    # Delete should succeed
+    cm._delete_contact(contact_id=cid)
+
+    # Verify deleted
+    contacts = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    assert len(contacts) == 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 5.  Natural-language deletion via update()                                 #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.slow
 @pytest.mark.asyncio

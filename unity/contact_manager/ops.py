@@ -11,6 +11,113 @@ from .types.contact import Contact
 from .custom_columns import sanitize_custom_columns
 
 
+def _get_assistant_id() -> int | None:
+    """Get assistant_id from SESSION_DETAILS, returning None if unavailable."""
+    from ..session_details import SESSION_DETAILS
+
+    if not SESSION_DETAILS.is_initialized:
+        return None
+
+    # Prefer numeric ID from assistant_record
+    if SESSION_DETAILS.assistant_record:
+        try:
+            return int(SESSION_DETAILS.assistant_record.get("id", 0))
+        except (ValueError, TypeError):
+            pass
+
+    # Fall back to parsing assistant.id string
+    try:
+        return int(SESSION_DETAILS.assistant.id)
+    except (ValueError, TypeError):
+        return None
+
+
+def _maybe_sync_timezone_to_backend(
+    self,
+    contact_id: int,
+    timezone: str,
+) -> None:
+    """
+    Fire-and-forget sync of timezone to backend for system contacts.
+
+    - contact_id=0 → sync to assistant
+    - contact_id=1 or other is_system=True → sync to user via email
+    """
+    from .backend_sync import sync_assistant_timezone, sync_user_timezone
+
+    assistant_id = _get_assistant_id()
+    if assistant_id is None:
+        return
+
+    if contact_id == 0:
+        sync_assistant_timezone(assistant_id, timezone)
+        return
+
+    # User or org member - need email and is_system check
+    try:
+        row = self._data_store.get(contact_id)
+    except KeyError:
+        row = None
+
+    if row is None:
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+                from_fields=["contact_id", "is_system", "email_address"],
+            )
+            row = rows[0].entries if rows else None
+        except Exception:
+            return
+
+    if row and row.get("is_system") and row.get("email_address"):
+        sync_user_timezone(assistant_id, row["email_address"], timezone)
+
+
+def _maybe_sync_bio_to_backend(
+    self,
+    contact_id: int,
+    bio: str,
+) -> None:
+    """
+    Fire-and-forget sync of bio to backend for system contacts.
+
+    - contact_id=0 → sync to assistant (as 'about')
+    - contact_id=1 or other is_system=True → sync to user (as 'bio')
+    """
+    from .backend_sync import sync_assistant_about, sync_user_bio
+
+    assistant_id = _get_assistant_id()
+    if assistant_id is None:
+        return
+
+    if contact_id == 0:
+        sync_assistant_about(assistant_id, bio)
+        return
+
+    # User or org member - need email and is_system check
+    try:
+        row = self._data_store.get(contact_id)
+    except KeyError:
+        row = None
+
+    if row is None:
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+                from_fields=["contact_id", "is_system", "email_address"],
+            )
+            row = rows[0].entries if rows else None
+        except Exception:
+            return
+
+    if row and row.get("is_system") and row.get("email_address"):
+        sync_user_bio(assistant_id, row["email_address"], bio)
+
+
 def _unique_fields() -> Set[str]:
     return {
         f
@@ -227,6 +334,19 @@ def update_contact(
             self._data_store.put(rows[0].entries)
     except Exception:
         pass
+
+    # Fire-and-forget sync to backend for system contacts
+    if timezone is not None:
+        try:
+            _maybe_sync_timezone_to_backend(self, contact_id, timezone)
+        except Exception:
+            pass
+    if bio is not None:
+        try:
+            _maybe_sync_bio_to_backend(self, contact_id, bio)
+        except Exception:
+            pass
+
     return {"outcome": "contact updated", "details": {"contact_id": contact_id}}
 
 
@@ -236,25 +356,33 @@ def delete_contact(
     contact_id: int,
     _log_id: Optional[int] = None,
 ) -> ToolOutcome:
+    # Fast path: hard-coded protection for assistant and primary user
     if contact_id in (0, 1):
         raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
 
     if _log_id is None:
-        log_ids = unify.get_logs(
+        # Fetch with is_system to check for org member protection
+        rows = unify.get_logs(
             context=self._ctx,
             filter=f"contact_id == {contact_id}",
             limit=2,
-            return_ids_only=True,
+            from_fields=["contact_id", "is_system"],
         )
-        if not log_ids:
+        if not rows:
             raise ValueError(
                 f"No contact found with contact_id {contact_id} to delete.",
             )
-        if len(log_ids) > 1:
+        if len(rows) > 1:
             raise RuntimeError(
                 f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
             )
-        resolved_id = log_ids[0]
+        row = rows[0]
+        if row.entries.get("is_system"):
+            raise RuntimeError(
+                f"Cannot delete system contact with id {contact_id}. "
+                "System contacts include the assistant, primary user, and org members.",
+            )
+        resolved_id = row.id
     else:
         resolved_id = _log_id
 

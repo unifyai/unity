@@ -114,3 +114,28 @@ def test_real_assistant(monkeypatch):
     users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert users, "Default user should exist"
     assert users[0].timezone == "UTC"
+
+
+@_handle_project
+def test_system_contacts_have_is_system_flag(monkeypatch):
+    """Assistant and user contacts should have is_system=True."""
+    # Force assistant discovery helper to return an empty list
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._list_assistants",
+        lambda self: [],
+        raising=True,
+    )
+
+    cm = ContactManager()
+
+    # Assistant (id=0) should have is_system=True
+    assistants = cm.filter_contacts(filter="contact_id == 0")["contacts"]
+    assert len(assistants) == 1, "Exactly one assistant contact (ID 0) should exist"
+    assert (
+        assistants[0].is_system is True
+    ), "Assistant contact should have is_system=True"
+
+    # User (id=1) should have is_system=True
+    users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
+    assert len(users) == 1, "Exactly one user contact (ID 1) should exist"
+    assert users[0].is_system is True, "User contact should have is_system=True"
