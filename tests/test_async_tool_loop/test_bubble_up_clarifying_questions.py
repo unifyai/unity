@@ -80,7 +80,7 @@ asked_questions: list[str] = []  # for assertions
 # ──────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_clarification_bubbles_up_two_tiers() -> None:
+async def test_clarification_bubbles_up_two_tiers(model) -> None:
     """
     Verifies that the clarification travels up & the answer travels down two
     levels of the call stack.
@@ -96,6 +96,7 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
         "After the original call resumes or completes, you may continue with further tools as needed.\n"
         "When the email has been sent successfully, end your final assistant message with an explicit confirmation using the word 'sent' (e.g., 'Email sent.').\n"
         "Do not hallucinate any details; if unknown, ask. Keep responses concise.",
+        model=model,
     )
 
     clar_up_q = asyncio.Queue()
@@ -260,7 +261,7 @@ async def delegating_tool(
 # regression test
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_clarification_bubbles_through_returned_handle() -> None:
+async def test_clarification_bubbles_through_returned_handle(model) -> None:
     """Clarification raised *inside* the returned handle must still reach the user."""
 
     clar_up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -278,6 +279,7 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
         "(3) Forward that answer to the pending tool via the clarify_* helper.\n"
         "Treat these as user preferences or facts unknown to you; do NOT answer them yourself, guess, or infer from unrelated context.\n"
         "Do NOT start unrelated tools until pending clarifications are resolved.",
+        model=model,
     )
 
     handle = start_async_tool_loop(
