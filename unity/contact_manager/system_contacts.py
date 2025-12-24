@@ -135,6 +135,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
         base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
         base_fields["respond_to"] = True
         base_fields["response_policy"] = ""
+        base_fields["is_system"] = True
         base_fields.update(
             {
                 "first_name": a.get("first_name"),
@@ -149,6 +150,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
         base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
         base_fields["respond_to"] = True
         base_fields["response_policy"] = ""
+        base_fields["is_system"] = True
         base_fields.update(
             {
                 "first_name": DEFAULT_ASSISTANT_FIRST_NAME,
@@ -167,14 +169,19 @@ def provision_assistant_contact(self, assistant_log) -> None:
     if assistant_log is not None:
         try:
             entries = assistant_log.entries
-            current = entries.get("timezone")
-            if current != "UTC":
-                # Only update the timezone field to avoid clobbering other values
-                self.update_contact(
-                    contact_id=0,
-                    timezone="UTC",
-                    _log_id=assistant_log.id,
-                )
+            needs_timezone = entries.get("timezone") != "UTC"
+            needs_is_system = entries.get("is_system") is not True
+
+            if needs_timezone or needs_is_system:
+                update_kwargs: Dict[str, Any] = {
+                    "contact_id": 0,
+                    "_log_id": assistant_log.id,
+                }
+                if needs_timezone:
+                    update_kwargs["timezone"] = "UTC"
+                if needs_is_system:
+                    update_kwargs["is_system"] = True
+                self.update_contact(**update_kwargs)
             else:
                 # Warm local cache when no change needed
                 self._data_store.put(entries)
@@ -214,6 +221,7 @@ def provision_user_contact(self, user_log) -> None:
         if fld not in {"contact_id", "bio", "rolling_summary"}
     }
     base_fields["respond_to"] = True
+    base_fields["is_system"] = True
     base_fields.update(
         {
             "first_name": user_info.get("first_name"),
@@ -245,14 +253,19 @@ def provision_user_contact(self, user_log) -> None:
     if user_log is not None:
         try:
             entries = user_log.entries
-            current = entries.get("timezone")
-            if current != "UTC":
-                # Only update the timezone field to avoid clobbering other values
-                self.update_contact(
-                    contact_id=1,
-                    timezone="UTC",
-                    _log_id=user_log.id,
-                )
+            needs_timezone = entries.get("timezone") != "UTC"
+            needs_is_system = entries.get("is_system") is not True
+
+            if needs_timezone or needs_is_system:
+                update_kwargs: Dict[str, Any] = {
+                    "contact_id": 1,
+                    "_log_id": user_log.id,
+                }
+                if needs_timezone:
+                    update_kwargs["timezone"] = "UTC"
+                if needs_is_system:
+                    update_kwargs["is_system"] = True
+                self.update_contact(**update_kwargs)
             else:
                 # Warm local cache when no change needed
                 self._data_store.put(entries)
@@ -276,3 +289,111 @@ def provision_user_contact(self, user_log) -> None:
             pass
         else:
             raise
+
+
+def _fetch_org_members() -> List[Dict[str, Any]]:
+    """
+    Return list of org members for the current organization.
+
+    Uses GET /v0/organizations/members
+    Returns empty list if:
+    - Personal API key (not org)
+    - API unavailable
+    - Any error
+    """
+    import os
+
+    base_url = os.environ.get("UNIFY_BASE_URL", "https://api.unify.ai").rstrip("/")
+    api_key = os.environ.get("UNIFY_KEY", "")
+
+    if not base_url or not api_key:
+        return []
+
+    try:
+        from unify.utils import http
+
+        url = f"{base_url}/v0/organizations/members"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        resp = http.get(url, headers=headers, timeout=30)
+
+        if 200 <= resp.status_code < 300:
+            return resp.json() or []
+        return []
+    except Exception:
+        return []
+
+
+def provision_org_member_contacts(self) -> None:
+    """
+    Ensure org member contacts exist with is_system=True.
+
+    For each org member:
+    - If contact with email exists: ensure is_system=True
+    - If no contact exists: create with is_system=True
+
+    Skips the primary user (id=1) to avoid duplicates.
+    """
+    members = _fetch_org_members()
+    if not members:
+        return
+
+    # Get primary user email to skip
+    primary_user_email = None
+    try:
+        primary_user_rows = unify.get_logs(
+            context=self._ctx,
+            filter="contact_id == 1",
+            limit=1,
+            from_fields=["email_address"],
+        )
+        if primary_user_rows:
+            primary_user_email = primary_user_rows[0].entries.get("email_address")
+    except Exception:
+        pass
+
+    for member in members:
+        email = member.get("email")
+        if not email:
+            continue
+
+        # Skip primary user (already synced as id=1)
+        if primary_user_email and email.lower() == primary_user_email.lower():
+            continue
+
+        # Parse name into first/last
+        full_name = member.get("name", "")
+        name_parts = full_name.strip().split(maxsplit=1)
+        first_name = name_parts[0] if name_parts else None
+        surname = name_parts[1] if len(name_parts) > 1 else None
+
+        try:
+            # Check if contact with this email already exists
+            existing = unify.get_logs(
+                context=self._ctx,
+                filter=f"email_address == '{email}'",
+                limit=1,
+            )
+
+            if existing:
+                log = existing[0]
+                entries = log.entries
+                # Update to mark as system if needed
+                if not entries.get("is_system"):
+                    self.update_contact(
+                        contact_id=int(entries["contact_id"]),
+                        is_system=True,
+                        _log_id=log.id,
+                    )
+            else:
+                # Create new contact for org member
+                self._create_contact(
+                    first_name=first_name,
+                    surname=surname,
+                    email_address=email,
+                    is_system=True,
+                    respond_to=True,
+                    response_policy=self.USER_MANAGER_RESPONSE_POLICY,
+                )
+        except Exception:
+            # Best-effort: continue with other members
+            continue
