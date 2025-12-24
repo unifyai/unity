@@ -601,7 +601,7 @@ def test_fk_message_exchange_id_cascade_delete():
         },
     )
 
-    # Log more messages in same exchange
+    # Log more messages in same exchange (synchronous=True to ensure persisted before query)
     tm.log_messages(
         {
             "medium": "sms_message",
@@ -611,6 +611,7 @@ def test_fk_message_exchange_id_cascade_delete():
             "timestamp": datetime.now(),
             "exchange_id": exchange_id,
         },
+        synchronous=True,
     )
 
     # Verify 2 messages in exchange
