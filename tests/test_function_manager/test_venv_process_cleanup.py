@@ -13,12 +13,17 @@ import asyncio
 import os
 import signal
 import sys
+import uuid
 import pytest
 import shutil
 
 from unity.function_manager.function_manager import FunctionManager
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
+
+# Module-level unique ID to namespace PID files for this test session.
+# This ensures parallel test runs don't interfere with each other's PID files.
+_TEST_SESSION_ID = uuid.uuid4().hex[:8]
 
 
 # Sample pyproject.toml with minimal dependencies (fast to sync)
@@ -34,10 +39,13 @@ dependencies = []
 # ────────────────────────────────────────────────────────────────────────────
 # Test Functions
 # ────────────────────────────────────────────────────────────────────────────
+# All functions accept a session_id parameter to namespace their PID files,
+# ensuring parallel test runs don't interfere with each other.
 
-# Function that spawns multiprocessing workers (sync version)
-# NOTE: Uses __import__ since venv sandbox doesn't have os/multiprocessing in globals
-MULTIPROCESSING_SPAWN_FUNCTION = """
+
+def make_multiprocessing_spawn_function(session_id: str) -> str:
+    """Generate sync function that spawns multiprocessing workers."""
+    return f"""
 def spawn_workers(num_workers: int = 3) -> str:
     '''Spawn worker processes and return their PIDs.'''
     mp = __import__('multiprocessing')
@@ -48,7 +56,7 @@ def spawn_workers(num_workers: int = 3) -> str:
         '''Worker that sleeps indefinitely.'''
         os_mod = __import__('os')
         time_mod = __import__('time')
-        pid_file = f"/tmp/unity_test_worker_{os_mod.getpid()}.pid"
+        pid_file = f"/tmp/unity_test_{session_id}_worker_{{os_mod.getpid()}}.pid"
         fd = os_mod.open(pid_file, os_mod.O_CREAT | os_mod.O_WRONLY, 0o644)
         os_mod.write(fd, str(os_mod.getpid()).encode())
         os_mod.close(fd)
@@ -65,13 +73,13 @@ def spawn_workers(num_workers: int = 3) -> str:
     time.sleep(0.5)
 
     # Return the parent PID so caller can verify hierarchy
-    return f"spawned {len(procs)} workers, parent pid: {os.getpid()}"
+    return f"spawned {{len(procs)}} workers, parent pid: {{os.getpid()}}"
 """.strip()
 
 
-# Async version that spawns workers then waits
-# NOTE: Uses __import__ since venv sandbox doesn't have os/multiprocessing in globals
-ASYNC_MULTIPROCESSING_FUNCTION = """
+def make_async_multiprocessing_function(session_id: str) -> str:
+    """Generate async function that spawns workers then waits."""
+    return f"""
 async def spawn_and_wait(num_workers: int = 2) -> str:
     '''Spawn workers and wait (can be cancelled).'''
     # Import modules explicitly (sandbox doesn't include these in globals)
@@ -83,7 +91,7 @@ async def spawn_and_wait(num_workers: int = 2) -> str:
         '''Worker that sleeps indefinitely and writes its PID.'''
         os_mod = __import__('os')
         time_mod = __import__('time')
-        pid_file = f"/tmp/unity_test_worker_{os_mod.getpid()}.pid"
+        pid_file = f"/tmp/unity_test_{session_id}_worker_{{os_mod.getpid()}}.pid"
         # Use os.open and os.write for file I/O
         fd = os_mod.open(pid_file, os_mod.O_CREAT | os_mod.O_WRONLY, 0o644)
         os_mod.write(fd, str(os_mod.getpid()).encode())
@@ -102,7 +110,7 @@ async def spawn_and_wait(num_workers: int = 2) -> str:
     await asyncio.sleep(1.0)
 
     # Write parent PID to signal we're ready
-    pid_file = f"/tmp/unity_test_parent_{os.getpid()}.pid"
+    pid_file = f"/tmp/unity_test_{session_id}_parent_{{os.getpid()}}.pid"
     fd = os.open(pid_file, os.O_CREAT | os.O_WRONLY, 0o644)
     os.write(fd, str(os.getpid()).encode())
     os.close(fd)
@@ -113,13 +121,13 @@ async def spawn_and_wait(num_workers: int = 2) -> str:
 """.strip()
 
 
-# Simple long-running function for basic termination test
-# NOTE: Uses __import__ since venv sandbox doesn't have os in globals
-LONG_RUNNING_FUNCTION = """
+def make_long_running_function(session_id: str) -> str:
+    """Generate simple long-running function for basic termination test."""
+    return f"""
 async def long_running_task() -> str:
     '''A task that runs for a long time.'''
     os = __import__('os')
-    pid_file = f"/tmp/unity_test_longrun_{os.getpid()}.pid"
+    pid_file = f"/tmp/unity_test_{session_id}_longrun_{{os.getpid()}}.pid"
     fd = os.open(pid_file, os.O_CREAT | os.O_WRONLY, 0o644)
     os.write(fd, str(os.getpid()).encode())
     os.close(fd)
@@ -159,12 +167,21 @@ def function_manager_factory():
 
 @pytest.fixture
 def cleanup_test_pid_files():
-    """Cleanup any PID files created during tests."""
-    yield
-    # Clean up any test PID files
+    """Cleanup PID files created during THIS test session only."""
     import glob
 
-    for pid_file in glob.glob("/tmp/unity_test_*.pid"):
+    # Clean up any stale PID files from this session BEFORE test
+    pattern = f"/tmp/unity_test_{_TEST_SESSION_ID}_*.pid"
+    for pid_file in glob.glob(pattern):
+        try:
+            os.unlink(pid_file)
+        except Exception:
+            pass
+
+    yield
+
+    # Clean up PID files from this session AFTER test
+    for pid_file in glob.glob(pattern):
         try:
             os.unlink(pid_file)
         except Exception:
@@ -172,11 +189,12 @@ def cleanup_test_pid_files():
 
 
 def get_test_worker_pids() -> list[int]:
-    """Get PIDs of test worker processes from PID files."""
+    """Get PIDs of test worker processes from PID files for this session."""
     import glob
 
     pids = []
-    for pid_file in glob.glob("/tmp/unity_test_worker_*.pid"):
+    pattern = f"/tmp/unity_test_{_TEST_SESSION_ID}_worker_*.pid"
+    for pid_file in glob.glob(pattern):
         try:
             with open(pid_file) as f:
                 pids.append(int(f.read().strip()))
@@ -195,7 +213,7 @@ def is_process_alive(pid: int) -> bool:
 
 
 def cleanup_test_processes():
-    """Force kill any remaining test processes."""
+    """Force kill any remaining test processes for this session."""
     for pid in get_test_worker_pids():
         try:
             os.kill(pid, signal.SIGKILL)
@@ -223,7 +241,7 @@ async def test_execute_in_venv_terminates_subprocess_on_cleanup(
         task = asyncio.create_task(
             fm.execute_in_venv(
                 venv_id=venv_id,
-                implementation=LONG_RUNNING_FUNCTION,
+                implementation=make_long_running_function(_TEST_SESSION_ID),
                 call_kwargs={},
                 is_async=True,
             ),
@@ -235,7 +253,8 @@ async def test_execute_in_venv_terminates_subprocess_on_cleanup(
         # Get the subprocess PID from the file
         import glob
 
-        pid_files = glob.glob("/tmp/unity_test_longrun_*.pid")
+        pattern = f"/tmp/unity_test_{_TEST_SESSION_ID}_longrun_*.pid"
+        pid_files = glob.glob(pattern)
         assert len(pid_files) == 1, f"Expected 1 PID file, found {len(pid_files)}"
 
         with open(pid_files[0]) as f:
@@ -274,9 +293,10 @@ async def wait_for_parent_pid_file(timeout: float = 10.0) -> bool:
     """Wait for the parent PID file to appear, indicating workers are ready."""
     import glob
 
+    pattern = f"/tmp/unity_test_{_TEST_SESSION_ID}_parent_*.pid"
     start = asyncio.get_event_loop().time()
     while asyncio.get_event_loop().time() - start < timeout:
-        pid_files = glob.glob("/tmp/unity_test_parent_*.pid")
+        pid_files = glob.glob(pattern)
         if pid_files:
             return True
         await asyncio.sleep(0.2)
@@ -301,7 +321,7 @@ async def test_multiprocessing_children_terminated_on_cleanup(
         task = asyncio.create_task(
             fm.execute_in_venv(
                 venv_id=venv_id,
-                implementation=ASYNC_MULTIPROCESSING_FUNCTION,
+                implementation=make_async_multiprocessing_function(_TEST_SESSION_ID),
                 call_kwargs={"num_workers": 2},
                 is_async=True,
             ),
@@ -347,7 +367,8 @@ async def test_multiprocessing_children_terminated_on_cleanup(
         # Clean up parent PID files too
         import glob
 
-        for f in glob.glob("/tmp/unity_test_parent_*.pid"):
+        pattern = f"/tmp/unity_test_{_TEST_SESSION_ID}_parent_*.pid"
+        for f in glob.glob(pattern):
             try:
                 os.unlink(f)
             except Exception:
@@ -375,7 +396,7 @@ async def test_sync_multiprocessing_children_terminated(
         task = asyncio.create_task(
             fm.execute_in_venv(
                 venv_id=venv_id,
-                implementation=MULTIPROCESSING_SPAWN_FUNCTION,
+                implementation=make_multiprocessing_spawn_function(_TEST_SESSION_ID),
                 call_kwargs={"num_workers": 3},
                 is_async=False,
             ),
@@ -515,7 +536,9 @@ async def test_no_orphaned_processes_after_cleanup(
             task = asyncio.create_task(
                 fm.execute_in_venv(
                     venv_id=venv_id,
-                    implementation=ASYNC_MULTIPROCESSING_FUNCTION,
+                    implementation=make_async_multiprocessing_function(
+                        _TEST_SESSION_ID,
+                    ),
                     call_kwargs={"num_workers": 2},
                     is_async=True,
                 ),
