@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-import unify
+import unillm
 from typing import Dict, Callable
 
 from unity.common.async_tool_loop import start_async_tool_loop
@@ -10,7 +10,7 @@ from unity.common.llm_client import new_llm_client
 
 # small helper: pre-seed an assistant tool_call so preflight backfill schedules it immediately
 def _preseed_tool_call(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     *,
     call_id: str,
     tool_name: str,
@@ -90,7 +90,7 @@ async def test_timeout_exceeded(model):
 class _ToolCallingDriver:
     """Deprecated stub removed – tests now instruct the real LLM instead."""
 
-    def __init__(self, client: unify.AsyncUnify):
+    def __init__(self, client: unillm.AsyncUnify):
         self._client = client
         self._orig = client.generate
 
@@ -100,7 +100,7 @@ class _ToolCallingDriver:
 
 # ── 7. pruning over-quota tool calls (hidden quotas) ────────────────────────
 class _MultiCallDriver:
-    def __init__(self, client: unify.AsyncUnify):
+    def __init__(self, client: unillm.AsyncUnify):
         self._client = client
         self._orig = client.generate
 
@@ -158,7 +158,7 @@ async def test_prunes_over_quota_tool_calls(model, monkeypatch):
 
 # ── 8. pruning over-quota tool calls across serial turns ────────────────────
 class _SerialCallsDriver:
-    def __init__(self, client: unify.AsyncUnify):
+    def __init__(self, client: unillm.AsyncUnify):
         self._client = client
         self._orig = client.generate
 

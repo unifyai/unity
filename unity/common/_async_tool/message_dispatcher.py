@@ -1,7 +1,7 @@
 from .loop_config import LoopConfig
 from .timeout_timer import TimeoutTimer
 from .event_bus_util import to_event_bus
-import unify
+import unillm
 
 
 class LoopMessageDispatcher:
@@ -12,7 +12,7 @@ class LoopMessageDispatcher:
 
     def __init__(
         self,
-        client: unify.AsyncUnify,
+        client: unillm.AsyncUnify,
         cfg: LoopConfig,
         timer: TimeoutTimer,
     ):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import pytest
-import unify
+import unillm
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
@@ -56,7 +56,7 @@ class DummyImageHandle:
 
 
 async def _await_tool(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     tool_name: str,
     *,
     min_results: int = 1,
@@ -383,7 +383,7 @@ async def test_nested_loop_does_not_inherit_parent_images(model) -> None:
     synthetic `live_images_overview` into the inner loop; now it should not.
     """
 
-    inner_clients: list[unify.AsyncUnify] = []
+    inner_clients: list[unillm.AsyncUnify] = []
 
     async def spawn_inner() -> dict:
         # Create a brand-new inner client and start a nested loop WITHOUT images

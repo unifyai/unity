@@ -57,7 +57,7 @@ class ScenarioBuilder:
         Identifier of the chat‑completion model to use (defaults to the same
         *o4-mini* model the concrete managers rely on).
     stateful
-        If *True* the underlying :class:`unify.AsyncUnify` instance keeps
+        If *True* the underlying :class:`unillm.AsyncUnify` instance keeps
         conversational state across multiple `create()` invocations – handy
         when building *related* scenarios incrementally.
     """

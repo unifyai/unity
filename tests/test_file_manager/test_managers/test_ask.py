@@ -33,7 +33,7 @@ async def test_ask_with_mocked_llm(file_manager, supported_file_examples: dict):
 
     # Mock the async unify client
     with patch(
-        "unity.file_manager.managers.file_manager.unify.AsyncUnify",
+        "unity.file_manager.managers.file_manager.unillm.AsyncUnify",
     ) as mock_unify:
         # Setup mock
         mock_client = AsyncMock()
@@ -76,7 +76,7 @@ async def test_ask_with_reasoning_steps(file_manager, supported_file_examples: d
 
     # Mock the async unify client
     with patch(
-        "unity.file_manager.managers.file_manager.unify.AsyncUnify",
+        "unity.file_manager.managers.file_manager.unillm.AsyncUnify",
     ) as mock_unify:
         # Setup mock
         mock_client = AsyncMock()
@@ -122,7 +122,7 @@ async def test_ask_with_clarification_queues(
 
     # Mock the async unify client
     with patch(
-        "unity.file_manager.managers.file_manager.unify.AsyncUnify",
+        "unity.file_manager.managers.file_manager.unillm.AsyncUnify",
     ) as mock_unify:
         # Setup mock
         mock_client = AsyncMock()
@@ -163,7 +163,7 @@ async def test_ask_with_rolling_summary(file_manager, supported_file_examples: d
 
     # Mock the async unify client
     with patch(
-        "unity.file_manager.managers.file_manager.unify.AsyncUnify",
+        "unity.file_manager.managers.file_manager.unillm.AsyncUnify",
     ) as mock_unify:
         # Setup mock
         mock_client = AsyncMock()

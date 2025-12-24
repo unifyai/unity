@@ -1,5 +1,5 @@
 import asyncio
-import unify
+import unillm
 import json
 import inspect
 import copy
@@ -186,7 +186,7 @@ def _check_valid_response_format(response_format: Any):
 
 
 async def async_tool_loop_inner(
-    client: unify.AsyncUnify,
+    client: unillm.AsyncUnify,
     message: str | dict | list[str | dict],
     tools: Dict[str, Union[Callable, ToolSpec]],
     *,
@@ -249,7 +249,7 @@ async def async_tool_loop_inner(
 
     Parameters
     ----------
-    client : ``unify.AsyncUnify``
+    client : ``unillm.AsyncUnify``
         Pre-initialised Unify client that provides ``append_messages`` and
         ``generate``.  All tokens sent to / received from the LLM flow
         through this object.

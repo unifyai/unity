@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import unify
+import unillm
 from pydantic import BaseModel
 
 from unity.settings import SETTINGS
@@ -26,7 +26,7 @@ def new_llm_client(
     async_client: bool = True,
     stateful: bool = False,
     **kwargs: Any,
-) -> "unify.AsyncUnify | unify.Unify":
+) -> "unillm.AsyncUnify | unillm.Unify":
     """
     Create a configured Unify client.
 
@@ -47,8 +47,8 @@ def new_llm_client(
     config.update(kwargs)
 
     if async_client:
-        return unify.AsyncUnify(model, **config)
-    return unify.Unify(model, **config)
+        return unillm.AsyncUnify(model, **config)
+    return unillm.Unify(model, **config)
 
 
 def _make_openai_strict_json_schema_compatible(node: Any) -> None:

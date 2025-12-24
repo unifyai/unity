@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from textwrap import dedent
 import functools
 import backoff
-import unify
+import unillm
 import cv2
 
 from unity.common.llm_client import new_llm_client
@@ -157,9 +157,9 @@ class ScreenShareManager:
         self,
         settings: Optional[ScreenShareManagerSettings] = None,
         image_manager=None,
-        detection_client: Optional[unify.AsyncUnify] = None,
-        analysis_client: Optional[unify.AsyncUnify] = None,
-        summary_client: Optional[unify.AsyncUnify] = None,
+        detection_client: Optional[unillm.AsyncUnify] = None,
+        analysis_client: Optional[unillm.AsyncUnify] = None,
+        summary_client: Optional[unillm.AsyncUnify] = None,
         debug: bool = False,
     ):
         """

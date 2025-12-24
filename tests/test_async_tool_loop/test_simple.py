@@ -1,9 +1,9 @@
 """
-pytest tests for the async-tool loop helpers **using a real `unify.AsyncUnify`
+pytest tests for the async-tool loop helpers **using a real `unillm.AsyncUnify`
 client for every test** – no stubs, no scripted completions.
 
 Running these tests will make real requests to the model you pass to
-`unify.AsyncUnify` (by default we use **GPT-5**).
+`unillm.AsyncUnify` (by default we use **GPT-5**).
 Make sure you have:
 
 * a valid OpenAI (or Unify-proxy) API key in your environment, and
@@ -32,7 +32,7 @@ from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 import pytest
-import unify
+import unillm
 
 # --------------------------------------------------------------------------- #
 #  MODULE UNDER TEST                                                          #
@@ -119,7 +119,7 @@ async def test_concurrent_tools_waits_for_all_results(model):
     slow.__name__ = "slow"
     slow.__qualname__ = "slow"
 
-    class InstrumentedClient(unify.AsyncUnify):
+    class InstrumentedClient(unillm.AsyncUnify):
         async def generate(self, **kwargs):  # noqa: D401
             events.append(("generate", time.monotonic()))
             return await super().generate(**kwargs)

@@ -9,7 +9,7 @@ correct.
 Running the suite therefore requires:
 
 * network access
-* a valid OpenAI-compatible key (used by `unify.Unify`)
+* a valid OpenAI-compatible key (used by `unillm.Unify`)
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import Literal, Optional, Type, Any
 from pydantic import BaseModel
-import unify
+import unillm
 
 from ..common.llm_client import new_llm_client
 from ..common.simulated import (
@@ -177,7 +177,7 @@ class SimulatedConversationManagerHandle(
         class _AnswerHandle(SteerableToolHandle, SimulatedHandleMixin):
             def __init__(
                 inner_self,
-                stateful_llm: unify.AsyncUnify,
+                stateful_llm: unillm.AsyncUnify,
                 prompt_str: str,
                 pydantic_model: Optional[Type[BaseModel]],
                 log_label: str,

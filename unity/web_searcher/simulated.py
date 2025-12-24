@@ -5,7 +5,7 @@ import threading
 from typing import Any, Dict, List, Optional, Type
 from pydantic import BaseModel
 
-import unify
+import unillm
 from .prompt_builders import build_ask_prompt, build_simulated_method_prompt
 from ..common.llm_client import new_llm_client
 from ..common.simulated import (
@@ -29,7 +29,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unillm.Unify,
         initial_text: str,
         *,
         mode: str,

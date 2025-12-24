@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
-import unify
+import unillm
 from .base import BaseSecretManager
 from .types import Secret
 from ..common.llm_client import new_llm_client
@@ -35,7 +35,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unillm.Unify,
         initial_text: str,
         *,
         mode: str,
