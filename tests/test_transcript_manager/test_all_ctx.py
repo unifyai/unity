@@ -74,7 +74,8 @@ def test_log_creates_all_transcripts_entries():
         content="Test message for All/Ctx",
         exchange_id=0,
     )
-    tm.log_messages(msg, synchronous=True)
+    tm.log_messages(msg)
+    tm.join_published()
 
     # Get the message_id from the created message
     result = tm._filter_messages(filter="content == 'Test message for All/Ctx'")
@@ -113,7 +114,8 @@ def test_user_field_injected():
             content="User field test",
             exchange_id=0,
         )
-        tm.log_messages(msg, synchronous=True)
+        tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'User field test'")
         messages = result["messages"]
@@ -147,7 +149,8 @@ def test_assistant_field_injected():
             content="Assistant field test",
             exchange_id=0,
         )
-        tm.log_messages(msg, synchronous=True)
+        tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'Assistant field test'")
         messages = result["messages"]
@@ -181,7 +184,8 @@ def test_assistant_id_field_injected():
             content="Assistant ID field test",
             exchange_id=0,
         )
-        tm.log_messages(msg, synchronous=True)
+        tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'Assistant ID field test'")
         messages = result["messages"]
@@ -215,7 +219,8 @@ def test_user_id_field_injected():
             content="User ID field test",
             exchange_id=0,
         )
-        tm.log_messages(msg, synchronous=True)
+        tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'User ID field test'")
         messages = result["messages"]
@@ -260,7 +265,8 @@ def test_private_fields_excluded_from_filter_messages():
         content="Private field exclusion test",
         exchange_id=0,
     )
-    tm.log_messages(msg, synchronous=True)
+    tm.log_messages(msg)
+    tm.join_published()
 
     # Get message via public filter_messages API
     result = tm._filter_messages(filter="content == 'Private field exclusion test'")
@@ -289,7 +295,8 @@ def test_deleting_message_removes_from_all_ctxs():
         content="Message to be deleted",
         exchange_id=0,
     )
-    tm.log_messages(msg, synchronous=True)
+    tm.log_messages(msg)
+    tm.join_published()
 
     result = tm._filter_messages(filter="content == 'Message to be deleted'")
     messages = result["messages"]
@@ -344,7 +351,8 @@ def test_update_syncs_to_all_aggregation_contexts():
         content="Update sync test message",
         exchange_id=0,
     )
-    tm.log_messages(msg, synchronous=True)
+    tm.log_messages(msg)
+    tm.join_published()
 
     result = tm._filter_messages(filter="content == 'Update sync test message'")
     messages = result["messages"]
@@ -388,7 +396,8 @@ def test_log_id_unchanged_after_update():
         content="Log ID test message",
         exchange_id=0,
     )
-    tm.log_messages(msg, synchronous=True)
+    tm.log_messages(msg)
+    tm.join_published()
 
     result = tm._filter_messages(filter="content == 'Log ID test message'")
     messages = result["messages"]
