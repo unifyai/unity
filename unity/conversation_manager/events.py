@@ -2,7 +2,7 @@ import json
 import uuid
 from typing import Optional, Any, ClassVar
 from datetime import datetime
-from dataclasses import dataclass, asdict, field, fields
+from dataclasses import dataclass, asdict, field
 
 from pydantic import BaseModel
 
@@ -63,16 +63,12 @@ class Event:
 
     @classmethod
     def from_dict(cls, data) -> "Event":
-        event_cls = cls._registry.get(data["event_name"])
-        if not event_cls:
+        cls = cls._registry.get(data["event_name"])
+        if not cls:
             raise Exception(f"Class {data['event_name']} is not registered.")
         kwargs = data["payload"].copy()
         timestamp = kwargs.pop("timestamp")
-        # Filter to only include fields defined on the target dataclass to handle
-        # schema changes gracefully (old stored events may have extra fields).
-        valid_fields = {f.name for f in fields(event_cls)}
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_fields}
-        return event_cls(**filtered_kwargs, timestamp=datetime.fromisoformat(timestamp))
+        return cls(**kwargs, timestamp=datetime.fromisoformat(timestamp))
 
     @classmethod
     def from_json(cls, json_data):
