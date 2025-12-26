@@ -1015,4 +1015,99 @@ class SteerableToolPane:
 
         return {"targets": targets, "count": len(targets), "results": results}
 
+    async def answer_clarification(
+        self,
+        handle_id: str,
+        call_id: str,
+        answer: str,
+    ) -> None:
+        """Answer a clarification for a specific handle (safe no-op if not pending)."""
+
+        key = (handle_id, call_id)
+        truncated = answer[:200]
+
+        no_op_event: dict[str, Any] | None = None
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            origin = (
+                self._origin_from_meta(meta)
+                if meta is not None
+                else self._unknown_origin()
+            )
+            pending = key in self._pending_clarifications
+            if meta is None:
+                no_op_event = {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "answer_clarification",
+                        "args": {"call_id": call_id, "answer": truncated},
+                        "status": "no-op",
+                        "reason": "handle not found",
+                    },
+                }
+                handle = None
+            elif not pending:
+                no_op_event = {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "answer_clarification",
+                        "args": {"call_id": call_id, "answer": truncated},
+                        "status": "no-op",
+                        "reason": "no pending clarification",
+                    },
+                }
+                handle = None
+            else:
+                handle = meta.handle
+
+        if no_op_event is not None:
+            await self._emit_event(no_op_event)
+            return
+
+        try:
+            await maybe_await(handle.answer_clarification(call_id, answer))
+            async with self._lock:
+                self._pending_clarifications.pop(key, None)
+                meta2 = self._registry.get(handle_id)
+                if meta2 is not None and meta2.status == "waiting_for_clarification":
+                    meta2.status = "running"
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "answer_clarification",
+                        "args": {"call_id": call_id, "answer": truncated},
+                        "status": "ok",
+                    },
+                },
+            )
+        except Exception as e:
+            logger.error(
+                "answer_clarification failed for handle_id=%s call_id=%s: %s",
+                handle_id,
+                call_id,
+                e,
+                exc_info=True,
+            )
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "answer_clarification",
+                        "args": {"call_id": call_id, "answer": truncated},
+                        "status": "error",
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                },
+            )
+
     
