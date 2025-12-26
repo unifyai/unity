@@ -17,6 +17,9 @@ set -euo pipefail
 #   Tags are formatted as "KEY1=val1,KEY2=val2,..." and logged to the Combined context.
 #   Only explicitly passed --env values are tagged (not values from .env files).
 #
+# Note: Each combination runs sequentially (parallel_run.sh always blocks until
+#       completion). For truly parallel grid runs, launch in separate terminals.
+#
 # Example:
 #   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
 #
@@ -44,7 +47,6 @@ declare -a PASSTHROUGH=()    # All other args (non-env flags like --eval-only)
 declare -a TARGETS=()        # Test targets (files/directories)
 
 DRY_RUN=0
-WAIT_FOR_ALL=0
 
 usage() {
   cat <<'USAGE'
@@ -52,6 +54,7 @@ Grid Search Runner
 ==================
 
 Run tests across all combinations of settings values.
+Each combination runs sequentially (parallel_run.sh always blocks until completion).
 
 Usage:
   ./grid_search.sh [options] --env KEY=val1|val2 [--env KEY2=a|b] [targets...]
@@ -60,7 +63,6 @@ Options:
   --env KEY=val1|val2   Specify multiple values for a setting (pipe-separated)
   --env KEY=value       Single value (included in all runs and tags)
   -n, --dry-run         Show generated commands without executing
-  --wait-all            Wait for all grid runs to complete (runs sequentially with --wait)
   -h, --help            Show this help
 
 All other options and arguments are passed through to parallel_run.sh.
@@ -77,7 +79,7 @@ Examples:
   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
 
   # With additional pass-through options
-  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --eval-only --wait tests/
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --eval-only tests/
 
   # Dry run to see what would be executed (including auto-tags)
   ./grid_search.sh -n --env UNIFY_MODEL="gpt-4o|claude-3" tests/
@@ -87,9 +89,8 @@ Examples:
 
 Notes:
   - Each combination spawns a separate parallel_run.sh invocation
-  - All runs execute concurrently by default (unless --wait-all is used)
+  - Combinations run sequentially (parallel_run.sh blocks until tests complete)
   - Results are logged to the Combined context with tags and full settings for filtering
-  - Use --wait-all to run combinations sequentially (useful for resource-constrained environments)
 USAGE
 }
 
@@ -102,10 +103,6 @@ while (( "$#" )); do
       ;;
     -n|--dry-run)
       DRY_RUN=1
-      shift
-      ;;
-    --wait-all)
-      WAIT_FOR_ALL=1
       shift
       ;;
     -e|--env)
@@ -256,11 +253,10 @@ if (( DRY_RUN )); then
   exit 0
 fi
 
-# Execute all combinations
-echo "Launching ${#COMBINATIONS[@]} parallel runs..."
+# Execute all combinations sequentially
+# (parallel_run.sh always blocks until tests complete)
+echo "Running ${#COMBINATIONS[@]} combinations sequentially..."
 echo ""
-
-declare -a PIDS=()
 
 for i in "${!COMBINATIONS[@]}"; do
   combo="${COMBINATIONS[$i]}"
@@ -285,38 +281,15 @@ for i in "${!COMBINATIONS[@]}"; do
   cmd+=( "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}" )
   cmd+=( "${TARGETS[@]+"${TARGETS[@]}"}" )
 
-  # Add --wait if running sequentially
-  if (( WAIT_FOR_ALL )); then
-    cmd+=( "--wait" )
-  fi
-
   echo "[$((i+1))/${#COMBINATIONS[@]}] Running: ${cmd[*]}"
 
-  if (( WAIT_FOR_ALL )); then
-    # Run sequentially with --wait
-    "${cmd[@]}"
-    status=$?
-    if (( status != 0 )); then
-      echo "Warning: Run [$((i+1))] exited with status $status"
-    fi
-  else
-    # Run in background
-    "${cmd[@]}" &
-    PIDS+=( $! )
+  "${cmd[@]}"
+  status=$?
+  if (( status != 0 )); then
+    echo "Warning: Run [$((i+1))] exited with status $status"
   fi
   unset all_env_for_tags
 done
-
-# If running concurrently, wait for all to complete
-if (( ! WAIT_FOR_ALL && ${#PIDS[@]} > 0 )); then
-  echo ""
-  echo "All ${#PIDS[@]} runs launched. Sessions are running in tmux."
-  echo ""
-  echo "To monitor progress:"
-  echo "  watch -n 0.5 'tmux ls'"
-  echo ""
-  echo "Results will be logged to the Combined context with settings for filtering."
-fi
 
 echo ""
 echo "Grid search complete."

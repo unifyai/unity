@@ -86,8 +86,8 @@ compdef _unity_attach_complete attach
 # Completes flags and test directories/files
 _unity_parallel_run_complete() {
     _arguments \
-        '-w[Wait for completion]' \
-        '--wait[Wait for completion]' \
+        '-t[Timeout in seconds]:timeout:(60 120 300 600)' \
+        '--timeout[Timeout in seconds]:timeout:(60 120 300 600)' \
         '-s[Serial mode (one session per file)]' \
         '--serial[Serial mode (one session per file)]' \
         '-j[Job limit]:jobs:(8 16 25 40 0)' \

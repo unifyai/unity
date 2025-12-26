@@ -47,10 +47,11 @@ grid_search.sh [options] --env KEY=val1|val2|val3 [--env KEY2=a|b] [targets...]
 | `--env KEY=val1\|val2` | Grid variable (multiple values, pipe-separated); each value becomes a separate run |
 | `--env KEY=value` | Constant variable (single value for all runs, included in auto-tags) |
 | `-n`, `--dry-run` | Show generated commands without executing (including auto-tags) |
-| `--wait-all` | Run combinations sequentially (with `--wait` per run) |
 | `-h`, `--help` | Show help |
 
 All other options are passed through to `parallel_run`.
+
+Note: Combinations run sequentially since each `parallel_run` call blocks until tests complete.
 
 ---
 
@@ -152,16 +153,6 @@ Dry run - commands that would be executed:
   parallel_run --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=false tests/
   ...
 ```
-
-**Sequential execution (resource-constrained):**
-
-```bash
-grid_search.sh --wait-all \
-  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
-  tests/
-```
-
-Runs combinations one at a time instead of all concurrently.
 
 ---
 

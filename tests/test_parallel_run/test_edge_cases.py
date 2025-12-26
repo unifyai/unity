@@ -294,19 +294,17 @@ class TestOutputMessages:
         # Should include hints about attaching/observing
         assert "attach" in result.stdout.lower() or "tmux" in result.stdout.lower()
 
-    def test_wait_shows_completion_message(self, runner):
-        """--wait should show completion message."""
+    def test_shows_completion_message(self, runner):
+        """Script should show completion message."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_single_test.py"),
         )
 
         assert "completed" in result.stdout.lower() or "passed" in result.stdout.lower()
 
-    def test_wait_failure_shows_failure_info(self, runner):
-        """--wait with failures should show failure info."""
+    def test_failure_shows_failure_info(self, runner):
+        """Script with failures should show failure info."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_fail.py"),
         )
 

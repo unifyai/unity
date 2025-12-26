@@ -336,7 +336,7 @@ class ParallelRunner:
         Args:
             *args: Arguments to pass to the script
             timeout: Subprocess timeout (default 600s to handle stress test scenarios)
-            wait_for_completion: If True, wait for sessions to complete even if --wait not passed
+            wait_for_completion: If True, use adaptive wait for sessions (script blocks by default)
             completion_timeout: No-progress timeout for session completion (default 300s)
             env: Additional environment variables
 

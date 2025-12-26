@@ -2,7 +2,7 @@
 Individual flag tests for parallel_run.sh.
 
 Tests each flag in isolation:
-- --wait / -w
+- --timeout / -t
 - --serial / -s
 - --match / -m
 - --env / -e
@@ -17,14 +17,13 @@ from __future__ import annotations
 import time
 
 
-class TestWaitFlag:
-    """Tests for --wait / -w flag."""
+class TestBlockingBehavior:
+    """Tests for default blocking behavior (script always blocks until completion)."""
 
-    def test_wait_blocks_until_completion(self, runner):
-        """--wait should block until all tests complete."""
+    def test_blocks_until_completion(self, runner):
+        """Script should block until all tests complete."""
         start = time.time()
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
         elapsed = time.time() - start
@@ -34,10 +33,9 @@ class TestWaitFlag:
         assert elapsed > 0.5, "Should have waited for tests"
         assert elapsed < 300, "Should not wait forever"
 
-    def test_wait_returns_zero_on_all_pass(self, runner):
-        """--wait should return 0 when all tests pass."""
+    def test_returns_zero_on_all_pass(self, runner):
+        """Script should return 0 when all tests pass."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -45,10 +43,9 @@ class TestWaitFlag:
             result.exit_code == 0
         ), f"Should return 0 on success, got {result.exit_code}. stderr: {result.stderr}"
 
-    def test_wait_returns_nonzero_on_failure(self, runner):
-        """--wait should return non-zero when any test fails."""
+    def test_returns_nonzero_on_failure(self, runner):
+        """Script should return non-zero when any test fails."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_fail.py"),
         )
 
@@ -56,45 +53,34 @@ class TestWaitFlag:
             result.exit_code != 0
         ), f"Should return non-zero on failure, got {result.exit_code}"
 
-    def test_wait_returns_nonzero_on_mixed_results(self, runner):
-        """--wait should return non-zero when some tests fail."""
+    def test_returns_nonzero_on_mixed_results(self, runner):
+        """Script should return non-zero when some tests fail."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_mixed_results.py"),
         )
 
         assert result.exit_code != 0, "Should return non-zero on partial failure"
 
-    def test_wait_creates_log_files(self, runner):
-        """--wait should create log files in pytest_logs/{socket}/."""
+    def test_creates_log_files(self, runner):
+        """Script should create log files in pytest_logs/{socket}/."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
         # Should have created at least one log file
-        assert len(result.log_files) >= 1, "Should create log files with --wait"
-
-    def test_short_wait_flag(self, runner):
-        """-w should work the same as --wait."""
-        result = runner.run(
-            "-w",
-            runner.fixture_path("test_always_pass.py"),
-        )
-
-        assert result.exit_code == 0, "Short -w flag should work"
+        assert len(result.log_files) >= 1, "Should create log files"
 
 
-class TestWaitWithTimeout:
-    """Tests for --wait N timeout functionality."""
+class TestTimeoutFlag:
+    """Tests for --timeout / -t flag."""
 
-    def test_wait_with_timeout_completes_normally(self, runner):
-        """--wait N should complete normally if tests finish before timeout."""
+    def test_timeout_completes_normally(self, runner):
+        """--timeout N should complete normally if tests finish before timeout."""
         import time
 
         start = time.time()
         result = runner.run(
-            "--wait",
+            "--timeout",
             "300",  # 5 minute timeout - handles stress test scenarios
             runner.fixture_path("test_always_pass.py"),
         )
@@ -105,11 +91,11 @@ class TestWaitWithTimeout:
         # Should complete within reasonable time (300s upper bound for stress test scenarios)
         assert elapsed < 300, f"Should complete within timeout, took {elapsed:.1f}s"
 
-    def test_wait_with_timeout_times_out(self, runner):
-        """--wait N should timeout and exit with code 2 if tests don't complete in time."""
+    def test_timeout_times_out(self, runner):
+        """--timeout N should timeout and exit with code 2 if tests don't complete in time."""
         # Use a very short timeout (2 seconds) - tests won't complete in time
         result = runner.run(
-            "--wait",
+            "--timeout",
             "2",  # 2 second timeout - too short
             runner.fixture_path("test_always_pass.py"),
         )
@@ -121,22 +107,22 @@ class TestWaitWithTimeout:
         # Should mention timeout in output
         assert "timeout" in result.stdout.lower() or "Timeout" in result.stdout
 
-    def test_wait_with_short_flag_and_timeout(self, runner):
-        """-w N should work the same as --wait N."""
+    def test_timeout_with_short_flag(self, runner):
+        """-t N should work the same as --timeout N."""
         result = runner.run(
-            "-w",
+            "-t",
             "300",  # 5 minute timeout - handles stress test scenarios
             runner.fixture_path("test_always_pass.py"),
         )
 
         assert (
             result.exit_code == 0
-        ), f"Short -w with timeout should work: {result.stderr}"
+        ), f"Short -t with timeout should work: {result.stderr}"
 
-    def test_wait_timeout_default_per_test(self, runner):
-        """--wait N should work correctly with default per-test mode."""
+    def test_timeout_default_per_test(self, runner):
+        """--timeout N should work correctly with default per-test mode."""
         result = runner.run(
-            "--wait",
+            "--timeout",
             "300",  # 5 minute timeout - handles stress test scenarios
             runner.fixture_path("test_always_pass.py"),
         )
@@ -199,11 +185,10 @@ class TestSerialFlag:
             len(result.sessions_created) == 1
         ), f"Expected 1 session, got {len(result.sessions_created)}"
 
-    def test_serial_with_wait(self, runner):
-        """--serial with --wait should wait for all file sessions."""
+    def test_serial_blocks_until_completion(self, runner):
+        """--serial should block until all file sessions complete."""
         result = runner.run(
             "-s",
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 

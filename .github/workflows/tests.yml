@@ -231,12 +231,12 @@ jobs:
           echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
         fi
 
-        # Calculate wait timeout in seconds (default 120 minutes)
+        # Calculate timeout in seconds (default 120 minutes)
         TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
         if [[ -z "$TIMEOUT_MINS" || "$TIMEOUT_MINS" == "null" ]]; then
           TIMEOUT_MINS=120
         fi
-        echo "wait_seconds=$((TIMEOUT_MINS * 60))" >> $GITHUB_OUTPUT
+        echo "timeout_seconds=$((TIMEOUT_MINS * 60))" >> $GITHUB_OUTPUT
 
     - name: Set up Python
       uses: actions/setup-python@v2
@@ -301,7 +301,7 @@ jobs:
       id: run-tests
       run: |
         set +e
-        xvfb-run tests/parallel_run.sh --wait ${{ steps.normalize-path.outputs.wait_seconds }} ${{ inputs.parallel_run_args }} ${{ steps.normalize-path.outputs.test_args }}
+        xvfb-run tests/parallel_run.sh --timeout ${{ steps.normalize-path.outputs.timeout_seconds }} ${{ inputs.parallel_run_args }} ${{ steps.normalize-path.outputs.test_args }}
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE

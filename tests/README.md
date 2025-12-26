@@ -21,14 +21,14 @@ This directory contains the test suite for Unity.
 ## Quick Start
 
 ```bash
-# Run all tests in parallel (works immediately, no setup required)
+# Run all tests in parallel (blocks until completion)
 tests/parallel_run.sh tests/
 
 # Run a specific folder
 tests/parallel_run.sh tests/test_contact_manager/
 
-# Wait for completion
-tests/parallel_run.sh --wait tests/
+# Run with a timeout (useful for CI)
+tests/parallel_run.sh --timeout 300 tests/
 
 # Run on CI instead (no local CPU load)
 git commit -m "Fix bug [run-tests]"
@@ -111,6 +111,8 @@ parallel_run --symbolic-only tests   # Only symbolic tests
 
 ## Parallel Runner Reference
 
+The script always blocks until all tests complete, streaming pass/fail results inline.
+
 ```bash
 parallel_run [options] <targets>
 
@@ -120,7 +122,7 @@ parallel_run tests/test_foo.py                   # File
 parallel_run tests/test_foo.py::test_bar         # Specific test
 
 # Common flags
-parallel_run -w tests/                           # Wait for completion
+parallel_run --timeout 300 tests/                # Abort after 5 minutes
 parallel_run -s tests/                           # Serial (per-file, not per-test)
 parallel_run -j 8 tests/                         # Limit to 8 concurrent
 parallel_run --eval-only tests/                  # Only eval tests
@@ -137,7 +139,7 @@ parallel_run tests/ -- --lf                     # Re-run last failed tests
 
 | Flag | Description |
 |------|-------------|
-| `-w`, `--wait` | Wait for all tests to complete |
+| `-t`, `--timeout N` | Abort if tests don't complete within N seconds |
 | `-s`, `--serial` | One session per file (default: one per test) |
 | `-j N`, `--jobs N` | Limit concurrent sessions (default: 25) |
 | `--eval-only` | Only `@pytest.mark.eval` tests |
