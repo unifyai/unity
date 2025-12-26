@@ -415,6 +415,44 @@ class InterjectionDecision(BaseModel):
         description="The context for generalization, e.g., 'all other employees in the folder' or 'Sam Parker'.",
     )
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Routing to in-flight steerable handles (SteerableToolPane)
+    # ──────────────────────────────────────────────────────────────────────
+    routing_action: Optional[
+        typing.Literal["none", "targeted", "broadcast_filtered"]
+    ] = Field(
+        None,
+        description=(
+            "How to route this interjection to in-flight handles. "
+            "'none': No routing (default). "
+            "'targeted': Route to specific handle_ids. "
+            "'broadcast_filtered': Broadcast to handles matching filter criteria."
+        ),
+    )
+    target_handle_ids: Optional[List[str]] = Field(
+        None,
+        description=(
+            "List of handle_ids to target when routing_action='targeted'. "
+            "Use this when the interjection is relevant to specific in-flight operations."
+        ),
+    )
+    broadcast_filter: Optional[dict[str, Any]] = Field(
+        None,
+        description=(
+            "Filter criteria for broadcast routing when routing_action='broadcast_filtered'. "
+            "Supported keys: 'origin_tool_prefixes' (list[str]), 'statuses' (list[str]), "
+            "'capabilities' (list[str]), 'created_after_step' (int), 'created_before_step' (int). "
+            "All filters are inclusive-only (whitelist). If omitted, defaults to all in-flight interjectable handles."
+        ),
+    )
+    routed_message: Optional[str] = Field(
+        None,
+        description=(
+            "Optional custom message to send to routed handles. "
+            "If omitted, the original interjection message is used."
+        ),
+    )
+
 
 class SandboxMergeDecision(BaseModel):
     """A structured decision on whether to merge sandbox findings."""
