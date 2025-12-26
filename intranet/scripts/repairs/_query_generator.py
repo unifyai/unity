@@ -9,6 +9,7 @@ Usage:
     python _query_generator.py --list-queries          # List available queries
     python _query_generator.py --all                   # All queries with default params
     python _query_generator.py --all --expand-params   # All queries × all param combinations
+    python _query_generator.py --all --full-matrix     # Full matrix: all queries × all params, nested dirs
     python _query_generator.py --query jobs_completed_per_day
     python _query_generator.py --query jobs_completed_per_day --expand-params
 """
@@ -104,9 +105,25 @@ def get_default_params(query_id: str) -> Dict[str, Any]:
     return {}
 
 
+def _params_to_log_filename(params: Dict[str, Any]) -> str:
+    """Convert params dict to a log filename component."""
+    if not params:
+        return "default"
+    parts = []
+    for key, value in sorted(params.items()):
+        # Format value as string
+        if isinstance(value, bool):
+            val_str = "true" if value else "false"
+        else:
+            val_str = str(value)
+        parts.append(f"{key}_{val_str}")
+    return "__".join(parts)
+
+
 def generate_query_specs(
     query_ids: List[str],
     expand_params: bool = False,
+    full_matrix: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Generate query specifications.
@@ -114,11 +131,18 @@ def generate_query_specs(
     Args:
         query_ids: List of query IDs to generate specs for
         expand_params: If True, generate all parameter combinations
+        full_matrix: If True, generate all combinations with metric subdirs
+                    (implies expand_params=True)
 
     Returns:
-        List of query specs with query_id, params, and description
+        List of query specs with query_id, params, and description.
+        In full_matrix mode, also includes 'metric_subdir' for nested logging.
     """
     specs = []
+
+    # full_matrix implies expand_params
+    if full_matrix:
+        expand_params = True
 
     for query_id in query_ids:
         if query_id not in QUERIES:
@@ -143,6 +167,12 @@ def generate_query_specs(
                 spec["session_name"] = f"{query_id}__{param_suffix}"
             else:
                 spec["session_name"] = query_id
+
+            # In full_matrix mode, add metric_subdir for nested directory structure
+            if full_matrix:
+                spec["metric_subdir"] = query_id
+                # Also add a log filename hint
+                spec["log_filename"] = _params_to_log_filename(params)
 
             specs.append(spec)
 
@@ -177,6 +207,11 @@ def main():
         help="Expand all parameter combinations",
     )
     parser.add_argument(
+        "--full-matrix",
+        action="store_true",
+        help="Full matrix mode: all queries × all params with metric subdirs for nested logging",
+    )
+    parser.add_argument(
         "--format",
         choices=["json", "jsonl", "names"],
         default="json",
@@ -200,7 +235,11 @@ def main():
         return 1
 
     # Generate specs
-    specs = generate_query_specs(query_ids, expand_params=args.expand_params)
+    specs = generate_query_specs(
+        query_ids,
+        expand_params=args.expand_params,
+        full_matrix=args.full_matrix,
+    )
 
     # Output
     if args.format == "json":
