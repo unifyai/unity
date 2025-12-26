@@ -4,7 +4,6 @@ Conductor orchestrates all state managers and has complex tool routing.
 These tests validate the prompt structure and stability using mock tools.
 """
 
-import re
 import sys
 import subprocess
 import textwrap
@@ -22,6 +21,7 @@ from unity.conductor.prompt_builders import build_request_prompt
 
 def _make_mock_conductor_tools() -> dict:
     """Create mock tool functions matching Conductor's expected tool set."""
+
     # ContactManager
     def ContactManager_ask(text: str) -> str:
         """Ask about contacts."""
@@ -241,7 +241,7 @@ def _build_prompt_in_subprocess() -> str:
     This ensures we catch differences that only manifest across Python sessions.
     """
     code = textwrap.dedent(
-        '''
+        """
         import os, sys
         sys.path.insert(0, os.getcwd())
         # Install the same static timestamp override used by pytest's autouse fixture,
@@ -304,7 +304,7 @@ def _build_prompt_in_subprocess() -> str:
 
         prompt = build_request_prompt(tools=tools)
         sys.stdout.write(prompt)
-        ''',
+        """,
     )
     proc = subprocess.run(
         [sys.executable, "-c", code],

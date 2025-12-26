@@ -28,6 +28,7 @@ class Contact(BaseModel):
         "respond_to": "resp",
         "response_policy": "policy",
         "timezone": "tz",
+        "is_system": "sys",
     }
 
     # Dynamic aliases for custom columns (full → shorthand); managers can
@@ -81,6 +82,11 @@ class Contact(BaseModel):
     timezone: Optional[str] = Field(
         default=None,
         description="IANA Timezone identifier (e.g., 'America/New_York', 'Europe/London').",
+    )
+
+    is_system: bool = Field(
+        default=False,
+        description="System contact (assistant, user, or org member). Cannot be deleted.",
     )
 
     @model_validator(mode="before")

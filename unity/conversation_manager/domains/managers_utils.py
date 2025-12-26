@@ -413,18 +413,22 @@ def _init_managers(
     local_start_time = perf_counter()
     # ConversationManagerHandle has different constructor args for real vs simulated
     if SETTINGS.conversation.IMPL == "simulated":
-        cm._conversation_manager_handle = ManagerRegistry.get_conversation_manager_handle(
-            description="production deployment",
-            assistant_id=SESSION_DETAILS.assistant.id,
-            contact_id="1",
+        cm._conversation_manager_handle = (
+            ManagerRegistry.get_conversation_manager_handle(
+                description="production deployment",
+                assistant_id=SESSION_DETAILS.assistant.id,
+                contact_id="1",
+            )
         )
     else:
-        cm._conversation_manager_handle = ManagerRegistry.get_conversation_manager_handle(
-            event_broker=cm.event_broker,
-            conversation_id=SESSION_DETAILS.assistant.id,
-            contact_id="1",
-            transcript_manager=cm.transcript_manager,
-            conversation_manager=cm,
+        cm._conversation_manager_handle = (
+            ManagerRegistry.get_conversation_manager_handle(
+                event_broker=cm.event_broker,
+                conversation_id=SESSION_DETAILS.assistant.id,
+                contact_id="1",
+                transcript_manager=cm.transcript_manager,
+                conversation_manager=cm,
+            )
         )
     print(
         f"[ManagersWorker] ConversationManagerHandle ({type(cm._conversation_manager_handle).__name__}) initialized in "

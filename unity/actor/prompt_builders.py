@@ -4,6 +4,7 @@ import inspect
 import textwrap
 import json
 from typing import Callable, Dict, Any, Optional, Mapping, TYPE_CHECKING
+from unity.actor.prompt_examples import get_verification_examples_for_environments
 from unity.common.llm_helpers import (
     class_api_overview,
     get_type_hints,
@@ -14,166 +15,54 @@ if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
 
 
-def _build_verification_static_prefix() -> str:
+def _build_verification_static_prefix(
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
+) -> str:
     """
     Builds the static, cacheable prefix for verification prompts.
     Returns:
         Static prefix string for verification prompts (≥2,048 tokens)
     """
+    has_browser = environments is None or "computer_primitives" in environments
+    has_primitives = environments is not None and "primitives" in environments
+    examples_block = get_verification_examples_for_environments(
+        has_browser=has_browser,
+        has_primitives=has_primitives,
+    )
     return textwrap.dedent(
-        """
-        You are a pragmatic and meticulous Quality Assurance expert for an autonomous agent. Your task is to assess if an executed function has made **meaningful and accurate progress** towards the **Overall User Goal**, even if the website behaves in unexpected ways.
+        f"""
+        You are a pragmatic and meticulous QA reviewer for an autonomous agent. Your job is to assess whether an executed function made **meaningful, accurate progress** toward the **Overall User Goal** using the best available evidence (trace, environment evidence, return value).
 
         ---
-        ### 🧠 Your Decision-Making Framework
-        You MUST follow this reasoning process to arrive at a decision.
+        ### Decision-Making Framework
+        Follow this process to arrive at a decision:
 
-        **Step 1: Scrutinize the Low-Level Agent Trace.**
-        - This is your primary evidence. Read the agent's step-by-step reasoning. Does its logic hold up? Did it correctly identify elements? Did it notice any errors or unexpected UI changes?
-        - The trace is the ground truth of what happened.
+        **Step 1: Scrutinize the Low-Level Agent Trace (primary evidence).**
+        - Check whether the reasoning is sound and the described actions match the task.
+        - Look for confusion, unverified assumptions, or missing preconditions.
 
-        **Step 2: Assess the Core Purpose vs. The Evidence.**
-        - Look at the **Intent** and the **Overall Goal**. What was the most important outcome this function was supposed to achieve?
-        - Compare this with the hard evidence: the agent's reasoning in the **Trace**, the visual **Screenshot**, and the final **Return Value**.
+        **Step 2: Compare intent vs. evidence.**
+        - Use the function's intent and goal as the source of truth.
+        - Compare against the trace, environment evidence (e.g., screenshot/URL), and the return value.
 
-        **Step 3: Choose Your Action.**
+        **Step 3: Choose one action.**
 
-        - **Is the outcome definitively correct and does it advance the goal?**
-          - The **Agent Trace** shows sound reasoning, the **Screenshot** confirms the final state, and the **Return Value** is correct.
-          - Choose **`ok`**.
+        - If the outcome is definitively correct and advances the goal: choose **`ok`**.
 
-        - **Is the outcome definitively wrong?**
-          - The **Agent Trace** shows the agent made a mistake (e.g., clicked the wrong button, extracted wrong text). The **Screenshot** or **Return Value** confirms the error.
-          - Choose **`reimplement_local`**.
+        - If the outcome is definitively wrong (trace or evidence contradicts success): choose **`reimplement_local`**.
 
-        - **Is the function's entire premise flawed?**
-          - The **Agent Trace** shows the agent correctly reasoning that it *cannot* perform the action (e.g., "I am looking for a 'shipping' button, but the page text says 'shipping is calculated at checkout'").
-          - Choose **`replan_parent`**.
+        - If the function is impossible due to missing preconditions or a parent mistake: choose **`replan_parent`**.
 
-        - **Are you unsure, or did the agent's trace reveal confusion or ambiguity?**
-          - The **Agent Trace** shows the agent struggling or making an assumption you cannot verify (e.g., "I clicked the button, but I am not sure if it worked.").
-          - Choose **`request_clarification`**. This is your default for ambiguity.
+        - If success is ambiguous or the trace shows an unverified assumption: choose **`request_clarification`** (default for ambiguity).
 
-        ### ✨ CRITICAL FOR FAILURES (`reimplement_local`, `replan_parent`) ✨
-        If you determine a failure requires code modification (`reimplement_local`) or replanning (`replan_parent`):
-        1.  **Detailed Root Cause:** Your `reason` field MUST clearly explain *why* the function failed, referencing specific evidence from the Agent Trace, Screenshot, or Return Value. Pinpoint the exact mismatch between intent and outcome.
-        2.  **Actionable Fix Strategy:** Your `reason` field MUST also include a concise but specific strategy for how the function should be fixed (for `reimplement_local`) or how the parent should be replanned (for `replan_parent`). This strategy will directly guide the next implementation step.
+        ### Critical for failures (`reimplement_local`, `replan_parent`)
+        Your `reason` MUST include:
+        1. **Detailed root cause** (cite specific trace/evidence/return value).
+        2. **Actionable fix strategy** (how to re-implement locally or how to replan the parent).
 
         ---
-        ### 💡 Examples of Verification Decisions
-
-
-        **Example 1: A Clear Success (`ok`)**
-        - **Goal**: "Find the cheapest flight to New York and select it."
-        - **Function**: `select_cheapest_flight()`
-        - **Agent Trace**:
-        - `◆ [act] Find and select the cheapest flight option.`
-        - `REASONING: I am scanning the flight results. I see three options: Delta for $250, United for $220, and Spirit for $195. The Spirit flight is the cheapest. I will click the 'Select' button for the Spirit flight.`
-        - `⊙ click 'Select' button next to 'Spirit - $195'`
-        - `✓ done`
-        - **Return Value**: `{{'airline': 'Spirit', 'price': 195}}`
-        - **Screenshot**: Shows the "Passenger Details" page, with a header that says "Your flight with Spirit to JFK".
-        - **Correct Assessment**:
-        ```json
-        {{
-            "status": "ok",
-            "reason": "The function's intent was fully achieved. The Agent Trace clearly shows correct reasoning for identifying the cheapest flight. The Function Return Value confirms the correct data was extracted, and the Screenshot proves the action resulted in successful progress to the next step in the booking process."
-        }}
-        ```
-
-        ---
-
-        **Example 2: An Ambiguous Outcome (`request_clarification`)**
-        - **Goal**: "Download the Q3 financial report."
-        - **Function**: `download_q3_report()`
-        - **Agent Trace**:
-        - `◆ [act] Download the Q3 financial report.`
-        - `REASONING: I have navigated to the reports page. I see two links: 'Q3 2024 Summary (PDF)' and 'Q3 2024 Raw Data (CSV)'. The user's request is ambiguous about the required format. I will assume the PDF summary is what they want and proceed with that.`
-        - `⊙ click link with text 'Q3 2024 Summary (PDF)'`
-        - `✓ done`
-        - **Return Value**: `None`
-        - **Screenshot**: Shows the browser's "File Download" dialog box for a file named `Q3_Report_Summary.pdf`.
-        - **Correct Assessment**:
-        ```json
-        {{
-            "status": "request_clarification",
-            "reason": "The function's success is ambiguous. The Agent Trace reveals it encountered two valid options (PDF and CSV) and had to make an assumption. While it successfully initiated a download, it may not be the format the user needs. It is best to verify with the user before proceeding.",
-            "clarification_question": "I found two versions of the Q3 report: a PDF summary and a CSV with raw data. I have started downloading the PDF. Is this the correct one, or do you need the CSV file instead?"
-        }}
-        ```
-
-        ---
-
-        **Example 3: A Clear Tactical Failure (`reimplement_local`)**
-        - **Goal**: "Sign me up for the newsletter with 'test@example.com'."
-        - **Function**: `submit_newsletter_signup(email='test@example.com')`
-        - **Function Source**:
-        ```python
-        async def submit_newsletter_signup(email: str):
-            \"\"\"Submits the newsletter signup form with the provided email address.\"\"\"
-            await computer_primitives.act(f"Type '{{email}}' into the email input field")
-            await computer_primitives.act("Click the 'Subscribe' button")
-            return "Signup submitted"
-        ```
-        - **Agent Trace**:
-        - `◆ [act] Submit the newsletter signup form with the provided email.`
-        - `REASONING: I see the email input field and the 'Subscribe' button. I will type the email address and then click the button.`
-        - `⌨︎ type "test@example.com" into the email field`
-        - `⊙ click 'Subscribe' button`
-        - `✓ done`
-        - **Return Value**: `None`
-        - **Screenshot**: Shows the same signup form, but a new red error message is now visible below the input field, which reads: "Please provide a corporate email address."
-        - **Correct Assessment**:
-        ```json
-        {{
-            "status": "reimplement_local",
-            "reason": "Tactical error: The Agent Trace confirms the steps (typing, clicking) were executed correctly, but the Screenshot provides definitive evidence of failure through the 'Please provide a corporate email address' error message. Root cause: The function blindly submitted the provided email without validating whether it meets the form's requirements (corporate email domain). The form rejected 'test@example.com' as it requires a corporate domain. Fix strategy: The function `submit_newsletter_signup()` needs to be reimplemented to add validation logic before submission. It should either: (1) Check if the provided email appears to be a corporate domain (not generic domains like gmail.com, example.com, etc.) and request clarification from the user if it's not, or (2) Attempt submission, detect the error message on the page after clicking Subscribe, and if the corporate email error appears, request clarification asking the user to provide a corporate email address. The function's logic can be fixed locally - no changes to the parent plan are needed."
-        }}
-        ```
-
-        ---
-
-
-        **Example 4: A Strategic Failure - Parent's Mistake (`replan_parent`)**
-        - **Goal**: "Find a laptop under $500 and add it to cart"
-        - **Function Under Review**: `apply_price_filter(max_price: int)`
-        - **Function Source (including parent context from Scoped Plan Analysis)**:
-        ```python
-        # --- Parent Function (caller) ---
-        async def search_and_filter_laptops():
-            \"\"\"Searches for laptops and applies price filtering.\"\"\"
-            await computer_primitives.act("Search for 'laptops' on the website")
-            # ERROR: Missing navigation step to product catalog page!
-            # Should navigate to the product listing page here before filtering
-            await apply_price_filter(500)
-            return "Filtering applied"
-
-        # --- Current Function (under review) ---
-        async def apply_price_filter(max_price: int):
-            \"\"\"Applies a price filter to the current product listing.\"\"\"
-            result = await computer_primitives.act(
-                f"Apply a price filter to show only items under ${{max_price}}"
-            )
-            return result
-        ```
-        - **Agent Trace**:
-        - `◆ [act] Apply a price filter to show only items under $500`
-        - `REASONING: I need to find and use the price filter controls on the page. Let me scan the visible elements for filter options or a price range selector.`
-        - `✗ I cannot find any price filter controls on the current page. The page is showing search results with a search bar and category links, but no product listing with filters. It appears the page is still on the main search results view, not the product catalog page where filters would be available.`
-        - `REASONING: This is a strategic error. The function's goal is to apply a price filter, but the necessary UI elements (price filter controls) are not present on the current page. The browser is on a search results page, not the detailed product catalog page that would have filtering options. This indicates the parent function failed to navigate to the correct page before calling this function.`
-        - `✓ done (no action taken - impossible to complete)`
-        - **Return Value**: `{{"success": False, "reason": "Price filter controls not found on current page"}}`
-        - **Screenshot**: Shows a search results page with a search bar at the top, category navigation links, and general website content. No product grid or filter sidebar is visible.
-        - **Correct Assessment**:
-        ```json
-        {{
-            "status": "replan_parent",
-            "reason": "Strategic error: The function's goal is to apply a price filter, but the Agent Trace reveals that the browser is on a search results page, not the product catalog page where filter controls would be available. The Screenshot confirms this - it shows a general search interface with no product listing or filter sidebar. The agent correctly identified that the necessary UI elements are missing through no fault of this function's logic. Root cause: Looking at the Parent Function source code in the Scoped Plan Analysis, `search_and_filter_laptops()` calls `computer_primitives.act('Search for laptops')` and then *immediately* calls `apply_price_filter(500)` without any navigation step in between. The parent assumes searching will automatically land on a product catalog page with filters, but the trace shows the browser is still on a generic search results page. Fix strategy: The parent function `search_and_filter_laptops()` needs to be replanned to add an explicit navigation step after the search (e.g., `await computer_primitives.act('Navigate to the laptop products page')` or `await computer_primitives.act('Click on the laptops category to view the full catalog')`) *before* calling `apply_price_filter()`. The parent must ensure the product grid and filter controls are visible before attempting to apply filters."
-        }}
-        ```
-        **Explanation**: This is a clear case for `replan_parent` vs `reimplement_local`. The Agent Trace shows the agent correctly reasoning about what it was asked to do (apply price filter), correctly scanning for the necessary UI elements (filter controls), and correctly concluding that those elements are absent due to being on the wrong page. The function `apply_price_filter()` itself has no tactical errors - it cannot be "fixed" because the problem lies in the parent's plan. By reviewing the Parent Function source code, we can see the structural flaw: `search_and_filter_laptops()` is missing a navigation step between searching and filtering. The parent failed to establish the correct preconditions (being on the product catalog page with filters) before calling this child function. The enhanced reason clearly identifies the missing line in the parent code and provides a concrete fix strategy (add navigation step).
-
-        ---
+        ### Examples
+        {examples_block}
 
         ### Function Execution to Verify
 
@@ -232,14 +121,285 @@ def _build_dynamic_implement_static_prefix(
     ).strip()
 
 
+def _build_core_implementation_rules() -> str:
+    """
+    Builds environment-agnostic core implementation rules.
+
+    Returns:
+        Formatted string with 9 critical implementation rules
+    """
+    return textwrap.dedent(
+        """
+        ### 🎯 CRITICAL RULES FOR DYNAMIC FUNCTION IMPLEMENTATION
+
+        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
+            ```python
+            # ✅ CORRECT: Just one function implementation
+            async def extract_data():
+                # Full implementation here
+                pass
+
+            # ❌ WRONG: Multiple functions or extra code
+            def helper():
+                pass
+            async def extract_data():
+                pass
+            ```
+
+        2.  **Scope and Imports:** ALL imports must be placed **inside** the function.
+            ```python
+            # ❌ WRONG: Top-level imports
+            from pydantic import BaseModel
+            from typing import Optional
+
+            async def my_function():
+                pass
+
+            # ✅ CORRECT: All imports inside the function
+            async def my_function():
+                from pydantic import BaseModel
+                from typing import Optional
+                import json
+                import re
+                # Rest of implementation
+            ```
+
+        3.  **Decorators & Docstrings:** Include comprehensive docstrings, but NO decorators.
+            ```python
+            # ❌ WRONG: Using @verify decorator
+            @verify
+            async def process_data():
+                pass
+
+            # ✅ CORRECT: No decorators, clear docstring
+            async def process_data(items: list[dict]) -> dict:
+                \"\"\"Process and analyze item data.
+
+                Args:
+                    items: List of item dictionaries
+
+                Returns:
+                    dict: Processed results with statistics
+                \"\"\"
+            ```
+
+        4.  **Async All The Way:** Function MUST be async.
+            ```python
+            # ❌ WRONG: Regular function
+            def extract_info():
+                return data
+
+            # ✅ CORRECT: Async function
+            async def extract_info():
+                return data
+            ```
+
+        5.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all environment methods AND any helper functions or skills you call.
+            ```python
+            # ✅ CORRECT: Awaiting environment methods (browser or primitives)
+            await computer_primitives.navigate("https://example.com")
+            contact = await primitives.contacts.ask("Find John Doe")
+
+            # ✅ CORRECT: Awaiting a helper function/skill from the library
+            result = await helper_func_1("arg1", "arg2")
+
+            # ❌ WRONG: Forgetting to await
+            result = helper_func_1("arg1", "arg2")
+            ```
+
+        6.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
+            ```python
+            async def extract_structured_data():
+                # Step 1: Import inside function
+                from pydantic import BaseModel, Field
+                from typing import Optional, List
+
+                # Step 2: Define models inside function
+                class Product(BaseModel):
+                    name: str
+                    price: float
+                    # Step 3: Use Optional for potentially missing fields
+                    rating: Optional[float] = Field(default=None)
+                    in_stock: bool = Field(description="Availability status")
+
+                class ProductList(BaseModel):
+                    products: List[Product]
+                    total: int
+
+                # Step 4: CRITICAL - Call model_rebuild() on outermost model
+                ProductList.model_rebuild()
+
+                # Step 5: Use with response_format (works with any environment)
+                result = await some_tool.observe(
+                    "Extract all products with details",
+                    response_format=ProductList
+                )
+
+                # ❌ WRONG: Forgetting model_rebuild()
+                # ❌ WRONG: Not using Optional for missing fields
+                # ❌ WRONG: Defining models outside the function
+            ```
+
+        7.  **Robust Error Handling:** Log errors but ALWAYS re-raise.
+            ```python
+            # ❌ WRONG: Silencing errors
+            try:
+                result = await risky_operation()
+            except Exception as e:
+                print(f"Failed: {{e}}")
+                return None  # Never do this!
+
+            # ✅ CORRECT: Log and re-raise
+            try:
+                result = await risky_operation()
+            except Exception as e:
+                print(f"Operation failed: {{e}}")
+                raise  # Always re-raise!
+
+            # ✅ CORRECT: With fallback and re-raise
+            try:
+                # Primary approach
+                result = await primary_method()
+            except Exception as e:
+                print(f"Primary failed: {{e}}")
+                try:
+                    # Fallback approach
+                    result = await fallback_method()
+                except Exception as fallback_e:
+                    print(f"Fallback also failed: {{fallback_e}}")
+                    raise ValueError(f"Both methods failed: {{e}}, {{fallback_e}}")
+            ```
+
+        8.  **Environment Globals Usage:** Use environment globals directly, no imports or type hints.
+            ```python
+            # ❌ WRONG: Importing or typing environments
+            from somewhere import ComputerPrimitives
+            def my_func(computer_primitives: ComputerPrimitives):
+                pass
+
+            # ❌ WRONG: Creating environment instances
+            computer_primitives = ComputerPrimitives()
+
+            # ✅ CORRECT: Use injected globals directly
+            async def my_func():
+                # Browser environment
+                result = await computer_primitives.navigate("https://example.com")
+                data = await computer_primitives.observe("Get page title")
+
+                # State manager environment
+                contact = await primitives.contacts.ask("Find John Doe")
+            ```
+
+        9. **Requesting Clarification:**
+            ```python
+            # ✅ CORRECT: Call as a global function
+            destination = await request_clarification("What is your destination city?")
+
+            # ❌ WRONG: Do not call it on an environment
+            # destination = await computer_primitives.request_clarification(...)
+            ```
+        """,
+    ).strip()
+
+
+def _build_browser_implementation_examples() -> str:
+    """
+    Builds browser-specific implementation examples from the centralized library.
+
+    Returns:
+        Formatted string with browser navigation, multi-step, and screenshot-driven examples
+    """
+    from unity.actor.prompt_examples import (
+        get_browser_navigation_example,
+        get_browser_multistep_example,
+        get_browser_screenshot_driven_example,
+    )
+
+    return textwrap.dedent(
+        f"""
+        ### Browser Implementation Examples
+
+        When implementing functions that use `computer_primitives`, follow these patterns:
+
+        {get_browser_navigation_example().strip()}
+
+        {get_browser_multistep_example().strip()}
+
+        {get_browser_screenshot_driven_example().strip()}
+        """,
+    ).strip()
+
+
+def _build_primitives_implementation_examples() -> str:
+    """
+    Builds state manager implementation examples from the centralized library.
+
+    Returns:
+        Formatted string with contact, cross-manager, and task execution examples
+    """
+    from unity.actor.prompt_examples import (
+        get_primitives_contact_ask_example,
+        get_primitives_contact_update_example,
+        get_primitives_cross_manager_example,
+        get_primitives_task_execute_example,
+    )
+
+    return textwrap.dedent(
+        f"""
+        ### State Manager Implementation Examples
+
+        When implementing functions that use `primitives`, follow these patterns:
+
+        {get_primitives_contact_ask_example().strip()}
+
+        {get_primitives_contact_update_example().strip()}
+
+        {get_primitives_cross_manager_example().strip()}
+
+        {get_primitives_task_execute_example().strip()}
+        """,
+    ).strip()
+
+
+def _build_mixed_implementation_examples() -> str:
+    """
+    Builds mixed-mode implementation examples from the centralized library.
+
+    Returns:
+        Formatted string with browse-persist and concurrent examples
+    """
+    from unity.actor.prompt_examples import (
+        get_mixed_browse_persist_example,
+        get_mixed_concurrent_example,
+    )
+
+    return textwrap.dedent(
+        f"""
+        ### Mixed-Mode Implementation Examples
+
+        When implementing functions that use both `computer_primitives` and `primitives`, follow these patterns:
+
+        {get_mixed_browse_persist_example().strip()}
+
+        {get_mixed_concurrent_example().strip()}
+        """,
+    ).strip()
+
+
 def _build_interjection_static_prefix(
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> str:
     """
     Builds the static, cacheable prefix for interjection prompts.
+
+    Includes environment-agnostic cache invalidation rules, decision tree,
+    routing guidance for in-flight handles, and examples for browser,
+    primitives, and mixed-mode workflows.
+
     Args:
         tools: Dictionary of available tool functions
+        environments: Active environments for conditional sections
 
     Returns:
         Static prefix string for interjection prompts (≥2,048 tokens)
@@ -263,191 +423,119 @@ def _build_interjection_static_prefix(
         ---
         ### Your Task: Analyze, Decide, Patch, and Propose Cache Strategy
 
-        **1. Analyze Intent and Choose an Action:** First, analyze the user's intent to choose the single best action from the Decision Tree below.
+        **1. Analyze Intent:** Choose the best action from the Decision Tree below.
 
-        **2. Perform Global Code Analysis:** Once you've chosen `modify_task` or `refactor_and_generalize`, you must act like an expert developer.
-            - **Read the ENTIRE `plan_source_code`**.
-            - **Identify ALL necessary changes.** A single user request might require changing a function's implementation, updating its call site in a parent function, and even modifying the docstrings.
-            - **Generate Patches:** For every function that needs to be changed, create a `FunctionPatch` object containing its full, updated source code.
+        **2. Generate Patches (if modifying code):**
+            - Read entire `plan_source_code`; identify all changes (implementation, call sites, docstrings).
+            - Create `FunctionPatch` for each modified function.
+            - Omit `patches` for routing-only interjections (set `routing_action` instead).
 
-        **3. Devise an Optimal Cache Strategy (CRITICAL for `modify_task`):**
+        **3. Devise Cache Strategy (CRITICAL for `modify_task`):**
 
-            **Golden Rule of Replay:** After you submit your patches, the plan **always restarts execution from the beginning of `main_plan`**. Your task is to craft a cache invalidation plan that makes this replay as fast as possible by preserving all valid caches.
+            **Replay Rule:** The plan restarts from `main_plan` after patches. Invalidate only what's affected to preserve valid caches.
 
-            **Scenario 1: Invalidating Downstream Dependencies (`invalidate_functions`)**
-            * **Situation:** The plan is `A_authenticate() -> B_fetch_data(id="123") -> C_process_results(...)`. The correctness of `C` depends on the data fetched in `B`. The user interjects: "Sorry, I meant ID `'456'`."
-            * **Analysis:** Changing the `id` in `B` will cause it to fetch different data. Because `C` relies on this data, its previous cached result is now invalid and must also be cleared. `A_authenticate`, however, is unaffected.
-            * **Correct `modify_task` Response:**
-                ```json
-                {{
-                    "action": "modify_task",
-                    "reason": "User changed the target ID. This invalidates both the data fetching step (B) and the processing step (C) which depends on it.",
-                    "patches": [
-                        {{
-                            "function_name": "main_plan",
-                            "new_code": "async def main_plan():\\n    await A_authenticate()\\n    data = await B_fetch_data(id='456')\\n    await C_process_results(data)"
-                        }}
-                    ],
-                    "cache": {{
-                        "invalidate_functions": ["B_fetch_data", "C_process_results"]
-                    }}
-                }}
-                ```
-            * **Replay Analysis:**
-                1.  Execution starts at `main_plan`.
-                2.  `await A_authenticate()` runs. **Result: CACHE HIT**.
-                3.  `await B_fetch_data(id='456')` runs. **Result: CACHE MISS**. It executes for real.
-                4.  `await C_process_results(...)` runs. **Result: CACHE MISS**. It executes for real with the new data from `B`.
+            **Scenario 1: Downstream Dependencies (`invalidate_functions`)**
+            * Plan: `fetch_records(filter="active") -> process_records() -> generate_report()`. User: "Use filter='archived'."
+            * Invalidate: `["fetch_records", "process_records", "generate_report"]` (filter change affects all downstream).
 
-            ---
+            **Scenario 2: Partial Invalidation (`invalidate_steps`)**
+            * Plan: `find_contact(name="Alice") -> update_contact_title()`. User: "I meant Alice Smith."
+            * Invalidate: `[{{"function_name": "find_contact", "from_step_inclusive": 1}}]` (preserve earlier steps, clear from step 1).
 
-            **Scenario 2: Invalidating a Portion of a Function (`invalidate_steps`)**
-            * **Situation:** Function `B` has 5 internal steps. After step 2 completes, the user interjects: "In step B, after step 2, you need to add a new action before continuing."
-            * **Analysis:** Only the latter part of function `B` is affected. The initial steps (1 and 2) inside `B` are still valid and their caches should be preserved to save time.
-            * **Correct `modify_task` Response:**
-                ```json
-                {{
-                    "action": "modify_task",
-                    "reason": "User added a new step in the middle of function B. Invalidating from step 3 onwards.",
-                    "patches": [
-                        {{
-                            "function_name": "B",
-                            "new_code": "async def B(parameter: str):\\n    # step 1\\n    await namespace.tool('Step B1')\\n    # step 2\\n    await namespace.tool('Step B2')\\n    # new step 2.5\\n    await namespace.tool('Newly added Step B2.5')\\n    # step 3\\n    await namespace.tool('Step B3')\\n    # ..."
-                        }}
-                    ],
-                    "cache": {{
-                        "invalidate_steps": [
-                            {{"function_name": "B", "from_step_inclusive": 3}}
-                        ]
-                    }}
-                }}
-                ```
-            * **Replay Analysis:**
-                1.  Execution starts at `main_plan`.
-                2.  `await A()` runs. **Result: CACHE HIT**.
-                3.  `await B(...)` runs.
-                    * Internal Step 1: **CACHE HIT**.
-                    * Internal Step 2: **CACHE HIT**.
-                    * Internal Step 2.5 (new): **CACHE MISS**.
-                    * Internal Step 3 onwards: **CACHE MISS** (due to invalidation).
-                4.  `await C()` runs. **Result: CACHE HIT**.
+            **Scenario 3: No Invalidation (Structural Change)**
+            * Plan: `prepare_data() -> transform_data() -> save_results()`. User: "Skip save."
+            * Omit `cache` field (only removing a step; existing function logic unchanged).
 
-            ---
-
-            **Scenario 3: No Invalidation Needed (Structural Change)**
-            * **Situation:** The plan `A() -> B() -> C()` has fully completed `A` and `B`. The user interjects: "Actually, you don't need to do C. Just stop after B."
-            * **Analysis:** The user is only changing the sequence of calls in `main_plan`. The internal logic and inputs for functions `A` and `B` have not changed, so their caches are perfectly valid.
-            * **Correct `modify_task` Response:**
-                ```json
-                {{
-                    "action": "modify_task",
-                    "reason": "User requested to remove step C from the plan.",
-                    "patches": [
-                        {{
-                            "function_name": "main_plan",
-                            "new_code": "async def main_plan():\\n    await A()\\n    await B()"
-                        }}
-                    ]
-                }}
-                ```
-            * **Replay Analysis:**
-                1.  Execution starts at the *new* `main_plan`.
-                2.  `await A()` runs. **Result: CACHE HIT**.
-                3.  `await B()` runs. **Result: CACHE HIT**.
-                4.  The plan finishes. The replay is extremely fast.
+            **Scenario 4: Routing-Only (No Code/Cache)**
+            * Plan has concurrent ops. User: "Be concise."
+            * Use `routing_action: "broadcast_filtered"` with no `patches` or `cache`.
 
         ---
-        #### 🧠 Distinguishing `modify_task` from `refactor_and_generalize`
-        This is your most critical strategic decision.
-        - **Choose `modify_task` to alter the BEHAVIOR of the current plan.** Use this when the user wants to add a step, correct a step, or change a parameter. The fundamental *structure* of the plan (which functions call which other functions) remains the same. Do not delete the existing steps and/or workflow unless the user specifically asks you to do so.
-        - **Choose `refactor_and_generalize` to alter the STRUCTURE of the plan itself.** Use this when the user asks you to re-apply an entire taught sequence to a new target. This implies that a monolithic, step-by-step plan should be abstracted into a reusable, parameterized skill.
+        #### 🧠 `modify_task` vs `refactor_and_generalize`
+        - **`modify_task`**: Alter behavior (add/correct step, change parameter). Structure stays the same.
+        - **`refactor_and_generalize`**: Alter structure (re-apply taught sequence to new target; abstract into reusable skill).
 
         ---
         ### Decision Tree & Action-Specific Examples
         You MUST respond with a JSON object that strictly adheres to the `InterjectionDecision` Pydantic model.
 
-        #### 1. `modify_task` (Altering Plan Behavior)
-        - **Context**: The plan has `main_plan()` which calls `search_products("laptops")`. The user says:
-            > "Whoops, I meant to search for 'monitors', not laptops."
-        - **Analysis**: The user's intent is to change a parameter. This modifies the plan's behavior but not its structure. A global analysis is needed to find all code that references "laptops". This requires patching both the `search_products` function (to change the default value) and the `main_plan` (to change the specific call).
+        #### 1. `modify_task` (Alter Behavior)
+        - User: "Search 'monitors' not 'laptops'."
+        - Patch both `main_plan` call and `search_products` default. Invalidate affected functions.
+
+        #### 2. `refactor_and_generalize` (Alter Structure)
+        - User: "Now do the same for 'Sam Parker'." (after teaching process for "Michael Smith")
+        - Refactor monolithic plan into reusable parameterized function.
+
+        #### 3. `replace_task` (Goal Change)
+        - User: "Forget the recipe. Find flights SFO to LAX."
+        - Complete goal change; start over with new goal.
+
+        #### 4. `request_clarification` (Ambiguous)
+        - User: "Make it cheaper." (while searching for laptops)
+        - Unclear intent (price filter? different product? coupon?). Ask for clarification.
+
+        #### 5. Primitives-Only Interjection (Correcting Contact Name)
+        - **Context**: Plan is executing `await primitives.contacts.ask("Find Alice's email")`
+        - **User interjects**: "I meant Alice Smith, not Alice Wonder"
+        - **Analysis**: Clarification should be routed to in-flight handle, not patched into code
         - **JSON Output**:
             ```json
             {{
                 "action": "modify_task",
-                "reason": "User wants to correct the search term from 'laptops' to 'monitors'.",
-                "patches": [
-                    {{
-                        "function_name": "main_plan",
-                        "new_code": "async def main_plan():\\n    # ...\\n    await search_products(\\"monitors\\")\\n    # ..."
-                    }},
-                    {{
-                        "function_name": "search_products",
-                        "new_code": "async def search_products(product_type: str = \\"monitors\\") -> None:\\n    # ... function implementation ..."
-                    }}
-                ]
+                "reason": "User clarified contact name; route to in-flight handle.",
+                "routing_action": "targeted",
+                "target_handle_ids": ["<handle_id_from_pane_snapshot>"],
+                "routed_message": "User clarified: Alice Smith"
             }}
             ```
 
-        #### 2. `refactor_and_generalize` (Altering Plan Structure)
-        - **Context**: The plan was taught step-by-step to find information on "Michael Smith". The `main_plan` is now a monolithic block of code with these steps. The user says:
-            > "Awesome. Now do the same for 'Sam Parker'."
-        - **Analysis**: The user is asking to re-apply the *entire taught process* to a new person. This is a structural change. The monolithic `main_plan` should be refactored into a reusable `enrich_lead(lead_name: str)` function.
+        #### 6. Mixed-Mode Interjection (Browser + Primitives)
+        - **Context**: Plan is browsing LinkedIn and saving contacts concurrently
+        - **User interjects**: "Prioritize data validation before saving"
+        - **Analysis**: Guidance applies to both browser extraction and contact updates
         - **JSON Output**:
             ```json
             {{
-                "action": "refactor_and_generalize",
-                "reason": "User wants to repeat the taught lead enrichment process for a new person, 'Sam Parker'.",
-                "generalization_context": "The user wants to apply the same process (search LinkedIn, GitHub, etc.) to the new lead 'Sam Parker'."
+                "action": "modify_task",
+                "reason": "User wants validation priority; broadcast to all in-flight operations.",
+                "routing_action": "broadcast_filtered",
+                "broadcast_filter": {{"capabilities": ["interjectable"]}},
+                "routed_message": "Prioritize data validation before proceeding."
             }}
             ```
 
-        #### 3. `replace_task` (Fundamental Goal Change)
-        - **Context**: The current goal is to find a lasagna recipe. The user says:
-            > "Actually, forget the recipe. Find me the cheapest flights from SFO to LAX for next weekend."
-        - **Analysis**: This is a complete change of goal. The existing plan is irrelevant. The best action is to start over with a new goal.
-        - **JSON Output**:
-            ```json
-            {{
-                "action": "replace_task",
-                "reason": "User has completely changed the goal from finding a recipe to booking flights. The existing plan is no longer relevant.",
-                "new_goal": "Find the cheapest flights from SFO to LAX for next weekend."
-            }}
-            ```
+        ---
+        ### Routing Interjections to In-Flight Handles (SteerableToolPane)
 
-        #### 4. `request_clarification` (Ambiguous Intent)
-        - **Context**: The plan is searching for laptops. The user says:
-            > "Actually, make it cheaper."
-        - **Analysis**: The user's intent is unclear. Do they want to add a price filter? Change to a cheaper product category? Use a coupon? Without more information, implementing a change could lead to an incorrect modification.
-        - **JSON Output**:
-            ```json
-            {{
-                "action": "request_clarification",
-                "reason": "The user's instruction 'make it cheaper' is ambiguous. It's unclear whether they want to apply a price filter, change the product, or use a discount code.",
-                "clarification_question": "To help you find a cheaper option, could you clarify: (1) Should I add a price filter to show only laptops under a certain amount? (2) Should I search for a different, less expensive product instead? (3) Is there a coupon code you'd like me to apply?"
-            }}
-            ```
+        If the dynamic prompt includes an **In-Flight Handles (Steerable)** section, there are active in-flight
+        handles that can receive interjections. You must decide whether to route the user's interjection to those
+        handles, in addition to choosing your primary `action`.
 
-        #### 5. `continue` (Encouragement or Confirmation)
-        - **Context**: The plan is in the middle of filling out a multi-step form. The user says:
-            > "Great, keep going!"
-        - **Analysis**: The user is simply encouraging the agent to continue with the current plan. No modifications are needed.
-        - **JSON Output**:
-            ```json
-            {{
-                "action": "continue",
-                "reason": "User is providing encouragement to continue with the current plan. No modifications are needed."
-            }}
-            ```
+        Use these optional routing fields in your JSON:
+        - `routing_action`: one of `"none"`, `"targeted"`, `"broadcast_filtered"`
+        - `target_handle_ids`: list of handle ids (required when `routing_action="targeted"`)
+        - `broadcast_filter`: filter dict (used when `routing_action="broadcast_filtered"`)
+        - `routed_message`: optional rewritten message for the routed handles (defaults to the user's interjection)
 
-        #### 6. `stop` (Explicit Termination Request)
-        - **Context**: The plan is searching through multiple pages of results. The user says:
-            > "Stop. That's enough results."
-        - **Analysis**: The user explicitly wants to terminate the current execution. The plan should stop gracefully.
-        - **JSON Output**:
+        Routing guidelines:
+        1. If the user referenced one or more specific handle ids, use `routing_action="targeted"` and copy those ids.
+        2. If the instruction applies broadly (e.g., "be concise", "stop asking clarifying questions"), use
+           `routing_action="broadcast_filtered"` with a filter like `{{"capabilities":["interjectable"]}}` and optionally
+           constrain by `origin_tool_prefixes` (e.g., `["primitives.contacts"]`).
+        3. If there are no active handles, or the interjection is only about plan-level code changes, use `routing_action="none"`.
+        4. Routing complements the primary `action` (you may both patch the plan and route to in-flight handles).
+
+        **Routing-only example (NO PATCHES):**
+            - User: "Be concise and don't ask clarifying questions — apply this to whatever is currently running."
+            - Correct JSON:
             ```json
             {{
-                "action": "stop",
-                "reason": "User explicitly requested to stop the current execution as they have gathered enough results."
+              "action": "modify_task",
+              "reason": "No plan change needed; route the preference to in-flight handles.",
+              "routing_action": "broadcast_filtered",
+              "broadcast_filter": {{"capabilities": ["interjectable"]}},
+              "routed_message": "Please be concise and avoid asking clarifying questions."
             }}
             ```
 
@@ -716,6 +804,108 @@ def _build_shared_strategy_principles() -> str:
         6.  **Use Fallbacks**: If a website's feature is unreliable (e.g., a buggy serving size calculator), create a fallback. First, try the website feature. If it fails, use the `reason` tool or pure Python to perform the calculation or transformation yourself. This makes your plan robust.
         """,
     )
+
+
+def _build_core_planning_rules() -> str:
+    """
+    Environment-agnostic planning rules (condensed from rules 1-13).
+    Removes verbose inline code examples for better token efficiency.
+    """
+    return textwrap.dedent(
+        """
+        ### 🎯 CRITICAL RULES FOR INITIAL PLAN CREATION
+
+        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block. No explanatory text before or after.
+
+        2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
+
+        3.  **Scoped Imports**: ALL imports must be placed **inside** functions, never at the top level.
+
+        4.  **Decomposition:** Break complex tasks into smaller, focused functions. Each function should have a single, clear purpose.
+
+        5.  **Confidence-Based Stubbing** (THE MOST IMPORTANT RULE):
+            - **Implement** steps you are confident about (simple, predictable actions).
+            - **Stub** uncertain steps with a pure `raise NotImplementedError("...")`.
+            - **CRITICAL - Purity of Stubs**: A stubbed function MUST contain ONLY a docstring and `raise NotImplementedError(...)`. No `await` calls, no other logic.
+
+        6.  **Async/Await**: ALL functions must be `async def`. ALWAYS use `await` when calling any async function (tools, state managers, helper functions).
+
+        7.  **Structured Output with Pydantic**:
+            - Import Pydantic inside the function.
+            - Define models inside the function.
+            - Use `Optional` for fields that might be missing.
+            - **CRITICAL**: Call `model_rebuild()` on the outermost model before use.
+            - Pass the model to `response_format` parameter.
+
+        8.  **Error Handling - NEVER SILENCE ERRORS**:
+            - Log exceptions and re-raise them. Never catch and ignore.
+            - **EXCEPTION**: Never wrap stubbed functions in try/except (this breaks dynamic implementation).
+
+        9.  **Tool Provider Usage**:
+            - Use injected global objects directly (provided as globals in your environment).
+            - Never import or instantiate tool providers yourself.
+            - Never type hint the injected globals.
+
+        10. **Requesting Clarification:**
+            - Call `request_clarification("...")` as a global function when you need user input.
+            - Do NOT call it as a method on tool providers.
+
+        11. **Return the Final Value**: If the last step returns a value, your `main_plan` MUST capture and return it.
+
+        12. **Function Naming**: Name functions for the *action/process*, not the specific data. Use parameters for specific values.
+            - ✅ Good: `async def process_user(username: str)`
+            - ❌ Bad: `async def process_user_smith()`
+
+        13. **Handle Ambiguous Goals**: If the user's goal is vague, empty, or "I'll guide you step-by-step", generate a simple plan with just `pass`:
+            ```python
+            async def main_plan():
+                \"\"\"Awaiting user instructions.\"\"\"
+                pass
+            ```
+        """,
+    ).strip()
+
+
+def _build_browser_planning_examples() -> str:
+    """Browser-specific planning examples using the centralized library."""
+    from unity.actor.prompt_examples import get_browser_examples
+
+    return textwrap.dedent(
+        f"""
+        ---
+        ### Browser Automation Examples
+
+        {get_browser_examples()}
+        """,
+    ).strip()
+
+
+def _build_primitives_planning_examples() -> str:
+    """State manager planning examples using the centralized library."""
+    from unity.actor.prompt_examples import get_primitives_examples
+
+    return textwrap.dedent(
+        f"""
+        ---
+        ### State Manager Examples (`primitives`)
+
+        {get_primitives_examples()}
+        """,
+    ).strip()
+
+
+def _build_mixed_planning_examples() -> str:
+    """Mixed-mode planning examples using the centralized library."""
+    from unity.actor.prompt_examples import get_mixed_examples
+
+    return textwrap.dedent(
+        f"""
+        ---
+        ### Mixed-Mode Examples (Browser + State Managers)
+
+        {get_mixed_examples()}
+        """,
+    ).strip()
 
 
 def _build_browser_rules_and_examples(computer_primitives) -> str:
@@ -1171,940 +1361,81 @@ def _build_initial_plan_rules_and_examples(
     environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> str:
     """Builds the reusable block of core rules and examples for initial planning."""
+    # Tool metadata
     tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
 
+    # Core rules (environment-agnostic)
+    core_rules = _build_core_planning_rules()
+
+    # Shared strategy principles
     shared_principles = _build_shared_strategy_principles()
-    has_browser = environments is None or "computer_primitives" in environments
-    has_primitives = environments is not None and "primitives" in environments
 
-    primitives_examples_section = ""
-    if has_primitives:
-        mixed_example = ""
-        if has_browser:
-            mixed_example = textwrap.dedent(
-                """
-                **Mixed Example: Browser + State Managers**
-                ```python
-                @verify
-                async def browse_for_current_role(name: str) -> dict:
-                    \"\"\"Browse for current role/company info for a person (implementation deferred).\"\"\"
-                    raise NotImplementedError("Browse and extract current role/company for the person")
+    # Detect active environments
+    if environments is None:
+        # Legacy mode: infer from tool namespaces to avoid browser assumptions
+        # for primitives-only callers
+        tool_names = list(tools.keys())
+        has_browser = any(name.startswith("computer_primitives") for name in tool_names)
+        has_primitives = any(name.startswith("primitives") for name in tool_names)
+    else:
+        # Modern mode: use explicit environment map
+        has_browser = "computer_primitives" in environments
+        has_primitives = "primitives" in environments
 
-                @verify
-                async def main_plan():
-                    \"\"\"Example main plan showing `primitives` usage even when browser tools exist.\"\"\"
-                    existing = await primitives.contacts.ask("Find John Doe and return the best match.")
-                    role_info = await browse_for_current_role("John Doe")
-                    updated = await primitives.contacts.update("Update John Doe with confirmed company and title.")
-                    return {"existing": existing, "role_info": role_info, "updated": updated}
-                ```
-                """,
-            ).strip()
+    # Compose examples based on active environments
+    example_sections = []
 
-        primitives_examples_section = textwrap.dedent(
-            f"""
-            ---
-            ### Additional Examples: State Managers (`primitives`)
-            { _build_state_manager_rules_and_examples()}
+    # Always include core pattern examples (environment-agnostic)
+    from unity.actor.prompt_examples import get_core_pattern_examples
 
-            {mixed_example}
-            """,
-        ).strip()
-
-    if (not has_browser) and has_primitives:
-        instructions_and_rules = textwrap.dedent(
-            """
-            ### 🎯 CRITICAL RULES FOR INITIAL PLAN CREATION
-
-            1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-
-            2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
-
-            3.  **Scope and Imports**: ALL imports must be placed **inside** functions, never at the top level.
-
-            4.  **Decomposition:** Break complex tasks into smaller, focused functions.
-
-            5.  **Confidence-Based Stubbing**:
-                - Implement steps you are confident about.
-                - Stub uncertain steps with a pure `raise NotImplementedError(\"...\")` (docstring + raise only).
-
-            6.  **Async All The Way**: ALL functions must be `async def`.
-
-            7.  **Await Keyword**: ALWAYS `await` any async call, including state manager calls like:
-                - `await primitives.contacts.ask(...)`
-                - `await primitives.contacts.update(...)`
-                - `await primitives.tasks.execute(...)`
-
-            8.  **Requesting Clarification**:
-                Call `request_clarification(\"...\")` as a global function when needed.
-
-            9.  **Return the Final Value**: If the last step returns a value, capture and return it from `main_plan`.
-            """,
-        ).strip()
-
-        namespaces = (
-            ", ".join(f"`{ns}`" for ns in environments.keys())
-            if environments
-            else "`primitives`"
+    core_examples = get_core_pattern_examples()
+    if core_examples:
+        example_sections.append(
+            f"### Core Patterns (Environment-Agnostic)\n\n{core_examples}",
         )
 
-        return textwrap.dedent(
-            f"""
-            ---
-            ### Core Instructions & Rules
-            {instructions_and_rules}
+    if has_browser:
+        example_sections.append(_build_browser_planning_examples())
 
-            ---
-            ### Strategy & Tool Usage
-            {strategy_instruction}
-            ---
-            {shared_principles}
-            {tool_usage_instruction}
+    if has_primitives:
+        example_sections.append(_build_primitives_planning_examples())
 
-            ---
-            ### Tools Reference
-            You have access to the following global objects (namespaces) inside plan code: {namespaces}
-            ```json
-            {tool_reference}
-            ```
+    if has_browser and has_primitives:
+        example_sections.append(_build_mixed_planning_examples())
 
-            ---
-            ### Handle APIs
-            Some tools return a \"handle\" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+    examples_str = "\n\n".join(example_sections) if example_sections else ""
 
-            {handle_apis}
-            """,
-        ).strip()
-    strategy_instruction += textwrap.dedent(
-        f"""\n
-        ---
-        {shared_principles}
-        7. **Name for the Action, Not the Data**: Function names must describe the *process*, not the specific values being processed. Avoid hardcoding data like numbers or names into function names. This makes your plan robust and easy to modify later.
-        8. **Handle Ambiguous or "Non-Goals"**: If the user's goal is not a specific, actionable task (e.g., it's vague, "I don't know," or an instruction like "I will guide you"), your responsibility is to generate a simple, empty plan that allows the user to provide the first real instruction via interjection.
-
-        | ❌ Bad (Too Specific & Brittle)        | ✅ Good (Generic & Reusable)                    |
-        | ------------------------------------ | --------------------------------------------- |
-        | `async def process_user_smith()`       | `async def process_user(username: str)`       |
-        | `async def get_report_for_q3()`        | `async def get_report(quarter: str)`          |
-        | `async def extract_ten_items()`        | `async def extract_items(item_count: int)`    |
-
-        | User Goal                                           | Correct Plan Output                                                                                                                              |
-        | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-        | `"I\\'ll tell you what to do step-by-step."`            | `async def main_plan():\\n    "\"\"\"This is a teaching session. I will await user instructions.\"\"\"\\n    pass`                                            |
-        | `"Ummm, I\\'m not sure yet."`                           | `async def main_plan():\\n    "\"\"\"The user\\'s goal is unclear. I will await instructions.\"\"\"\\n    pass`                                                |
-        | `None` or Empty String                              | `async def main_plan():\\n    "\"\"\"No goal was provided. Awaiting user instructions.\"\"\"\\n    pass`                                                      |
-        ---
-        """,
-    )
-
-    instructions_and_rules = textwrap.dedent(
-        """
-        ### 🎯 CRITICAL RULES FOR INITIAL PLAN CREATION
-
-        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-            ```python
-            # ✅ CORRECT: Single code block response
-            async def helper_function():
-                ...
-
-            async def main_plan():
-                ...
-            ```
-
-        2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
-            ```python
-            # ✅ CORRECT: Always end with main_plan
-            async def main_plan():
-                \"\"\"Main entry point for the automation plan.\"\"\"
-                await step_one()
-                result = await step_two()
-                return result
-            ```
-
-        3.  **Scope and Imports**: ALL imports must be placed **inside** functions, never at the top level.
-            ```python
-            # ❌ WRONG: Top-level import
-            from typing import Optional
-
-            # ✅ CORRECT: Import inside function
-            async def my_function():
-                from typing import Optional
-                from pydantic import BaseModel
-                ...
-            ```
-
-        4.  **Decomposition:** Break complex tasks into smaller, focused functions.
-            ```python
-            # ✅ GOOD: Each function has a single, clear purpose
-            async def login_to_account(username: str, password: str):
-                \"\"\"Logs into the user account.\"\"\"
-                ...
-
-            async def search_for_product(product_name: str):
-                \"\"\"Searches for a specific product.\"\"\"
-                ...
-            ```
-
-        5.  **Confidence-Based Stubbing**: The MOST IMPORTANT rule for robust planning.
-            ```python
-            # ✅ IMPLEMENT if confident (simple, predictable actions)
-            async def navigate_to_shop():
-                \"\"\"Navigate to the shop homepage.\"\"\"
-                await computer_primitives.navigate("https://shop.example.com")
-
-            # ✅ STUB if uncertain (complex extractions, unknown layouts)
-            async def extract_shipping_options():
-                \"\"\"Extract available shipping options and prices.\"\"\"
-                # Need to see the page structure first
-                raise NotImplementedError("Extract shipping options from checkout page")
-            ```
-
-            **CRITICAL**: **Purity of Stubs**: A stubbed function MUST contain ONLY a `raise NotImplementedError(...)` statement and its docstring. Do not include ANY `await computer_primitives` calls or other logic inside a stub.
-
-            ```python
-            # ❌ WRONG: Stub with a side-effect
-            async def my_stub():
-                "\"\"\"This is a bad stub.\"\"\""
-                await computer_primitives.navigate("...")  # NEVER DO THIS
-                raise NotImplementedError("Implement me")
-
-            # ✅ CORRECT: A pure stub
-            async def my_stub():
-                "\"\"\"This is a perfect stub.\"\"\""
-                raise NotImplementedError("Implement me")
-            ```
-
-        6.  **Decorators & Docstrings:** EVERY function needs proper documentation.
-            ```python
-            # ✅ CORRECT: Clear docstring with Args and Returns
-            async def calculate_total_price(items: list[dict], tax_rate: float) -> float:
-                \"\"\"Calculate the total price including tax.
-
-                Args:
-                    items: List of items with 'price' keys
-                    tax_rate: Tax rate as a decimal (e.g., 0.08 for 8%)
-
-                Returns:
-                    float: Total price including tax
-                \"\"\"
-                ...
-            ```
-
-        7.  **Async All The Way**: ALL functions must be async.
-            ```python
-            # ❌ WRONG: Regular function
-            def helper():
-                pass
-
-            # ✅ CORRECT: Async function
-            async def helper():
-                pass
-            ```
-
-        8.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes browser tools (e.g. `computer_primitives.*`), state manager tools (e.g. `primitives.*`), AND any helper functions or skills you call.
-            ```python
-            # ✅ CORRECT: Awaiting an computer_primitives method
-            await computer_primitives.navigate("https://example.com")
-
-            # ✅ CORRECT: Awaiting a primitives state manager method
-            contact = await primitives.contacts.ask("Find John Doe")
-
-            # ✅ CORRECT: Awaiting a helper function/skill from the library
-            result = await helper_func_1("arg1", "arg2")
-
-            # ❌ WRONG: Forgetting to await a helper function
-            result = helper_func_1("arg1", "arg2")
-            ```
-
-        9.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
-            ```python
-            async def extract_structured_data():
-                # Step 1: Import inside function
-                from pydantic import BaseModel, Field
-                from typing import Optional, List
-
-                # Step 2: Define models inside function
-                class Product(BaseModel):
-                    name: str
-                    price: float
-                    # Step 3: Use Optional for potentially missing fields
-                    rating: Optional[float] = Field(default=None)
-                    in_stock: bool = Field(description="Availability status")
-
-                class ProductList(BaseModel):
-                    products: List[Product]
-                    total: int
-
-                # Step 4: CRITICAL - Call model_rebuild() on outermost model
-                ProductList.model_rebuild()
-
-                # Step 5: Use with response_format
-                result = await computer_primitives.observe(
-                    "Extract all products with details",
-                    response_format=ProductList
-                )
-
-                # ❌ WRONG: Forgetting model_rebuild()
-                # ❌ WRONG: Not using Optional for missing fields
-                # ❌ WRONG: Defining models outside the function
-            ```
-
-        10. **Error Handling - NEVER SILENCE ERRORS:**
-            ```python
-            # ❌ WRONG: Silencing errors
-            try:
-                result = await risky_operation()
-            except:
-                return None  # Never do this!
-
-            # ✅ CORRECT: Log and re-raise
-            try:
-                result = await risky_operation()
-            except Exception as e:
-                print(f"Operation failed: {e}")
-                raise  # Always re-raise!
-
-            # ⚠️ EXCEPTION: Never wrap stubbed functions
-            # ❌ WRONG:
-            try:
-                await my_stubbed_function()  # Has NotImplementedError
-            except:
-                pass  # This breaks dynamic implementation!
-
-            # ✅ CORRECT:
-            await my_stubbed_function()  # Let NotImplementedError propagate
-            ```
-
-        11. **Action Provider Usage:**
-            ```python
-            # ❌ WRONG: Don't create or import tool providers
-            from some_module import ComputerPrimitives
-            computer_primitives = ComputerPrimitives()
-
-            # ❌ WRONG: Don't type hint it
-            def my_func(computer_primitives: ComputerPrimitives):
-                pass
-
-            # ✅ CORRECT: Use injected globals directly
-            async def my_func():
-                await computer_primitives.navigate("...")
-                _ = await primitives.contacts.ask("Find John Doe")
-            ```
-
-         12. **Requesting Clarification:**
-            ```python
-            # ✅ CORRECT: Call as a global function
-            destination = await request_clarification("What is your destination city?")
-
-            # ❌ WRONG: Do not call it on computer_primitives
-            # destination = await computer_primitives.request_clarification(...)
-            ```
-        13. **Return the Final Value**: If the last function or skill you call returns a value, your `main_plan` **MUST** capture that value and return it. This ensures the final result of the plan is meaningful.
-
-            ```python
-            # ✅ CORRECT: Capturing and returning the result
-            async def main_plan():
-                def step_one(arg1, arg2):
-                    return arg1 + arg2
-
-                # ... other steps ...
-                final_result = await step_one(arg1, arg2)
-                return final_result
-
-            # ❌ WRONG: Calling the skill but not returning its value
-            async def main_plan():
-                await step_one(arg1, arg2)
-                # This plan will incorrectly return None.
-            ```
-        """,
-    )
-
+    # Compose final prompt
     return textwrap.dedent(
         f"""
         ---
         ### Core Instructions & Rules
-        {instructions_and_rules}
+        {core_rules}
+
         ---
         ### Strategy & Tool Usage
         {strategy_instruction}
+        {shared_principles}
         {tool_usage_instruction}
 
         ---
         ### Tools Reference
-        You have access to global objects (namespaces) for your active environments. Tools are grouped by namespace below; you MUST call them with the correct arguments as specified here.
+        You have access to global objects (namespaces) for your active environments.
         ```json
         {tool_reference}
         ```
 
         ---
         ### Handle APIs
-        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-
+        Some tools return a "handle" object for ongoing interaction.
         {handle_apis}
 
         ---
-        ### Usage Examples for Initial Plan Creation
-
-        **COMPLETE EXAMPLE: E-commerce Automation Plan**
-        This example demonstrates ALL the rules for creating a robust initial plan.
-        ```python
-        # RULE 6: Every function has proper docstrings with purpose, args, and returns
-        @verify
-        async def search_for_product(product_name: str) -> None:
-            \"\"\"Searches for a specific product on the e-commerce site.
-
-            Args:
-                product_name: The name of the product to search for
-
-            Returns:
-                None
-            \"\"\"
-            # RULE 5: Implemented directly - high confidence action
-            print(f"Searching for product: {{product_name}}")
-
-            # RULE 8: Await all async computer_primitives methods
-            await computer_primitives.navigate("https://shop.example.com")
-            await computer_primitives.act(
-                f"Type '{{product_name}}' in the search box and press Enter to load search results with products"
-            )
-
-        # RULE 5: STUB - Complex extraction requiring page analysis
-        @verify
-        async def extract_product_prices() -> list[dict]:
-            \"\"\"Extracts all product information from search results.
-
-            This needs to see the actual page structure to implement properly.
-
-            Returns:
-                list[dict]: List of products with name, price, rating
-            \"\"\"
-            # RULE 5: Use NotImplementedError for confidence-based stubbing
-            raise NotImplementedError("Need to see search results page structure to extract products")
-
-        # RULE 3: All imports inside functions
-        @verify
-        async def filter_by_price_range(min_price: float, max_price: float) -> None:
-            \"\"\"Applies price filters to the search results.
-
-            Args:
-                min_price: Minimum price in dollars
-                max_price: Maximum price in dollars
-
-            Returns:
-                None
-            \"\"\"
-            # RULE 3: Import inside the function
-            from typing import Optional
-
-            # RULE 10: Error handling with re-raise
-            try:
-                await computer_primitives.act(
-                    f"Set price filter from ${{min_price}} to ${{max_price}} to filter products by price range"
-                )
-            except Exception as e:
-                print(f"Failed to apply price filter: {{e}}")
-                # RULE 10: MUST re-raise the exception
-                raise
-
-        # RULE 9: Pydantic models for structured data
-        @verify
-        async def verify_product_in_cart() -> dict:
-            \"\"\"Verifies that the product was added to cart successfully.
-
-            Returns:
-                dict: Cart information including item count and total
-            \"\"\"
-            # RULE 3 & 9: Import Pydantic inside function
-            from pydantic import BaseModel, Field
-            from typing import Optional
-
-            # RULE 9: Define model inside function
-            class CartStatus(BaseModel):
-                item_count: int = Field(description="Number of items in cart")
-                total_price: float = Field(description="Total price of items")
-                # RULE 9: Use Optional for fields that might be missing
-                discount: Optional[float] = Field(default=None, description="Discount amount if any")
-
-            # RULE 9: CRITICAL - Always rebuild the model
-            CartStatus.model_rebuild()
-
-            # RULE 9: Use response_format for structured output
-            cart_info = await computer_primitives.observe(
-                "What is the current cart status including item count and total price?",
-                response_format=CartStatus
-            )
-
-            return {{
-                "items": cart_info.item_count,
-                "total": cart_info.total_price,
-                "discount": cart_info.discount
-            }}
-
-        # RULE 4: All functions must be async
-        @verify
-        async def main_plan():
-            \"\"\"Main plan to search for and purchase a product.
-
-            This demonstrates a complete e-commerce automation flow.
-            \"\"\"
-            # Step 1: Search for the product
-            await search_for_product("wireless headphones")
-
-            # Step 2: Extract and analyze products (stubbed)
-            # RULE 10: Don't wrap stubbed functions in try/except
-            products = await extract_product_prices()
-
-            # Step 3: Apply filters
-            await filter_by_price_range(50.0, 150.0)
-
-            # Step 4: Select and add to cart (would be implemented)
-            # Step 5: Verify cart
-            cart_status = await verify_product_in_cart()
-
-            print(f"Cart has {{cart_status['items']}} items, total: ${{cart_status['total']}}")
-            return cart_status
-        ```
-
-        **Example: Using Handle-Based Tools (SMS and Calls)**
-        This demonstrates proper use of SteerableToolHandle for communication tools.
-        ```python
-        @verify
-        async def send_appointment_reminders(appointments: list[dict]) -> list[str]:
-            \"\"\"Sends SMS reminders for multiple appointments.
-
-            Args:
-                appointments: List of dicts with 'phone', 'time', 'doctor' keys
-
-            Returns:
-                list[str]: List of confirmation messages
-            \"\"\"
-            # RULE 3: Import inside function
-            from typing import List
-
-            confirmations = []
-
-            # RULE 10: Proper error handling
-            for appt in appointments:
-                try:
-                    # RULE 8: Await the async tool
-                    sms_handle = await computer_primitives.send_sms_message(
-                        f"Text {{appt['phone']}} about appointment at {{appt['time']}} with Dr. {{appt['doctor']}}"
-                    )
-
-                    # Handle returns allow interaction
-                    result = await sms_handle.result()
-                    confirmations.append(result)
-
-                except Exception as e:
-                    print(f"Failed to send SMS to {{appt['phone']}}: {{e}}")
-                    # RULE 10: Re-raise to let actor handle
-                    raise
-
-            return confirmations
-
-        @verify
-        async def make_followup_call_with_questions(phone: str, questions: list[str]) -> dict:
-            \"\"\"Makes an interactive phone call with specific questions.
-
-            Args:
-                phone: Phone number to call
-                questions: List of questions to ask during call
-
-            Returns:
-                dict: Call summary with answers
-            \"\"\"
-            # RULE 3: All imports inside
-            from pydantic import BaseModel, Field
-            from typing import Optional, Dict
-
-            # Note: start_call is synchronous
-            call_handle = computer_primitives.start_call(
-                phone_number=phone,
-                purpose="Follow-up call to ask specific questions"
-            )
-
-            answers = {{}}
-
-            # Use the handle's interactive methods
-            for question in questions:
-                ask_handle = await call_handle.ask(question)
-                answer = await ask_handle.result()
-                answers[question] = answer
-
-            # Get full transcript
-            full_result = await call_handle.result()
-
-            # RULE 9: Structured analysis with Pydantic
-            class CallAnalysis(BaseModel):
-                all_questions_answered: bool
-                followup_needed: bool
-                satisfaction_level: Optional[str] = Field(default=None)
-
-            CallAnalysis.model_rebuild()
-
-            analysis = await computer_primitives.reason(
-                request="Analyze if all questions were answered satisfactorily",
-                context=f"Questions: {{questions}}\\nAnswers: {{answers}}\\nTranscript: {{full_result}}",
-                response_format=CallAnalysis
-            )
-
-            return {{
-                "answers": answers,
-                "analysis": analysis.dict(),
-                "transcript": full_result
-            }}
-        ```
-
-        **Example: Complex Multi-Step Plan with Fallbacks**
-        This shows advanced patterns including stubbing strategy and error recovery.
-        ```python
-        @verify
-        async def process_customer_data() -> dict:
-            \"\"\"Processes customer data with multiple fallback strategies.
-
-            Demonstrates proper error handling and recovery patterns.
-
-            Returns:
-                dict: Processed customer information
-            \"\"\"
-            # RULE 3: Imports inside function
-            from pydantic import BaseModel, Field
-            from typing import Optional, List
-            import json
-
-            # Primary approach: Use the website's export feature
-            try:
-                await computer_primitives.act(
-                    "Click on 'Export Data' button and select JSON format to start the download or display data"
-                )
-
-                # RULE 9: Structured extraction
-                class ExportedData(BaseModel):
-                    customers: List[dict]
-                    export_date: str
-                    total_count: int
-
-                ExportedData.model_rebuild()
-
-                data = await computer_primitives.observe(
-                    "Extract the exported customer data",
-                    response_format=ExportedData
-                )
-
-                return {{"source": "export", "data": data.dict()}}
-
-            except Exception as e:
-                print(f"Export feature failed: {{e}}")
-                # RULE 10: Log but don't silence - try fallback
-
-                # Fallback: Manually extract from table
-                try:
-                    class CustomerTable(BaseModel):
-                        class Customer(BaseModel):
-                            name: str
-                            email: str
-                            status: str
-                            joined_date: Optional[str] = None
-
-                        customers: List[Customer]
-
-                    # RULE 9: Always rebuild outermost model
-                    CustomerTable.model_rebuild()
-
-                    table_data = await computer_primitives.observe(
-                        "Extract all customer information from the visible table",
-                        response_format=CustomerTable
-                    )
-
-                    return {{
-                        "source": "table_extraction",
-                        "data": {{
-                            "customers": [c.dict() for c in table_data.customers],
-                            "total_count": len(table_data.customers)
-                        }}
-                    }}
-
-                except Exception as fallback_e:
-                    print(f"Table extraction also failed: {{fallback_e}}")
-                    # RULE 10: Must re-raise
-                    raise ValueError(f"Both export ({{e}}) and table extraction ({{fallback_e}}) failed")
-
-        # The main plan shows how everything comes together
-        @verify
-        async def main_plan():
-            \"\"\"Main entry point demonstrating a complete workflow.
-
-            RULE 2: This is the required entry point for the plan.
-            \"\"\"
-            print("Starting customer data processing workflow")
-
-            # Navigate to the system
-            await computer_primitives.navigate("https://crm.example.com")
-
-            # Login (would typically be implemented or stubbed based on confidence)
-            await login_to_system("admin", "password123")
-
-            # Process the data with fallbacks
-            customer_data = await process_customer_data()
-
-            # Send notifications (demonstrates handle-based tools)
-            if customer_data["source"] == "export":
-                confirmations = await send_appointment_reminders([
-                    {{"phone": "+1234567890", "time": "3pm", "doctor": "Smith"}}
-                ])
-
-            print(f"Workflow completed. Processed {{customer_data['data']['total_count']}} customers")
-            return customer_data
-        ```
-
-        **Browser Automation with Strategic Stubbing**
-        This example shows the recommended approach for web automation tasks.
-        # This function is implemented directly because navigating and searching are simple, high-confidence actions.
-        @verify
-        async def search_for_product() -> str:
-            \"\"\"Navigates to an e-commerce site and searches for a specific product.\"\"\"
-            print("Navigating to store and searching for 'blue sneakers'.")
-            await computer_primitives.navigate("https://fakestore.example.com")
-            await computer_primitives.act(
-                "Type 'blue sneakers' into the search bar and click the search button to show products related to 'blue sneakers'"
-            )
-            print("Search complete.")
-            return "Successfully searched for products."
-
-        # This function is a STUB. The layout of the search results page is unknown,
-        # so we must wait until we can see it before we can reliably implement the extraction logic.
-        # This is a perfect example of "Confidence-Based Stubbing".
-        @verify
-        async def find_and_select_top_rated_product() -> str:
-            \"\"\"
-            Analyzes the product list, finds the product with the highest rating, and navigates to its page.
-            \"\"\"
-            raise NotImplementedError("Implement logic to find the highest-rated product and get its URL.")
-
-        # This is another STUB. The product details page layout is also unknown.
-        @verify
-        async def extract_product_price_and_reviews(product_url: str) -> dict:
-            \"\"\"
-            Given a product URL, this function navigates to the page and extracts the price and review count.
-            \"\"\"
-            # Note: A Pydantic model would be defined here during dynamic implementation, like this:
-            # from pydantic import BaseModel, Field
-            # class ProductDetails(BaseModel):
-            #     price: float
-            #     review_count: int
-            #
-            # await computer_primitives.navigate(product_url)
-            # details = await computer_primitives.observe(
-            #     "Extract the price and number of reviews for this product.",
-            #     response_format=ProductDetails
-            # )
-            # return details.dict()
-            raise NotImplementedError("Implement logic to extract price and review count from the product page.")
-
-
-        @verify
-        async def main_plan():
-            \"\"\"
-            Main plan to find the price of the top-rated blue sneakers.
-            \"\"\"
-            # Step 1: Perform the search. This is a concrete, implemented step.
-            await search_for_product()
-
-            # Step 2: Find the specific product URL. This function is a stub and will be
-            # implemented dynamically by the agent once it sees the search results page.
-            # CRITICAL: Never wrap a stubbed function in a try-except block.
-            # The NotImplementedError MUST be allowed to propagate to the agent.
-            #
-            # WRONG:
-            # try:
-            #     top_product_url = await find_and_select_top_rated_product()
-            # except Exception:
-            #     # This prevents the agent from implementing the stub. Do not do this.
-            #     return "Failed"
-            #
-            # CORRECT:
-            top_product_url = await find_and_select_top_rated_product()
-
-            # Step 3: Extract details from that product's page. This is also a stub.
-            product_info = await extract_product_price_and_reviews(top_product_url)
-
-            print(f"Final Info Found: {{product_info}}")
-            return f"The top-rated product costs {{product_info['price']}} and has {{product_info['review_count']}} reviews."
-
-        ```
-
-        **Fallback Strategy Example (using `reason` tool)**
-        This example demonstrates how to create a robust function that first attempts to use a website's feature, but has a fallback plan to use the `reason` tool if the feature fails.
-        ```python
-        @verify
-        async def get_price_in_euros(product_price_usd: float) -> float:
-            \"\"\"
-            Ensures the product price is available in Euros.
-
-            This function demonstrates a fallback strategy. It first attempts to use
-            the website's built-in currency converter. If that fails, it falls back
-            to using the `reason` tool to perform the conversion manually.
-            \"\"\"
-            from pydantic import BaseModel, Field
-            print(f"Attempting to convert price: ${{product_price_usd}}")
-
-            # --- Primary Approach: Use the website's feature ---
-            try:
-                await computer_primitives.act(
-                    "Click the currency selector and choose 'EUR' to display the price in Euros (€)"
-                )
-
-                class PriceInfo(BaseModel):
-                    price_eur: float = Field(description="The price in Euros.")
-
-                observed_price = await computer_primitives.observe(
-                    "What is the product price in Euros?",
-                    response_format=PriceInfo
-                )
-                print("Successfully converted price using the website's feature.")
-                return observed_price.price_eur
-
-            except Exception as e:
-                print(f"Website's currency converter failed: ${{e}}. Attempting fallback.")
-
-                # --- Fallback Approach: Use the `reason` tool ---
-                try:
-                    class ConversionResult(BaseModel):
-                        price_in_euros: float
-
-                    # Assume a general exchange rate for the purpose of the task
-                    conversion_request = (
-                        f"Convert ${{product_price_usd}} USD to Euros. "
-                        f"Assume an exchange rate of 1 USD = 0.92 EUR. "
-                        f"Provide only the final numeric value."
-                    )
-
-                    result = await computer_primitives.reason(
-                        request=conversion_request,
-                        context=f"The price is ${{product_price_usd}} dollars.",
-                        response_format=ConversionResult
-                    )
-                    print("Successfully converted price using the `reason` tool.")
-                    return result.price_in_euros
-                except Exception as reason_e:
-                    raise ValueError(f"Both website interaction and manual reasoning failed. Error: ${{reason_e}}")
-        ```
-
-        **Example: Isolating Pure Logic for Efficiency**
-        This example shows how to factor out a non-browser task into a separate, cacheable function.
-        ```python
-        @verify
-        async def extract_sales_data_from_page() -> list[dict]:
-            \"\"\\"Extracts raw sales data from a table on the current page.\"\"\\"
-            from pydantic import BaseModel, Field
-            from typing import List
-
-            class SalesRecord(BaseModel):
-                product_name: str
-                quantity: int
-                unit_price: float
-                date: str
-
-            class SalesData(BaseModel):
-                records: List[SalesRecord]
-
-            SalesData.model_rebuild()
-
-            result = await computer_primitives.observe(
-                "Extract all sales records from the table including product name, quantity, unit price, and date",
-                response_format=SalesData
-            )
-
-            # Convert to list of dicts for easier processing
-            return [record.dict() for record in result.records]
-
-        @verify
-        async def perform_complex_analysis(sales_records: list[dict]) -> dict:
-            \"\"\\"
-            Performs a time-consuming analysis on raw data.
-            This function contains only pure Python logic and does not use the browser.
-            \"\"\\"
-            import asyncio
-            from datetime import datetime
-
-            print("Performing complex offline analysis...")
-
-            # Simulate complex calculations
-            total_sales = sum(r['quantity'] * r['unit_price'] for r in sales_records)
-            average_sale = total_sales / len(sales_records) if sales_records else 0
-
-            # Group by product (simulating complex logic)
-            product_totals = {{}}
-            for record in sales_records:
-                product = record['product_name']
-                amount = record['quantity'] * record['unit_price']
-                product_totals[product] = product_totals.get(product, 0) + amount
-
-            # Find best selling product
-            best_product = max(product_totals.items(), key=lambda x: x[1]) if product_totals else (None, 0)
-
-            # Simulate time-consuming computation
-            await asyncio.sleep(5)  # Represents complex calculations
-
-            print("Analysis complete.")
-            return {{
-                "total_sales": total_sales,
-                "average_sale": average_sale,
-                "best_product": best_product[0],
-                "best_product_sales": best_product[1],
-                "product_breakdown": product_totals
-            }}
-
-        @verify
-        async def main_plan():
-            \"\"\"
-            Main plan to extract and analyze sales data.
-            \"\"\"
-            # Navigate to the sales report page
-            await computer_primitives.navigate("https://example.com/sales-report")
-
-            # The result of this step will be cached by the actor
-            raw_data = await extract_sales_data_from_page()
-
-            # If the plan is modified and restarts after this point,
-            # this analysis function will NOT be re-run because its result
-            # will be loaded from the cache, saving significant time.
-            analysis_results = await perform_complex_analysis(raw_data)
-
-            # Use the analysis results for further actions
-            if analysis_results['best_product']:
-                await computer_primitives.act(
-                    f"Search for more information about {{analysis_results['best_product']}} to load the product detail page"
-                )
-
-            return analysis_results
-        ```
-
-        **Example: Proactive Clarification**
-        This example shows how to generate a plan that asks for required information before acting.
-        ```python
-        # This plan is for a vague goal like "Book a hotel for me."
-        # The LLM knows it's missing key details, so it uses the request_clarification primitive.
-        @verify
-        async def get_booking_details_from_user() -> dict:
-            "\"\"\"Asks the user for all necessary details to book a hotel.\"\"\""
-            city = await request_clarification("Sure, I can book a hotel. What city are you traveling to?")
-            check_in = await request_clarification("What is your check-in date?")
-            check_out = await request_clarification("And what is your check-out date?")
-            return {{"city": city, "check_in": check_in, "check_out": check_out}}
-
-        @verify
-        async def main_plan():
-            "\"\"\"Main plan to book a hotel after gathering user input.\"\"\""
-            details = await get_booking_details_from_user()
-            # ... now the plan would proceed to use these details for browser automation ...
-            print(f"Searching for hotels in {{details['city']}} from {{details['check_in']}} to {{details['check_out']}}.")
-            return f"Search initiated for {{details['city']}}."
-        ```
-        {primitives_examples_section}
-    """,
-    )
+        ### Usage Examples
+        {examples_str}
+        """,
+    ).strip()
 
 
 def _build_dynamic_implement_rules_and_examples(
@@ -2117,65 +1448,22 @@ def _build_dynamic_implement_rules_and_examples(
     tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
 
-    has_browser = environments is None or "computer_primitives" in environments
-    has_primitives = environments is not None and "primitives" in environments
+    # Detect active environments
+    if environments is None:
+        # Legacy mode: infer from tool namespaces
+        tool_names = list(tools.keys())
+        has_browser = any(
+            name.startswith("computer_primitives.") for name in tool_names
+        )
+        has_primitives = any(name.startswith("primitives.") for name in tool_names)
+    else:
+        # Modern mode: use explicit environment map
+        has_browser = "computer_primitives" in environments
+        has_primitives = "primitives" in environments
 
-    primitives_appendix = ""
-    if has_primitives:
-        mixed_impl_example = ""
-        if has_browser:
-            mixed_impl_example = textwrap.dedent(
-                """
-                **Example (Mixed): Use both browser tools and state managers**
-                ```python
-                async def enrich_contact_from_browser(name: str) -> dict:
-                    \"\"\"Find a person's current role in the browser and persist it to contacts.\"\"\"
-                    await computer_primitives.navigate("https://www.google.com")
-                    await computer_primitives.act(f"Search for '{name} current job title company'")
-                    from pydantic import BaseModel, Field
-                    from typing import Optional
-
-                    class RoleInfo(BaseModel):
-                        title: Optional[str] = Field(default=None, description="Current job title")
-                        company: Optional[str] = Field(default=None, description="Current company")
-
-                    RoleInfo.model_rebuild()
-
-                    info = await computer_primitives.observe(
-                        f"Extract {name}'s current job title and company from the visible results.",
-                        response_format=RoleInfo,
-                    )
-
-                    await primitives.contacts.update(
-                        f"Update {name} with title '{info.title}' and company '{info.company}'."
-                    )
-                    return info.model_dump()
-                ```
-                """,
-            ).strip()
-
-        primitives_appendix = textwrap.dedent(
-            f"""
-            ---
-            ### State Manager Guidance (`primitives`)
-            { _build_state_manager_rules_and_examples()}
-
-            **Example (Primitives-only): Create or update a contact**
-            ```python
-            async def ensure_contact_exists(name: str, email: str | None = None) -> dict:
-                \"\"\"Ensure a contact exists; create or update via state managers.\"\"\"
-                contact = await primitives.contacts.ask(f\"Find the best matching contact for: {{name}}\")
-                if email:
-                    await primitives.contacts.update(f\"Update {{name}} with email {{email}}\")
-                return {{"contact": contact, "email": email}}
-            ```
-
-            {mixed_impl_example}
-            """,
-        ).strip()
-
+    # Primitives-only mode: simplified rules without browser references
     if (not has_browser) and has_primitives:
-        instructions_and_rules = textwrap.dedent(
+        simplified_rules = textwrap.dedent(
             """
             ### 🎯 CRITICAL RULES FOR DYNAMIC FUNCTION IMPLEMENTATION
 
@@ -2201,7 +1489,7 @@ def _build_dynamic_implement_rules_and_examples(
             f"""
             ---
             ### Core Instructions & Rules
-            {instructions_and_rules}
+            {simplified_rules}
             ---
             ### Strategy & Tool Usage
             {strategy_instruction}
@@ -2219,591 +1507,51 @@ def _build_dynamic_implement_rules_and_examples(
             Some tools return a \"handle\" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
 
             {handle_apis}
+
+            ---
+            ### State Manager Guidance (`primitives`)
+            {_build_state_manager_rules_and_examples()}
+
+            {_build_primitives_implementation_examples()}
             """,
         ).strip()
 
-    instructions_and_rules = textwrap.dedent(
-        """
-        ### 🎯 CRITICAL RULES FOR DYNAMIC FUNCTION IMPLEMENTATION
+    # Browser or mixed mode: full rules with environment-specific examples
+    sections = []
 
-        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-            ```python
-            # ✅ CORRECT: Just one function implementation
-            async def extract_data():
-                # Full implementation here
-                pass
-
-            # ❌ WRONG: Multiple functions or extra code
-            def helper():
-                pass
-            async def extract_data():
-                pass
-            ```
-
-        2.  **Scope and Imports:** ALL imports must be placed **inside** the function.
-            ```python
-            # ❌ WRONG: Top-level imports
-            from pydantic import BaseModel
-            from typing import Optional
-
-            async def my_function():
-                pass
-
-            # ✅ CORRECT: All imports inside the function
-            async def my_function():
-                from pydantic import BaseModel
-                from typing import Optional
-                import json
-                import re
-                # Rest of implementation
-            ```
-
-        3.  **Decorators & Docstrings:** Include comprehensive docstrings, but NO decorators.
-            ```python
-            # ❌ WRONG: Using @verify decorator
-            @verify
-            async def process_data():
-                pass
-
-            # ✅ CORRECT: No decorators, clear docstring
-            async def process_data(items: list[dict]) -> dict:
-                \"\"\"Process and analyze item data.
-
-                Args:
-                    items: List of item dictionaries
-
-                Returns:
-                    dict: Processed results with statistics
-                \"\"\"
-            ```
-
-        4.  **Async All The Way:** Function MUST be async.
-            ```python
-            # ❌ WRONG: Regular function
-            def extract_info():
-                return data
-
-            # ✅ CORRECT: Async function
-            async def extract_info():
-                return data
-            ```
-
-        5.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `computer_primitives` methods AND any helper functions or skills you call.
-            ```python
-            # ✅ CORRECT: Awaiting an computer_primitives method
-            await computer_primitives.navigate("https://example.com")
-
-            # ✅ CORRECT: Awaiting a primitives state manager method
-            contact = await primitives.contacts.ask("Find John Doe")
-
-            # ✅ CORRECT: Awaiting a helper function/skill from the library
-            result = await helper_func_1("arg1", "arg2")
-
-            # ❌ WRONG: Forgetting to await a helper function
-            result = helper_func_1("arg1", "arg2")
-            ```
-
-        6.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
-            ```python
-            async def extract_structured_data():
-                # Step 1: Import inside function
-                from pydantic import BaseModel, Field
-                from typing import Optional, List
-
-                # Step 2: Define models inside function
-                class Product(BaseModel):
-                    name: str
-                    price: float
-                    # Step 3: Use Optional for potentially missing fields
-                    rating: Optional[float] = Field(default=None)
-                    in_stock: bool = Field(description="Availability status")
-
-                class ProductList(BaseModel):
-                    products: List[Product]
-                    total: int
-
-                # Step 4: CRITICAL - Call model_rebuild() on outermost model
-                ProductList.model_rebuild()
-
-                # Step 5: Use with response_format
-                result = await computer_primitives.observe(
-                    "Extract all products with details",
-                    response_format=ProductList
-                )
-
-                # ❌ WRONG: Forgetting model_rebuild()
-                # ❌ WRONG: Not using Optional for missing fields
-                # ❌ WRONG: Defining models outside the function
-            ```
-
-        7.  **Robust Error Handling:** Log errors but ALWAYS re-raise.
-            ```python
-            # ❌ WRONG: Silencing errors
-            try:
-                result = await risky_operation()
-            except Exception as e:
-                print(f"Failed: {{e}}")
-                return None  # Never do this!
-
-            # ✅ CORRECT: Log and re-raise
-            try:
-                result = await risky_operation()
-            except Exception as e:
-                print(f"Operation failed: {{e}}")
-                raise  # Always re-raise!
-
-            # ✅ CORRECT: With fallback and re-raise
-            try:
-                # Primary approach
-                result = await primary_method()
-            except Exception as e:
-                print(f"Primary failed: {{e}}")
-                try:
-                    # Fallback approach
-                    result = await fallback_method()
-                except Exception as fallback_e:
-                    print(f"Fallback also failed: {{fallback_e}}")
-                    raise ValueError(f"Both methods failed: {{e}}, {{fallback_e}}")
-            ```
-
-        8.  **Action Provider Usage:** Use directly as global, no imports or type hints.
-            ```python
-            # ❌ WRONG: Importing or typing ComputerPrimitives
-            from somewhere import ComputerPrimitives
-            def my_func(computer_primitives: ComputerPrimitives):
-                pass
-
-            # ❌ WRONG: Creating ComputerPrimitives instance
-            computer_primitives = ComputerPrimitives()
-
-            # ✅ CORRECT: Use injected globals directly
-            async def my_func():
-                result = await computer_primitives.navigate("https://example.com")
-                data = await computer_primitives.observe("Get page title")
-                _ = await primitives.contacts.ask("Find John Doe")
-            ```
-
-        9. **Requesting Clarification:**
-            ```python
-            # ✅ CORRECT: Call as a global function
-            destination = await request_clarification("What is your destination city?")
-
-            # ❌ WRONG: Do not call it on computer_primitives
-            # destination = await computer_primitives.request_clarification(...)
-            ```
-        """,
+    # Core rules (always included)
+    sections.append(
+        f"### Core Instructions & Rules\n{_build_core_implementation_rules()}",
     )
 
-    return textwrap.dedent(
-        f"""
-        ---
-        ### Core Instructions & Rules
-        {instructions_and_rules}
-        ---
-        ### Strategy & Tool Usage
-        {strategy_instruction}
-        {tool_usage_instruction}
-
-        ---
-        ### Tools Reference
-        Tools are grouped by namespace below; you MUST call them with the correct arguments as specified here.
-        ```json
-        {tool_reference}
-        ```
-
-        ---
-        ### Handle APIs
-        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-
-        {handle_apis}
-
-        ---
-        ### Usage Examples for Dynamic Function Implementation
-
-        **CONTEXT:** You are implementing a SINGLE function that was previously stubbed. These examples show how to properly implement functions following all the rules above.
-
-        **Example 1: Using Handle-Based Tools (SMS Message)**
-        This shows how to use the `send_sms_message` tool which returns a SteerableToolHandle.
-        ```python
-        async def send_appointment_reminder(phone_number: str, appointment_details: str) -> str:
-            \"\"\"Sends an SMS reminder about an appointment.
-
-            Args:
-                phone_number: The phone number to text
-                appointment_details: Details about the appointment
-
-            Returns:
-                str: Confirmation message or delivery status
-            \"\"\"
-            print(f"Sending SMS to {{phone_number}}")
-
-            # The send_sms_message tool returns a handle for ongoing interaction
-            try:
-                # Await the tool to get the interactive handle
-                sms_handle = await computer_primitives.send_sms_message(
-                    f"Text {{phone_number}} to remind them about their {{appointment_details}}"
-                )
-
-                # The handle allows ongoing interaction if needed
-                # For simple cases, just get the final result
-                result = await sms_handle.result()
-
-                print(f"SMS sent successfully: {{result}}")
-                return result
-
-            except Exception as e:
-                print(f"Failed to send SMS: {{e}}")
-                raise
-        ```
-
-        **Example 2: Using Handle-Based Tools (Phone Call with Interaction)**
-        This demonstrates the full capabilities of SteerableToolHandle with the start_call tool.
-        ```python
-        async def conduct_detailed_appointment_call(phone_number: str, appointment_info: dict) -> dict:
-            \"\"\"Makes an interactive phone call to confirm appointment details.
-
-            Args:
-                phone_number: The phone number to call
-                appointment_info: Dict with 'date', 'time', 'doctor' keys
-
-            Returns:
-                dict: Detailed call outcomes including confirmation status
-            "\"\"\
-            # Imports inside the function
-            from pydantic import BaseModel, Field
-            from typing import Optional
-
-            print(f"Starting call to {{phone_number}}")
-
-            # Note: start_call is synchronous and returns a Call handle immediately
-            call_handle = computer_primitives.start_call(
-                phone_number=phone_number,
-                purpose=f"Confirm appointment on {{appointment_info['date']}} at {{appointment_info['time']}} with Dr. {{appointment_info['doctor']}}"
-            )
-
-            try:
-                # The Call handle is a SteerableToolHandle with special methods
-                # You can interact during the call with ask() or interject()
-
-                # Example of asking a specific question during the call
-                allergy_handle = await call_handle.ask("Do you have any medication allergies we should know about?")
-                allergy_info = await allergy_handle.result()
-
-                # You can also just wait for the full call to complete
-                full_transcript = await call_handle.result()
-
-                print("Call completed, analyzing results...")
-
-                # Define models for structured analysis
-                class CallSummary(BaseModel):
-                    appointment_confirmed: bool = Field(description="Whether the appointment was confirmed")
-                    has_allergies: bool = Field(description="Whether patient reported any allergies")
-                    allergy_details: Optional[str] = Field(default=None, description="Specific allergy information if any")
-                    needs_followup: bool = Field(description="Whether a follow-up call is needed")
-                    additional_notes: Optional[str] = Field(default=None, description="Any other important information")
-
-                # CRITICAL: Always rebuild Pydantic models
-                CallSummary.model_rebuild()
-
-                # Analyze the complete call
-                analysis = await computer_primitives.reason(
-                    request="Analyze this phone call transcript and extract key information about the appointment confirmation and any medical information discussed",
-                    context=f"Full call transcript: {{full_transcript}}\n\nAllergy question response: {{allergy_info}}",
-                    response_format=CallSummary
-                )
-
-                return {{
-                    "confirmed": analysis.appointment_confirmed,
-                    "allergies": {{
-                        "has_allergies": analysis.has_allergies,
-                        "details": analysis.allergy_details
-                    }},
-                    "needs_folloswup": analysis.needs_followup,
-                    "notes": analysis.additional_notes
-                }}
-
-            except Exception as e:
-                print(f"Call failed or was interrupted: {{e}}")
-                raise
-
-        ```
-
-        **Example 3: Browser Data Extraction with Pydantic Models**
-        This shows the proper pattern for extracting structured data from web pages.
-        ```python
-        async def extract_product_listings() -> list[dict]:
-            \"\"\"Extracts all product information from a search results page.
-
-            Returns:
-                list[dict]: List of products with name, price, rating, and availability
-            \"\"\"
-            # All imports inside the function
-            from pydantic import BaseModel, Field
-            from typing import Optional, List
-
-            print("Extracting product listings from current page...")
-
-            # Define the data models inside the function
-            class Product(BaseModel):
-                name: str = Field(description="Product name or title")
-                price: float = Field(description="Numeric price without currency symbol")
-                currency: str = Field(description="Currency code or symbol")
-                # Use Optional for fields that might not always be present
-                rating: Optional[float] = Field(default=None, description="Average rating out of 5")
-                review_count: Optional[int] = Field(default=None, description="Number of reviews")
-                in_stock: bool = Field(description="Whether the item is available")
-                image_url: Optional[str] = Field(default=None, description="Product image URL if visible")
-
-            class ProductListings(BaseModel):
-                products: List[Product] = Field(description="All products found on the page")
-                total_results: Optional[int] = Field(default=None, description="Total number of results if shown")
-
-            # CRITICAL: Always call model_rebuild() on the outermost model
-            ProductListings.model_rebuild()
-
-            try:
-                # Use observe with structured output
-                result = await computer_primitives.observe(
-                    "Extract all products from this search results page. For each product, get the name, "
-                    "numeric price (without currency), currency symbol/code, rating if shown, review count if shown, "
-                    "stock availability, and image URL if visible. Also note the total number of results if displayed.",
-                    response_format=ProductListings
-                )
-
-                # Process and return the data
-                products_data = []
-                for product in result.products:
-                    products_data.append({{
-                        "name": product.name,
-                        "price": product.price,
-                        "currency": product.currency,
-                        "rating": product.rating,
-                        "review_count": product.review_count,
-                        "in_stock": product.in_stock,
-                        "image_url": product.image_url
-                    }})
-
-                print(f"Successfully extracted {{len(products_data)}} products")
-                return products_data
-
-            except Exception as e:
-                print(f"Failed to extract product listings: {{e}}")
-                raise
-        ```
-
-        **Example 4: Complex Operation with Fallback Strategy**
-        This demonstrates robust error handling with fallback approaches.
-        ```python
-        async def complete_checkout_process(payment_info: dict) -> dict:
-            \"\"\"Completes the checkout process with payment information.
-
-            Args:
-                payment_info: Dict containing 'card_number', 'cvv', 'expiry', 'zip'
-
-            Returns:
-                dict: Order confirmation details
-            \"\"\"
-            from pydantic import BaseModel, Field
-            from typing import Optional
-
-            print("Starting checkout process...")
-
-            # Define expected output structure
-            class OrderConfirmation(BaseModel):
-                order_number: str = Field(description="The order confirmation number")
-                total_amount: float = Field(description="Total amount charged")
-                delivery_date: Optional[str] = Field(default=None, description="Expected delivery date if shown")
-                confirmation_email: Optional[str] = Field(default=None, description="Email where confirmation was sent")
-
-            OrderConfirmation.model_rebuild()
-
-            try:
-                # Primary approach: Fill out the payment form
-                await computer_primitives.act(
-                    f"Fill out the payment form with card ending in {{payment_info['card_number'][-4:]}}, "
-                    f"CVV {{payment_info['cvv']}}, expiry {{payment_info['expiry']}}, and billing zip {{payment_info['zip']}}. "
-                    f"Then click the 'Place Order' or 'Complete Purchase' button to see the order confirmation page with order number"
-                )
-
-                # Extract confirmation details
-                confirmation = await computer_primitives.observe(
-                    "Extract the order confirmation number, total amount charged, expected delivery date, and confirmation email address",
-                    response_format=OrderConfirmation
-                )
-
-                print(f"Order placed successfully: {{confirmation.order_number}}")
-                return {{
-                    "success": True,
-                    "order_number": confirmation.order_number,
-                    "total": confirmation.total_amount,
-                    "delivery_date": confirmation.delivery_date,
-                    "email": confirmation.confirmation_email
-                }}
-
-            except Exception as e:
-                print(f"Primary checkout approach failed: {{e}}")
-
-                # Fallback: Try alternative checkout flow
-                try:
-                    print("Attempting PayPal checkout as fallback...")
-
-                    await computer_primitives.act(
-                        "Click on 'PayPal' or 'Pay with PayPal' option to redirect to PayPal login or show PayPal frame"
-                    )
-
-                    # Note: In real scenario, would handle PayPal flow
-                    # This is simplified for example
-                    return {{
-                        "success": True,
-                        "order_number": "PAYPAL-PENDING",
-                        "total": 0.0,
-                        "delivery_date": None,
-                        "email": None,
-                        "payment_method": "paypal_redirect"
-                    }}
-
-                except Exception as fallback_e:
-                    print(f"Fallback PayPal approach also failed: {{fallback_e}}")
-                    # Re-raise with full context
-                    raise ValueError(
-                        f"Unable to complete checkout. "
-                        f"Credit card error: {{e}}, "
-                        f"PayPal error: {{fallback_e}}"
-                    )
-        ```
-
-        **Example 5: Isolating Pure Logic for Efficiency**
-        This demonstrates how to implement a function that separates browser interaction from complex data processing.
-        The actor will cache results of each function, so separating pure logic ensures it won't be re-executed.
-        ```python
-        async def analyze_competitor_pricing(product_name: str) -> dict:
-            \"\"\"Analyzes competitor pricing data for a specific product.
-
-            This function demonstrates the pattern of isolating pure computation
-            from browser interaction to leverage the actor's caching system.
-
-            Args:
-                product_name: The product to analyze pricing for
-
-            Returns:
-                dict: Analysis results including price statistics and recommendations
-            \"\"\"
-            from pydantic import BaseModel, Field
-            from typing import List, Optional
-            import asyncio
-
-            print(f"Starting competitor pricing analysis for: {{product_name}}")
-
-            # Define the data model for competitor prices
-            class CompetitorPrice(BaseModel):
-                store_name: str
-                price: float
-                shipping_cost: Optional[float] = Field(default=0.0)
-                availability: str = Field(description="In stock, out of stock, limited stock")
-                rating: Optional[float] = Field(default=None)
-
-            class PricingData(BaseModel):
-                product_name: str
-                competitors: List[CompetitorPrice]
-                search_timestamp: str
-
-            PricingData.model_rebuild()
-
-            # Step 1: Extract pricing data from the current page
-            pricing_data = await computer_primitives.observe(
-                f"Extract all competitor pricing information for {{product_name}}. "
-                "Include store name, price, shipping cost if shown, availability status, and rating if available.",
-                response_format=PricingData
-            )
-
-            # Step 2: Call a separate function for complex analysis
-            # This is the key pattern - isolating the pure logic computation
-            # If the plan restarts after this point, the analysis won't be re-run
-            analysis_result = await _perform_pricing_analysis(pricing_data.dict())
-
-            # Step 3: Use the analysis to make a decision
-            if analysis_result['recommendation'] == 'match_lowest':
-                await computer_primitives.act(
-                    f"Update our price to {{analysis_result['suggested_price']}} and confirm the price update is successful"
-                )
-
-            return analysis_result
-
-        # This helper function would be implemented separately in the plan
-        # It contains pure logic with no browser interaction, making it cacheable
-        async def _perform_pricing_analysis(pricing_data: dict) -> dict:
-            \"\"\"Performs detailed statistical analysis on pricing data.
-
-            This is a separate function containing only pure Python logic.
-            The actor caches its result, so it won't re-execute if the plan restarts.
-            \"\"\"
-            import statistics
-            import asyncio
-
-            print("Performing complex pricing analysis...")
-
-            competitors = pricing_data['competitors']
-
-            # Extract total prices (price + shipping)
-            total_prices = [
-                c['price'] + c.get('shipping_cost', 0)
-                for c in competitors
-            ]
-
-            # Simulate complex calculations that might take time
-            await asyncio.sleep(2)  # Represents complex computation
-
-            # Calculate statistics
-            avg_price = statistics.mean(total_prices) if total_prices else 0
-            median_price = statistics.median(total_prices) if total_prices else 0
-            min_price = min(total_prices) if total_prices else 0
-            max_price = max(total_prices) if total_prices else 0
-
-            # Find best value (considering price and rating)
-            best_value_store = None
-            best_value_score = float('inf')
-
-            for comp in competitors:
-                total = comp['price'] + comp.get('shipping_cost', 0)
-                # Lower score is better (price divided by rating)
-                score = total / comp.get('rating', 3.0) if comp.get('rating') else total / 3.0
-                if score < best_value_score and comp['availability'] != 'out of stock':
-                    best_value_score = score
-                    best_value_store = comp['store_name']
-
-            # Determine pricing strategy
-            our_target_margin = 0.95  # We want to be 5% below average
-            suggested_price = round(avg_price * our_target_margin, 2)
-
-            recommendation = 'match_lowest' if suggested_price < min_price else 'competitive'
-
-            print("Analysis complete.")
-
-            return {{
-                "average_price": round(avg_price, 2),
-                "median_price": round(median_price, 2),
-                "min_price": round(min_price, 2),
-                "max_price": round(max_price, 2),
-                "best_value_store": best_value_store,
-                "suggested_price": suggested_price,
-                "recommendation": recommendation,
-                "total_competitors": len(competitors),
-                "analysis_timestamp": pricing_data['search_timestamp']
-            }}
-        ```
-
-        **Example 6: Requesting Clarification During Implementation**
-        This demonstrates how to use request_clarification when the implementation strategy is unclear.
-        ```json
-        {{
-            "action": "request_clarification",
-            "reason": "The page contains two visually identical 'Continue' buttons. I need to know which one to click to proceed with the payment.",
-            "clarification_question": "I see two 'Continue' buttons on the page. Should I click the one in the 'Order Summary' section or the one at the very bottom of the page?"
-        }}
-        ```
-        {primitives_appendix}
-    """,
+    # Strategy and tool usage
+    sections.append(
+        f"### Strategy & Tool Usage\n{strategy_instruction}\n{tool_usage_instruction}",
     )
+
+    # Tool reference and handle APIs
+    sections.append(
+        f"### Tools Reference\nTools are grouped by namespace below; you MUST call them with the correct arguments as specified here.\n```json\n{tool_reference}\n```",
+    )
+    sections.append(
+        f'### Handle APIs\nSome tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.\n\n{handle_apis}',
+    )
+
+    # Environment-specific examples
+    if has_browser:
+        sections.append(_build_browser_implementation_examples())
+
+    if has_primitives:
+        # Add state manager guidance section
+        sections.append(
+            f"### State Manager Guidance (`primitives`)\n{_build_state_manager_rules_and_examples()}",
+        )
+        sections.append(_build_primitives_implementation_examples())
+
+    if has_browser and has_primitives:
+        sections.append(_build_mixed_implementation_examples())
+
+    return "\n\n---\n\n".join(sections)
 
 
 def build_initial_plan_prompt(
@@ -3080,6 +1828,7 @@ def build_verification_prompt(
     clarification_answer: Optional[str] = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
+    environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> tuple[str, str]:
     """
     Builds the prompt for verifying a function's execution.
@@ -3098,9 +1847,12 @@ def build_verification_prompt(
             Dynamically builds evidence sections based on available evidence types:
             - Visual evidence (browser screenshots)
             - Return value evidence (state manager operations)
-            - Mixed evidence (both)
+            - Mixed evidence (both): if both visual evidence and state-manager return-value evidence are present,
+              a dedicated mixed-evidence section is added instructing cross-checking and discrepancy resolution.
         clarification_question: An optional question that was previously asked.
         clarification_answer: An optional answer that was received.
+        environments: Optional mapping of active environment namespaces to environment objects.
+            Used to select environment-appropriate verification examples in the static prefix.
 
     Returns:
         Tuple of (static_prefix, dynamic_content) for prompt caching.
@@ -3149,8 +1901,10 @@ def build_verification_prompt(
 
     # Visual evidence (browser).
     browser_evidence = evidence.get("computer_primitives")
+    has_browser_screenshot_evidence = False
     if isinstance(browser_evidence, dict):
         if "screenshot" in browser_evidence and "error" not in browser_evidence:
+            has_browser_screenshot_evidence = True
             url = browser_evidence.get("url", "N/A")
             evidence_sections.append(
                 textwrap.dedent(
@@ -3176,10 +1930,12 @@ def build_verification_prompt(
 
     # State manager evidence (return values).
     primitives_evidence = evidence.get("primitives")
+    has_primitives_return_value_evidence = False
     if (
         isinstance(primitives_evidence, dict)
         and primitives_evidence.get("type") == "return_value"
     ):
+        has_primitives_return_value_evidence = True
         evidence_sections.append(
             textwrap.dedent(
                 """
@@ -3189,6 +1945,21 @@ def build_verification_prompt(
                 - If the function returned a success message or data, that confirms the operation succeeded.
                 - If the function returned an error or unexpected value, that indicates failure.
                 - Analyze the return value in the "Function Return Value" section below.
+                """,
+            ),
+        )
+
+    # Mixed evidence (browser + primitives): add dedicated instructions when both are present.
+    if has_browser_screenshot_evidence and has_primitives_return_value_evidence:
+        evidence_sections.append(
+            textwrap.dedent(
+                """
+                ---
+                ### 🔀 Mixed Evidence (Browser + Return Value)
+                Both a browser screenshot and a state-manager return value are available.
+                - **Cross-check the screenshot against the returned value, resolve discrepancies, and prefer the ground-truth source.**
+                - Treat the **screenshot** as ground truth for the browser/UI final state and treat the **return value** as ground truth for state-manager mutation outcomes.
+                - If they disagree, explain why (cite the trace/evidence) and choose the most conservative status (often `reimplement_local` or `request_clarification`).
                 """,
             ),
         )
@@ -3246,7 +2017,7 @@ for understanding the current execution context.
         """,
         )
 
-    static_prefix = _build_verification_static_prefix()
+    static_prefix = _build_verification_static_prefix(environments=environments)
 
     dynamic_content = textwrap.dedent(
         f"""
@@ -3287,6 +2058,7 @@ def build_interjection_prompt(
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
     images: Optional[dict[str, Any]] = None,
+    pane_snapshot: Optional[dict[str, Any]] = None,
 ) -> tuple[str, str]:
     """
     Builds the system prompt for the Interjection Handler LLM.
@@ -3297,6 +2069,24 @@ def build_interjection_prompt(
     """
     cache_summary = _format_cache_summary(idempotency_cache)
     image_context_str = _format_images_for_prompt(images)
+    pane_context_str = ""
+    if pane_snapshot and pane_snapshot.get("active_handles"):
+        handles = pane_snapshot.get("active_handles") or []
+        if handles:
+            pane_context_str = "\n### In-Flight Handles (Steerable)\n"
+            pane_context_str += "The following handles are currently active and can receive interjections:\n"
+            for h in handles:
+                pane_context_str += (
+                    f"- **handle_id**: `{h.get('handle_id')}` | "
+                    f"**origin_tool**: `{h.get('origin_tool')}` | "
+                    f"**status**: `{h.get('status')}` | "
+                    f"**capabilities**: {h.get('capabilities')}\n"
+                )
+            pane_context_str += (
+                "\nYou can route this interjection to relevant handles using the `routing_action` field. "
+                "Use 'targeted' to route to specific handle_ids (especially if the user referenced handle ids), "
+                "or 'broadcast_filtered' to route to all handles matching criteria (e.g., all `primitives.contacts` handles).\n"
+            )
 
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
@@ -3322,6 +2112,7 @@ def build_interjection_prompt(
     - **Most Recent Plan Actions:**
       {recent_actions}
     {image_context_str}
+    {pane_context_str}
 
     {cache_summary}
     ---
@@ -3339,7 +2130,7 @@ def build_ask_prompt(
     context_log: str,
     question: str,
     environments: Mapping[str, "BaseEnvironment"] | None = None,
-    has_visual_evidence: bool = False,
+    evidence: Dict[str, Any] | None = None,
 ) -> str:
     """
     Builds the system prompt for answering questions about the plan's state.
@@ -3351,57 +2142,104 @@ def build_ask_prompt(
         context_log: A log of recent actions.
         question: The user's question.
         environments: The active environments for conditional prompt sections.
-        has_visual_evidence: Whether visual evidence (screenshot) is currently available.
+        evidence: Evidence dict from all environments (screenshot, return values, etc.).
+            Keys are environment namespaces; values are evidence dicts from env.capture_state().
 
     Returns:
         The complete prompt string.
     """
+    # Determine available evidence types
     has_browser = "computer_primitives" in (environments or {})
+    has_primitives = "primitives" in (environments or {})
 
-    # Only use browser-specific language when we actually have visual evidence
-    show_browser_view = has_browser and has_visual_evidence
+    # Check for visual evidence (screenshot from any environment)
+    has_visual_evidence = False
+    if evidence:
+        for env_namespace, env_evidence in evidence.items():
+            if env_evidence.get("type") == "screenshot" or "screenshot" in env_evidence:
+                has_visual_evidence = True
+                break
 
-    # Build conditional context items list
-    if show_browser_view:
+    # Check for primitives evidence (return values)
+    has_primitives_evidence = False
+    if evidence:
+        for env_namespace, env_evidence in evidence.items():
+            if env_evidence.get("type") == "return_value":
+                has_primitives_evidence = True
+                break
+
+    # Build context items dynamically
+    context_items = []
+    context_items.append("1. **Goal:** Primary objective")
+    context_items.append("2. **Action Log:** Chronological history")
+
+    if has_visual_evidence:
+        context_items.append("3. **Visual Evidence:** Screenshots")
+
+    if has_primitives_evidence:
+        context_items.append(
+            f"{len(context_items) + 1}. **State Evidence:** Return values from primitives",
+        )
+
+    context_items.append(
+        f"{len(context_items) + 1}. **Call Stack:** Current execution point",
+    )
+    context_items.append(
+        f"{len(context_items) + 1}. **Tools:** `query` for memory/history",
+    )
+
+    context_items_str = "\n        ".join(context_items)
+
+    # Determine task type
+    if has_browser and has_visual_evidence:
         task_type = "web automation task"
-        context_items = """1. **Current Goal:** This is your primary objective. It may have been updated by the user.
-        2. **Full Action Log:** This is a chronological history of everything that has happened, including your actions, verifications, and any user interjections or clarifications. This is your memory.
-        3. **Current Browser View:** A screenshot of what you see on the screen RIGHT NOW. This is your most important source of truth for visual questions.
-        4. **Call Stack:** Shows which part of your plan you are currently executing.
-        5. **Tools:** You have access to one tool: `query`. This tool allows you to ask questions about the parent agent's memory, including its past actions and observations."""
-        visual_context_note = "and paying close attention to the **Action Log** for recent user updates and the **Browser View** for the current visual state"
+    elif has_primitives:
+        task_type = "state management task"
     else:
         task_type = "task"
-        context_items = """1. **Current Goal:** This is your primary objective. It may have been updated by the user.
-        2. **Full Action Log:** This is a chronological history of everything that has happened, including your actions, verifications, and any user interjections or clarifications. This is your memory.
-        3. **Call Stack:** Shows which part of your plan you are currently executing.
-        4. **Tools:** You have access to one tool: `query`. This tool allows you to ask questions about the parent agent's memory, including its past actions and observations."""
-        visual_context_note = (
-            "and paying close attention to the **Action Log** for recent user updates"
+
+    # Add guidance with examples
+    guidance = ""
+    if has_primitives_evidence:
+        guidance = (
+            "\n\n**State Evidence:**\n"
+            "- Use recent `primitives.*` return values for data questions\n"
+            "- Check log for mutations (update/execute) to see changes\n"
+            '- Ex: "How many tasks?" → check `primitives.tasks.ask`; "Did update succeed?" → check log'
         )
+
+    if has_visual_evidence and has_primitives_evidence:
+        guidance += '\n\n**Mixed-Mode:** Combine screenshot + primitives state for complete answers (e.g., "What\'s our progress?").'
+
+    # Update context note
+    context_note = "reviewing **Action Log**"
+    if has_visual_evidence:
+        context_note += " + **Visual Evidence**"
+    if has_primitives_evidence:
+        context_note += " + **State Evidence**"
 
     return textwrap.dedent(
         f"""
-        You are an AI assistant who is actively performing a {task_type}. The user has paused to ask you a question. Your persona is that of the one performing the work. Speak in the first person ("I am doing...", "I just finished...").
+        You are an AI assistant performing a {task_type}. User paused to ask:
 
-        You have been provided with a complete picture of your current situation:
-        {context_items}
+        **Available Context:**
+        {context_items_str}
+        {guidance}
 
-        First, carefully review the context of the parent agent provided below. Then, formulate a plan to answer the user's question. This may involve one or more calls to the `query` tool. Once you have gathered enough information, provide a final, concise answer to the user.
-        **Current Goal:** {goal}
-        **Current State:** {state}
-        **Current Call Stack:** {call_stack}
+        **Goal:** {goal}
+        **State:** {state}
+        **Call Stack:** {call_stack}
 
-        --- FULL ACTION LOG ---
+        --- ACTION LOG ---
         {context_log}
         --- END LOG ---
 
-        Based on all of this information, {visual_context_note}, answer the user's question.
+        Answer by {context_note}.
 
-        **User's Question:** "{question}"
-        **Your Answer:**
+        **Question:** "{question}"
+        **Answer:**
     """,
-    )
+    ).strip()
 
 
 def build_sandbox_merge_prompt(

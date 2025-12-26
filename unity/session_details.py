@@ -239,6 +239,7 @@ class SessionDetails:
         os.environ["CHANNEL"] = self.voice_call.channel
         os.environ["CONTACT"] = self.voice_call.contact_json
         os.environ["BOSS"] = self.voice_call.boss_json
+        os.environ["UNIFY_KEY"] = self.unify_key
 
     def populate_from_env(self) -> None:
         """Populate from environment variables.
@@ -291,6 +292,8 @@ class SessionDetails:
         # General config
         if val := os.environ.get("SHARED_UNIFY_KEY"):
             self.shared_unify_key = val
+        if val := os.environ.get("UNIFY_KEY"):
+            self.unify_key = val
         self._initialized = True
 
     def get_subprocess_env(self, **overrides: str) -> dict[str, str]:

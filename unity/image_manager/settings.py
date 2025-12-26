@@ -22,4 +22,3 @@ class ImageSettings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
-

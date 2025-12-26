@@ -15,16 +15,12 @@ from typing import Callable, Dict, List
 from .types import column_type_schema
 from ..memory_manager.broader_context import get_broader_context
 from ..common.prompt_helpers import (
-    clarification_guidance,
     sig_dict,
-    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     PromptSpec,
     compose_system_prompt,
-    parallelism_guidance,
 )
-from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 # ────────────────────────────────────────────────────────────────────────────
 # helpers
@@ -291,7 +287,9 @@ Tool availability groups (for reference)
         images_extras_block=None,
         include_parallelism=True,
         schemas=[],
-        special_blocks=([case_specific_instructions.strip()] if case_specific_instructions else []),
+        special_blocks=(
+            [case_specific_instructions.strip()] if case_specific_instructions else []
+        ),
         include_clarification_footer=True,
         include_time_footer=True,
         time_footer_prefix="Current UTC time: ",
@@ -459,9 +457,8 @@ Anti-patterns to avoid
         usage_examples = f"{usage_examples}\n\n{clarification_block}"
 
     # Build workflow instructions
-    workflow = (
-        textwrap.dedent(
-            f"""
+    workflow = textwrap.dedent(
+        f"""
 Follow this workflow strictly:
 1. Extract every fact (subject → attribute → value) from the message.
 2. Use the `{ask_fname}` tool to search for any existing records that need to be updated.
@@ -478,8 +475,7 @@ Before adding new knowledge or making edits, briefly check whether similar recor
 When the user describes the update semantically, resolve the row identifier first by requesting the row identifier from the ask method, then perform the update via the row identifier.
 Use the `{ask_fname}` method to see if you can find any missing context *before* you consider asking the user for clarifications.
             """,
-        ).strip()
-    )
+    ).strip()
 
     # Build schema blocks
     column_schema_block = "\n".join(
@@ -522,7 +518,8 @@ Use the `{ask_fname}` method to see if you can find any missing context *before*
         images_extras_block=None,
         include_parallelism=True,
         schemas=[],
-        special_blocks=[column_schema_block, table_schema_block] + ([case_specific_instructions.strip()] if case_specific_instructions else []),
+        special_blocks=[column_schema_block, table_schema_block]
+        + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
         time_footer_prefix="Current UTC time: ",
@@ -589,7 +586,9 @@ def build_ask_prompt(
    **Avoid joins on the same table** (including self-joins). When all required fields live in a single table,
    prefer using `{filter}` directly. Reserve join operations for combining **different** tables where a join
    is actually necessary.
-        """.format(filter=filter_fname)
+        """.format(
+            filter=filter_fname,
+        )
         if include_join_info
         else ""
     )
@@ -740,7 +739,8 @@ Do **not** hallucinate data.
         images_extras_block=None,
         include_parallelism=True,
         schemas=[],
-        special_blocks=[column_schema_block, table_schema_block] + ([case_specific_instructions.strip()] if case_specific_instructions else []),
+        special_blocks=[column_schema_block, table_schema_block]
+        + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
         time_footer_prefix="Current UTC time: ",

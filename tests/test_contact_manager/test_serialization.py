@@ -375,3 +375,32 @@ async def test_deserialize_and_continue_update_then_ask_nested_with_interjection
         and interjection_text in str(m.get("content", ""))
     ]
     assert len(seen) == 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Contact model field tests                                                  #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_contact_is_system_field():
+    """Contact model should have is_system field with correct default."""
+    from unity.contact_manager.types.contact import Contact
+
+    # Default value should be False
+    c = Contact(first_name="Test")
+    assert c.is_system is False
+
+    # Explicit True
+    c2 = Contact(first_name="Test", is_system=True)
+    assert c2.is_system is True
+
+    # Explicit False
+    c3 = Contact(first_name="Test", is_system=False)
+    assert c3.is_system is False
+
+
+def test_is_system_shorthand():
+    """is_system should have shorthand alias 'sys'."""
+    from unity.contact_manager.types.contact import Contact
+
+    assert Contact.SHORTHAND_MAP.get("is_system") == "sys"

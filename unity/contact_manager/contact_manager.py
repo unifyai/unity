@@ -41,6 +41,7 @@ from .system_contacts import (
     _ensure_columns_exist as _sys_ensure_columns_exist,
     provision_assistant_contact as _sys_provision_assistant_contact,
     provision_user_contact as _sys_provision_user_contact,
+    provision_org_member_contacts as _sys_provision_org_member_contacts,
 )
 from .custom_columns import (
     create_custom_column as _cc_create,
@@ -1134,6 +1135,9 @@ class ContactManager(BaseContactManager):
         user_log = logs_by_contact_id.get(1)
         _sys_provision_assistant_contact(self, assistant_log)
         _sys_provision_user_contact(self, user_log)
+
+        # Sync org members (returns early if not org API key)
+        _sys_provision_org_member_contacts(self)
 
     # Validation / sanitization
     def _allowed_fields(self) -> list[str]:

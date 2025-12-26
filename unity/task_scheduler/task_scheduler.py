@@ -364,6 +364,12 @@ class TaskScheduler(BaseTaskScheduler):
         self._reintegration_plans = {}
         self._num_tasks_cached = None
 
+        # Clear the cached context from ContextRegistry so it will be re-created
+        ContextRegistry.forget(self, "Tasks")
+
+        # Re-create the context with proper schema and fields
+        self._ctx = ContextRegistry.get_context(self, "Tasks")
+
         # Re-provision storage (schema, local view)
         self._provision_storage()
 

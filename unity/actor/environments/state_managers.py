@@ -23,6 +23,10 @@ class StateManagerEnvironment(BaseEnvironment):
     def get_instance(self) -> Primitives:
         return self._primitives
 
+    def get_prompt_context(self) -> str:
+        """Return Markdown-formatted rules/examples for using state managers."""
+        return ""
+
     def get_tools(self) -> Dict[str, ToolMetadata]:
         # The public surface for state managers is driven by the shared primitives registry
         # (`PRIMITIVE_SOURCES`) to avoid hardcoding manager/method lists in multiple places.
@@ -94,6 +98,17 @@ class StateManagerEnvironment(BaseEnvironment):
                 )
 
         return tools
+
+    def get_prompt_context(self) -> str:
+        """Markdown-formatted guidance for using state-manager primitives in plans."""
+
+        return (
+            "### State manager primitives (`primitives.*`)\n"
+            "- Use these tools to query or mutate durable assistant state (contacts, tasks, transcripts, etc.).\n"
+            "- Calls like `await primitives.contacts.ask(...)` may return a steerable handle; await `.result()` for the final answer.\n"
+            "- If a tool asks for clarification, wait for the user response and then answer via the handle's clarification API.\n"
+            "- Prefer `ask(...)` for read-only queries and `update(...)`/`execute(...)` only when mutations or tracked execution are intended.\n"
+        )
 
     async def capture_state(self) -> Dict[str, Any]:
         """State manager \"state\" is primarily evidenced via return values."""

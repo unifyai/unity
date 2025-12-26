@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
 from pydantic import BaseModel
-from ..common.log_utils import log as unity_log
+from ..common.log_utils import log as unity_log, _inject_private_fields, _add_to_all
 from ..contact_manager.base import BaseContactManager
 from ..manager_registry import ManagerRegistry
 from .types.message import Message, UNASSIGNED
@@ -507,12 +507,27 @@ class TranscriptManager(BaseTranscriptManager):
                 created_msg = Message(**persisted_payload)
             else:
                 # Async path: fire-and-forget, don't block on network I/O
-                self._get_logger().log_create(
+                # Inject private fields (same as sync path via unity_log)
+                entries_with_private = _inject_private_fields(entries)
+                future = self._get_logger().log_create(
                     project=unify.active_project(),
                     context=self._transcripts_ctx,
                     params={},
-                    entries=entries,
+                    entries=entries_with_private,
                 )
+                # Add callback to mirror to aggregation contexts when log is created
+                if self.include_in_multi_assistant_table and future is not None:
+                    ctx = self._transcripts_ctx
+
+                    def _on_log_created(fut, context=ctx):
+                        try:
+                            log_id = fut.result()
+                            if log_id:
+                                _add_to_all([log_id], context)
+                        except Exception:
+                            pass  # Best-effort
+
+                    future.add_done_callback(_on_log_created)
                 # In async mode, we don't wait for the response, so use the
                 # original message (IDs may not be assigned yet)
                 created_msg = _orig_msg

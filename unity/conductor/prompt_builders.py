@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Dict, Callable
 
 from ..common.prompt_helpers import (

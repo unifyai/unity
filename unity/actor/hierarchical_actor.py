@@ -4,6 +4,7 @@ import ast
 import asyncio
 import base64
 import copy
+import contextlib
 import datetime
 import enum
 import functools
@@ -54,6 +55,7 @@ from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from unity.conversation_manager.handle import ConversationManagerHandle
+from unity.actor.steerable_tool_pane import SteerableToolPane
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(
@@ -86,6 +88,9 @@ class VerificationWorkItem:
     start_seq: int = -1
     full_call_stack_tuple: tuple = field(default_factory=tuple)
     scoped_context_snapshot: dict = field(default_factory=dict)
+    # Pane event capture (index-based boundaries; robust under concurrency)
+    pane_events: list = field(default_factory=list)
+    pane_event_boundary: int = 0
 
 
 @dataclass
@@ -414,6 +419,44 @@ class InterjectionDecision(BaseModel):
         description="The context for generalization, e.g., 'all other employees in the folder' or 'Sam Parker'.",
     )
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Routing to in-flight steerable handles (SteerableToolPane)
+    # ──────────────────────────────────────────────────────────────────────
+    routing_action: Optional[
+        typing.Literal["none", "targeted", "broadcast_filtered"]
+    ] = Field(
+        None,
+        description=(
+            "How to route this interjection to in-flight handles. "
+            "'none': No routing (default). "
+            "'targeted': Route to specific handle_ids. "
+            "'broadcast_filtered': Broadcast to handles matching filter criteria."
+        ),
+    )
+    target_handle_ids: Optional[List[str]] = Field(
+        None,
+        description=(
+            "List of handle_ids to target when routing_action='targeted'. "
+            "Use this when the interjection is relevant to specific in-flight operations."
+        ),
+    )
+    broadcast_filter: Optional[dict[str, Any]] = Field(
+        None,
+        description=(
+            "Filter criteria for broadcast routing when routing_action='broadcast_filtered'. "
+            "Supported keys: 'origin_tool_prefixes' (list[str]), 'statuses' (list[str]), "
+            "'capabilities' (list[str]), 'created_after_step' (int), 'created_before_step' (int). "
+            "All filters are inclusive-only (whitelist). If omitted, defaults to all in-flight interjectable handles."
+        ),
+    )
+    routed_message: Optional[str] = Field(
+        None,
+        description=(
+            "Optional custom message to send to routed handles. "
+            "If omitted, the original interjection message is used."
+        ),
+    )
+
 
 class SandboxMergeDecision(BaseModel):
     """A structured decision on whether to merge sandbox findings."""
@@ -503,6 +546,20 @@ async def llm_call(
         provider-agnostic prompt caching across OpenAI, Anthropic, Gemini, etc.
         The static prompt should be ≥2,048 tokens for optimal caching benefits.
     """
+    # Vertex/Gemini context caching has provider-side minimums. Empirically, attempting to
+    # start caching below ~1024 tokens can hard-fail requests with INVALID_ARGUMENT.
+    #
+    # We therefore only include `cache_control` when the static prompt is "definitely"
+    # large enough to be worth caching (and to avoid provider errors). Otherwise we still
+    # send `static_prompt` as a normal system message, but without cache directives.
+    #
+    # NOTE: we intentionally use a conservative character threshold (rather than a token
+    # estimator) because tokenization varies by provider/model.
+    _CACHE_CONTROL_MIN_CHARS = 9000
+    _use_cache_control = (
+        bool(static_prompt) and len(static_prompt) >= _CACHE_CONTROL_MIN_CHARS
+    )
+
     client.reset_messages()
     user_content = [{"type": "text", "text": prompt}]
 
@@ -538,28 +595,30 @@ async def llm_call(
                 logger.warning(f"Could not process image for prompt: {e}")
 
     if static_prompt:
+        if _use_cache_control:
+            system_content = [
+                {
+                    "type": "text",
+                    "text": static_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ]
+        else:
+            system_content = [{"type": "text", "text": static_prompt}]
+
         messages_to_send = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": static_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                ],
-            },
-            {
-                "role": "user",
-                "content": user_content,
-            },
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
         ]
     else:
         messages_to_send = [{"role": "user", "content": user_content}]
 
-    response = await client.generate(messages=messages_to_send)
+    try:
+        response = await client.generate(messages=messages_to_send)
+    except Exception as _e:
+        raise
 
-    if static_prompt:
+    if static_prompt and _use_cache_control:
         try:
             usage = None
 
@@ -1046,12 +1105,14 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
         self,
         real_handle: SteerableToolHandle,
         plan: "HierarchicalActorHandle",
+        handle_id: str | None,
         call_repr: str,
         cache_key: tuple,
         meta: dict,
     ):
         self._real_handle = real_handle
         self._plan = plan
+        self._handle_id = handle_id
         self._call_repr = call_repr
         self._cache_key = cache_key
         self._meta = meta
@@ -1176,6 +1237,21 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
             "meta": self._meta,
         }
 
+        # Best-effort completion marking for pane (only reliable when `.result()` is awaited).
+        try:
+            if (
+                getattr(self._plan, "pane", None) is not None
+                and self._handle_id is not None
+            ):
+                await self._plan.pane._cleanup_handle(
+                    self._handle_id,
+                    emit_completed=True,
+                )
+        except Exception as e:
+            logger.debug(
+                f"Pane completion marking failed for handle_id={self._handle_id}: {e}",
+            )
+
         return final_result
 
 
@@ -1243,6 +1319,7 @@ class _SteerableToolHandleProxy:
                     return _HistoryCapturingHandleProxy(
                         real_handle,
                         self._plan,
+                        handle_id,
                         call_repr,
                         original_cache_key,
                         meta,
@@ -1281,10 +1358,51 @@ class _SteerableToolHandleProxy:
 
             output = await real_attr(*args, **kwargs)
 
+            # Best-effort completion marking for pane: when `.result()` is awaited on a top-level handle proxy.
+            if name == "result":
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        await self._plan.pane._cleanup_handle(
+                            self._handle_id,
+                            emit_completed=True,
+                        )
+                except Exception as e:
+                    logger.debug(
+                        f"Pane completion marking failed for handle_id={self._handle_id}: {e}",
+                    )
+
             if isinstance(output, SteerableToolHandle):
                 sub_handle_name = f"{name}_handle"
                 sub_handle_id = str(uuid.uuid4())
                 self._plan.live_handles[sub_handle_id] = output
+
+                # Register nested handles with the pane (best-effort).
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        capabilities: list[str] = []
+                        if hasattr(output, "interject"):
+                            capabilities.append("interjectable")
+                        if hasattr(output, "pause") and hasattr(output, "resume"):
+                            capabilities.append("pausable")
+                        if hasattr(output, "ask"):
+                            capabilities.append("askable")
+                        if hasattr(output, "stop"):
+                            capabilities.append("stoppable")
+                        if hasattr(output, "answer_clarification"):
+                            capabilities.append("clarifiable")
+
+                        await self._plan.pane.register_handle(
+                            handle=output,
+                            handle_id=sub_handle_id,
+                            parent_handle_id=self._handle_id,
+                            origin_tool=tool_name,
+                            origin_step=self._plan.runtime.action_counter,
+                            environment_namespace="handle_methods",
+                            capabilities=capabilities,
+                            call_stack=str(cache_key[0]) if cache_key else None,
+                        )
+                except Exception as e:
+                    logger.debug(f"Pane nested registration failed: {e}")
 
                 result_to_cache = {"handle_id": sub_handle_id}
 
@@ -1320,12 +1438,33 @@ class _SteerableToolHandleProxy:
                 return _HistoryCapturingHandleProxy(
                     output,
                     self._plan,
+                    sub_handle_id,
                     call_repr,
                     cache_key,
                     meta,
                 )
             else:
-                interaction_to_cache = ("handle_method_call", call_repr, str(output))
+                # Special-case `.result()`: capture sub-loop history (when available) as a 4th tuple element.
+                # This allows verification prompts to treat handle history as "low-level trace" evidence.
+                if name == "result":
+                    sub_loop_history: list[Any] = []
+                    if hasattr(self._real_handle, "get_history"):
+                        try:
+                            sub_loop_history = self._real_handle.get_history()  # type: ignore[attr-defined]
+                        except Exception:
+                            sub_loop_history = []
+                    interaction_to_cache = (
+                        "handle_method_call",
+                        call_repr,
+                        str(output),
+                        sub_loop_history,
+                    )
+                else:
+                    interaction_to_cache = (
+                        "handle_method_call",
+                        call_repr,
+                        str(output),
+                    )
                 interactions_log = current_interaction_sink_var.get()
                 if interactions_log is not None:
                     interactions_log.append(interaction_to_cache)
@@ -1380,7 +1519,22 @@ class _SteerableToolHandleProxy:
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = real_attr(*args, **kwargs)
-            interaction_to_cache = ("handle_method_call", call_repr, str(output))
+            # Special-case `.result()`: best-effort capture of sub-loop history (when available).
+            if name == "result":
+                sub_loop_history: list[Any] = []
+                if hasattr(self._real_handle, "get_history"):
+                    try:
+                        sub_loop_history = self._real_handle.get_history()  # type: ignore[attr-defined]
+                    except Exception:
+                        sub_loop_history = []
+                interaction_to_cache = (
+                    "handle_method_call",
+                    call_repr,
+                    str(output),
+                    sub_loop_history,
+                )
+            else:
+                interaction_to_cache = ("handle_method_call", call_repr, str(output))
             interactions_log = current_interaction_sink_var.get()
             if interactions_log is not None:
                 interactions_log.append(interaction_to_cache)
@@ -1667,6 +1821,37 @@ class _ToolProviderProxy:
                     handle_id,
                 )
 
+                # Register new handle with pane (best-effort).
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        capabilities: list[str] = []
+                        if hasattr(tool_output, "interject"):
+                            capabilities.append("interjectable")
+                        if hasattr(tool_output, "pause") and hasattr(
+                            tool_output,
+                            "resume",
+                        ):
+                            capabilities.append("pausable")
+                        if hasattr(tool_output, "ask"):
+                            capabilities.append("askable")
+                        if hasattr(tool_output, "stop"):
+                            capabilities.append("stoppable")
+                        if hasattr(tool_output, "answer_clarification"):
+                            capabilities.append("clarifiable")
+
+                        await self._plan.pane.register_handle(
+                            handle=tool_output,
+                            handle_id=handle_id,
+                            parent_handle_id=None,
+                            origin_tool=tool_name,
+                            origin_step=self._plan.runtime.action_counter,
+                            environment_namespace=self._namespace,
+                            capabilities=capabilities,
+                            call_stack=str(cache_key[0]) if cache_key else None,
+                        )
+                except Exception as e:
+                    logger.debug(f"Pane registration failed for tool handle: {e}")
+
             if self._is_browser_env:
                 interaction_to_cache = (
                     "tool_call",
@@ -1820,6 +2005,38 @@ class _ToolProviderProxy:
                     handle_name,
                     handle_id,
                 )
+
+                # Register new handle with pane (best-effort). sync_wrapper can't await.
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        capabilities: list[str] = []
+                        if hasattr(result, "interject"):
+                            capabilities.append("interjectable")
+                        if hasattr(result, "pause") and hasattr(result, "resume"):
+                            capabilities.append("pausable")
+                        if hasattr(result, "ask"):
+                            capabilities.append("askable")
+                        if hasattr(result, "stop"):
+                            capabilities.append("stoppable")
+                        if hasattr(result, "answer_clarification"):
+                            capabilities.append("clarifiable")
+
+                        t = asyncio.create_task(
+                            self._plan.pane.register_handle(
+                                handle=result,
+                                handle_id=handle_id,
+                                parent_handle_id=None,
+                                origin_tool=tool_name,
+                                origin_step=self._plan.runtime.action_counter,
+                                environment_namespace=self._namespace,
+                                capabilities=capabilities,
+                                call_stack=str(cache_key[0]) if cache_key else None,
+                            ),
+                            name=f"pane_register_{handle_id[:8]}",
+                        )
+                        self._plan._child_tasks.add(t)
+                except Exception:
+                    pass
 
             interaction_to_cache = ("tool_call", call_repr, interaction_str)
             if interactions_log is not None:
@@ -2061,6 +2278,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self.runtime = PlanRuntime()
         self.call_stack: List[str] = []
         self.action_log: List[str] = []
+        self._pane_supervisor_task: Optional[asyncio.Task] = None
         self.last_verified_function_name: Optional[str] = None
         self.last_verified_url: Optional[str] = None
         self.last_verified_screenshot: Optional[str | bytes] = None
@@ -2087,6 +2305,9 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             self._last_summarized_interaction_count: int = 0
 
         self._child_tasks: set[asyncio.Task] = set()
+
+        # One pane per actor run (deterministic runtime component).
+        self.pane = SteerableToolPane(run_id=str(self.run_id))
 
         self.verif_seq: int = 0
         self.pending_verifications: "OrderedDict[int, VerificationHandle]" = (
@@ -2221,8 +2442,22 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         token = current_run_id_var.set(self.run_id)
         self.runtime.execution_mode = mode
         try:
+            # Ensure pane run_id stays correlated with the plan run_id (run_id may change across reruns).
+            try:
+                self.pane.run_id = str(self.run_id)
+            except Exception:
+                pass
+
             if not self._is_complete:
                 self._set_state(_HierarchicalHandleState.RUNNING)
+
+            # Start the pane supervisor early so it can react to clarifications during execution.
+            if self._pane_supervisor_task is None or self._pane_supervisor_task.done():
+                self._pane_supervisor_task = asyncio.create_task(
+                    self._pane_event_supervisor(),
+                    name=f"PaneSupervisor-{self._module_name}",
+                )
+                self._child_tasks.add(self._pane_supervisor_task)
 
             if self.plan_source_code is None:
                 # Determine the entrypoint: explicit, semantic search, or generate plan
@@ -2340,6 +2575,130 @@ async def main_plan():
                 current_run_id_var.reset(token)
             except Exception:
                 pass
+
+    async def _pane_event_supervisor(self) -> None:
+        """Concurrent supervisor reacting to pane events.
+
+        Policy: be conservative for clarifications. If a clarification channel exists,
+        pause the plan, ask the user, forward the answer via `pane.answer_clarification`,
+        then resume. Notifications are logged (no additional LLM turns).
+        """
+
+        try:
+            while not self._completion_event.is_set():
+                wake = asyncio.create_task(self.pane._events_q.get())
+                done, pending = await asyncio.wait(
+                    {wake, asyncio.create_task(self._completion_event.wait())},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await t
+
+                # Completed: exit
+                if wake not in done:
+                    break
+
+                try:
+                    idx = wake.result()
+                except Exception:
+                    continue
+
+                try:
+                    event = self.pane._events_log[idx]
+                except Exception:
+                    continue
+
+                if event.get("type") == "steering_applied":
+                    payload = event.get("payload") or {}
+                    method = payload.get("method")
+                    status = payload.get("status")
+                    handle_id = event.get("handle_id")
+
+                    interactions_log = current_interaction_sink_var.get()
+                    if interactions_log is not None:
+                        interactions_log.append(
+                            (
+                                "pane_steering",
+                                str(method),
+                                f"handle_id={handle_id} status={status}",
+                            ),
+                        )
+                    try:
+                        self.action_log.append(
+                            f"PANE steering_applied: method={method} handle_id={handle_id} status={status}",
+                        )
+                    except Exception:
+                        pass
+
+                elif event.get("type") == "clarification":
+                    await self._handle_pane_clarification_event(event)
+                elif event.get("type") == "notification":
+                    try:
+                        self.action_log.append(
+                            f"PANE notification from {event.get('handle_id')}: {event.get('payload')}",
+                        )
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.debug(f"Pane supervisor failed: {e}", exc_info=True)
+
+    async def _handle_pane_clarification_event(self, event: dict[str, Any]) -> None:
+        """Handle a single clarification event from the pane."""
+
+        handle_id = str(event.get("handle_id", ""))
+        payload = event.get("payload") or {}
+        call_id = str(payload.get("call_id", ""))
+        question = str(payload.get("question", ""))
+        origin_tool = ""
+        try:
+            origin = event.get("origin") or {}
+            origin_tool = str(origin.get("origin_tool", ""))
+        except Exception:
+            origin_tool = ""
+
+        self.action_log.append(
+            f"PANE clarification from {origin_tool or '<unknown>'}: {question}",
+        )
+
+        if self.clarification_enabled:
+            # Pause the plan (non-immediate: avoids browser interrupt assumptions).
+            with contextlib.suppress(Exception):
+                await self.pause(immediate=False)
+
+            # Ask user via queues, then answer the clarification.
+            await self.clarification_up_q.put(question)
+            user_answer = await self.clarification_down_q.get()
+            self.action_log.append(
+                f"PANE clarification answered by user: {user_answer}",
+            )
+
+            # Forward into the specific in-flight handle via the pane.
+            await self.pane.answer_clarification(handle_id, call_id, user_answer)
+
+            # Also record as an interaction for verification traces (best-effort).
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(
+                    (
+                        "pane_steering",
+                        "answer_clarification",
+                        f"handle_id={handle_id} call_id={call_id}",
+                    ),
+                )
+
+            with contextlib.suppress(Exception):
+                await self.resume()
+        else:
+            # No user clarification channel available: best-effort forward a neutral response.
+            await self.pane.answer_clarification(
+                handle_id,
+                call_id,
+                "No user clarification channel is available. Please proceed with your best judgment.",
+            )
 
     async def _start_main_execution_loop(self):
         """
@@ -3568,6 +3927,16 @@ async def main_plan():
         if self._recovery_task and not self._recovery_task.done():
             self._recovery_task.cancel()
 
+        # Cancel pane supervisor (independent of verification/recovery task presence).
+        if (
+            self._pane_supervisor_task is not None
+            and not self._pane_supervisor_task.done()
+        ):
+            self._pane_supervisor_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._pane_supervisor_task
+        self._pane_supervisor_task = None
+
         verifications_to_cancel = [
             handle
             for handle in self.pending_verifications.values()
@@ -3687,6 +4056,25 @@ async def main_plan():
                     context_dict,
                 )
 
+                # Snapshot steerable pane state for routing decisions (best-effort).
+                pane_snapshot: dict[str, Any] | None = None
+                try:
+                    if hasattr(self, "pane") and self.pane is not None:
+                        all_handles = await self.pane.list_handles(status=None)
+                        in_flight = [
+                            h
+                            for h in all_handles
+                            if h.get("status")
+                            in ("running", "paused", "waiting_for_clarification")
+                        ]
+                        pending_clars = await self.pane.get_pending_clarifications()
+                        pane_snapshot = {
+                            "active_handles": in_flight,
+                            "pending_clarifications_count": len(pending_clars),
+                        }
+                except Exception as e:
+                    logger.debug(f"Could not build pane snapshot for interjection: {e}")
+
                 static_prompt, dynamic_prompt = (
                     prompt_builders.build_interjection_prompt(
                         interjection=message,
@@ -3699,6 +4087,7 @@ async def main_plan():
                         tools=self.actor.tools,
                         environments=self.actor.environments,
                         images=images,
+                        pane_snapshot=pane_snapshot,
                     )
                 )
 
@@ -3721,7 +4110,17 @@ async def main_plan():
                     f"Interjection Decision: {decision.action} - {decision.reason}",
                 )
 
+                # Apply routing to in-flight handles via pane.
+                # Do this *before* executing potentially expensive interjection actions (e.g. modify_task),
+                # to minimize propagation latency to in-flight manager loops.
+                routing_status = await self._apply_interjection_routing(
+                    decision=decision,
+                    original_message=message,
+                    images=images,
+                )
                 status_message = await self._execute_interjection_decision(decision)
+                if routing_status:
+                    status_message = f"{status_message}\n{routing_status}"
 
                 return status_message
 
@@ -3730,13 +4129,138 @@ async def main_plan():
                 self.action_log.append(f"ERROR during interjection: {e}")
                 return f"Error processing interjection: {e}"
             finally:
-                should_resume = decision is None or decision.action not in (
-                    "modify_task",
-                    "replace_task",
-                    "clarify",
+                # Resume by default after interjection handling, except when we are
+                # intentionally waiting for follow-up user input or replacing the plan.
+                #
+                # `modify_task` only blocks resume when patches are present; when no patches
+                # are provided, we treat it as a no-op.
+                should_resume = decision is None or (
+                    decision.action not in ("replace_task", "clarify")
+                    and not (decision.action == "modify_task" and decision.patches)
                 )
                 if self._state == _HierarchicalHandleState.PAUSED and should_resume:
                     await self.resume()
+
+    async def _apply_interjection_routing(
+        self,
+        *,
+        decision: InterjectionDecision,
+        original_message: str,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+    ) -> str:
+        """Apply routing from an interjection decision to in-flight handles via the pane.
+
+        This is deterministic runtime logic: it does not perform an additional LLM call.
+        Returns a short status message summarizing routing actions (or '' for no routing).
+        """
+
+        if not hasattr(self, "pane") or self.pane is None:
+            return ""
+
+        routing_action = getattr(decision, "routing_action", None) or "none"
+        if routing_action == "none":
+            return ""
+
+        routed_message = getattr(decision, "routed_message", None) or original_message
+
+        try:
+            if routing_action == "targeted":
+                target_ids = getattr(decision, "target_handle_ids", None) or []
+                if not target_ids:
+                    logger.warning(
+                        "Interjection routing requested targeted but no target_handle_ids provided",
+                    )
+                    return ""
+
+                # Best-effort status summary: use current pane registry snapshot (metadata only).
+                try:
+                    known = {
+                        h["handle_id"]: h.get("status")
+                        for h in await self.pane.list_handles(status=None)
+                    }
+                except Exception:
+                    known = {}
+
+                results: list[str] = []
+                for hid in target_ids:
+                    # Always call pane.interject so the pane emits a canonical `steering_applied` event
+                    # (even when the handle is not found or already terminal).
+                    await self.pane.interject(
+                        hid,
+                        routed_message,
+                        parent_chat_context_cont=self.parent_chat_context,
+                        images=images,
+                    )
+                    st = known.get(hid)
+                    if st is None:
+                        results.append(
+                            f"- {hid}: dispatched (handle not found at snapshot time)",
+                        )
+                    elif st in ("completed", "failed", "stopped"):
+                        results.append(
+                            f"- {hid}: dispatched (handle already {st} at snapshot time)",
+                        )
+                    else:
+                        results.append(f"- {hid}: dispatched")
+
+                status = (
+                    f"Routed interjection to {len(target_ids)} handle(s):\n"
+                    + "\n".join(
+                        results,
+                    )
+                )
+                self.action_log.append(f"ROUTING: {status}")
+                return status
+
+            if routing_action == "broadcast_filtered":
+                from unity.actor.steerable_tool_pane import BroadcastFilter
+
+                # Micro-optimization / log hygiene: if there are no in-flight handles at all,
+                # don't attempt a broadcast (avoids "0 handle(s)" noise).
+                try:
+                    all_handles = await self.pane.list_handles(status=None)
+                    in_flight = [
+                        h
+                        for h in all_handles
+                        if h.get("status")
+                        in ("running", "paused", "waiting_for_clarification")
+                    ]
+                    if not in_flight:
+                        return ""
+                except Exception:
+                    # Best-effort; if introspection fails, proceed with broadcast.
+                    pass
+
+                filter_dict = getattr(decision, "broadcast_filter", None) or {}
+                statuses = filter_dict.get(
+                    "statuses",
+                    ["running", "paused", "waiting_for_clarification"],
+                )
+                bfilter = BroadcastFilter(
+                    statuses=statuses,
+                    origin_tool_prefixes=filter_dict.get("origin_tool_prefixes"),
+                    capabilities=filter_dict.get("capabilities"),
+                    created_after_step=filter_dict.get("created_after_step"),
+                    created_before_step=filter_dict.get("created_before_step"),
+                )
+                result = await self.pane.broadcast_interject(
+                    routed_message,
+                    filter=bfilter,
+                    parent_chat_context_cont=self.parent_chat_context,
+                    images=images,
+                )
+                status = f"Broadcast interjection to {int(result.get('count') or 0)} handle(s)"
+                self.action_log.append(f"ROUTING: {status}")
+                return status
+
+            logger.warning(f"Unknown routing_action: {routing_action}")
+            return ""
+
+        except Exception as e:
+            logger.error(f"Error applying interjection routing: {e}", exc_info=True)
+            msg = f"Routing error: {e}"
+            self.action_log.append(f"ROUTING ERROR: {msg}")
+            return msg
 
     async def _execute_interjection_decision(
         self,
@@ -3954,7 +4478,7 @@ async def main_plan():
                 f"Executing decision: refactor_and_generalize. Context: '{decision.generalization_context}'",
             )
             logger.debug(
-                "Refactor and generalize triggered. Proceeding to Phase 2 implementation.",
+                "Refactor and generalize triggered. Generating a refactored plan and restarting execution.",
             )
 
             run_id_being_cancelled = self.run_id
@@ -4199,6 +4723,13 @@ async def main_plan():
             self.action_log.append("Executing decision: complete_task.")
             return await self.stop(final_result="Plan completed by user instruction.")
 
+        # If the LLM chooses modify_task without patches, treat it as "no plan change needed".
+        if decision.action == "modify_task" and not decision.patches:
+            self.action_log.append(
+                "Interjection chose modify_task but provided no patches; treating as no-op.",
+            )
+            return "No plan modifications provided; continuing execution."
+
         return "Error: Unknown or unsupported interjection action."
 
     async def stop(
@@ -4247,6 +4778,13 @@ async def main_plan():
         await self._cancel_all_background_tasks()
         if self._is_complete:
             return f"Plan already in terminal state: {self._state.name}."
+
+        # Cleanup pane (watchers) best-effort.
+        try:
+            if getattr(self, "pane", None) is not None:
+                await self.pane.cleanup()
+        except Exception as e:
+            logger.debug(f"Pane cleanup failed: {e}", exc_info=True)
 
         if final_result is not None:
             base_msg = final_result
@@ -4364,15 +4902,14 @@ async def main_plan():
         """
         full_context_log = "\n".join(f"- {log}" for log in self.action_log)
 
-        # Check if we have visual evidence available (screenshot from browser)
-        has_visual_evidence = False
-        if "computer_primitives" in self.actor.environments:
+        # Capture evidence from all active environments
+        evidence: Dict[str, Any] = {}
+        for env_namespace, env in self.actor.environments.items():
             try:
-                # Visual evidence is available if we can access the browser's current view
-                browser = self._get_computer_primitives()
-                has_visual_evidence = browser is not None
-            except Exception:
-                has_visual_evidence = False
+                evidence[env_namespace] = await env.capture_state()
+            except Exception as e:
+                logger.warning(f"Failed to capture evidence from {env_namespace}: {e}")
+                evidence[env_namespace] = {"type": "error", "error": str(e)}
 
         system_message = prompt_builders.build_ask_prompt(
             goal=self.goal,
@@ -4381,7 +4918,7 @@ async def main_plan():
             context_log=full_context_log,
             question=question,
             environments=self.actor.environments,
-            has_visual_evidence=has_visual_evidence,
+            evidence=evidence,
         )
 
         self.ask_client.reset_messages()
@@ -5454,6 +5991,14 @@ class HierarchicalActor(BaseActor):
                     # if not plan.runtime.execution_mode.startswith("replay_"):
                     #     await self._ensure_precondition(plan, func_name)
 
+                    # Capture pane event boundary (index-based, robust for concurrent watcher emissions).
+                    pane_event_idx_before = 0
+                    try:
+                        if getattr(plan, "pane", None) is not None:
+                            pane_event_idx_before = len(plan.pane._events_log)
+                    except Exception:
+                        pane_event_idx_before = 0
+
                     # Gather pre-execution evidence from all active environments.
                     pre_state: dict[str, Any] = {}
                     active_envs = (
@@ -5735,6 +6280,21 @@ class HierarchicalActor(BaseActor):
                             self._get_scoped_context_from_plan_state(plan)
                         )
 
+                        # Capture pane events since boundary (index-based slice).
+                        captured_pane_events: list[Any] = []
+                        pane_event_idx_after = pane_event_idx_before
+                        try:
+                            if getattr(plan, "pane", None) is not None:
+                                pane_event_idx_after = len(plan.pane._events_log)
+                                captured_pane_events = list(
+                                    plan.pane._events_log[
+                                        pane_event_idx_before:pane_event_idx_after
+                                    ],
+                                )
+                        except Exception:
+                            captured_pane_events = []
+                            pane_event_idx_after = pane_event_idx_before
+
                         plan.verif_seq += 1
                         item = VerificationWorkItem(
                             ordinal=plan.verif_seq,
@@ -5756,6 +6316,8 @@ class HierarchicalActor(BaseActor):
                             start_seq=start_seq,
                             full_call_stack_tuple=captured_full_stack_tuple,
                             scoped_context_snapshot=captured_scoped_context_snapshot,
+                            pane_events=captured_pane_events,
+                            pane_event_boundary=pane_event_idx_after,
                         )
 
                         plan._spawn_async_verification(item)
@@ -6306,6 +6868,7 @@ class HierarchicalActor(BaseActor):
             parent_chat_context=plan.parent_chat_context,
             clarification_question=clarification_question,
             clarification_answer=clarification_answer,
+            environments=self.environments,
         )
 
         plan.verification_client.set_response_format(VerificationAssessment)

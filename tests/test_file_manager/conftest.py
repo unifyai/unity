@@ -13,8 +13,6 @@ from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.simulated import SimulatedFileManager
 from unity.common.llm_client import new_llm_client
 
-from tests.settings import SETTINGS
-
 
 async def llm_judge_html_equivalence(
     expected_html: str,
@@ -34,7 +32,7 @@ async def llm_judge_html_equivalence(
         Tuple of (is_equivalent: bool, explanation: str)
     """
     try:
-        import unify
+        pass
 
         system_prompt = """You are an HTML table comparison expert. Your task is to determine if two HTML tables are semantically equivalent.
 

@@ -122,10 +122,10 @@ async def test_simulated_execute_response_format():
 @pytest.mark.asyncio
 @_handle_project
 async def test_real_ask_response_format(
-    basic_task_scenario: tuple[TaskScheduler, list],
+    task_scheduler_read_scenario: tuple[TaskScheduler, list],
 ):
     """Real TaskScheduler.ask should return structured output when response_format is provided."""
-    ts, _ = basic_task_scenario
+    ts, _ = task_scheduler_read_scenario
 
     handle = await ts.ask(
         "How many tasks are in the system and list their names?",
@@ -144,10 +144,10 @@ async def test_real_ask_response_format(
 @pytest.mark.asyncio
 @_handle_project
 async def test_real_update_response_format(
-    basic_task_scenario: tuple[TaskScheduler, list],
+    task_scheduler_mutation_scenario: tuple[TaskScheduler, list],
 ):
     """Real TaskScheduler.update should return structured output when response_format is provided."""
-    ts, _ = basic_task_scenario
+    ts, _ = task_scheduler_mutation_scenario
 
     handle = await ts.update(
         "Add a note to the 'Write quarterly report' task indicating it needs review",

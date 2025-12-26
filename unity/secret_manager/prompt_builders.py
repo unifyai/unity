@@ -8,7 +8,6 @@ a **live** ``tools``-dict and construct the corresponding **system** messages
 
 from __future__ import annotations
 
-import json
 import textwrap
 from typing import Dict, Callable
 

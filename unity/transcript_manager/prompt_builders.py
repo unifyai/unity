@@ -261,7 +261,9 @@ def build_ask_prompt(
     # Two-table info: explains both tables and references schemas
     two_table_info = _render_two_table_info(
         num_messages=num_messages,
-        transcript_custom_columns=transcript_custom_cols if transcript_custom_cols else None,
+        transcript_custom_columns=(
+            transcript_custom_cols if transcript_custom_cols else None
+        ),
     )
 
     positioning_lines = [

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import unify
@@ -133,10 +132,13 @@ def test_assistant_id_field_injected():
 
 @_handle_project
 def test_user_id_field_injected():
-    """Logs should have _user_id field when USER_ID env var is set."""
+    """Logs should have _user_id field when USER_ID is set."""
     test_user_id = "user-456"
 
-    with patch.dict(os.environ, {"USER_ID": test_user_id}):
+    with patch(
+        "unity.common.log_utils._get_user_id",
+        return_value=test_user_id,
+    ):
         fm = FunctionManager()
 
         src = "def test_user_id_field(x):\n    return x * x\n"

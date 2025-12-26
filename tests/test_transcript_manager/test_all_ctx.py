@@ -12,6 +12,44 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 
 
+@_handle_project
+def test_async_log_messages_mirrors_to_all_contexts():
+    """Async log_messages (synchronous=False) should also mirror to aggregation contexts."""
+    tm = TranscriptManager()
+
+    msg = Message(
+        medium="email",
+        sender_id=0,
+        receiver_ids=[1],
+        timestamp=datetime.now(UTC),
+        content="Async mirror test message",
+        exchange_id=0,
+    )
+    # Use async path (synchronous=False is default)
+    tm.log_messages(msg, synchronous=False)
+
+    # Wait for async logger to flush
+    tm.join_published()
+
+    # Verify message exists in primary context
+    result = tm._filter_messages(filter="content == 'Async mirror test message'")
+    messages = result["messages"]
+    assert len(messages) >= 1, "Message should exist in manager's context"
+    message_id = messages[0].message_id
+
+    # Derive aggregation contexts
+    all_ctxs = _derive_all_contexts(tm._transcripts_ctx)
+    assert len(all_ctxs) == 2, "Should have user-level and global aggregation contexts"
+
+    # Verify it was mirrored to both aggregation contexts
+    for all_ctx in all_ctxs:
+        all_logs = unify.get_logs(
+            context=all_ctx,
+            filter=f"message_id == {message_id}",
+        )
+        assert len(all_logs) >= 1, f"Async log should be mirrored to {all_ctx}"
+
+
 def _get_raw_log_by_message_id(ctx: str, message_id: int):
     """Get raw log entry including private fields."""
     logs = unify.get_logs(
@@ -37,6 +75,7 @@ def test_log_creates_all_transcripts_entries():
         exchange_id=0,
     )
     tm.log_messages(msg)
+    tm.join_published()
 
     # Get the message_id from the created message
     result = tm._filter_messages(filter="content == 'Test message for All/Ctx'")
@@ -76,6 +115,7 @@ def test_user_field_injected():
             exchange_id=0,
         )
         tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'User field test'")
         messages = result["messages"]
@@ -110,6 +150,7 @@ def test_assistant_field_injected():
             exchange_id=0,
         )
         tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'Assistant field test'")
         messages = result["messages"]
@@ -144,6 +185,7 @@ def test_assistant_id_field_injected():
             exchange_id=0,
         )
         tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'Assistant ID field test'")
         messages = result["messages"]
@@ -178,6 +220,7 @@ def test_user_id_field_injected():
             exchange_id=0,
         )
         tm.log_messages(msg)
+        tm.join_published()
 
         result = tm._filter_messages(filter="content == 'User ID field test'")
         messages = result["messages"]
@@ -223,6 +266,7 @@ def test_private_fields_excluded_from_filter_messages():
         exchange_id=0,
     )
     tm.log_messages(msg)
+    tm.join_published()
 
     # Get message via public filter_messages API
     result = tm._filter_messages(filter="content == 'Private field exclusion test'")
@@ -252,6 +296,7 @@ def test_deleting_message_removes_from_all_ctxs():
         exchange_id=0,
     )
     tm.log_messages(msg)
+    tm.join_published()
 
     result = tm._filter_messages(filter="content == 'Message to be deleted'")
     messages = result["messages"]
@@ -307,6 +352,7 @@ def test_update_syncs_to_all_aggregation_contexts():
         exchange_id=0,
     )
     tm.log_messages(msg)
+    tm.join_published()
 
     result = tm._filter_messages(filter="content == 'Update sync test message'")
     messages = result["messages"]
@@ -351,6 +397,7 @@ def test_log_id_unchanged_after_update():
         exchange_id=0,
     )
     tm.log_messages(msg)
+    tm.join_published()
 
     result = tm._filter_messages(filter="content == 'Log ID test message'")
     messages = result["messages"]
