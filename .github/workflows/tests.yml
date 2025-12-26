@@ -331,6 +331,105 @@ jobs:
         if-no-files-found: ignore
         retention-days: 7
 
+  consolidate-logs:
+    name: Consolidate all logs
+    runs-on: ubuntu-latest
+    needs: [should-run-tests, pytest]
+    if: always() && needs.should-run-tests.outputs.run_tests == 'true'
+    steps:
+    - name: Download all pytest logs
+      uses: actions/download-artifact@v4
+      with:
+        pattern: pytest-logs-*
+        path: all-pytest-logs
+        merge-multiple: false
+
+    - name: Download all LLM I/O debug logs
+      uses: actions/download-artifact@v4
+      with:
+        pattern: llm-io-debug-*
+        path: all-llm-io-debug
+        merge-multiple: false
+
+    - name: Reorganize logs for easy browsing
+      run: |
+        # Create consolidated directories
+        mkdir -p consolidated/pytest_logs
+        mkdir -p consolidated/llm_io_debug
+
+        # Move pytest logs, preserving folder structure
+        if [ -d "all-pytest-logs" ]; then
+          for dir in all-pytest-logs/pytest-logs-*/; do
+            if [ -d "$dir" ]; then
+              # Extract test folder name (e.g., tests_test_actor -> test_actor)
+              folder_name=$(basename "$dir" | sed 's/^pytest-logs-tests_//')
+              # Copy contents, flattening one level
+              for subdir in "$dir"*/; do
+                if [ -d "$subdir" ]; then
+                  cp -r "$subdir" "consolidated/pytest_logs/${folder_name}_$(basename "$subdir")"
+                fi
+              done
+              # Also copy any direct files
+              find "$dir" -maxdepth 1 -type f -exec cp {} "consolidated/pytest_logs/" \; 2>/dev/null || true
+            fi
+          done
+        fi
+
+        # Move LLM I/O debug logs similarly
+        if [ -d "all-llm-io-debug" ]; then
+          for dir in all-llm-io-debug/llm-io-debug-*/; do
+            if [ -d "$dir" ]; then
+              folder_name=$(basename "$dir" | sed 's/^llm-io-debug-tests_//')
+              for subdir in "$dir"*/; do
+                if [ -d "$subdir" ]; then
+                  cp -r "$subdir" "consolidated/llm_io_debug/${folder_name}_$(basename "$subdir")"
+                fi
+              done
+              find "$dir" -maxdepth 1 -type f -exec cp {} "consolidated/llm_io_debug/" \; 2>/dev/null || true
+            fi
+          done
+        fi
+
+        # Show what we collected
+        echo "=== Consolidated pytest_logs ==="
+        ls -la consolidated/pytest_logs/ 2>/dev/null || echo "(empty)"
+        echo ""
+        echo "=== Consolidated llm_io_debug ==="
+        ls -la consolidated/llm_io_debug/ 2>/dev/null || echo "(empty)"
+
+    - name: Upload consolidated logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: all-logs-consolidated
+        path: consolidated/
+        if-no-files-found: ignore
+        retention-days: 7
+
+    - name: Generate consolidated summary
+      run: |
+        echo "## 📦 Consolidated Test Logs" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "All test logs have been consolidated into a single artifact: **\`all-logs-consolidated\`**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Directory structure:" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "all-logs-consolidated/" >> $GITHUB_STEP_SUMMARY
+        echo "├── pytest_logs/      # Test output logs" >> $GITHUB_STEP_SUMMARY
+        echo "│   ├── actor_*/" >> $GITHUB_STEP_SUMMARY
+        echo "│   ├── conductor_*/" >> $GITHUB_STEP_SUMMARY
+        echo "│   └── ..." >> $GITHUB_STEP_SUMMARY
+        echo "└── llm_io_debug/     # LLM request/response traces" >> $GITHUB_STEP_SUMMARY
+        echo "    ├── actor_*/" >> $GITHUB_STEP_SUMMARY
+        echo "    ├── conductor_*/" >> $GITHUB_STEP_SUMMARY
+        echo "    └── ..." >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Count files
+        pytest_count=$(find consolidated/pytest_logs -type f 2>/dev/null | wc -l)
+        llm_count=$(find consolidated/llm_io_debug -type f 2>/dev/null | wc -l)
+        echo "📊 **$pytest_count** pytest log files, **$llm_count** LLM I/O debug files" >> $GITHUB_STEP_SUMMARY
+
   cache-consolidation:
     name: Consolidate and store cache
     runs-on: ubuntu-latest
