@@ -309,6 +309,8 @@ jobs:
     - name: Generate failure summary
       if: failure()
       run: |
+        ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
+
         echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -335,11 +337,13 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "📋 **See the \"Run tests via parallel_run.sh\" step above** for inline failure details." >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "📥 **Download full logs** from the Artifacts section below." >> $GITHUB_STEP_SUMMARY
+        echo "📥 **[Download full logs]($ARTIFACTS_URL)** from Artifacts." >> $GITHUB_STEP_SUMMARY
 
     - name: Generate success summary
       if: success()
       run: |
+        ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
+
         echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -348,7 +352,7 @@ jobs:
           log_dir=$(ls -d pytest_logs/*/ 2>/dev/null | head -1)
           if [ -n "$log_dir" ]; then
             log_count=$(find "$log_dir" -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
-            echo "📊 **$log_count** tests passed" >> $GITHUB_STEP_SUMMARY
+            echo "📊 **$log_count** tests passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "<details>" >> $GITHUB_STEP_SUMMARY
             echo "<summary>View test list</summary>" >> $GITHUB_STEP_SUMMARY
