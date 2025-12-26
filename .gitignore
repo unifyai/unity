@@ -40,3 +40,4 @@ discord_messages.md
 # Ignore log contents but keep the README
 logs/*
 !logs/README.md
+.repairs_queries/
