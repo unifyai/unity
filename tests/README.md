@@ -320,9 +320,9 @@ After a CI run, logs are available in the GitHub Actions UI:
 
 | Artifact | Contents |
 |----------|----------|
-| `all-logs-consolidated` | **One-click download** of all logs combined |
-| `pytest-logs-{folder}` | Individual folder's pytest output |
-| `llm-io-debug-{folder}` | Individual folder's LLM I/O traces |
+| `pytest-logs-{folder}` | Test output logs for each folder |
+| `llm-io-debug-{folder}` | LLM request/response traces for each folder |
+| `cache-diff-{run}-{folder}` | Cache delta files (used internally) |
 
 **Inline Failure Summaries**: Failed jobs display collapsible failure excerpts directly in the Summary page—no download required for quick triage.
 
