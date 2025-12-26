@@ -556,7 +556,9 @@ async def llm_call(
     # NOTE: we intentionally use a conservative character threshold (rather than a token
     # estimator) because tokenization varies by provider/model.
     _CACHE_CONTROL_MIN_CHARS = 9000
-    _use_cache_control = bool(static_prompt) and len(static_prompt) >= _CACHE_CONTROL_MIN_CHARS
+    _use_cache_control = (
+        bool(static_prompt) and len(static_prompt) >= _CACHE_CONTROL_MIN_CHARS
+    )
 
     client.reset_messages()
     user_content = [{"type": "text", "text": prompt}]

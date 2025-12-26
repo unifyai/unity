@@ -48,14 +48,20 @@ def get_broader_context(
             return _BROADER_CONTEXT
 
         # -------- lazy imports to avoid circular dependencies -------------
-        from unity.manager_registry import ManagerRegistry  # noqa: WPS433  – runtime import
+        from unity.manager_registry import (
+            ManagerRegistry,
+        )  # noqa: WPS433  – runtime import
         from unity.memory_manager.memory_manager import (
             MemoryManager,
         )  # noqa: WPS433  – runtime import
 
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
-        cm = contact_manager if contact_manager is not None else ManagerRegistry.get_contact_manager()
+        cm = (
+            contact_manager
+            if contact_manager is not None
+            else ManagerRegistry.get_contact_manager()
+        )
         contacts = sorted(
             cm.filter_contacts(
                 filter="(contact_id == 0) or (contact_id == 1)",

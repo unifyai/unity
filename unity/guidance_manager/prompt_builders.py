@@ -7,7 +7,6 @@ and referenced in table info to avoid duplication.
 
 from __future__ import annotations
 
-import json
 import textwrap
 from typing import Callable, Dict, List, Optional, Union
 
