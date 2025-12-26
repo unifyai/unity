@@ -96,3 +96,83 @@ class BroadcastFilter:
     capabilities: list[str] | None = None
     created_after_step: int | None = None
     created_before_step: int | None = None
+
+
+class SteerableToolPane:
+    """Aggregates events and control for all in-flight `SteerableToolHandle`s in an Actor run.
+
+    Responsibilities:
+    - Maintain a registry (`handle_id -> HandleMetadata`) for discovered handles.
+    - Maintain an append-only durable events log (canonical record).
+    - Provide a bounded wakeup queue (delivery tokens) to notify a supervisor.
+    - Maintain an index of pending clarifications for fast "what's blocking?" queries.
+    - Run watcher tasks that surface `next_clarification()` / `next_notification()` events.
+    - Provide steering methods (`interject`, `pause`, `resume`, `stop`, `answer_clarification`).
+
+    Completion detection is best-effort:
+    - Watchers are always cancelled on `cleanup()`.
+    - Watchers may also be cancelled by `_cleanup_handle(...)` when the surrounding
+      runtime observes handle completion (typically when `.result()` is awaited).
+    - If a plan never awaits `.result()`, watchers may live until `cleanup()`.
+    """
+
+    MAX_EVENTS: int = 50_000
+    WAKEUP_QUEUE_SIZE: int = 1_000
+
+    _CRITICAL_OVERFLOW_TYPES: frozenset[PaneEventType] = frozenset(
+        {
+            "clarification",
+            "failed",
+            "stopped",
+            "handle_registered",
+            "steering_applied",
+        },
+    )
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+
+        self._registry: dict[str, HandleMetadata] = {}
+        self._events_log: list[PaneEvent] = []
+        # Wakeup queue carries event indices; it may drop tokens (QueueFull).
+        self._events_q: asyncio.Queue[int] = asyncio.Queue(
+            maxsize=self.WAKEUP_QUEUE_SIZE,
+        )
+        self._watcher_tasks: dict[str, asyncio.Task[None]] = {}
+        # Index: (handle_id, call_id) -> clarification PaneEvent
+        self._pending_clarifications: dict[tuple[str, str], PaneEvent] = {}
+
+        self._lock = asyncio.Lock()
+        self._overflow_occurred = False
+        self._cleanup_started = False
+
+        logger.debug("SteerableToolPane created for run_id=%s", run_id)
+
+    def _unknown_origin(self) -> PaneEventOrigin:
+        return {
+            "origin_tool": "unknown",
+            "origin_step": -1,
+            "environment_namespace": "unknown",
+        }
+
+    def _origin_from_meta(self, meta: HandleMetadata) -> PaneEventOrigin:
+        return {
+            "origin_tool": meta.origin_tool,
+            "origin_step": meta.origin_step,
+            "environment_namespace": meta.environment_namespace,
+        }
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Event log
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _get_current_actor_step(self) -> int | None:
+        """Best-effort retrieval of current Actor runtime step.
+
+        The pane is actor-agnostic; by default this returns None. A surrounding
+        runtime may extend/wrap the pane to supply a step provider.
+        """
+
+        return None
+
+    
