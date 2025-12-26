@@ -235,8 +235,10 @@ jobs:
         # Default mode: one tmux session per test (maximum parallelism within each folder)
         # Combined with matrix parallelism across folders for full concurrency
         set +e
+        # Convert session timeout from minutes to seconds for --wait
+        WAIT_SECONDS=$(( (${{ inputs.test_session_timeout || 120 }}) * 60 ))
         xvfb-run tests/parallel_run.sh \
-          --wait ${{ inputs.test_session_timeout || 120 }}m \
+          --wait $WAIT_SECONDS \
           ${{ inputs.parallel_run_args }} \
           ${{ matrix.test_path }}
         TEST_EXIT_CODE=$?
