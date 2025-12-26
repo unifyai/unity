@@ -702,3 +702,165 @@ class SteerableToolPane:
                 },
             )
             return None
+
+    async def pause(self, handle_id: str) -> Optional[str]:
+        """Pause a specific handle (safe no-op for terminal handles)."""
+
+        no_op_event: dict[str, Any] | None = None
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            if meta is None:
+                origin = self._unknown_origin()
+                no_op_event = {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "pause",
+                        "status": "no-op",
+                        "reason": "handle not found",
+                    },
+                }
+                handle = None
+            else:
+                origin = self._origin_from_meta(meta)
+                if meta.status in ("completed", "failed", "stopped"):
+                    no_op_event = {
+                        "type": "steering_applied",
+                        "handle_id": handle_id,
+                        "origin": origin,
+                        "payload": {
+                            "method": "pause",
+                            "status": "no-op",
+                            "reason": f"handle already {meta.status}",
+                        },
+                    }
+                    handle = None
+                else:
+                    handle = meta.handle
+
+        if no_op_event is not None:
+            await self._emit_event(no_op_event)
+            return None
+
+        try:
+            result = await maybe_await(handle.pause())
+            async with self._lock:
+                meta2 = self._registry.get(handle_id)
+                if meta2 is not None and meta2.status not in (
+                    "completed",
+                    "failed",
+                    "stopped",
+                ):
+                    meta2.status = "paused"
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {"method": "pause", "status": "ok"},
+                },
+            )
+            return result
+        except Exception as e:
+            logger.error(
+                "pause failed for handle_id=%s: %s",
+                handle_id,
+                e,
+                exc_info=True,
+            )
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "pause",
+                        "status": "error",
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                },
+            )
+            return None
+
+    async def resume(self, handle_id: str) -> Optional[str]:
+        """Resume a specific handle (safe no-op for terminal handles)."""
+
+        no_op_event: dict[str, Any] | None = None
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            if meta is None:
+                origin = self._unknown_origin()
+                no_op_event = {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "resume",
+                        "status": "no-op",
+                        "reason": "handle not found",
+                    },
+                }
+                handle = None
+            else:
+                origin = self._origin_from_meta(meta)
+                if meta.status in ("completed", "failed", "stopped"):
+                    no_op_event = {
+                        "type": "steering_applied",
+                        "handle_id": handle_id,
+                        "origin": origin,
+                        "payload": {
+                            "method": "resume",
+                            "status": "no-op",
+                            "reason": f"handle already {meta.status}",
+                        },
+                    }
+                    handle = None
+                else:
+                    handle = meta.handle
+
+        if no_op_event is not None:
+            await self._emit_event(no_op_event)
+            return None
+
+        try:
+            result = await maybe_await(handle.resume())
+            async with self._lock:
+                meta2 = self._registry.get(handle_id)
+                if meta2 is not None and meta2.status not in (
+                    "completed",
+                    "failed",
+                    "stopped",
+                ):
+                    meta2.status = "running"
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {"method": "resume", "status": "ok"},
+                },
+            )
+            return result
+        except Exception as e:
+            logger.error(
+                "resume failed for handle_id=%s: %s",
+                handle_id,
+                e,
+                exc_info=True,
+            )
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "resume",
+                        "status": "error",
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                },
+            )
+            return None
