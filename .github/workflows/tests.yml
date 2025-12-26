@@ -199,27 +199,15 @@ jobs:
       fail-fast: false
       matrix:
         test_path: ${{ fromJSON(needs.discover.outputs.test_dirs) }}
-    # Environment variables at job level so ALL steps (including test collection) have access
+    # Only secrets/credentials - all behavioral settings use defaults
     env:
-      UNIFY_TESTS_RAND_PROJ: "true"
-      UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "true"
-      UNITY_SIM_ACTOR_DURATION: "20"
-      UNITY_TS_LOCAL_VIEW_OFF: "false"
       UNIFY_KEY: ${{ secrets.USER_API_KEY }}
-      UNIFY_BASE_URL: https://api.unify.ai/v0
-      UNIFY_CACHE: "true"
-      UNIFY_DELETE_CONTEXT_ON_EXIT: "false"
-      UNIFY_OVERWRITE_PROJECT: "true"
-      UNIFY_CACHE_BENCHMARK: "true"
-      UNIFY_PRETEST_CONTEXT_CREATE: "false"
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+      VERTEXAI_LOCATION: ${{ secrets.VERTEXAI_LOCATION }}
+      VERTEXAI_PROJECT: ${{ secrets.VERTEXAI_PROJECT }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-      FIRST_NAME: Rick
-      AGENT_FIRST: Rick
-      AGENT_LAST: Morty
-      AGENT_AGE: "29"
-      REGISTER_SUMMARY_CALLBACKS: "false"
-      REGISTER_UPDATE_CALLBACKS: "false"
     steps:
     - uses: actions/checkout@v2
 
@@ -242,6 +230,13 @@ jobs:
           normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/test_||' | tr '/' '_')
           echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
         fi
+
+        # Calculate wait timeout in seconds (default 120 minutes)
+        TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
+        if [[ -z "$TIMEOUT_MINS" || "$TIMEOUT_MINS" == "null" ]]; then
+          TIMEOUT_MINS=120
+        fi
+        echo "wait_seconds=$((TIMEOUT_MINS * 60))" >> $GITHUB_OUTPUT
 
     - name: Set up Python
       uses: actions/setup-python@v2
@@ -305,22 +300,8 @@ jobs:
     - name: Run tests via parallel_run.sh
       id: run-tests
       run: |
-        # Run tests using parallel_run.sh with --wait to block until completion
-        # Default mode: one tmux session per test (maximum parallelism within each folder)
-        # Combined with matrix parallelism across folders for full concurrency
         set +e
-        # Convert timeout from minutes to seconds for --wait
-        # Note: inputs context doesn't exist for push/PR events, so use shell fallback
-        TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
-        if [[ -z "$TIMEOUT_MINS" || "$TIMEOUT_MINS" == "null" ]]; then
-          TIMEOUT_MINS=120
-        fi
-        WAIT_SECONDS=$((TIMEOUT_MINS * 60))
-        # test_args comes from normalize-path step (handles [parallel_run.sh ...] from commit/PR)
-        xvfb-run tests/parallel_run.sh \
-          --wait $WAIT_SECONDS \
-          ${{ inputs.parallel_run_args }} \
-          ${{ steps.normalize-path.outputs.test_args }}
+        xvfb-run tests/parallel_run.sh --wait ${{ steps.normalize-path.outputs.wait_seconds }} ${{ inputs.parallel_run_args }} ${{ steps.normalize-path.outputs.test_args }}
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
