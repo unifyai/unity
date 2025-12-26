@@ -397,7 +397,7 @@ build_env_exports() {
   done
 
   # Propagate relevant system environment variables if not already set via --env
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_TESTS_DELETE_PROJ_ON_EXIT UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP"
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_TESTS_DELETE_PROJ_ON_START UNIFY_TESTS_DELETE_PROJ_ON_EXIT UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP"
   for var_name in $propagate_vars; do
     if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
       exports="$exports ${var_name}=${!var_name}"

@@ -234,6 +234,9 @@ By default, test contexts persist across runs (useful for debugging). To auto-de
 # Delete context after each test
 parallel_run --env UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
 
+# Or delete entire project before session (clean slate)
+parallel_run --env UNIFY_TESTS_DELETE_PROJ_ON_START=true tests
+
 # Or delete entire project after session
 parallel_run --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 ```
