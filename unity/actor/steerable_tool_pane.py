@@ -605,4 +605,100 @@ class SteerableToolPane:
                 },
             )
 
-    
+    async def interject(
+        self,
+        handle_id: str,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> Optional[str]:
+        """Interject into a specific handle.
+
+        Safe no-op for terminal handles (`completed`, `failed`, `stopped`), but still
+        records a `steering_applied` event with status `no-op`.
+        """
+
+        truncated = message[:200]
+        no_op_event: dict[str, Any] | None = None
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            if meta is None:
+                no_op_event = {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": self._unknown_origin(),
+                    "payload": {
+                        "method": "interject",
+                        "args": {"message": truncated},
+                        "status": "no-op",
+                        "reason": "handle not found",
+                    },
+                }
+                handle = None
+                origin = self._unknown_origin()
+            else:
+                origin = self._origin_from_meta(meta)
+                if meta.status in ("completed", "failed", "stopped"):
+                    no_op_event = {
+                        "type": "steering_applied",
+                        "handle_id": handle_id,
+                        "origin": origin,
+                        "payload": {
+                            "method": "interject",
+                            "args": {"message": truncated},
+                            "status": "no-op",
+                            "reason": f"handle already {meta.status}",
+                        },
+                    }
+                    handle = None
+                else:
+                    handle = meta.handle
+
+        if no_op_event is not None:
+            await self._emit_event(no_op_event)
+            return None
+
+        try:
+            result = await maybe_await(
+                handle.interject(
+                    message,
+                    parent_chat_context_cont=parent_chat_context_cont,
+                    images=images,
+                ),
+            )
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "interject",
+                        "args": {"message": truncated},
+                        "status": "ok",
+                    },
+                },
+            )
+            return result
+        except Exception as e:
+            logger.error(
+                "interject failed for handle_id=%s: %s",
+                handle_id,
+                e,
+                exc_info=True,
+            )
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "interject",
+                        "args": {"message": truncated},
+                        "status": "error",
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                },
+            )
+            return None
