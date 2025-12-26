@@ -54,6 +54,7 @@ from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from unity.conversation_manager.handle import ConversationManagerHandle
+from unity.actor.steerable_tool_pane import SteerableToolPane
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(
@@ -2061,6 +2062,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self.runtime = PlanRuntime()
         self.call_stack: List[str] = []
         self.action_log: List[str] = []
+        self._pane_supervisor_task: Optional[asyncio.Task] = None
         self.last_verified_function_name: Optional[str] = None
         self.last_verified_url: Optional[str] = None
         self.last_verified_screenshot: Optional[str | bytes] = None
@@ -2087,6 +2089,9 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             self._last_summarized_interaction_count: int = 0
 
         self._child_tasks: set[asyncio.Task] = set()
+
+        # One pane per actor run (deterministic runtime component).
+        self.pane = SteerableToolPane(run_id=str(self.run_id))
 
         self.verif_seq: int = 0
         self.pending_verifications: "OrderedDict[int, VerificationHandle]" = (
@@ -2221,8 +2226,22 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         token = current_run_id_var.set(self.run_id)
         self.runtime.execution_mode = mode
         try:
+            # Ensure pane run_id stays correlated with the plan run_id (run_id may change across reruns).
+            try:
+                self.pane.run_id = str(self.run_id)
+            except Exception:
+                pass
+
             if not self._is_complete:
                 self._set_state(_HierarchicalHandleState.RUNNING)
+
+            # Start the pane supervisor early so it can react to clarifications during execution.
+            if self._pane_supervisor_task is None or self._pane_supervisor_task.done():
+                self._pane_supervisor_task = asyncio.create_task(
+                    self._pane_event_supervisor(),
+                    name=f"PaneSupervisor-{self._module_name}",
+                )
+                self._child_tasks.add(self._pane_supervisor_task)
 
             if self.plan_source_code is None:
                 # Determine the entrypoint: explicit, semantic search, or generate plan
