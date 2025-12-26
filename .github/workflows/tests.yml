@@ -146,6 +146,7 @@ jobs:
     outputs:
       test_dirs: ${{ steps.set-matrix.outputs.test_dirs }}
       parallel_run_cmd: ${{ needs.should-run-tests.outputs.parallel_run_cmd }}
+      job_timeout: ${{ steps.set-matrix.outputs.job_timeout }}
     steps:
     - uses: actions/checkout@v2
 
@@ -176,12 +177,18 @@ jobs:
         json=$(printf '%s\n' "$dirs" | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
         echo "test_dirs=$json" >> "$GITHUB_OUTPUT"
 
+        # Compute job timeout (test timeout + 10 min buffer)
+        # GitHub expressions don't support arithmetic, so compute here
+        BASE_TIMEOUT="${{ inputs.timeout_minutes || 120 }}"
+        JOB_TIMEOUT=$((BASE_TIMEOUT + 10))
+        echo "job_timeout=$JOB_TIMEOUT" >> "$GITHUB_OUTPUT"
+
   pytest:
     name: pytest (${{ matrix.test_path == '__parallel_run_cmd__' && 'from commit' || matrix.test_path }})
     runs-on: ubuntu-latest-8-cores
     environment: unity-testing
-    # Job timeout = test timeout + 10 min buffer for setup/cleanup
-    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && fromJSON(inputs.timeout_minutes) || 120) + 10 }}
+    # Job timeout = test timeout + 10 min buffer (computed in discover job)
+    timeout-minutes: ${{ needs.discover.outputs.job_timeout }}
     needs: [should-run-tests, discover]
     if: needs.should-run-tests.outputs.run_tests == 'true'
     strategy:
