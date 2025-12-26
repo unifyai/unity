@@ -299,6 +299,88 @@ See [tests/README.md](tests/README.md) for comprehensive testing documentation i
 
 ---
 
+## Continuous Integration
+
+Tests run in GitHub Actions with **24 parallel jobs** (one per test folder). Tests are **off by default** to avoid unnecessary CI costs.
+
+### Triggering Tests
+
+| Method | How to Trigger |
+|--------|----------------|
+| **Commit message** | Include `[run-tests]` anywhere in the message |
+| **PR title** | Include `[run-tests]` in the pull request title |
+| **Manual** | GitHub Actions → "Testing Unity with uv" → "Run workflow" |
+
+**Examples:**
+
+```bash
+# Trigger tests on push
+git commit -m "Fix contact manager bug [run-tests]"
+
+# Regular commit (no tests)
+git commit -m "Update documentation"
+```
+
+### Manual Workflow Dispatch
+
+For surgical test runs, use the GitHub Actions UI:
+
+1. Go to **Actions** → **"Testing Unity with uv"**
+2. Click **"Run workflow"** dropdown
+3. Configure the inputs:
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `test_path` | `.` (all) | Path to test folder, file, or specific test |
+| `test_session_timeout` | 120 | Session timeout in minutes |
+| `runner_timeout` | 130 | Overall job timeout in minutes |
+| `test_timeout` | 240 | Per-test timeout in seconds |
+| `test_cli_log_level` | ERROR | CLI logging verbosity |
+
+### Flexible Test Targeting
+
+The `test_path` input supports various targeting patterns:
+
+| Input Value | What Runs |
+|-------------|-----------|
+| *(blank or `.`)* | All 24 test folders in parallel |
+| `tests/test_actor` | Only the `test_actor` folder |
+| `tests/test_actor/test_code_act.py` | Only that specific file |
+| `tests/test_actor/test_code_act.py::test_name` | Only that specific test |
+| `tests/test_actor tests/test_conductor` | Both folders (space-separated, same job) |
+
+**Note:** Space-separated paths run in the same job. For true parallel jobs across specific folders, trigger separate workflow runs or use the automatic folder discovery (leave `test_path` blank).
+
+### Accessing Test Logs
+
+After a CI run, logs are available in multiple formats:
+
+| Artifact | Contents |
+|----------|----------|
+| `all-logs-consolidated` | **One-click download** of all logs combined |
+| `pytest-logs-{folder}` | Individual folder's pytest output |
+| `llm-io-debug-{folder}` | Individual folder's LLM I/O traces |
+
+**Inline Failure Summaries**: Failed jobs display collapsible failure excerpts directly in the GitHub Actions Summary page—no download required for quick triage.
+
+### What's NOT Exposed in CI
+
+The following `parallel_run.sh` options are available locally but **not** in CI workflow inputs:
+
+| Flag | Description | Workaround |
+|------|-------------|------------|
+| `-s` / `--serial` | One session per file | Tests run concurrently by default in CI |
+| `--eval-only` | Only `@pytest.mark.eval` tests | Run locally or request feature |
+| `--symbolic-only` | Only non-eval tests | Run locally or request feature |
+| `--repeat N` | Statistical sampling | Run locally |
+| `--tags` | Tag runs for filtering | Not exposed |
+| `-j` / `--jobs` | Concurrency limit | CI uses default (25) |
+| `--env KEY=VALUE` | Environment overrides | Set in workflow secrets/env |
+
+To use these options, run tests locally with `tests/parallel_run.sh`.
+
+---
+
 ## Deployment
 
 ### Docker
