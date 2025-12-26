@@ -23,6 +23,10 @@ class StateManagerEnvironment(BaseEnvironment):
     def get_instance(self) -> Primitives:
         return self._primitives
 
+    def get_prompt_context(self) -> str:
+        """Return Markdown-formatted rules/examples for using state managers."""
+        return ""
+
     def get_tools(self) -> Dict[str, ToolMetadata]:
         # The public surface for state managers is driven by the shared primitives registry
         # (`PRIMITIVE_SOURCES`) to avoid hardcoding manager/method lists in multiple places.

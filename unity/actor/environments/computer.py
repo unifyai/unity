@@ -24,6 +24,10 @@ class ComputerEnvironment(BaseEnvironment):
     def get_instance(self) -> ComputerPrimitives:
         return self._computer_primitives
 
+    def get_prompt_context(self) -> str:
+        """Return Markdown-formatted rules/examples for using browser/desktop control."""
+        return ""
+
     def get_tools(self) -> Dict[str, ToolMetadata]:
         # Explicit categorization avoids brittle substring heuristics.
         # (This list should track the actual public methods exposed on ComputerPrimitives.)
