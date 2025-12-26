@@ -219,11 +219,10 @@ jobs:
       id: run-tests
       run: |
         # Run tests using parallel_run.sh with --wait to block until completion
-        # The -s flag runs tests serially within the folder (one tmux session per file)
-        # This avoids excessive parallelism since we already parallelize at folder level
+        # Default mode: one tmux session per test (maximum parallelism within each folder)
+        # Combined with matrix parallelism across folders for full concurrency
         set +e
         xvfb-run tests/parallel_run.sh \
-          -s \
           --wait ${{ inputs.test_session_timeout || 120 }}m \
           ${{ matrix.test_path }}
         TEST_EXIT_CODE=$?
