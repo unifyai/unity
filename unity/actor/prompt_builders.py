@@ -3287,6 +3287,7 @@ def build_interjection_prompt(
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
     images: Optional[dict[str, Any]] = None,
+    pane_snapshot: Optional[dict[str, Any]] = None,
 ) -> tuple[str, str]:
     """
     Builds the system prompt for the Interjection Handler LLM.
@@ -3297,6 +3298,24 @@ def build_interjection_prompt(
     """
     cache_summary = _format_cache_summary(idempotency_cache)
     image_context_str = _format_images_for_prompt(images)
+    pane_context_str = ""
+    if pane_snapshot and pane_snapshot.get("active_handles"):
+        handles = pane_snapshot.get("active_handles") or []
+        if handles:
+            pane_context_str = "\n### In-Flight Handles (Steerable)\n"
+            pane_context_str += "The following handles are currently active and can receive interjections:\n"
+            for h in handles:
+                pane_context_str += (
+                    f"- **handle_id**: `{h.get('handle_id')}` | "
+                    f"**origin_tool**: `{h.get('origin_tool')}` | "
+                    f"**status**: `{h.get('status')}` | "
+                    f"**capabilities**: {h.get('capabilities')}\n"
+                )
+            pane_context_str += (
+                "\nYou can route this interjection to relevant handles using the `routing_action` field. "
+                "Use 'targeted' to route to specific handle_ids (especially if the user referenced handle ids), "
+                "or 'broadcast_filtered' to route to all handles matching criteria (e.g., all `primitives.contacts` handles).\n"
+            )
 
     call_stack_str = (
         " -> ".join(call_stack) if call_stack else "Not inside any function."
@@ -3322,6 +3341,7 @@ def build_interjection_prompt(
     - **Most Recent Plan Actions:**
       {recent_actions}
     {image_context_str}
+    {pane_context_str}
 
     {cache_summary}
     ---
