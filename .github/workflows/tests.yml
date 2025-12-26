@@ -179,7 +179,11 @@ jobs:
 
         # Compute job timeout (test timeout + 10 min buffer)
         # GitHub expressions don't support arithmetic, so compute here
-        BASE_TIMEOUT="${{ inputs.timeout_minutes || 120 }}"
+        # Note: inputs context doesn't exist for push/PR events, so use shell fallback
+        BASE_TIMEOUT="${{ inputs.timeout_minutes }}"
+        if [[ -z "$BASE_TIMEOUT" || "$BASE_TIMEOUT" == "null" ]]; then
+          BASE_TIMEOUT=120
+        fi
         JOB_TIMEOUT=$((BASE_TIMEOUT + 10))
         echo "job_timeout=$JOB_TIMEOUT" >> "$GITHUB_OUTPUT"
 
@@ -259,7 +263,12 @@ jobs:
         # Combined with matrix parallelism across folders for full concurrency
         set +e
         # Convert timeout from minutes to seconds for --wait
-        WAIT_SECONDS=$(( (${{ inputs.timeout_minutes || 120 }}) * 60 ))
+        # Note: inputs context doesn't exist for push/PR events, so use shell fallback
+        TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
+        if [[ -z "$TIMEOUT_MINS" || "$TIMEOUT_MINS" == "null" ]]; then
+          TIMEOUT_MINS=120
+        fi
+        WAIT_SECONDS=$((TIMEOUT_MINS * 60))
         # test_args comes from normalize-path step (handles [parallel_run.sh ...] from commit/PR)
         xvfb-run tests/parallel_run.sh \
           --wait $WAIT_SECONDS \
