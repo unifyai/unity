@@ -23,15 +23,7 @@ on:
         type: number
         default: 120
       parallel_run_args:
-        description: |
-          Extra args passed to parallel_run.sh. Examples:
-            --eval-only         Only @pytest.mark.eval tests
-            --symbolic-only     Only non-eval tests
-            --repeat 5          Run each test 5 times
-            -s                  Serial mode (one session per file)
-            --tags exp-1        Tag runs for filtering
-            -j 10               Limit to 10 concurrent sessions
-            --env KEY=VALUE     Set environment variable
+        description: "parallel_run.sh extra args"
         required: false
         type: string
         default: ""
