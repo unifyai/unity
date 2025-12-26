@@ -52,7 +52,8 @@ kill_failed
 
 | Command | Purpose |
 |---------|---------|
-| `parallel_run <tests>` | Run tests in parallel tmux sessions |
+| `parallel_run <tests>` | Run tests in parallel tmux sessions (local) |
+| `parallel_cloud_run.sh <tests>` | Run tests on GitHub Actions CI |
 | `watch_tests` | Monitor test progress in real-time |
 | `attach '<name>'` | Attach to a tmux session |
 | `list_runs` | List all active test runs across terminals |
@@ -223,12 +224,33 @@ For surgical test runs without straining your local machine, use GitHub Actions:
 - **24 parallel jobs** — one per test folder, all running simultaneously
 - **Full `parallel_run.sh` support** — same flags work in CI as locally
 
+### Quick Cloud Run (`parallel_cloud_run.sh`)
+
+The fastest way to run CI tests on your current code—even uncommitted changes:
+
+```bash
+# Test current code state (handles uncommitted/unpushed automatically)
+parallel_cloud_run.sh tests/test_contact_manager
+
+# Run all tests
+parallel_cloud_run.sh .
+```
+
+The script automatically:
+1. Stashes uncommitted changes
+2. Pushes to a staging branch (`ci-staging-{username}`)
+3. Triggers the CI workflow
+4. Restores your local state (staged/unstaged preserved)
+
+See [Cloud Runner Guide](docs/parallel-cloud-run.md) for details.
+
 ### Triggering Tests
 
 Tests are **off by default** to avoid unnecessary CI costs. Trigger them explicitly:
 
 | Method | How to Trigger | What Runs |
 |--------|----------------|-----------|
+| **`parallel_cloud_run.sh`** | Run script locally | Current code state (auto-pushes staging branch) |
 | **`[run-tests]`** | Include in commit message or PR title | All 24 test folders (parallel workers) |
 | **`[parallel_run.sh ...]`** | Include in commit message or PR title | Specified paths/args (single worker) |
 | **Manual** | GitHub Actions UI or `gh` CLI | Configurable via inputs |
@@ -412,6 +434,7 @@ project_cleanup.sh --random-only
 ## Detailed Documentation
 
 - **[Parallel Runner](docs/parallel-runner.md)** — Full guide to `parallel_run`, tmux isolation, flags, and troubleshooting
+- **[Cloud Runner](docs/parallel-cloud-run.md)** — Trigger CI tests on current code state (handles uncommitted changes)
 - **[Grid Search](docs/grid-search.md)** — Running tests across setting combinations for model comparisons and ablations
 - **[Resource Monitor](docs/resource-monitor.md)** — Dashboard for monitoring CPU, memory, network, and file descriptors
 - **[Logging & Data](docs/logging.md)** — Log directory structure, remote telemetry, and analyzing test data
