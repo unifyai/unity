@@ -242,171 +242,24 @@ This project uses `uv` for dependency management:
 
 ## Testing
 
-Tests are central to Unity's development. They fall on a spectrum between **symbolic tests** (infrastructure-focused) and **eval tests** (capability-focused).
-
-You can run tests **locally** or offload them to **GitHub Actions** for better performance and to avoid straining your machine.
-
-### Local Testing
-
-#### Quick Start
+Run tests locally or offload them to GitHub Actions (24 parallel jobs, no local CPU load).
 
 ```bash
-# Run all tests
-pytest tests/
+# Quick start (local)
+tests/parallel_run.sh tests/                    # Run all tests
+tests/parallel_run.sh tests/test_actor/         # Run one folder
+tests/parallel_run.sh --wait tests/             # Wait for completion
 
-# Run a specific test file
-pytest tests/test_contact_manager/test_create_contact.py
-
-# Run a specific test
-pytest tests/test_contact_manager/test_create_contact.py::test_create_single_contact
+# CI trigger (via commit message)
+git commit -m "Fix bug [run-tests]"                           # All tests
+git commit -m "Fix bug [parallel_run.sh tests/test_actor]"    # Specific folder
 ```
 
-#### Parallel Execution
-
-For faster runs, use the parallel test runner:
-
-```bash
-# Run all tests in parallel (one tmux session per test)
-tests/parallel_run.sh tests/
-
-# Wait for completion and capture logs
-tests/parallel_run.sh --wait tests/
-
-# Run only eval tests
-tests/parallel_run.sh --eval-only tests/
-
-# Run only symbolic tests
-tests/parallel_run.sh --symbolic-only tests/
-```
-
-### Cloud Test Runs (GitHub Actions)
-
-For surgical test runs without straining your local machine, use GitHub Actions. Benefits:
-
-- **No local CPU load** — tests run on GitHub's infrastructure
-- **No rate limiting** — GitHub runners have excellent network connectivity
-- **24 parallel jobs** — one per test folder, all running simultaneously
-- **Full `parallel_run.sh` support** — same flags work in CI as locally
-
-#### Triggering Tests
-
-Tests are **off by default** to avoid unnecessary CI costs. Trigger them explicitly:
-
-| Method | How to Trigger | What Runs |
-|--------|----------------|-----------|
-| **`[run-tests]`** | Include in commit message or PR title | All 24 test folders (parallel workers) |
-| **`[parallel_run.sh ...]`** | Include in commit message or PR title | Specified paths/args (single worker) |
-| **Manual** | GitHub Actions UI → "Run workflow" | Configurable via inputs |
-
-**Examples:**
-
-```bash
-# Run ALL tests (24 parallel workers)
-git commit -m "Fix contact manager bug [run-tests]"
-
-# Run specific folder (single worker)
-git commit -m "Fix contact manager bug [parallel_run.sh tests/test_contact_manager]"
-
-# Run multiple folders (single worker, both run concurrently inside)
-git commit -m "Fix bugs [parallel_run.sh tests/test_contact_manager tests/test_transcript_manager]"
-
-# Run with extra args (single worker)
-git commit -m "Eval check [parallel_run.sh --eval-only tests/test_actor]"
-
-# Run specific test file
-git commit -m "Fix test [parallel_run.sh tests/test_actor/test_code_act.py]"
-
-# Regular commit (no tests)
-git commit -m "Update documentation"
-```
-
-The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything.
-
-#### Manual Workflow Dispatch (Surgical Runs)
-
-For maximum control, use the GitHub Actions UI:
-
-1. Go to **Actions** → **"Testing Unity with uv"**
-2. Click **"Run workflow"** dropdown
-3. Select your branch and configure inputs:
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `test_path` | `.` (all) | Path to test folder, file, or specific test |
-| `parallel_run_args` | *(empty)* | Extra args passed to `parallel_run.sh` |
-| `timeout_minutes` | 120 | `parallel_run.sh` timeout (minutes) |
-
-#### Flexible Test Targeting
-
-The `test_path` input supports precise targeting:
-
-| Input Value | What Runs |
-|-------------|-----------|
-| *(blank or `.`)* | All 24 test folders in parallel |
-| `tests/test_actor` | Only the `test_actor` folder |
-| `tests/test_actor/test_code_act.py` | Only that specific file |
-| `tests/test_actor/test_code_act.py::test_name` | Only that specific test |
-
-#### Advanced Options (`parallel_run_args`)
-
-The `parallel_run_args` input accepts any `parallel_run.sh` flags—the CI experience matches local usage exactly:
-
-| Flag | Example | Description |
-|------|---------|-------------|
-| `--eval-only` | `--eval-only` | Only `@pytest.mark.eval` tests |
-| `--symbolic-only` | `--symbolic-only` | Only non-eval tests |
-| `--repeat N` | `--repeat 5` | Run each test N times |
-| `-s` | `-s` | Serial mode (one session per file) |
-| `--tags` | `--tags exp-1` | Tag runs for filtering |
-| `-j N` | `-j 10` | Limit concurrent sessions |
-| `--env K=V` | `--env UNIFY_CACHE=false` | Set environment variable |
-
-**Examples** (enter in the `parallel_run_args` field):
-
-```
---eval-only --repeat 5
---symbolic-only -s
---env UNIFY_CACHE=false
---eval-only --tags model-compare -j 15
-```
-
-#### Accessing Test Logs
-
-After a CI run, logs are available in the GitHub Actions UI:
-
-| Artifact | Contents |
-|----------|----------|
-| `all-logs-consolidated` | **One-click download** of all logs combined |
-| `pytest-logs-{folder}` | Individual folder's pytest output |
-| `llm-io-debug-{folder}` | Individual folder's LLM I/O traces |
-
-**Inline Failure Summaries**: Failed jobs display collapsible failure excerpts directly in the Summary page—no download required for quick triage.
-
-### LLM Response Caching
-
-By default (`UNIFY_CACHE=true`), LLM responses are cached in `.cache.ndjson`:
-
-- **First run**: Real LLM calls, responses cached
-- **Subsequent runs**: Cached responses replayed (fast, deterministic)
-
-To force fresh LLM calls:
-
-```bash
-# Locally
-tests/parallel_run.sh --env UNIFY_CACHE=false tests/
-
-# In CI (via parallel_run_args)
---env UNIFY_CACHE=false
-```
-
-### Detailed Documentation
-
-See [tests/README.md](tests/README.md) for comprehensive testing documentation including:
-
+See **[tests/README.md](tests/README.md)** for complete documentation:
+- Local testing with `parallel_run.sh` (flags, tmux sessions, debugging)
+- CI/GitHub Actions (triggers, workflow dispatch, log artifacts)
 - Test philosophy (symbolic vs eval spectrum)
-- Parallel runner options and tmux debugging
-- Grid search for model comparisons
-- Test data logging and analysis
+- Grid search, resource monitoring, and more
 
 ---
 
