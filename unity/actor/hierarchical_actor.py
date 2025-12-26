@@ -1668,6 +1668,37 @@ class _ToolProviderProxy:
                     handle_id,
                 )
 
+                # Register new handle with pane (best-effort).
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        capabilities: list[str] = []
+                        if hasattr(tool_output, "interject"):
+                            capabilities.append("interjectable")
+                        if hasattr(tool_output, "pause") and hasattr(
+                            tool_output,
+                            "resume",
+                        ):
+                            capabilities.append("pausable")
+                        if hasattr(tool_output, "ask"):
+                            capabilities.append("askable")
+                        if hasattr(tool_output, "stop"):
+                            capabilities.append("stoppable")
+                        if hasattr(tool_output, "answer_clarification"):
+                            capabilities.append("clarifiable")
+
+                        await self._plan.pane.register_handle(
+                            handle=tool_output,
+                            handle_id=handle_id,
+                            parent_handle_id=None,
+                            origin_tool=tool_name,
+                            origin_step=self._plan.runtime.action_counter,
+                            environment_namespace=self._namespace,
+                            capabilities=capabilities,
+                            call_stack=str(cache_key[0]) if cache_key else None,
+                        )
+                except Exception as e:
+                    logger.debug(f"Pane registration failed for tool handle: {e}")
+
             if self._is_browser_env:
                 interaction_to_cache = (
                     "tool_call",
@@ -1821,6 +1852,38 @@ class _ToolProviderProxy:
                     handle_name,
                     handle_id,
                 )
+
+                # Register new handle with pane (best-effort). sync_wrapper can't await.
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        capabilities: list[str] = []
+                        if hasattr(result, "interject"):
+                            capabilities.append("interjectable")
+                        if hasattr(result, "pause") and hasattr(result, "resume"):
+                            capabilities.append("pausable")
+                        if hasattr(result, "ask"):
+                            capabilities.append("askable")
+                        if hasattr(result, "stop"):
+                            capabilities.append("stoppable")
+                        if hasattr(result, "answer_clarification"):
+                            capabilities.append("clarifiable")
+
+                        t = asyncio.create_task(
+                            self._plan.pane.register_handle(
+                                handle=result,
+                                handle_id=handle_id,
+                                parent_handle_id=None,
+                                origin_tool=tool_name,
+                                origin_step=self._plan.runtime.action_counter,
+                                environment_namespace=self._namespace,
+                                capabilities=capabilities,
+                                call_stack=str(cache_key[0]) if cache_key else None,
+                            ),
+                            name=f"pane_register_{handle_id[:8]}",
+                        )
+                        self._plan._child_tasks.add(t)
+                except Exception:
+                    pass
 
             interaction_to_cache = ("tool_call", call_repr, interaction_str)
             if interactions_log is not None:
