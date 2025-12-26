@@ -312,4 +312,82 @@ class SteerableToolPane:
         async with self._lock:
             return list(self._pending_clarifications.values())
 
-    
+    # ──────────────────────────────────────────────────────────────────────────
+    # Watcher infrastructure
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def register_handle(
+        self,
+        *,
+        handle: SteerableToolHandle,
+        handle_id: str,
+        parent_handle_id: str | None,
+        origin_tool: str,
+        origin_step: int,
+        environment_namespace: str,
+        capabilities: list[str],
+        call_stack: str | None = None,
+    ) -> None:
+        """Register a handle and start its watcher task.
+
+        This method:
+        - Stores handle metadata in the registry.
+        - Emits a `handle_registered` event.
+        - Spawns a background watcher task that listens for clarifications and
+          notifications via `next_clarification()` / `next_notification()`.
+        """
+
+        async with self._lock:
+            if self._cleanup_started:
+                logger.warning(
+                    "Pane cleanup started; ignoring registration for handle_id=%s",
+                    handle_id,
+                )
+                return
+
+            if handle_id in self._registry:
+                # Treat duplicates as an idempotent no-op (callers should provide stable IDs).
+                logger.debug("Handle already registered: handle_id=%s", handle_id)
+                return
+
+            meta = HandleMetadata(
+                handle_id=handle_id,
+                handle=handle,
+                parent_handle_id=parent_handle_id,
+                origin_tool=origin_tool,
+                origin_step=origin_step,
+                environment_namespace=environment_namespace,
+                created_at=time.monotonic(),
+                status="running",
+                capabilities=list(capabilities),
+                call_stack=call_stack,
+            )
+            self._registry[handle_id] = meta
+
+            # Spawn watcher task (event-driven; no polling).
+            self._watcher_tasks[handle_id] = asyncio.create_task(
+                self._watch_handle(handle_id, handle),
+                name=f"pane_watcher_{handle_id[:8]}",
+            )
+
+        await self._emit_event(
+            {
+                "type": "handle_registered",
+                "handle_id": handle_id,
+                "origin": {
+                    "origin_tool": origin_tool,
+                    "origin_step": origin_step,
+                    "environment_namespace": environment_namespace,
+                },
+                "payload": {
+                    "capabilities": list(capabilities),
+                    "parent_handle_id": parent_handle_id,
+                },
+            },
+        )
+
+        logger.debug(
+            "Registered handle_id=%s origin_tool=%s (watcher started)",
+            handle_id,
+            origin_tool,
+        )
