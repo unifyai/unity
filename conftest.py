@@ -63,6 +63,32 @@ def _path_to_name(path: str) -> str:
     return name.replace("/", "-").replace("\\", "-")
 
 
+def _sanitize_filename(name: str) -> str:
+    """Sanitize a string to be safe for use in filenames on all platforms.
+
+    Removes/replaces characters that are invalid on Windows/NTFS:
+    - Double quote "
+    - Colon :
+    - Less than <
+    - Greater than >
+    - Vertical bar |
+    - Asterisk *
+    - Question mark ?
+    - Carriage return \r
+    - Line feed \n
+    - Backslash \\ (path separator on Windows)
+    """
+    import re
+
+    # Replace invalid characters with underscore or dash
+    name = re.sub(r'["\:<>|*?\r\n\\]', "_", name)
+    # Collapse multiple underscores/dashes
+    name = re.sub(r"[_-]{2,}", "-", name)
+    # Remove leading/trailing underscores/dashes
+    name = name.strip("_-")
+    return name
+
+
 def _derive_multi_target_name(paths: list) -> str:
     """Derive a meaningful name when multiple test targets are provided.
 
@@ -89,8 +115,9 @@ def _derive_multi_target_name(paths: list) -> str:
         # All targets from the same file
         base_name = _path_to_name(bases[0])
         if nodes[0]:
-            # Sanitize node: replace :: with -, remove brackets
+            # Sanitize node: replace :: with -, remove brackets, sanitize for filename
             first_node = nodes[0].replace("::", "-").replace("[", "-").replace("]", "")
+            first_node = _sanitize_filename(first_node)
             # Truncate if too long
             if len(first_node) > 40:
                 first_node = first_node[:37] + "..."
@@ -129,6 +156,7 @@ def _derive_multi_target_name(paths: list) -> str:
     if "::" in paths[0]:
         node = paths[0].split("::", 1)[1]
         node = node.replace("::", "-").replace("[", "-").replace("]", "")
+        node = _sanitize_filename(node)
         if len(node) > 30:
             node = node[:27] + "..."
         first_name = f"{first_name}--{node}"
@@ -178,8 +206,9 @@ def _derive_log_name_from_args(args: list) -> str:
         if "::" in target:
             base, node = target.split("::", 1)
             base_name = _path_to_name(base)
-            # Sanitize node: replace :: with -, remove brackets
+            # Sanitize node: replace :: with -, remove brackets, sanitize for filename
             node_name = node.replace("::", "-").replace("[", "-").replace("]", "")
+            node_name = _sanitize_filename(node_name)
             return f"{base_name}--{node_name}"
         return _path_to_name(target)
 
