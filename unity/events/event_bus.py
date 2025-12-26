@@ -338,25 +338,15 @@ class EventBus:
                 # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
                 pass
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
-        try:
-            unify.create_context(self._global_ctx)
-        except unify.RequestError as e:
-            body = getattr(e.response, "text", "") or str(e)
-            if "already exists" not in body.lower():
-                raise
+        unify.create_context(self._global_ctx)
 
         # Persisted subscription metadata lives here
         self._callbacks_ctx = f"{self._global_ctx}/_callbacks"
-        try:
-            unify.create_context(
-                self._callbacks_ctx,
-                unique_keys={"row_id": "int"},
-                auto_counting={"row_id": None},
-            )
-        except unify.RequestError as e:
-            body = getattr(e.response, "text", "") or str(e)
-            if "already exists" not in body.lower():
-                raise
+        unify.create_context(
+            self._callbacks_ctx,
+            unique_keys={"row_id": "int"},
+            auto_counting={"row_id": None},
+        )
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
@@ -444,12 +434,7 @@ class EventBus:
                 continue
 
             # Create context
-            try:
-                unify.create_context(ctx_name)
-            except unify.RequestError as e:
-                body = getattr(e.response, "text", "") or str(e)
-                if "already exists" not in body.lower():
-                    raise
+            unify.create_context(ctx_name)
 
             # Create fields from Pydantic model + common event fields
             try:
