@@ -311,62 +311,53 @@ jobs:
       run: |
         ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
 
+        # Collect failed sessions from tmux (passed ones auto-close after 10s)
+        FAILED_SESSIONS=""
+        for sock in /tmp/tmux-$(id -u)/unity*; do
+          if [ -S "$sock" ]; then
+            socket_name=$(basename "$sock")
+            FAILED_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' || true)
+            break
+          fi
+        done
+
+        # Echo to step output (foldable view)
+        echo "=== Failed tests ==="
+        echo "$FAILED_SESSIONS"
+        echo ""
+        echo "Download logs: $ARTIFACTS_URL"
+
+        # Write to GitHub Summary page
         echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-
-        # List failed test logs (simpler than parsing contents)
-        if [ -d "pytest_logs" ]; then
-          log_dir=$(ls -d pytest_logs/*/ 2>/dev/null | head -1)
-          if [ -n "$log_dir" ]; then
-            echo "### Failed tests:" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            # List log files (each corresponds to a test)
-            for log_file in "$log_dir"*.txt; do
-              if [ -f "$log_file" ]; then
-                filename=$(basename "$log_file" .txt)
-                echo "- \`$filename\`" >> $GITHUB_STEP_SUMMARY
-              fi
-            done
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-        else
-          echo "⚠️ No pytest_logs directory found" >> $GITHUB_STEP_SUMMARY
-        fi
-
-        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "### Failed tests:" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "$FAILED_SESSIONS" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "📋 **See the \"Run tests via parallel_run.sh\" step above** for inline failure details." >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "📥 **[Download full logs]($ARTIFACTS_URL)** from Artifacts." >> $GITHUB_STEP_SUMMARY
+        echo "📥 **[Download full logs]($ARTIFACTS_URL)**" >> $GITHUB_STEP_SUMMARY
 
     - name: Generate success summary
       if: success()
       run: |
         ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
 
+        # Count test files
+        log_count=0
+        if [ -d "pytest_logs" ]; then
+          log_count=$(find pytest_logs -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
+        fi
+
+        # Echo to step output (foldable view)
+        echo "=== All tests passed ==="
+        echo "$log_count tests passed"
+        echo ""
+        echo "View logs: $ARTIFACTS_URL"
+
+        # Write to GitHub Summary page
         echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-
-        # Count and list test files
-        if [ -d "pytest_logs" ]; then
-          log_dir=$(ls -d pytest_logs/*/ 2>/dev/null | head -1)
-          if [ -n "$log_dir" ]; then
-            log_count=$(find "$log_dir" -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
-            echo "📊 **$log_count** tests passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "<details>" >> $GITHUB_STEP_SUMMARY
-            echo "<summary>View test list</summary>" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            for log_file in "$log_dir"*.txt; do
-              if [ -f "$log_file" ]; then
-                filename=$(basename "$log_file" .txt)
-                echo "- \`$filename\`" >> $GITHUB_STEP_SUMMARY
-              fi
-            done
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "</details>" >> $GITHUB_STEP_SUMMARY
-          fi
-        fi
+        echo "📊 **$log_count** tests passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
     - name: Upload cache artifact
       if: always()
