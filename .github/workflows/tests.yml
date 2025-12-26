@@ -191,8 +191,8 @@ jobs:
     name: pytest (${{ matrix.test_path == '__parallel_run_cmd__' && 'from commit' || matrix.test_path }})
     runs-on: ubuntu-latest-8-cores
     environment: unity-testing
-    # Job timeout = test timeout + 10 min buffer (computed in discover job)
-    timeout-minutes: ${{ needs.discover.outputs.job_timeout }}
+    # Fixed timeout - dynamic timeout from needs.discover.outputs caused silent job creation failure
+    timeout-minutes: 130
     needs: [should-run-tests, discover]
     if: needs.should-run-tests.outputs.run_tests == 'true'
     strategy:
