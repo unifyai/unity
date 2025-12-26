@@ -201,6 +201,7 @@ jobs:
         test_path: ${{ fromJSON(needs.discover.outputs.test_dirs) }}
     # Only secrets/credentials - all behavioral settings use defaults
     env:
+      UNIFY_BASE_URL: https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0
       UNIFY_KEY: ${{ secrets.USER_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
