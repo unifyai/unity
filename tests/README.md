@@ -277,6 +277,59 @@ For maximum control, use the GitHub Actions UI:
 | `-j N` | `-j 10` | Limit concurrent sessions |
 | `--env K=V` | `--env UNIFY_CACHE=false` | Set environment variable |
 
+### CLI Trigger (`gh`)
+
+The fastest way to trigger CI tests without commits or the web UI:
+
+```bash
+# Install GitHub CLI (one-time)
+brew install gh
+gh auth login
+
+# Run all tests
+gh workflow run tests.yml --repo unifyai/unity --ref main
+
+# Run specific folder
+gh workflow run tests.yml --repo unifyai/unity --ref main \
+  -f test_path="tests/test_actor"
+
+# Run with extra args
+gh workflow run tests.yml --repo unifyai/unity --ref main \
+  -f test_path="tests/test_actor" \
+  -f parallel_run_args="--eval-only"
+
+# Run on a different branch
+gh workflow run tests.yml --repo unifyai/unity --ref my-feature-branch \
+  -f test_path="tests/test_contact_manager"
+
+# Custom timeout (minutes)
+gh workflow run tests.yml --repo unifyai/unity --ref main \
+  -f test_path="." \
+  -f timeout_minutes="180"
+```
+
+**Available inputs:**
+
+| Flag | Description |
+|------|-------------|
+| `-f test_path="..."` | Path to test folder/file (default: `.` for all) |
+| `-f parallel_run_args="..."` | Extra args for `parallel_run.sh` |
+| `-f timeout_minutes="N"` | Timeout in minutes (default: 120) |
+| `--ref <branch>` | Branch to run tests on |
+
+**Watch the run:**
+
+```bash
+# List recent runs
+gh run list --repo unifyai/unity --workflow tests.yml
+
+# Watch a specific run
+gh run watch --repo unifyai/unity <run-id>
+
+# View run logs
+gh run view --repo unifyai/unity <run-id> --log
+```
+
 ### Accessing Test Logs
 
 After a CI run, logs are available in the GitHub Actions UI:
