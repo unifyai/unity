@@ -5,31 +5,33 @@ Provides fire-and-forget sync of system contact fields (timezone, bio/about)
 to the orchestra backend User and Assistant profiles.
 
 Endpoints:
-- GET /v0/organizations/members (list org members)
-- POST /v0/admin/assistant/update-user (user timezone/bio)
-- PATCH /v0/admin/assistant/{assistant_id} (assistant timezone/about)
+- GET /organizations/members (list org members)
+- POST /admin/assistant/update-user (user timezone/bio)
+- PATCH /admin/assistant/{assistant_id} (assistant timezone/about)
 """
 
 from __future__ import annotations
 
 import logging
-import os
+
+from ..settings import SETTINGS
 
 _log = logging.getLogger(__name__)
 
 
 def _get_base_url() -> str | None:
     """Return base URL or None if not configured."""
-    return os.environ.get("UNIFY_BASE_URL", "https://api.unify.ai").rstrip("/") or None
+    url = SETTINGS.UNIFY_BASE_URL
+    return url
 
 
 def _get_admin_key() -> str | None:
     """Return admin key or None if not configured."""
-    return os.environ.get("ORCHESTRA_ADMIN_KEY", "") or None
+    return SETTINGS.ORCHESTRA_ADMIN_KEY
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# User Profile Sync → POST /v0/admin/assistant/update-user
+# User Profile Sync → POST /admin/assistant/update-user
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -37,7 +39,7 @@ def sync_user_timezone(assistant_id: int, target_email: str, timezone: str) -> b
     """
     Fire-and-forget sync of timezone to user profile via assistant lookup.
 
-    Uses POST /v0/admin/assistant/update-user
+    Uses POST /admin/assistant/update-user
     """
     base_url = _get_base_url()
     admin_key = _get_admin_key()
@@ -48,7 +50,7 @@ def sync_user_timezone(assistant_id: int, target_email: str, timezone: str) -> b
     try:
         from unify.utils import http
 
-        url = f"{base_url}/v0/admin/assistant/update-user"
+        url = f"{base_url}/admin/assistant/update-user"
         headers = {"Authorization": f"Bearer {admin_key}"}
         payload = {
             "assistant_id": int(assistant_id),
@@ -70,7 +72,7 @@ def sync_user_bio(assistant_id: int, target_email: str, bio: str) -> bool:
     """
     Fire-and-forget sync of bio to user profile via assistant lookup.
 
-    Uses POST /v0/admin/assistant/update-user
+    Uses POST /admin/assistant/update-user
     """
     base_url = _get_base_url()
     admin_key = _get_admin_key()
@@ -81,7 +83,7 @@ def sync_user_bio(assistant_id: int, target_email: str, bio: str) -> bool:
     try:
         from unify.utils import http
 
-        url = f"{base_url}/v0/admin/assistant/update-user"
+        url = f"{base_url}/admin/assistant/update-user"
         headers = {"Authorization": f"Bearer {admin_key}"}
         payload = {
             "assistant_id": int(assistant_id),
@@ -100,7 +102,7 @@ def sync_user_bio(assistant_id: int, target_email: str, bio: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Assistant Profile Sync → PATCH /v0/admin/assistant/{assistant_id}
+# Assistant Profile Sync → PATCH /admin/assistant/{assistant_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -108,7 +110,7 @@ def sync_assistant_timezone(assistant_id: int, timezone: str) -> bool:
     """
     Fire-and-forget sync of timezone to assistant profile.
 
-    Uses PATCH /v0/admin/assistant/{assistant_id}
+    Uses PATCH /admin/assistant/{assistant_id}
     """
     base_url = _get_base_url()
     admin_key = _get_admin_key()
@@ -119,7 +121,7 @@ def sync_assistant_timezone(assistant_id: int, timezone: str) -> bool:
     try:
         from unify.utils import http
 
-        url = f"{base_url}/v0/admin/assistant/{int(assistant_id)}"
+        url = f"{base_url}/admin/assistant/{int(assistant_id)}"
         headers = {"Authorization": f"Bearer {admin_key}"}
         payload = {"timezone": timezone}
         resp = http.patch(url, headers=headers, json=payload, timeout=30)
@@ -139,7 +141,7 @@ def sync_assistant_about(assistant_id: int, about: str) -> bool:
     """
     Fire-and-forget sync of about field to assistant profile.
 
-    Uses PATCH /v0/admin/assistant/{assistant_id}
+    Uses PATCH /admin/assistant/{assistant_id}
     Note: ContactManager stores this as 'bio', backend uses 'about'.
     """
     base_url = _get_base_url()
@@ -151,7 +153,7 @@ def sync_assistant_about(assistant_id: int, about: str) -> bool:
     try:
         from unify.utils import http
 
-        url = f"{base_url}/v0/admin/assistant/{int(assistant_id)}"
+        url = f"{base_url}/admin/assistant/{int(assistant_id)}"
         headers = {"Authorization": f"Bearer {admin_key}"}
         payload = {"about": about}
         resp = http.patch(url, headers=headers, json=payload, timeout=30)

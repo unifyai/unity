@@ -169,7 +169,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
     if assistant_log is not None:
         try:
             entries = assistant_log.entries
-            needs_timezone = entries.get("timezone") != "UTC"
+            needs_timezone = not entries.get("timezone")
             needs_is_system = entries.get("is_system") is not True
 
             if needs_timezone or needs_is_system:
@@ -253,7 +253,7 @@ def provision_user_contact(self, user_log) -> None:
     if user_log is not None:
         try:
             entries = user_log.entries
-            needs_timezone = entries.get("timezone") != "UTC"
+            needs_timezone = not entries.get("timezone")
             needs_is_system = entries.get("is_system") is not True
 
             if needs_timezone or needs_is_system:
@@ -295,16 +295,17 @@ def _fetch_org_members() -> List[Dict[str, Any]]:
     """
     Return list of org members for the current organization.
 
-    Uses GET /v0/organizations/members
+    Uses GET /organizations/members
     Returns empty list if:
     - Personal API key (not org)
     - API unavailable
     - Any error
     """
-    import os
+    from ..session_details import SESSION_DETAILS
+    from ..settings import SETTINGS
 
-    base_url = os.environ.get("UNIFY_BASE_URL", "https://api.unify.ai").rstrip("/")
-    api_key = os.environ.get("UNIFY_KEY", "")
+    base_url = SETTINGS.UNIFY_BASE_URL
+    api_key = SESSION_DETAILS.unify_key
 
     if not base_url or not api_key:
         return []
@@ -312,7 +313,7 @@ def _fetch_org_members() -> List[Dict[str, Any]]:
     try:
         from unify.utils import http
 
-        url = f"{base_url}/v0/organizations/members"
+        url = f"{base_url}/organizations/members"
         headers = {"Authorization": f"Bearer {api_key}"}
         resp = http.get(url, headers=headers, timeout=30)
 

@@ -18,14 +18,6 @@ def _get_assistant_id() -> int | None:
     if not SESSION_DETAILS.is_initialized:
         return None
 
-    # Prefer numeric ID from assistant_record
-    if SESSION_DETAILS.assistant_record:
-        try:
-            return int(SESSION_DETAILS.assistant_record.get("id", 0))
-        except (ValueError, TypeError):
-            pass
-
-    # Fall back to parsing assistant.id string
     try:
         return int(SESSION_DETAILS.assistant.id)
     except (ValueError, TypeError):
