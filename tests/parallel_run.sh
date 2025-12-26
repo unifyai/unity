@@ -981,6 +981,14 @@ fi
 declare -a made_sessions=()
 declare -a session_ids=()
 
+# Print log directory info first (before session creation starts)
+echo
+echo "========================================================================"
+echo "📁 Test logs for THIS run: pytest_logs/$LOG_SUBDIR/"
+echo "📂 All log directories:    pytest_logs/*/"
+echo "========================================================================"
+echo
+
 if (( MAX_JOBS > 0 )); then
   echo "Concurrency limit: $MAX_JOBS simultaneous sessions"
 else
@@ -988,7 +996,7 @@ else
 fi
 
 # Print header before drip-feeding session creation
-echo "Creating tmux sessions (socket: $TMUX_SOCKET):"
+echo "Creating ${#files[@]} tmux sessions..."
 
 for target in "${files[@]}"; do
   # Report any completions before creating new sessions
@@ -1027,23 +1035,29 @@ for target in "${files[@]}"; do
   CREATED_SESSION_IDS+=( "$sid" )
 done
 
-echo "Created ${#made_sessions[@]} tmux sessions."
-
-echo
-echo "========================================================================"
-echo "📁 Test logs for THIS run: pytest_logs/$LOG_SUBDIR/"
-echo "📂 All log directories:    pytest_logs/*/"
-echo "========================================================================"
-echo
-
 # ---- Wait for all tests to complete ----
 # Always block until completion (or timeout). Continue showing drip-feed of
 # pass/fail results as tests complete.
 
-if (( TIMEOUT > 0 )); then
-  echo "Waiting for tests to complete (timeout: ${TIMEOUT}s)..."
+# Count how many have already completed during session creation
+completed_count=0
+pending_count=0
+for sid in "${session_ids[@]}"; do
+  current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+  if [[ "$current_name" == "r"* ]]; then
+    ((pending_count++)) || true
+  else
+    ((completed_count++)) || true
+  fi
+done
+
+# Print summary with completion status
+if (( pending_count == 0 )); then
+  echo "Created all ${#made_sessions[@]} tmux sessions. All completed!"
+elif (( TIMEOUT > 0 )); then
+  echo "Created all ${#made_sessions[@]} tmux sessions. $completed_count completed. Waiting for remaining $pending_count to complete (timeout: ${TIMEOUT}s)..."
 else
-  echo "Waiting for tests to complete..."
+  echo "Created all ${#made_sessions[@]} tmux sessions. $completed_count completed. Waiting for remaining $pending_count to complete..."
 fi
 
 wait_start=$(date +%s)
