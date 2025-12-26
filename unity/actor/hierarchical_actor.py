@@ -546,6 +546,18 @@ async def llm_call(
         provider-agnostic prompt caching across OpenAI, Anthropic, Gemini, etc.
         The static prompt should be ≥2,048 tokens for optimal caching benefits.
     """
+    # Vertex/Gemini context caching has provider-side minimums. Empirically, attempting to
+    # start caching below ~1024 tokens can hard-fail requests with INVALID_ARGUMENT.
+    #
+    # We therefore only include `cache_control` when the static prompt is "definitely"
+    # large enough to be worth caching (and to avoid provider errors). Otherwise we still
+    # send `static_prompt` as a normal system message, but without cache directives.
+    #
+    # NOTE: we intentionally use a conservative character threshold (rather than a token
+    # estimator) because tokenization varies by provider/model.
+    _CACHE_CONTROL_MIN_CHARS = 9000
+    _use_cache_control = bool(static_prompt) and len(static_prompt) >= _CACHE_CONTROL_MIN_CHARS
+
     client.reset_messages()
     user_content = [{"type": "text", "text": prompt}]
 
@@ -581,28 +593,30 @@ async def llm_call(
                 logger.warning(f"Could not process image for prompt: {e}")
 
     if static_prompt:
+        if _use_cache_control:
+            system_content = [
+                {
+                    "type": "text",
+                    "text": static_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ]
+        else:
+            system_content = [{"type": "text", "text": static_prompt}]
+
         messages_to_send = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": static_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                ],
-            },
-            {
-                "role": "user",
-                "content": user_content,
-            },
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
         ]
     else:
         messages_to_send = [{"role": "user", "content": user_content}]
 
-    response = await client.generate(messages=messages_to_send)
+    try:
+        response = await client.generate(messages=messages_to_send)
+    except Exception as _e:
+        raise
 
-    if static_prompt:
+    if static_prompt and _use_cache_control:
         try:
             usage = None
 
