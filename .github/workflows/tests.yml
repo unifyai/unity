@@ -227,22 +227,48 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y tmux portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon0 libgtk-3-dev libgbm-dev libgirepository1.0-dev
-        # Install Playwright system dependencies for Ubuntu
-        sudo apt-get install -y libasound2t64 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
+    # Cache apt packages to avoid re-downloading 170+ packages on every run
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: >-
+          tmux portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2
+          libxkbcommon0 libgtk-3-dev libgbm-dev libgirepository1.0-dev
+          libasound2t64 libatspi2.0-0 libgtk-3-0 libnspr4 libwayland-client0
+          libxcomposite1 libxdamage1 libxrandr2 xvfb
+        version: 1.0
 
     - name: Install uv
       run: pip install uv
+
+    # Cache uv dependencies to avoid re-downloading on every run
+    - name: Cache uv dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/uv
+          .venv
+        key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+        restore-keys: |
+          uv-${{ runner.os }}-
 
     - name: Sync dependencies with uv
       run: |
         # Install project and dev dependencies from pyproject.toml
         uv sync --all-groups
 
+    # Cache Playwright browsers (~500MB) to avoid re-downloading on every run
+    - name: Cache Playwright browsers
+      uses: actions/cache@v4
+      id: playwright-cache
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+        restore-keys: |
+          playwright-${{ runner.os }}-
+
     - name: Install Playwright browsers
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
       run: |
         uv run playwright install --with-deps
 
