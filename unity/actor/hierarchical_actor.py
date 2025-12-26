@@ -2360,6 +2360,77 @@ async def main_plan():
             except Exception:
                 pass
 
+    async def _pane_event_supervisor(self) -> None:
+        """Concurrent supervisor reacting to pane events.
+
+        Policy: be conservative for clarifications. If a clarification channel exists,
+        pause the plan, ask the user, forward the answer via `pane.answer_clarification`,
+        then resume. Notifications are logged (no additional LLM turns).
+        """
+
+        try:
+            while not self._completion_event.is_set():
+                wake = asyncio.create_task(self.pane._events_q.get())
+                done, pending = await asyncio.wait(
+                    {wake, asyncio.create_task(self._completion_event.wait())},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await t
+
+                # Completed: exit
+                if wake not in done:
+                    break
+
+                try:
+                    idx = wake.result()
+                except Exception:
+                    continue
+
+                try:
+                    event = self.pane._events_log[idx]
+                except Exception:
+                    continue
+
+                if event.get("type") == "steering_applied":
+                    payload = event.get("payload") or {}
+                    method = payload.get("method")
+                    status = payload.get("status")
+                    handle_id = event.get("handle_id")
+
+                    interactions_log = current_interaction_sink_var.get()
+                    if interactions_log is not None:
+                        interactions_log.append(
+                            (
+                                "pane_steering",
+                                str(method),
+                                f"handle_id={handle_id} status={status}",
+                            ),
+                        )
+                    try:
+                        self.action_log.append(
+                            f"PANE steering_applied: method={method} handle_id={handle_id} status={status}",
+                        )
+                    except Exception:
+                        pass
+
+                elif event.get("type") == "clarification":
+                    await self._handle_pane_clarification_event(event)
+                elif event.get("type") == "notification":
+                    try:
+                        self.action_log.append(
+                            f"PANE notification from {event.get('handle_id')}: {event.get('payload')}",
+                        )
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.debug(f"Pane supervisor failed: {e}", exc_info=True)
+
+
     async def _start_main_execution_loop(self):
         """
         Starts the primary, stateful execution loop that advances the plan
