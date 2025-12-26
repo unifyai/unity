@@ -1110,4 +1110,24 @@ class SteerableToolPane:
                 },
             )
 
-    
+    async def cleanup(self) -> None:
+        """Cancel watcher tasks and prevent further registrations."""
+
+        async with self._lock:
+            if self._cleanup_started:
+                return
+            self._cleanup_started = True
+            tasks = list(self._watcher_tasks.values())
+            self._watcher_tasks.clear()
+
+        for t in tasks:
+            t.cancel()
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception) and not isinstance(
+                    r,
+                    asyncio.CancelledError,
+                ):
+                    logger.warning("Exception during pane watcher cleanup: %s", r)
