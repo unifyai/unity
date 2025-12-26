@@ -483,3 +483,73 @@ class SteerableToolPane:
                     t.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await t
+
+    async def _handle_clarification(self, handle_id: str, clar: dict[str, Any]) -> None:
+        call_id = str(clar.get("call_id", "unknown"))
+        tool_name = str(clar.get("tool_name", "unknown"))
+        question = str(clar.get("question", ""))
+
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            if meta is None:
+                logger.warning("Clarification for unknown handle_id=%s", handle_id)
+                origin: PaneEventOrigin = {
+                    "origin_tool": "unknown",
+                    "origin_step": -1,
+                    "environment_namespace": "unknown",
+                }
+            else:
+                meta.status = "waiting_for_clarification"
+                origin = {
+                    "origin_tool": meta.origin_tool,
+                    "origin_step": meta.origin_step,
+                    "environment_namespace": meta.environment_namespace,
+                }
+
+        event: dict[str, Any] = {
+            "type": "clarification",
+            "handle_id": handle_id,
+            "origin": origin,
+            "payload": {
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "question": question,
+            },
+        }
+        idx = await self._emit_event(event)
+
+        if idx is None:
+            return
+
+        async with self._lock:
+            # Index for fast lookup / "what's blocking?" queries.
+            # Store the *durable* log entry (with run_id/ts/emitted_at_step populated).
+            self._pending_clarifications[(handle_id, call_id)] = self._events_log[idx]
+
+    async def _handle_notification(self, handle_id: str, notif: dict[str, Any]) -> None:
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            if meta is None:
+                logger.warning("Notification for unknown handle_id=%s", handle_id)
+                origin: PaneEventOrigin = {
+                    "origin_tool": "unknown",
+                    "origin_step": -1,
+                    "environment_namespace": "unknown",
+                }
+            else:
+                origin = {
+                    "origin_tool": meta.origin_tool,
+                    "origin_step": meta.origin_step,
+                    "environment_namespace": meta.environment_namespace,
+                }
+
+        await self._emit_event(
+            {
+                "type": "notification",
+                "handle_id": handle_id,
+                "origin": origin,
+                "payload": notif,
+            },
+        )
+
+    
