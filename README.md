@@ -292,25 +292,35 @@ For surgical test runs without straining your local machine, use GitHub Actions.
 
 Tests are **off by default** to avoid unnecessary CI costs. Trigger them explicitly:
 
-| Method | How to Trigger |
-|--------|----------------|
-| **Commit message** | Include `[run-tests]` anywhere in the message |
-| **PR title** | Include `[run-tests]` in the pull request title |
-| **Manual** | GitHub Actions → "Testing Unity with uv" → "Run workflow" |
+| Method | How to Trigger | What Runs |
+|--------|----------------|-----------|
+| **`[run-tests]`** | Include in commit message or PR title | All 24 test folders (parallel workers) |
+| **`[parallel_run.sh ...]`** | Include in commit message or PR title | Specified paths/args (single worker) |
+| **Manual** | GitHub Actions UI → "Run workflow" | Configurable via inputs |
 
-**Recommended workflow for surgical runs:**
-
-1. Create a branch (or use an existing feature branch)
-2. Push to the branch with `[run-tests]` in the commit message, OR
-3. Manually trigger via the GitHub Actions UI for full control
+**Examples:**
 
 ```bash
-# Trigger full test suite on push
+# Run ALL tests (24 parallel workers)
 git commit -m "Fix contact manager bug [run-tests]"
+
+# Run specific folder (single worker)
+git commit -m "Fix contact manager bug [parallel_run.sh tests/test_contact_manager]"
+
+# Run multiple folders (single worker, both run concurrently inside)
+git commit -m "Fix bugs [parallel_run.sh tests/test_contact_manager tests/test_transcript_manager]"
+
+# Run with extra args (single worker)
+git commit -m "Eval check [parallel_run.sh --eval-only tests/test_actor]"
+
+# Run specific test file
+git commit -m "Fix test [parallel_run.sh tests/test_actor/test_code_act.py]"
 
 # Regular commit (no tests)
 git commit -m "Update documentation"
 ```
+
+The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything.
 
 #### Manual Workflow Dispatch (Surgical Runs)
 
