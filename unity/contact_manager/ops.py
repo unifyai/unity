@@ -175,6 +175,7 @@ def create_contact(
         "rolling_summary": rolling_summary,
         "respond_to": respond_to,
         "response_policy": response_policy,
+        "is_system": False,
     }
     if contact_details["response_policy"] is None:
         contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
