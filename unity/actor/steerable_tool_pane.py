@@ -864,3 +864,100 @@ class SteerableToolPane:
                 },
             )
             return None
+
+    async def stop(
+        self,
+        handle_id: str,
+        reason: str | None = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> Optional[str]:
+        """Stop a specific handle (safe no-op for terminal handles)."""
+
+        truncated_reason = (reason or "")[:200]
+        no_op_event: dict[str, Any] | None = None
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            if meta is None:
+                origin = self._unknown_origin()
+                no_op_event = {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "stop",
+                        "args": {"reason": truncated_reason},
+                        "status": "no-op",
+                        "reason": "handle not found",
+                    },
+                }
+                handle = None
+            else:
+                origin = self._origin_from_meta(meta)
+                if meta.status in ("completed", "failed", "stopped"):
+                    no_op_event = {
+                        "type": "steering_applied",
+                        "handle_id": handle_id,
+                        "origin": origin,
+                        "payload": {
+                            "method": "stop",
+                            "args": {"reason": truncated_reason},
+                            "status": "no-op",
+                            "reason": f"handle already {meta.status}",
+                        },
+                    }
+                    handle = None
+                else:
+                    handle = meta.handle
+
+        if no_op_event is not None:
+            await self._emit_event(no_op_event)
+            return None
+
+        try:
+            result = await maybe_await(
+                handle.stop(reason, parent_chat_context_cont=parent_chat_context_cont),
+            )
+            async with self._lock:
+                meta2 = self._registry.get(handle_id)
+                if meta2 is not None:
+                    meta2.status = "stopped"
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "stop",
+                        "args": {"reason": truncated_reason},
+                        "status": "ok",
+                    },
+                },
+            )
+            # After stopping, cancel watcher and clean indices (do not emit completed).
+            await self._cleanup_handle(handle_id, emit_completed=False)
+            return result
+        except Exception as e:
+            logger.error(
+                "stop failed for handle_id=%s: %s",
+                handle_id,
+                e,
+                exc_info=True,
+            )
+            await self._emit_event(
+                {
+                    "type": "steering_applied",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "method": "stop",
+                        "args": {"reason": truncated_reason},
+                        "status": "error",
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                },
+            )
+            return None
+
+    
