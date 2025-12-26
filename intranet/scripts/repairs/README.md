@@ -51,6 +51,8 @@ python intranet/scripts/repairs/run_repairs_query.py --query jobs_completed_per_
 | `--params` | JSON string | `{}` | Query parameters as JSON |
 | `--project` | string | `RepairsAgent` | Project context to activate |
 | `--log-dir` | string | cwd | Custom root directory for log files |
+| `--metric-subdir` | string | - | Metric subdirectory for nested structure (full-matrix mode) |
+| `--no-summary` | flag | - | Skip generating summary file (used by parallel runner) |
 | `--no-log` | flag | - | Disable file logging, full output to terminal |
 | `--raw` | flag | - | Output raw JSON without formatting |
 | `--pretty` | flag | `True` | Pretty print JSON output |
@@ -283,6 +285,8 @@ python intranet/scripts/repairs/run_repairs_query.py \
 
 When running queries via `parallel_queries.sh`, results are saved with per-terminal isolation:
 
+### Standard Mode (`--all` or `--expand-params`)
+
 ```
 .repairs_queries/
 └── 2025-12-18T19-30-45_repairs_dev_pts_0/   # Timestamped + socket name
@@ -291,6 +295,32 @@ When running queries via `parallel_queries.sh`, results are saved with per-termi
     ├── first_time_fix_rate__group_by_patch.log
     └── _run_summary.log                      # Summary of all queries in this run
 ```
+
+### Full-Matrix Mode (`--full-matrix`)
+
+In full-matrix mode, logs are organized by metric with per-metric summaries:
+
+```
+.repairs_queries/
+└── 2025-12-18T19-30-45_repairs_dev_pts_0/
+    ├── jobs_completed_per_day/              # Subdirectory per metric
+    │   ├── group_by_operative.log
+    │   ├── group_by_patch.log
+    │   ├── group_by_region.log
+    │   ├── group_by_total.log
+    │   └── _metric_summary.log              # Summary for this metric only
+    ├── no_access_rate/
+    │   ├── group_by_operative__return_absolute_false.log
+    │   ├── group_by_operative__return_absolute_true.log
+    │   ├── group_by_patch__return_absolute_false.log
+    │   ├── ...
+    │   └── _metric_summary.log
+    ├── first_time_fix_rate/
+    │   └── ...
+    └── _run_summary.log                     # Global summary across all metrics
+```
+
+### Single Query Mode
 
 When running single queries directly (not via `parallel_queries.sh`):
 
@@ -423,7 +453,8 @@ Sessions are named with status prefixes:
 |----------|-------------|
 | `--all` | Run all available queries |
 | `--query, -q ID` | Run specific query (can be repeated) |
-| `--expand-params` | Expand all parameter combinations per query |
+| `--expand-params` | Expand all parameter combinations per query (flat log structure) |
+| `--full-matrix` | Full matrix: all queries × all params with nested directories per metric |
 | `-j, --jobs N` | Max concurrent sessions (default: 10) |
 | `-w, --wait [N]` | Wait for completion (optional timeout in seconds) |
 | `--project NAME` | Project context (default: RepairsAgent) |
@@ -438,9 +469,13 @@ Sessions are named with status prefixes:
 # Run all queries with default parameters (one session per query)
 ./intranet/scripts/repairs/parallel_queries.sh --all
 
-# Run all queries × all parameter combinations
+# Run all queries × all parameter combinations (flat log structure)
 # (e.g., jobs_completed_per_day with group_by=operative, patch, region, total)
 ./intranet/scripts/repairs/parallel_queries.sh --all --expand-params
+
+# Full matrix mode: all queries × all params with nested directories per metric
+# Creates subdirectories for each metric with per-metric summaries
+./intranet/scripts/repairs/parallel_queries.sh --all --full-matrix -j 8 -w
 
 # Run specific queries
 ./intranet/scripts/repairs/parallel_queries.sh \
@@ -460,7 +495,7 @@ Sessions are named with status prefixes:
 # Run with verbose output in each query
 ./intranet/scripts/repairs/parallel_queries.sh --all --verbose
 
-# Expand params for specific queries
+# Expand params for specific queries (flat structure)
 ./intranet/scripts/repairs/parallel_queries.sh \
     --query first_time_fix_rate \
     --query no_access_rate \
@@ -563,12 +598,13 @@ tmux -L repairs_dev_pts_0 kill-server
 
 ### Parallelization Modes
 
-| Mode | Sessions Created | Use Case |
-|------|------------------|----------|
-| `--all` | 15 (one per query) | Quick overview of all metrics |
-| `--all --expand-params` | ~60 (queries × param combos) | Comprehensive analysis |
-| `--query Q1 --query Q2` | 2 | Focused analysis |
-| `--query Q --expand-params` | ~4-8 per query | Deep dive into one metric |
+| Mode | Sessions Created | Log Structure | Use Case |
+|------|------------------|---------------|----------|
+| `--all` | 15 (one per query) | Flat | Quick overview of all metrics |
+| `--all --expand-params` | ~60 (queries × param combos) | Flat | Comprehensive analysis |
+| `--all --full-matrix` | ~60 (queries × param combos) | Nested (per-metric dirs) | Full analysis with per-metric summaries |
+| `--query Q1 --query Q2` | 2 | Flat | Focused analysis |
+| `--query Q --expand-params` | ~4-8 per query | Flat | Deep dive into one metric |
 
 ### Exit Codes (Parallel Runner)
 

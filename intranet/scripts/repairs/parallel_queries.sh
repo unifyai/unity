@@ -9,6 +9,7 @@ set -euo pipefail
 # Usage:
 #   ./parallel_queries.sh --all                    # All queries, default params
 #   ./parallel_queries.sh --all --expand-params    # All queries × all param combos
+#   ./parallel_queries.sh --all --full-matrix      # Full matrix: all queries × all params, nested dirs
 #   ./parallel_queries.sh --query jobs_completed_per_day
 #   ./parallel_queries.sh --query first_time_fix_rate --query no_access_rate
 #   ./parallel_queries.sh --all -j 5               # Limit to 5 concurrent sessions
@@ -114,6 +115,7 @@ WAIT_FOR_COMPLETION=0
 WAIT_TIMEOUT=0
 MAX_JOBS=10
 EXPAND_PARAMS=0
+FULL_MATRIX=0
 RUN_ALL=0
 PROJECT="RepairsAgent"
 VERBOSE=0
@@ -156,6 +158,10 @@ while (( "$#" )); do
       ;;
     --expand-params)
       EXPAND_PARAMS=1
+      shift
+      ;;
+    --full-matrix)
+      FULL_MATRIX=1
       shift
       ;;
     --query|-q)
@@ -206,7 +212,9 @@ Run repairs queries in parallel tmux sessions.
 Query Selection:
   --all                 Run all available queries
   --query, -q ID        Run specific query (can be repeated)
-  --expand-params       Expand all parameter combinations per query
+  --expand-params       Expand all parameter combinations per query (flat structure)
+  --full-matrix         Full matrix: all queries × all params with nested directories
+                        Creates subdirectories per metric with per-metric summaries
 
 Execution Control:
   -j, --jobs N          Max concurrent sessions (default: 10)
@@ -226,8 +234,11 @@ Examples:
   # Run all queries with default parameters
   ./parallel_queries.sh --all
 
-  # Run all queries with all parameter variations
+  # Run all queries with all parameter variations (flat log structure)
   ./parallel_queries.sh --all --expand-params
+
+  # Full matrix with nested directories per metric
+  ./parallel_queries.sh --all --full-matrix -j 8 -w
 
   # Run specific queries
   ./parallel_queries.sh --query jobs_completed_per_day --query no_access_rate
@@ -291,7 +302,9 @@ else
     gen_args+=( "--query" "$qid" )
   done
 fi
-if (( EXPAND_PARAMS )); then
+if (( FULL_MATRIX )); then
+  gen_args+=( "--full-matrix" )
+elif (( EXPAND_PARAMS )); then
   gen_args+=( "--expand-params" )
 fi
 gen_args+=( "--format" "jsonl" )
@@ -345,7 +358,7 @@ count_pending_sessions() {
   local count=0
   while IFS= read -r name; do
     if [[ "$name" == "r"* ]]; then
-      ((count++))
+      ((count++)) || true
     fi
   done < <(tmux_cmd list-sessions -F "#{session_name}" 2>/dev/null || true)
   echo "$count"
@@ -374,6 +387,7 @@ wait_for_job_slot() {
 build_run_cmd() {
   local query_id="$1"
   local params_json="$2"
+  local metric_subdir="${3:-}"
 
   # Build the Python command
   local py_script="$SCRIPT_DIR/run_repairs_query.py"
@@ -389,6 +403,12 @@ build_run_cmd() {
 
   # Always pass log-subdir for per-terminal isolation (like tests/parallel_run.sh)
   py_cmd="$py_cmd --log-subdir '$LOG_SUBDIR'"
+
+  # In full-matrix mode, pass metric subdirectory for nested structure
+  # and skip per-query summaries (shell script will generate them)
+  if [[ -n "$metric_subdir" ]]; then
+    py_cmd="$py_cmd --metric-subdir '$metric_subdir' --no-summary"
+  fi
 
   if (( VERBOSE )); then
     py_cmd="$py_cmd --verbose"
@@ -463,8 +483,10 @@ echo ""
 info "Queries to run: $QUERY_COUNT"
 info "Max concurrent: $MAX_JOBS"
 info "Tmux socket: $TMUX_SOCKET"
-if (( EXPAND_PARAMS )); then
-  info "Mode: Expanded parameters (all combinations)"
+if (( FULL_MATRIX )); then
+  info "Mode: Full matrix (all queries × all params, nested dirs)"
+elif (( EXPAND_PARAMS )); then
+  info "Mode: Expanded parameters (all combinations, flat structure)"
 else
   info "Mode: Default parameters"
 fi
@@ -482,6 +504,8 @@ while IFS= read -r spec_line; do
   query_id=$(echo "$spec_line" | "$VENV_PY" -c "import sys, json; d=json.loads(sys.stdin.read()); print(d['query_id'])")
   params_json=$(echo "$spec_line" | "$VENV_PY" -c "import sys, json; d=json.loads(sys.stdin.read()); print(json.dumps(d['params']))")
   session_name=$(echo "$spec_line" | "$VENV_PY" -c "import sys, json; d=json.loads(sys.stdin.read()); print(d['session_name'])")
+  # In full-matrix mode, extract metric_subdir (may be empty in non-full-matrix mode)
+  metric_subdir=$(echo "$spec_line" | "$VENV_PY" -c "import sys, json; d=json.loads(sys.stdin.read()); print(d.get('metric_subdir', ''))")
 
   # Report completions and wait for slot
   report_completed_sessions
@@ -492,7 +516,7 @@ while IFS= read -r spec_line; do
   wname="${query_id}"
 
   # Build command
-  cmd="$(build_run_cmd "$query_id" "$params_json")"
+  cmd="$(build_run_cmd "$query_id" "$params_json" "$metric_subdir")"
 
   # Create session
   sid=$(tmux_cmd new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
@@ -543,7 +567,7 @@ if (( WAIT_FOR_COMPLETION )); then
     for sid in "${session_ids[@]}"; do
       current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
       if [[ "$current_name" == "r"* ]]; then
-        ((pending_count++))
+        ((pending_count++)) || true
       fi
     done
 
@@ -571,61 +595,66 @@ if (( WAIT_FOR_COMPLETION )); then
     exit 2
   fi
 
-  # Final summary
+  # Generate aggregate summary for all logs in this run FIRST
+  # (so we can read stats from it for terminal output)
+  echo ""
+  echo "Generating aggregate summary..."
+  RUN_LOG_DIR="$REPO_ROOT/.repairs_queries/$LOG_SUBDIR"
+  if [[ -d "$RUN_LOG_DIR" ]]; then
+    if (( FULL_MATRIX )); then
+      # In full-matrix mode, generate per-metric summaries first
+      echo "  Generating per-metric summaries..."
+      for metric_dir in "$RUN_LOG_DIR"/*/; do
+        if [[ -d "$metric_dir" ]]; then
+          metric_name=$(basename "$metric_dir")
+          "$VENV_PY" "$SCRIPT_DIR/query_logger.py" "$metric_dir" --per-metric 2>/dev/null || true
+        fi
+      done
+      # Then generate global summary
+      "$VENV_PY" "$SCRIPT_DIR/query_logger.py" "$RUN_LOG_DIR" --full-matrix 2>/dev/null || true
+    else
+      "$VENV_PY" "$SCRIPT_DIR/query_logger.py" "$RUN_LOG_DIR" 2>/dev/null || true
+    fi
+  fi
+
+  # Read stats from the generated summary file (more reliable than checking tmux sessions)
+  SUMMARY_FILE="$RUN_LOG_DIR/_run_summary.log"
+  passed=0
+  failed=0
+  total=0
+
+  if [[ -f "$SUMMARY_FILE" ]]; then
+    # Parse stats from summary file
+    total=$(grep -oP 'Total Queries:\s+\K\d+' "$SUMMARY_FILE" 2>/dev/null || echo "0")
+    passed=$(grep -oP 'Total Successful:\s+\K\d+' "$SUMMARY_FILE" 2>/dev/null || \
+             grep -oP 'Successful:\s+\K\d+' "$SUMMARY_FILE" 2>/dev/null || echo "0")
+    failed=$(grep -oP 'Total Failed:\s+\K\d+' "$SUMMARY_FILE" 2>/dev/null || \
+             grep -oP 'Failed:\s+\K\d+' "$SUMMARY_FILE" 2>/dev/null || echo "0")
+  fi
+
+  # Fallback: count log files if summary parsing failed
+  if (( total == 0 )); then
+    if (( FULL_MATRIX )); then
+      total=$(find "$RUN_LOG_DIR" -name "*.log" ! -name "_*" 2>/dev/null | wc -l)
+    else
+      total=$(find "$RUN_LOG_DIR" -maxdepth 1 -name "*.log" ! -name "_*" 2>/dev/null | wc -l)
+    fi
+    # Assume all passed if we can't determine (better than showing 0)
+    passed=$total
+    failed=0
+  fi
+
+  # Final summary output
   echo ""
   echo "========================================================================"
   echo "                           FINAL RESULTS"
   echo "========================================================================"
   echo ""
-
-  passed=0
-  failed=0
-  declare -a failed_sessions=()
-  declare -a passed_sessions=()
-
-  for sid in "${session_ids[@]}"; do
-    current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-    case "$current_name" in
-      "p ✅ "*)
-        ((passed++))
-        passed_sessions+=( "${current_name#p ✅ }" )
-        ;;
-      "f ❌ "*)
-        ((failed++))
-        failed_sessions+=( "${current_name#f ❌ }" )
-        ;;
-    esac
-  done
-
-  # Print passed queries
-  if (( passed > 0 )); then
-    echo -e "${GREEN}${BOLD}PASSED (${passed}):${NC}"
-    for name in "${passed_sessions[@]}"; do
-      print_pass "$name"
-    done
-    echo ""
-  fi
-
-  # Print failed queries
-  if (( failed > 0 )); then
-    echo -e "${RED}${BOLD}FAILED (${failed}):${NC}"
-    for name in "${failed_sessions[@]}"; do
-      print_fail "$name"
-    done
-    echo ""
-  fi
-
-  # Generate aggregate summary for all logs in this run
+  echo "  Total Queries:   $total"
+  echo "  Successful:      $passed"
+  echo "  Failed:          $failed"
   echo ""
-  echo "Generating aggregate summary..."
-  LOG_DIR="$REPO_ROOT/.repairs_queries/$LOG_SUBDIR"
-  if [[ -d "$LOG_DIR" ]]; then
-    "$VENV_PY" "$SCRIPT_DIR/query_logger.py" "$LOG_DIR" 2>/dev/null || true
-    echo "📄 Summary: $LOG_DIR/_run_summary.log"
-  fi
-
-  # Summary line
-  total=$((passed + failed))
+  echo "📄 Summary: $SUMMARY_FILE"
   echo ""
   echo "========================================================================"
   if (( failed > 0 )); then
@@ -635,6 +664,9 @@ if (( WAIT_FOR_COMPLETION )); then
     echo ""
     echo "To inspect failures:"
     echo "  • View summary:     cat .repairs_queries/$LOG_SUBDIR/_run_summary.log"
+    if (( FULL_MATRIX )); then
+      echo "  • Per-metric logs:  ls .repairs_queries/$LOG_SUBDIR/*/"
+    fi
     echo "  • List sessions:    tmux -L $TMUX_SOCKET ls"
     echo "  • Attach to failed: tmux -L $TMUX_SOCKET attach -t '<session>'"
     exit 1

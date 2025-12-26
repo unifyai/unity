@@ -47,7 +47,7 @@ from intranet.core.bespoke_repairs_agent import (
 import intranet.repairs.queries  # noqa: F401
 
 # Import the query logger (from same directory)
-from query_logger import QueryLogger
+from query_logger import QueryLogger, DebugLogCapture
 
 # ---------------------------------------------------------------------------
 # Logging Setup
@@ -246,6 +246,17 @@ See README.md for comprehensive usage documentation.
         help="Subdirectory name for logs (e.g., '{datetime}_{socket}' for per-terminal isolation)",
     )
     parser.add_argument(
+        "--metric-subdir",
+        type=str,
+        default=None,
+        help="Metric subdirectory for nested structure (e.g., 'jobs_completed_per_day' in full-matrix mode)",
+    )
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="Skip generating summary file (used when parallel_queries.sh handles summaries)",
+    )
+    parser.add_argument(
         "--no-log",
         action="store_true",
         help="Disable file logging, only print to terminal",
@@ -316,7 +327,11 @@ See README.md for comprehensive usage documentation.
     query_logger: Optional[QueryLogger] = None
     if not args.no_log:
         log_root = Path(args.log_dir) if args.log_dir else None
-        query_logger = QueryLogger(root_dir=log_root, log_subdir=args.log_subdir)
+        query_logger = QueryLogger(
+            root_dir=log_root,
+            log_subdir=args.log_subdir,
+            metric_subdir=args.metric_subdir,
+        )
         query_logger.start_run()
 
     # Execute query
@@ -330,133 +345,150 @@ See README.md for comprehensive usage documentation.
     result = None
     success = True
     error_msg = None
+    debug_output = ""
 
-    try:
-        logger.info(f"Executing query: {args.query}")
-        result = await agent.ask(args.query, **params)
-        query_elapsed = time.perf_counter() - query_start
+    # Capture debug logs from the metrics module during query execution
+    with DebugLogCapture("intranet.repairs.queries.metrics") as debug_capture:
+        try:
+            logger.info(f"Executing query: {args.query}")
+            result = await agent.ask(args.query, **params)
+            query_elapsed = time.perf_counter() - query_start
+            debug_output = debug_capture.get_output()
 
-        # Log to file
-        log_path = None
-        if query_logger:
-            log_path = query_logger.log_query(
-                query_id=args.query,
-                params=params,
-                result=result,
-                elapsed=query_elapsed,
-                success=True,
+            # Log to file
+            log_path = None
+            if query_logger:
+                log_path = query_logger.log_query(
+                    query_id=args.query,
+                    params=params,
+                    result=result,
+                    elapsed=query_elapsed,
+                    success=True,
+                    debug_log=debug_output,
+                )
+                if log_path:
+                    print(f"📝 Results logged to: {log_path.name}")
+
+            # Output to terminal
+            if args.raw:
+                print(json.dumps(result, default=str))
+            elif args.no_log:
+                # Full output only if not logging to file
+                print_result(result, pretty=args.pretty)
+                print_summary(result, query_elapsed)
+            else:
+                # Brief terminal output when logging to file
+                print_summary(result, query_elapsed)
+
+            print(
+                f"✅ Query completed successfully in {_format_duration(query_elapsed)}",
             )
-            if log_path:
-                print(f"📝 Results logged to: {log_path.name}")
+            logger.info(f"Query completed in {_format_duration(query_elapsed)}")
 
-        # Output to terminal
-        if args.raw:
-            print(json.dumps(result, default=str))
-        elif args.no_log:
-            # Full output only if not logging to file
-            print_result(result, pretty=args.pretty)
-            print_summary(result, query_elapsed)
-        else:
-            # Brief terminal output when logging to file
-            print_summary(result, query_elapsed)
-
-        print(f"✅ Query completed successfully in {_format_duration(query_elapsed)}")
-        logger.info(f"Query completed in {_format_duration(query_elapsed)}")
-
-    except ValueError as e:
-        query_elapsed = time.perf_counter() - query_start
-        success = False
-        error_msg = str(e)
-        logger.error(
-            f"Query validation error after {_format_duration(query_elapsed)}: {e}",
-        )
-
-        if query_logger:
-            import traceback
-
-            query_logger.log_query(
-                query_id=args.query,
-                params=params,
-                result=None,
-                elapsed=query_elapsed,
-                success=False,
-                error=f"ValueError: {e}\n\n{traceback.format_exc()}",
+        except ValueError as e:
+            query_elapsed = time.perf_counter() - query_start
+            debug_output = debug_capture.get_output()
+            success = False
+            error_msg = str(e)
+            logger.error(
+                f"Query validation error after {_format_duration(query_elapsed)}: {e}",
             )
 
-        print(f"❌ {e}")
-        print()
-        print("💡 Use --list to see all available queries")
+            if query_logger:
+                import traceback
 
-    except RuntimeError as e:
-        query_elapsed = time.perf_counter() - query_start
-        success = False
-        error_msg = str(e)
-        logger.error(
-            f"Query runtime error after {_format_duration(query_elapsed)}: {e}",
-        )
+                query_logger.log_query(
+                    query_id=args.query,
+                    params=params,
+                    result=None,
+                    elapsed=query_elapsed,
+                    success=False,
+                    error=f"ValueError: {e}\n\n{traceback.format_exc()}",
+                    debug_log=debug_output,
+                )
 
-        if query_logger:
-            import traceback
+            print(f"❌ {e}")
+            print()
+            print("💡 Use --list to see all available queries")
 
-            query_logger.log_query(
-                query_id=args.query,
-                params=params,
-                result=None,
-                elapsed=query_elapsed,
-                success=False,
-                error=f"RuntimeError: {e}\n\n{traceback.format_exc()}",
+        except RuntimeError as e:
+            query_elapsed = time.perf_counter() - query_start
+            debug_output = debug_capture.get_output()
+            success = False
+            error_msg = str(e)
+            logger.error(
+                f"Query runtime error after {_format_duration(query_elapsed)}: {e}",
             )
 
-        print(f"❌ Query failed: {e}")
-        print()
-        print("💡 Try running with --verbose or --debug for more details")
+            if query_logger:
+                import traceback
 
-    except KeyboardInterrupt:
-        query_elapsed = time.perf_counter() - query_start
-        success = False
-        error_msg = "Interrupted by user"
-        logger.warning(
-            f"Query interrupted by user after {_format_duration(query_elapsed)}",
-        )
+                query_logger.log_query(
+                    query_id=args.query,
+                    params=params,
+                    result=None,
+                    elapsed=query_elapsed,
+                    success=False,
+                    error=f"RuntimeError: {e}\n\n{traceback.format_exc()}",
+                    debug_log=debug_output,
+                )
 
-        if query_logger:
-            query_logger.log_query(
-                query_id=args.query,
-                params=params,
-                result=None,
-                elapsed=query_elapsed,
-                success=False,
-                error="KeyboardInterrupt: Query interrupted by user",
+            print(f"❌ Query failed: {e}")
+            print()
+            print("💡 Try running with --verbose or --debug for more details")
+
+        except KeyboardInterrupt:
+            query_elapsed = time.perf_counter() - query_start
+            debug_output = debug_capture.get_output()
+            success = False
+            error_msg = "Interrupted by user"
+            logger.warning(
+                f"Query interrupted by user after {_format_duration(query_elapsed)}",
             )
 
-        print()
-        print(f"⚠️  Query interrupted after {_format_duration(query_elapsed)}")
+            if query_logger:
+                query_logger.log_query(
+                    query_id=args.query,
+                    params=params,
+                    result=None,
+                    elapsed=query_elapsed,
+                    success=False,
+                    error="KeyboardInterrupt: Query interrupted by user",
+                    debug_log=debug_output,
+                )
 
-    except Exception as e:
-        query_elapsed = time.perf_counter() - query_start
-        success = False
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.exception(f"Unexpected error after {_format_duration(query_elapsed)}")
+            print()
+            print(f"⚠️  Query interrupted after {_format_duration(query_elapsed)}")
 
-        if query_logger:
-            import traceback
-
-            query_logger.log_query(
-                query_id=args.query,
-                params=params,
-                result=None,
-                elapsed=query_elapsed,
-                success=False,
-                error=f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
+        except Exception as e:
+            query_elapsed = time.perf_counter() - query_start
+            debug_output = debug_capture.get_output()
+            success = False
+            error_msg = f"{type(e).__name__}: {e}"
+            logger.exception(
+                f"Unexpected error after {_format_duration(query_elapsed)}",
             )
 
-        print(f"❌ Unexpected error: {type(e).__name__}: {e}")
-        print()
-        print("💡 Run with --debug for full stack trace")
+            if query_logger:
+                import traceback
+
+                query_logger.log_query(
+                    query_id=args.query,
+                    params=params,
+                    result=None,
+                    elapsed=query_elapsed,
+                    success=False,
+                    error=f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
+                    debug_log=debug_output,
+                )
+
+            print(f"❌ Unexpected error: {type(e).__name__}: {e}")
+            print()
+            print("💡 Run with --debug for full stack trace")
 
     # Finish logging run
     if query_logger:
-        summary_path = query_logger.finish_run()
+        summary_path = query_logger.finish_run(skip_summary=args.no_summary)
         print()
         print(query_logger.get_terminal_summary())
 
