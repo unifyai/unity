@@ -229,33 +229,6 @@ def transform_tool_calls_to_context(
     return transformed
 
 
-def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
-    """Transform assistant tool_calls without thinking blocks into system context.
-
-    Convenience wrapper for Claude extended thinking compatibility.
-    """
-
-    def needs_transformation(m: dict) -> bool:
-        if not isinstance(m, dict):
-            return False
-        if m.get("role") != "assistant":
-            return False
-        if not m.get("tool_calls"):
-            return False
-        # Check if thinking_blocks is missing or null
-        provider_fields = m.get("provider_specific_fields") or {}
-        thinking_blocks = provider_fields.get("thinking_blocks")
-        return thinking_blocks is None
-
-    return transform_tool_calls_to_context(
-        msgs,
-        marker_key="_claude_thinking_context",
-        context_header="[Prior tool execution context - extended thinking was disabled]",
-        context_footer="[Continue with extended thinking enabled]",
-        predicate=needs_transformation,
-    )
-
-
 def find_unreplied_assistant_entries(client: unillm.AsyncUnify) -> list[dict]:
     findings: list[dict] = []
     try:
