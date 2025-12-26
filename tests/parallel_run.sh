@@ -1105,19 +1105,24 @@ fi
 echo ""
 echo "All tests completed."
 
-failures=0
+# Collect failures
+declare -a failed_sessions=()
 for sid in "${session_ids[@]}"; do
   current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
   # Look for "f" prefix to detect failure (f ❌)
   if [[ "$current_name" == "f"* ]]; then
-    echo "Failure detected in session: $current_name"
-    failures=1
+    failed_sessions+=( "$current_name" )
   fi
 done
 
-if (( failures )); then
+if (( ${#failed_sessions[@]} > 0 )); then
   echo ""
-  echo "Failures detected. Logs are available in pytest_logs/$LOG_SUBDIR/"
+  echo "Failed tests:"
+  for name in "${failed_sessions[@]}"; do
+    echo "  - $name"
+  done
+  echo ""
+  echo "Logs: pytest_logs/$LOG_SUBDIR/"
   exit 1
 else
   echo "All tests passed!"
