@@ -28,7 +28,7 @@ The `ConversationManager` is the live orchestration layer that handles real-time
 
 ```bash
 # Ensure Redis is available (tests start their own instance)
-tests/parallel_run.sh -t --wait tests/test_conversation_manager/
+tests/parallel_run.sh -t tests/test_conversation_manager/
 ```
 
 ---
@@ -274,10 +274,10 @@ redis-server --version
 
 ```bash
 # Run all conversation_manager tests (with per-test parallelism)
-tests/parallel_run.sh -t --wait tests/test_conversation_manager/
+tests/parallel_run.sh -t tests/test_conversation_manager/
 
 # Run a specific test file
-tests/parallel_run.sh -t --wait tests/test_conversation_manager/test_comms.py
+tests/parallel_run.sh -t tests/test_conversation_manager/test_comms.py
 
 # Run directly with pytest (for debugging)
 .venv/bin/python -m pytest tests/test_conversation_manager/test_comms.py -v --timeout=300

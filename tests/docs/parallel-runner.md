@@ -72,9 +72,11 @@ kill_server --global
 
 ## Command-Line Options
 
+The script **always blocks** until all tests complete, streaming pass/fail results inline.
+
 | Option | Description |
 |--------|-------------|
-| `-w [N]`, `--wait [N]` | Block until all tests complete; exit 0 on success, 1 on failure, 2 on timeout. Optional `N` sets timeout in seconds. |
+| `-t N`, `--timeout N` | Abort if tests don't complete within N seconds. |
 | `-s`, `--serial` | Create one session per file instead of per test (tests within a file run serially) |
 | `-j N`, `--jobs N` | Limit concurrent tmux sessions (default: 25). Use `-j 0` or `-j none` for unlimited. |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
@@ -95,10 +97,10 @@ Use `-s/--serial` to create one session per *file* instead (tests within a file 
 
 ```bash
 # DEFAULT: 15 tests run concurrently in 15 sessions (~1 min)
-parallel_run --wait tests/test_contact_manager/test_ask.py
+parallel_run tests/test_contact_manager/test_ask.py
 
 # WITH -s: 15 tests in one file run serially (~10 min)
-parallel_run -s --wait tests/test_contact_manager/test_ask.py
+parallel_run -s tests/test_contact_manager/test_ask.py
 ```
 
 **When to use `-s`:**
@@ -133,20 +135,21 @@ parallel_run -j unlimited tests/ # equivalent
 
 ---
 
-## Wait Mode and Logs (`--wait`)
+## Blocking Behavior and Logs
 
-Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipelines or automated agents.
+The script always blocks until all tests complete, streaming pass/fail results inline as tests finish.
 
 ```bash
-# Wait indefinitely until all tests complete
-parallel_run --wait tests/my_tests
+# Run tests (blocks until all complete)
+parallel_run tests/my_tests
 
-# Wait up to 120 seconds, then timeout
-parallel_run --wait 120 tests/my_tests
+# Run with 120 second timeout
+parallel_run --timeout 120 tests/my_tests
 ```
 
 **Behavior:**
 - Blocks until all tmux sessions complete (or timeout is reached).
+- Streams pass/fail results inline as each test finishes.
 - If all pass, exits with code `0`.
 - If any fail, exits with code `1` and lists the failed sessions.
 - If timeout is reached before completion, exits with code `2`.
@@ -155,10 +158,10 @@ parallel_run --wait 120 tests/my_tests
 **Timeout examples:**
 ```bash
 # Quick sanity check with 60s timeout
-parallel_run --wait 60 tests/test_basic.py
+parallel_run --timeout 60 tests/test_basic.py
 
 # Long-running tests with 5 minute timeout
-parallel_run --wait 300 tests/test_slow_suite/
+parallel_run --timeout 300 tests/test_slow_suite/
 ```
 
 ---
@@ -234,8 +237,8 @@ The `--repeat N` flag runs each test target N times. **The primary use case is f
 # Run a specific eval test 10 times without caching
 parallel_run --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
 
-# Run all eval tests 5 times each, wait for completion
-parallel_run --env UNIFY_CACHE=false --repeat 5 --eval-only --wait tests
+# Run all eval tests 5 times each
+parallel_run --env UNIFY_CACHE=false --repeat 5 --eval-only tests
 ```
 
 **Use cases:**
@@ -308,8 +311,8 @@ parallel_run tests/foo_test.py::TestClass::test_something
 # Serial mode (one session per file)
 parallel_run -s tests
 
-# Wait for completion
-parallel_run --wait tests/unit
+# With timeout (abort after 5 minutes)
+parallel_run --timeout 300 tests/unit
 
 # Run only eval tests
 parallel_run --eval-only tests
@@ -321,7 +324,7 @@ parallel_run --symbolic-only tests
 parallel_run --tags "experiment-1" tests
 
 # Combine options
-parallel_run --eval-only --wait tests/test_contact_manager
+parallel_run --eval-only tests/test_contact_manager
 parallel_run --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
 ```
 

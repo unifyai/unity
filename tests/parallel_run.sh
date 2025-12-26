@@ -134,9 +134,9 @@ EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .i
 # With -s/--serial: one session per file (tests within a file run serially).
 SERIAL=0
 
-# Wait for completion flag and optional timeout
-WAIT_FOR_COMPLETION=0
-WAIT_TIMEOUT=0  # 0 means no timeout (wait indefinitely)
+# Timeout in seconds (0 = no timeout, wait indefinitely)
+# With --timeout N: abort if tests don't complete within N seconds
+TIMEOUT=0
 
 # Optional filename match (glob-like, e.g., "*_tool_docstring*")
 NAME_PATTERN=""
@@ -177,14 +177,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 declare -a POSITIONAL_ARGS=()
 while (( "$#" )); do
   case "$1" in
-    -w|--wait)
-      WAIT_FOR_COMPLETION=1
-      # Check if next arg is an optional timeout (positive integer)
+    -t|--timeout)
       if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
-        WAIT_TIMEOUT="$2"
+        TIMEOUT="$2"
         shift 2
       else
-        shift
+        echo "Error: --timeout requires a positive integer (seconds)." >&2
+        exit 2
       fi
       ;;
     -s|--serial)
@@ -264,9 +263,10 @@ while (( "$#" )); do
       echo "Usage: parallel_run.sh [options] [targets...]"
       echo ""
       echo "Run pytest tests in parallel tmux sessions."
+      echo "Always blocks until all tests complete (or timeout)."
       echo ""
       echo "Options:"
-      echo "  -w, --wait [N]       Wait for completion (optional timeout in seconds)"
+      echo "  -t, --timeout N      Abort if tests don't complete within N seconds"
       echo "  -s, --serial         One session per file (default: one per test)"
       echo "  -m, --match PATTERN  Filter files by glob pattern"
       echo "  -e, --env KEY=VALUE  Set environment variable (repeatable)"
@@ -282,7 +282,7 @@ while (( "$#" )); do
       echo "Examples:"
       echo "  parallel_run.sh tests/                    # Run all tests"
       echo "  parallel_run.sh tests/test_foo.py        # Run one file"
-      echo "  parallel_run.sh -w tests/                # Wait for completion"
+      echo "  parallel_run.sh --timeout 300 tests/     # 5-minute timeout"
       echo "  parallel_run.sh -s tests/                # Serial mode (per-file)"
       echo "  parallel_run.sh -j 8 tests/              # Limit to 8 concurrent"
       echo "  parallel_run.sh --eval-only tests/       # Only eval tests"
@@ -1035,90 +1035,77 @@ echo "📁 Test logs for THIS run: pytest_logs/$LOG_SUBDIR/"
 echo "📂 All log directories:    pytest_logs/*/"
 echo "========================================================================"
 echo
-echo "Trigger:"
-echo "  • Run everything under current dir:     ./parallel_run.sh"
-echo "  • Only a folder:                         ./parallel_run.sh test_cats"
-echo "  • Multiple roots:                        ./parallel_run.sh tests/unit tests/integration"
-echo "  • Specific files:                        ./parallel_run.sh tests/test_foo.py tests/test_bar.py"
-echo "  • Specific tests:                        ./parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
-echo "  • Serial (one session per file):         ./parallel_run.sh -s tests tests/test_foo.py"
-echo "  • Limit concurrency:                     ./parallel_run.sh -j 8 tests"
-echo "  • Set environment variables:             ./parallel_run.sh --env UNIFY_CACHE=false tests"
-echo "  • Multiple env vars:                     ./parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests"
-echo "  • Tag test runs:                         ./parallel_run.sh --tags experiment-1 tests"
-echo "  • Multiple tags:                         ./parallel_run.sh --tags \"model-compare,gpt-4o\" tests"
-echo "  • Run only eval tests:                   ./parallel_run.sh --eval-only tests"
-echo "  • Run only symbolic tests:               ./parallel_run.sh --symbolic-only tests"
-echo "  • Repeat tests for sampling:             ./parallel_run.sh --repeat 5 --eval-only tests"
-echo "  • Overwrite cached scenarios:            ./parallel_run.sh --overwrite-scenarios tests/test_contact_manager"
-echo "  • Pass extra args to pytest:             ./parallel_run.sh tests/ -- -v --tb=short --pdb"
-echo
-echo "Observe (this terminal's sessions only):"
-echo "  • Watch sessions:  tests/watch_tests.sh"
-echo "  • List sessions:   tmux -L $TMUX_SOCKET ls"
-echo "  • Attach:          tmux -L $TMUX_SOCKET attach -t <session>"
-echo
-echo "See all terminals' tests: tests/list_runs.sh"
 
-if (( WAIT_FOR_COMPLETION )); then
-  if (( WAIT_TIMEOUT > 0 )); then
-    echo "Waiting for tests to complete (timeout: ${WAIT_TIMEOUT}s)..."
-  else
-    echo "Waiting for tests to complete..."
+# ---- Wait for all tests to complete ----
+# Always block until completion (or timeout). Continue showing drip-feed of
+# pass/fail results as tests complete.
+
+if (( TIMEOUT > 0 )); then
+  echo "Waiting for tests to complete (timeout: ${TIMEOUT}s)..."
+else
+  echo "Waiting for tests to complete..."
+fi
+
+wait_start=$(date +%s)
+timed_out=0
+while true; do
+  # Report any newly completed sessions (drip-feed pass/fail inline)
+  report_completed_sessions
+
+  # Count remaining pending sessions
+  pending_count=0
+  for sid in "${session_ids[@]}"; do
+    # Check name of our specific session IDs only
+    current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+    # Look for "r" prefix to detect pending state (r ⏳)
+    if [[ "$current_name" == "r"* ]]; then
+      ((pending_count++)) || true
+    fi
+  done
+
+  if (( pending_count == 0 )); then
+    # Final report to catch any last completions
+    report_completed_sessions
+    break
   fi
 
-  wait_start=$(date +%s)
-  timed_out=0
-  while true; do
-    pending_count=0
-    for sid in "${session_ids[@]}"; do
-      # Check name of our specific session IDs only
-      current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-      # Look for "r" prefix to detect pending state (r ⏳)
-      if [[ "$current_name" == "r"* ]]; then
-        ((pending_count++)) || true
-      fi
-    done
-
-    if (( pending_count == 0 )); then
+  # Check timeout if specified
+  if (( TIMEOUT > 0 )); then
+    elapsed=$(( $(date +%s) - wait_start ))
+    if (( elapsed >= TIMEOUT )); then
+      timed_out=1
+      echo ""
+      echo "Timeout reached after ${TIMEOUT}s. ${pending_count} session(s) still running."
       break
     fi
-
-    # Check timeout if specified
-    if (( WAIT_TIMEOUT > 0 )); then
-      elapsed=$(( $(date +%s) - wait_start ))
-      if (( elapsed >= WAIT_TIMEOUT )); then
-        timed_out=1
-        echo "Timeout reached after ${WAIT_TIMEOUT}s. ${pending_count} session(s) still running."
-        break
-      fi
-    fi
-
-    sleep 1
-  done
-
-  if (( timed_out )); then
-    echo "Tests did not complete within timeout. Check tmux sessions manually."
-    exit 2
   fi
 
-  echo "All tests completed."
+  sleep 1
+done
 
-  failures=0
-  for sid in "${session_ids[@]}"; do
-    current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
-    # Look for "f" prefix to detect failure (f ❌)
-    if [[ "$current_name" == "f"* ]]; then
-      echo "Failure detected in session: $current_name"
-      failures=1
-    fi
-  done
+if (( timed_out )); then
+  echo "Tests did not complete within timeout. Check tmux sessions manually."
+  exit 2
+fi
 
-  if (( failures )); then
-    echo "Failures detected. Logs are available in pytest_logs/$LOG_SUBDIR/"
-    exit 1
-  else
-    echo "All tests passed!"
-    exit 0
+echo ""
+echo "All tests completed."
+
+failures=0
+for sid in "${session_ids[@]}"; do
+  current_name=$(tmux_cmd display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+  # Look for "f" prefix to detect failure (f ❌)
+  if [[ "$current_name" == "f"* ]]; then
+    echo "Failure detected in session: $current_name"
+    failures=1
   fi
+done
+
+if (( failures )); then
+  echo ""
+  echo "Failures detected. Logs are available in pytest_logs/$LOG_SUBDIR/"
+  exit 1
+else
+  echo "All tests passed!"
+  exit 0
 fi

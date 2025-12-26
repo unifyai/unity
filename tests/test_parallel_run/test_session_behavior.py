@@ -72,7 +72,7 @@ class TestStatusPrefixes:
 
     def test_pending_prefix_during_run(self, runner):
         """Sessions should have pending prefix while running."""
-        # Start without --wait so we can check mid-run
+        # Script blocks by default, but sessions start with pending prefix
         result = runner.run(
             runner.fixture_path("test_always_pass.py"),
         )
@@ -97,11 +97,10 @@ class TestStatusPrefixes:
     def test_pass_prefix_on_success(self, runner):
         """Sessions should have pass prefix after successful completion."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
-        # After --wait returns, check the session status (filter by socket)
+        # After completion, check the session status (filter by socket)
         sessions = list_tmux_sessions(socket=result.socket)
         # Note: session may have auto-closed by now, so just verify exit code
         assert result.exit_code == 0
@@ -109,7 +108,6 @@ class TestStatusPrefixes:
     def test_fail_prefix_on_failure(self, runner):
         """Sessions should have fail prefix after test failure."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_fail.py"),
         )
 
@@ -128,7 +126,6 @@ class TestAutoClose:
     def test_passing_sessions_auto_close(self, runner):
         """Passing sessions should auto-close after ~10 seconds."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -151,7 +148,6 @@ class TestAutoClose:
     def test_failing_sessions_persist(self, runner):
         """Failing sessions should NOT auto-close."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_fail.py"),
         )
 
@@ -171,10 +167,9 @@ class TestAutoClose:
 class TestLogFiles:
     """Tests for log file creation in pytest_logs/{socket}/."""
 
-    def test_wait_creates_log_file(self, runner):
-        """--wait should create log file for each session."""
+    def test_creates_log_file(self, runner):
+        """Script should create log file for each session."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -183,7 +178,6 @@ class TestLogFiles:
     def test_log_file_contains_output(self, runner):
         """Log files should contain pytest output."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -196,7 +190,6 @@ class TestLogFiles:
     def test_default_creates_multiple_logs(self, runner):
         """Default per-test mode should create log file per test."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -208,7 +201,6 @@ class TestLogFiles:
     def test_log_file_naming(self, runner):
         """Log files should be named after sessions."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -273,7 +265,6 @@ class TestExitCodes:
     def test_all_pass_exit_zero(self, runner):
         """All passing tests should result in exit code 0."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
@@ -282,7 +273,6 @@ class TestExitCodes:
     def test_any_fail_exit_nonzero(self, runner):
         """Any failing test should result in non-zero exit code."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_fail.py"),
         )
 
@@ -291,19 +281,8 @@ class TestExitCodes:
     def test_mixed_pass_fail_exit_nonzero(self, runner):
         """Mix of pass/fail should result in non-zero exit code."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
             runner.fixture_path("test_always_fail.py"),
         )
 
         assert result.exit_code != 0
-
-    def test_no_wait_exit_zero_immediate(self, runner):
-        """Without --wait, script should exit 0 immediately after session creation."""
-        result = runner.run(
-            runner.fixture_path("test_always_fail.py"),
-            wait_for_completion=True,  # We wait separately in test harness
-        )
-
-        # Script itself should exit 0 (doesn't wait for tests)
-        assert result.exit_code == 0

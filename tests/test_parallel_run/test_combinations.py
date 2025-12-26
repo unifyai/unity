@@ -4,15 +4,11 @@ Combination tests for parallel_run.sh.
 Tests various flag combinations to ensure they work together correctly.
 This is essentially a grid search across the flag space.
 
+The script always blocks until tests complete, so these tests verify
+flag combinations work correctly with blocking behavior.
+
 Flag combinations tested:
-- --wait (default per-test mode)
-- --wait + --serial
-- --wait + --match
-- --wait + --env
-- --wait + --eval-only
-- --wait + --symbolic-only
-- --wait + --repeat
-- --wait + --tags
+- default per-test mode
 - --serial + --match
 - --serial + --eval-only
 - --serial + --symbolic-only
@@ -20,40 +16,36 @@ Flag combinations tested:
 - --match + --symbolic-only
 - --eval-only + --repeat
 - --symbolic-only + --repeat
-- Triple combinations
-- Quadruple combinations
+- Triple combinations (--timeout, --match, --env, etc.)
 """
 
 from __future__ import annotations
 
 
-class TestWaitWithOtherFlags:
-    """Tests combining --wait with other flags."""
+class TestBlockingWithOtherFlags:
+    """Tests combining blocking behavior with other flags."""
 
-    def test_wait_default_per_test(self, runner):
-        """--wait should wait for all per-test sessions (default mode)."""
+    def test_default_per_test(self, runner):
+        """Script should block for all per-test sessions (default mode)."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_always_pass.py"),
         )
 
         # Should exit with 0 (all pass) and have waited for completion
         assert result.exit_code == 0, f"Failed with: {result.stderr}"
 
-    def test_wait_default_per_test_failure(self, runner):
-        """--wait should return non-zero if any test fails (default mode)."""
+    def test_default_per_test_failure(self, runner):
+        """Script should return non-zero if any test fails (default mode)."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_mixed_results.py"),
         )
 
         # test_mixed_results.py has one failing test
         assert result.exit_code != 0
 
-    def test_wait_with_match(self, runner, fixtures_dir):
-        """--wait with --match should wait for matched sessions."""
+    def test_with_match(self, runner, fixtures_dir):
+        """Script with --match should block for matched sessions."""
         result = runner.run(
-            "--wait",
             "--match",
             "*single*",
             fixtures_dir,
@@ -61,10 +53,9 @@ class TestWaitWithOtherFlags:
 
         assert result.exit_code == 0
 
-    def test_wait_with_env(self, runner):
-        """--wait with --env should pass env and wait."""
+    def test_with_env(self, runner):
+        """Script with --env should pass env and block."""
         result = runner.run(
-            "--wait",
             "--env",
             "MY_VAR=my_value",
             runner.fixture_path("test_always_pass.py"),
@@ -72,10 +63,9 @@ class TestWaitWithOtherFlags:
 
         assert result.exit_code == 0
 
-    def test_wait_with_eval_only(self, runner, fixtures_dir):
-        """--wait with --eval-only should wait for eval tests only."""
+    def test_with_eval_only(self, runner, fixtures_dir):
+        """Script with --eval-only should block for eval tests only."""
         result = runner.run(
-            "--wait",
             "--eval-only",
             fixtures_dir,
         )
@@ -83,20 +73,18 @@ class TestWaitWithOtherFlags:
         # Should succeed if eval tests pass
         assert result.exit_code == 0
 
-    def test_wait_with_symbolic_only(self, runner):
-        """--wait with --symbolic-only should wait for symbolic tests."""
+    def test_with_symbolic_only(self, runner):
+        """Script with --symbolic-only should block for symbolic tests."""
         result = runner.run(
-            "--wait",
             "--symbolic-only",
             runner.fixture_path("test_symbolic_only.py"),
         )
 
         assert result.exit_code == 0
 
-    def test_wait_with_repeat(self, runner):
-        """--wait with --repeat should wait for all repeated runs."""
+    def test_with_repeat(self, runner):
+        """Script with --repeat should block for all repeated runs."""
         result = runner.run(
-            "--wait",
             "--repeat",
             "2",
             runner.fixture_path("test_single_test.py"),
@@ -104,10 +92,9 @@ class TestWaitWithOtherFlags:
 
         assert result.exit_code == 0
 
-    def test_wait_with_tags(self, runner):
-        """--wait with --tags should tag and wait."""
+    def test_with_tags(self, runner):
+        """Script with --tags should tag and block."""
         result = runner.run(
-            "--wait",
             "--tags",
             "my-tag",
             runner.fixture_path("test_always_pass.py"),
@@ -256,10 +243,9 @@ class TestRepeatCombinations:
 class TestTripleCombinations:
     """Tests with three or more flags combined."""
 
-    def test_wait_match(self, runner, fixtures_dir):
-        """--wait + --match should all work together."""
+    def test_match_combo(self, runner, fixtures_dir):
+        """--match should work with blocking."""
         result = runner.run(
-            "--wait",
             "--match",
             "*single*",
             fixtures_dir,
@@ -268,10 +254,9 @@ class TestTripleCombinations:
         # test_single_test.py has 1 test
         assert result.exit_code == 0
 
-    def test_wait_repeat(self, runner):
-        """--wait + --repeat should all work together."""
+    def test_repeat_combo(self, runner):
+        """--repeat should work with blocking."""
         result = runner.run(
-            "--wait",
             "--repeat",
             "2",
             runner.fixture_path("test_single_test.py"),
@@ -280,32 +265,29 @@ class TestTripleCombinations:
         # 1 test * 2 repeats = 2 sessions, all should pass
         assert result.exit_code == 0
 
-    def test_wait_eval_only(self, runner):
-        """--wait + --eval-only should all work together."""
+    def test_eval_only_combo(self, runner):
+        """--eval-only should work with blocking."""
         # Use specific file instead of whole directory to avoid slow collection
         result = runner.run(
-            "--wait",
             "--eval-only",
             runner.fixture_path("test_eval_marked.py"),
         )
 
-        # Should wait for eval tests and return success
+        # Should block for eval tests and return success
         assert result.exit_code == 0
 
-    def test_wait_symbolic_only(self, runner):
-        """--wait + --symbolic-only should all work together."""
+    def test_symbolic_only_combo(self, runner):
+        """--symbolic-only should work with blocking."""
         result = runner.run(
-            "--wait",
             "--symbolic-only",
             runner.fixture_path("test_symbolic_only.py"),
         )
 
         assert result.exit_code == 0
 
-    def test_wait_tags(self, runner):
-        """--wait + --tags should all work together."""
+    def test_tags_combo(self, runner):
+        """--tags should work with blocking."""
         result = runner.run(
-            "--wait",
             "--tags",
             "triple-combo",
             runner.fixture_path("test_always_pass.py"),
@@ -313,10 +295,9 @@ class TestTripleCombinations:
 
         assert result.exit_code == 0
 
-    def test_wait_env(self, runner):
-        """--wait + --env should all work together."""
+    def test_env_combo(self, runner):
+        """--env should work with blocking."""
         result = runner.run(
-            "--wait",
             "--env",
             "COMBO_VAR=value",
             runner.fixture_path("test_always_pass.py"),
@@ -331,7 +312,6 @@ class TestTripleCombinations:
             "*eval*",
             "--eval-only",
             fixtures_dir,
-            wait_for_completion=True,
         )
 
         # test_eval_marked.py has 2 tests
@@ -345,7 +325,6 @@ class TestTripleCombinations:
             "--env",
             "REPEAT_VAR=value",
             runner.fixture_path("test_single_test.py"),
-            wait_for_completion=True,
         )
 
         assert len(result.sessions_created) == 2
@@ -354,10 +333,9 @@ class TestTripleCombinations:
 class TestQuadrupleCombinations:
     """Tests with four or more flags combined."""
 
-    def test_wait_match_repeat(self, runner, fixtures_dir):
-        """--wait + --match + --repeat should all work together."""
+    def test_match_repeat(self, runner, fixtures_dir):
+        """--match + --repeat should work together."""
         result = runner.run(
-            "--wait",
             "--match",
             "*single*",
             "--repeat",
@@ -368,11 +346,10 @@ class TestQuadrupleCombinations:
         # test_single_test.py has 1 test, repeated 2 times
         assert result.exit_code == 0
 
-    def test_wait_eval_only_tags(self, runner):
-        """--wait + --eval-only + --tags should all work together."""
+    def test_eval_only_tags(self, runner):
+        """--eval-only + --tags should work together."""
         # Use specific file instead of whole directory to avoid slow collection
         result = runner.run(
-            "--wait",
             "--eval-only",
             "--tags",
             "quad-combo",
@@ -381,10 +358,9 @@ class TestQuadrupleCombinations:
 
         assert result.exit_code == 0
 
-    def test_wait_symbolic_only_env(self, runner):
-        """--wait + --symbolic-only + --env should all work together."""
+    def test_symbolic_only_env(self, runner):
+        """--symbolic-only + --env should work together."""
         result = runner.run(
-            "--wait",
             "--symbolic-only",
             "--env",
             "QUAD_VAR=value",
@@ -393,10 +369,9 @@ class TestQuadrupleCombinations:
 
         assert result.exit_code == 0
 
-    def test_wait_repeat_tags(self, runner):
-        """--wait + --repeat + --tags should all work together."""
+    def test_repeat_tags(self, runner):
+        """--repeat + --tags should work together."""
         result = runner.run(
-            "--wait",
             "--repeat",
             "2",
             "--tags",
@@ -406,10 +381,9 @@ class TestQuadrupleCombinations:
 
         assert result.exit_code == 0
 
-    def test_wait_env_tags(self, runner):
-        """--wait + --env + --tags should all work together."""
+    def test_env_tags(self, runner):
+        """--env + --tags should work together."""
         result = runner.run(
-            "--wait",
             "--env",
             "ENV_VAR=value",
             "--tags",
@@ -423,10 +397,9 @@ class TestQuadrupleCombinations:
 class TestFiveFlagCombinations:
     """Tests with five flags combined."""
 
-    def test_wait_repeat_env_tags(self, runner):
-        """--wait + --repeat + --env + --tags should all work together."""
+    def test_repeat_env_tags(self, runner):
+        """--repeat + --env + --tags should all work together."""
         result = runner.run(
-            "--wait",
             "--repeat",
             "2",
             "--env",
@@ -438,10 +411,9 @@ class TestFiveFlagCombinations:
 
         assert result.exit_code == 0
 
-    def test_wait_match_repeat_tags(self, runner, fixtures_dir):
-        """--wait + --match + --repeat + --tags should all work together."""
+    def test_match_repeat_tags(self, runner, fixtures_dir):
+        """--match + --repeat + --tags should all work together."""
         result = runner.run(
-            "--wait",
             "--match",
             "*single*",
             "--repeat",
@@ -457,67 +429,46 @@ class TestFiveFlagCombinations:
 class TestInputTypeCombinations:
     """Tests combining different input types with flags."""
 
-    def test_file_and_dir_with_wait(self, runner):
-        """File + directory input with --wait should work."""
+    def test_file_and_dir(self, runner):
+        """File + directory input should work."""
         result = runner.run(
-            "--wait",
             runner.fixture_path("test_single_test.py"),
             runner.fixture_path("subdir"),
         )
 
         assert result.exit_code == 0
-
-    def test_file_and_dir_default(self, runner):
-        """File + directory input with default per-test mode should work."""
-        result = runner.run(
-            runner.fixture_path("test_single_test.py"),
-            runner.fixture_path("subdir"),
-            wait_for_completion=True,
-        )
-
         # test_single_test.py has 1 test, subdir has 2 = 3 total
         assert len(result.sessions_created) == 3
 
-    def test_specific_test_with_wait(self, runner):
-        """Specific test node with --wait should work."""
+    def test_specific_test(self, runner):
+        """Specific test node should work."""
         test_path = runner.fixture_path("test_always_pass.py") + "::test_pass_one"
         result = runner.run(
-            "--wait",
             test_path,
         )
 
         assert result.exit_code == 0
-
-    def test_specific_test_default(self, runner):
-        """Specific test node with default mode should work."""
-        test_path = runner.fixture_path("test_always_pass.py") + "::test_pass_one"
-        result = runner.run(
-            test_path,
-            wait_for_completion=True,
-        )
-
         # Still just 1 session for the specific test
         assert len(result.sessions_created) == 1
 
-    def test_multiple_specific_tests_with_wait(self, runner):
-        """Multiple specific tests with --wait should work."""
+    def test_multiple_specific_tests(self, runner):
+        """Multiple specific tests should work."""
         test1 = runner.fixture_path("test_always_pass.py") + "::test_pass_one"
         test2 = runner.fixture_path("test_always_pass.py") + "::test_pass_two"
         result = runner.run(
-            "--wait",
             test1,
             test2,
         )
 
         assert result.exit_code == 0
 
-    def test_multiple_specific_tests_with_wait_blocks(self, runner):
-        """Multiple explicit node IDs with --wait should block until complete.
+    def test_multiple_specific_tests_blocks(self, runner):
+        """Multiple explicit node IDs should block until complete.
 
         This tests the exact scenario of:
-            parallel_run.sh --wait file.py::test_a file.py::test_b ...
+            parallel_run.sh file.py::test_a file.py::test_b ...
 
-        The --wait flag should cause the script to block until all tests complete.
+        The script should block until all tests complete.
         """
         import time
 
@@ -528,7 +479,6 @@ class TestInputTypeCombinations:
 
         start = time.time()
         result = runner.run(
-            "--wait",
             test1,
             test2,
             test3,
@@ -539,17 +489,16 @@ class TestInputTypeCombinations:
         # Should have blocked for at least some time
         assert (
             elapsed > 1.0
-        ), f"--wait should block until tests complete, but returned in {elapsed:.2f}s"
+        ), f"Script should block until tests complete, but returned in {elapsed:.2f}s"
 
         # All tests should pass
         assert result.exit_code == 0, f"All tests should pass: {result.stderr}"
 
-    def test_mixed_file_and_specific_test_with_wait(self, runner):
-        """File + specific test with --wait should work."""
+    def test_mixed_file_and_specific_test(self, runner):
+        """File + specific test should work."""
         file_path = runner.fixture_path("test_single_test.py")
         specific_test = runner.fixture_path("test_always_pass.py") + "::test_pass_one"
         result = runner.run(
-            "--wait",
             file_path,
             specific_test,
         )
@@ -560,10 +509,9 @@ class TestInputTypeCombinations:
 class TestMultipleEnvVars:
     """Tests with multiple --env flags."""
 
-    def test_multiple_env_with_wait(self, runner):
-        """Multiple --env with --wait should work."""
+    def test_multiple_env(self, runner):
+        """Multiple --env should work."""
         result = runner.run(
-            "--wait",
             "-e",
             "VAR1=value1",
             "-e",
@@ -583,15 +531,13 @@ class TestMultipleEnvVars:
             "-e",
             "B=2",
             runner.fixture_path("test_single_test.py"),
-            wait_for_completion=True,
         )
 
         assert len(result.sessions_created) == 1
 
-    def test_multiple_env_wait(self, runner):
-        """Multiple --env with --wait should work."""
+    def test_multiple_env_combined(self, runner):
+        """Multiple --env with different values should work."""
         result = runner.run(
-            "--wait",
             "-e",
             "X=1",
             "-e",

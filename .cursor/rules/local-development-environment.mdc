@@ -27,26 +27,16 @@ Each terminal session (including each Cursor agent) automatically gets its own *
 
 ### Choosing the Right Command
 
-There are two modes for running tests: **blocking** and **non-blocking**.
-
-#### Blocking Mode (small/simple runs)
-
-Use `--wait` to block until all tests complete:
+The script **always blocks** until all tests complete (or timeout), streaming pass/fail results inline as tests finish.
 
 | Scenario | Command |
 |----------|---------|
-| **Default** (small runs) | `tests/parallel_run.sh --wait [path]` |
-| **Serial mode** (one session per file) | `tests/parallel_run.sh -s --wait [path]` |
-| **With timeout** | `tests/parallel_run.sh --wait 300 [path]` |
+| **Default** | `tests/parallel_run.sh [path]` |
+| **Serial mode** (one session per file) | `tests/parallel_run.sh -s [path]` |
+| **With timeout** | `tests/parallel_run.sh --timeout 300 [path]` |
 
-- `--wait` blocks until all tests complete, then reports success (exit 0), failure (exit 1), or timeout (exit 2).
-- `--wait N` adds a timeout of N seconds.
-
-#### Non-Blocking Mode (larger runs, early analysis)
-
-For larger test suites, run without `--wait` and analyze failures incrementally as they appear. Tests run in tmux sessions and write to `pytest_logs/` as they complete—you can read and analyze early failures while remaining tests are still running.
-
-See `parallelize-test-analysis.mdc` for the full workflow.
+- The script blocks until all tests complete, then reports success (exit 0), failure (exit 1), or timeout (exit 2).
+- `--timeout N` aborts if tests don't complete within N seconds.
 
 #### Parallelism Behavior
 
@@ -56,19 +46,19 @@ See `parallelize-test-analysis.mdc` for the full workflow.
 **Examples:**
 ```bash
 # Single test file with multiple tests (default: runs all tests concurrently)
-tests/parallel_run.sh --wait tests/test_contact_manager/test_ask.py
+tests/parallel_run.sh tests/test_contact_manager/test_ask.py
 
 # Specific test functions
-tests/parallel_run.sh --wait tests/test_foo.py::test_one tests/test_bar.py::test_two
+tests/parallel_run.sh tests/test_foo.py::test_one tests/test_bar.py::test_two
 
 # Small directory
-tests/parallel_run.sh --wait tests/test_actor/
+tests/parallel_run.sh tests/test_actor/
 
 # Large test suite with serial mode (one session per file, fewer total sessions)
-tests/parallel_run.sh -s --wait tests/
+tests/parallel_run.sh -s tests/
 
-# With timeout (wait up to 5 minutes)
-tests/parallel_run.sh --wait 300 tests/test_contact_manager/
+# With timeout (abort after 5 minutes)
+tests/parallel_run.sh --timeout 300 tests/test_contact_manager/
 ```
 
 ### Failure Handling

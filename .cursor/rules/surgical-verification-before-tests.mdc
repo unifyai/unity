@@ -50,7 +50,7 @@ A targeted verification script can validate a fix in **seconds** rather than wai
 .venv/bin/python tests/_verify_race_fix.py
 
 # 4. If verification passes, run actual test(s)
-tests/parallel_run.sh --wait tests/path/to/relevant_test.py
+tests/parallel_run.sh tests/path/to/relevant_test.py
 
 # 5. Delete verification script (it served its purpose)
 rm tests/_verify_race_fix.py
