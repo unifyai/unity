@@ -161,8 +161,6 @@ def stub_controller_deps(monkeypatch):
     monkeypatch.setattr("unity.secret_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.memory_manager.prompt_builders.now", _static_now)
-    monkeypatch.setattr("unity.web_searcher.prompt_builders.now", _static_now)
-    monkeypatch.setattr("unity.knowledge_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.file_manager.prompt_builders.now", _static_now)
 
     # Patch events._get_now for Event/Message timestamps in renderer output
