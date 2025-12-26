@@ -6,10 +6,13 @@ Tests each flag in isolation:
 - --serial / -s
 - --match / -m
 - --env / -e
+- --jobs / -j
 - --eval-only
 - --symbolic-only
 - --repeat
 - --tags
+- --help / -h
+- -- (pytest passthrough)
 """
 
 from __future__ import annotations
@@ -475,3 +478,153 @@ class TestTagsFlag:
         )
 
         assert result.exit_code != 0 or "Error" in result.stderr
+
+
+class TestJobsFlag:
+    """Tests for --jobs / -j flag (concurrency limiting)."""
+
+    def test_jobs_limits_concurrency(self, runner):
+        """--jobs N should limit concurrent sessions."""
+        result = runner.run(
+            "-j",
+            "2",
+            runner.fixture_path("test_always_pass.py"),
+            wait_for_completion=True,
+        )
+
+        # Should succeed with limited concurrency
+        assert result.exit_code == 0
+        # test_always_pass.py has 3 tests, all should still run
+        # Use log_files count since sessions may auto-close before parsing
+        assert len(result.log_files) == 3
+        # Verify concurrency limit was applied
+        assert "Concurrency limit: 2" in result.stdout
+
+    def test_jobs_long_flag(self, runner):
+        """--jobs N should work same as -j N."""
+        result = runner.run(
+            "--jobs",
+            "5",
+            runner.fixture_path("test_always_pass.py"),
+            wait_for_completion=True,
+        )
+
+        assert result.exit_code == 0
+
+    def test_jobs_with_value_one(self, runner):
+        """--jobs 1 should run tests sequentially."""
+        result = runner.run(
+            "-j",
+            "1",
+            runner.fixture_path("test_always_pass.py"),
+            wait_for_completion=True,
+        )
+
+        # Should still succeed, just slower
+        assert result.exit_code == 0
+        # Use log_files count since sessions may auto-close before parsing
+        assert len(result.log_files) == 3
+        # Verify sequential mode was applied
+        assert "Concurrency limit: 1" in result.stdout
+
+    def test_jobs_requires_number(self, runner):
+        """--jobs without a number should error."""
+        result = runner.run(
+            "--jobs",
+        )
+
+        assert result.exit_code != 0
+
+    def test_jobs_zero_means_unlimited(self, runner):
+        """--jobs 0 should mean unlimited concurrency."""
+        result = runner.run(
+            "-j",
+            "0",
+            runner.fixture_path("test_always_pass.py"),
+            wait_for_completion=True,
+        )
+
+        # 0 means no limit, not an error
+        assert result.exit_code == 0
+        assert "Concurrency limit: unlimited" in result.stdout
+
+
+class TestHelpFlag:
+    """Tests for --help / -h flag."""
+
+    def test_help_shows_usage(self, runner):
+        """--help should show usage information."""
+        result = runner.run("--help")
+
+        assert result.exit_code == 0
+        assert "Usage:" in result.stdout
+        assert "parallel_run" in result.stdout.lower()
+
+    def test_help_shows_options(self, runner):
+        """--help should list available options."""
+        result = runner.run("--help")
+
+        assert "--timeout" in result.stdout
+        assert "--serial" in result.stdout
+        assert "--match" in result.stdout
+        assert "--env" in result.stdout
+        assert "--jobs" in result.stdout
+        assert "--eval-only" in result.stdout
+        assert "--symbolic-only" in result.stdout
+        assert "--repeat" in result.stdout
+        assert "--tags" in result.stdout
+
+    def test_help_short_flag(self, runner):
+        """-h should work same as --help."""
+        result = runner.run("-h")
+
+        assert result.exit_code == 0
+        assert "Usage:" in result.stdout
+
+    def test_help_shows_examples(self, runner):
+        """--help should show usage examples."""
+        result = runner.run("--help")
+
+        assert "Examples:" in result.stdout
+
+
+class TestPytestPassthrough:
+    """Tests for -- pytest argument passthrough."""
+
+    def test_passthrough_verbose(self, runner):
+        """Arguments after -- should be passed to pytest."""
+        result = runner.run(
+            runner.fixture_path("test_always_pass.py"),
+            "--",
+            "-v",
+            wait_for_completion=True,
+        )
+
+        # Should succeed
+        assert result.exit_code == 0
+
+    def test_passthrough_multiple_args(self, runner):
+        """Multiple arguments after -- should all be passed."""
+        result = runner.run(
+            runner.fixture_path("test_always_pass.py"),
+            "--",
+            "-v",
+            "--tb=short",
+            wait_for_completion=True,
+        )
+
+        assert result.exit_code == 0
+
+    def test_passthrough_with_other_flags(self, runner):
+        """-- passthrough should work with other parallel_run flags."""
+        result = runner.run(
+            "-s",  # serial mode
+            runner.fixture_path("test_always_pass.py"),
+            "--",
+            "-v",
+            wait_for_completion=True,
+        )
+
+        assert result.exit_code == 0
+        # Serial mode: 1 session for the file
+        assert len(result.sessions_created) == 1
