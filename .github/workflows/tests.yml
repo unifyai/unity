@@ -13,17 +13,17 @@ on:
   workflow_dispatch:
     inputs:
       test_path:
-        description: "parallel_run.sh test paths"
+        description: "test_path: paths to test"
         required: false
         type: string
         default: "."
       timeout_minutes:
-        description: "parallel_run.sh timeout (minutes)"
+        description: "timeout_minutes: session timeout"
         required: false
         type: number
         default: 120
       parallel_run_args:
-        description: "parallel_run.sh extra args"
+        description: "parallel_run_args: extra arguments"
         required: false
         type: string
         default: ""
