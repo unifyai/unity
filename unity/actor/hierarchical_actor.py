@@ -1287,6 +1287,34 @@ class _SteerableToolHandleProxy:
                 sub_handle_id = str(uuid.uuid4())
                 self._plan.live_handles[sub_handle_id] = output
 
+                # Register nested handles with the pane (best-effort).
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        capabilities: list[str] = []
+                        if hasattr(output, "interject"):
+                            capabilities.append("interjectable")
+                        if hasattr(output, "pause") and hasattr(output, "resume"):
+                            capabilities.append("pausable")
+                        if hasattr(output, "ask"):
+                            capabilities.append("askable")
+                        if hasattr(output, "stop"):
+                            capabilities.append("stoppable")
+                        if hasattr(output, "answer_clarification"):
+                            capabilities.append("clarifiable")
+
+                        await self._plan.pane.register_handle(
+                            handle=output,
+                            handle_id=sub_handle_id,
+                            parent_handle_id=self._handle_id,
+                            origin_tool=tool_name,
+                            origin_step=self._plan.runtime.action_counter,
+                            environment_namespace="handle_methods",
+                            capabilities=capabilities,
+                            call_stack=str(cache_key[0]) if cache_key else None,
+                        )
+                except Exception as e:
+                    logger.debug(f"Pane nested registration failed: {e}")
+
                 result_to_cache = {"handle_id": sub_handle_id}
 
                 initial_interaction = (
