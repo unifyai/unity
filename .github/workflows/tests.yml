@@ -1,4 +1,4 @@
-name: Testing Unity with uv
+name: Tests
 run-name: >-
   ${{
     github.event_name == 'workflow_dispatch' &&

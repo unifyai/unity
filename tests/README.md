@@ -302,7 +302,7 @@ gh run view --repo unifyai/unity <run-id> --log
 
 For maximum control, use the GitHub Actions UI:
 
-1. Go to **Actions** → **"Testing Unity with uv"**
+1. Go to **Actions** → **"Tests"**
 2. Click **"Run workflow"** dropdown
 3. Select your branch and configure inputs
 
