@@ -293,10 +293,20 @@ def get_test_log_format(config):
 
 def pytest_sessionstart(session):
     # ------------------------------------------------------------------
-    #  Activate the UnityTests project
+    #  Optionally delete the project before starting (clean slate)
     # ------------------------------------------------------------------
 
     project_name = SETTINGS.test_project_name
+
+    if SETTINGS.UNIFY_TESTS_DELETE_PROJ_ON_START:
+        try:
+            unify.delete_project(project_name)
+        except Exception:
+            pass  # Project may not exist yet
+
+    # ------------------------------------------------------------------
+    #  Activate the UnityTests project
+    # ------------------------------------------------------------------
 
     if os.environ.get("CI"):
         unify.set_cache_backend("local_separate")

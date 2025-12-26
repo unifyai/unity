@@ -22,6 +22,7 @@ def pytest_configure(config):
     os.environ["UNIFY_SKIP_SESSION_SETUP"] = "True"
     # Don't create random projects - we don't need them
     os.environ["UNIFY_TESTS_RAND_PROJ"] = "False"
+    os.environ["UNIFY_TESTS_DELETE_PROJ_ON_START"] = "False"
     os.environ["UNIFY_TESTS_DELETE_PROJ_ON_EXIT"] = "False"
 
 
