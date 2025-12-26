@@ -69,6 +69,16 @@ class ComputerEnvironment(BaseEnvironment):
 
         return tools
 
+    def get_prompt_context(self) -> str:
+        """Return concise guidance for using computer/browser primitives in plan code."""
+        return (
+            "### Computer Tools (`computer_primitives`)\n"
+            "- Use `await computer_primitives.navigate(url)` to open pages.\n"
+            "- Use `await computer_primitives.act(instruction)` to click/type/scroll.\n"
+            "- Use `await computer_primitives.observe(question, response_format=...)` to extract info.\n"
+            "- Prefer `observe` for reading and `act` for interacting.\n"
+        )
+
     async def capture_state(self) -> Dict[str, Any]:
         """Captures visual browser state (screenshot + URL)."""
         try:

@@ -4886,15 +4886,14 @@ async def main_plan():
         """
         full_context_log = "\n".join(f"- {log}" for log in self.action_log)
 
-        # Check if we have visual evidence available (screenshot from browser)
-        has_visual_evidence = False
-        if "computer_primitives" in self.actor.environments:
+        # Capture evidence from all active environments
+        evidence: Dict[str, Any] = {}
+        for env_namespace, env in self.actor.environments.items():
             try:
-                # Visual evidence is available if we can access the browser's current view
-                browser = self._get_computer_primitives()
-                has_visual_evidence = browser is not None
-            except Exception:
-                has_visual_evidence = False
+                evidence[env_namespace] = await env.capture_state()
+            except Exception as e:
+                logger.warning(f"Failed to capture evidence from {env_namespace}: {e}")
+                evidence[env_namespace] = {"type": "error", "error": str(e)}
 
         system_message = prompt_builders.build_ask_prompt(
             goal=self.goal,
@@ -4903,7 +4902,7 @@ async def main_plan():
             context_log=full_context_log,
             question=question,
             environments=self.actor.environments,
-            has_visual_evidence=has_visual_evidence,
+            evidence=evidence,
         )
 
         self.ask_client.reset_messages()
@@ -6853,6 +6852,7 @@ class HierarchicalActor(BaseActor):
             parent_chat_context=plan.parent_chat_context,
             clarification_question=clarification_question,
             clarification_answer=clarification_answer,
+            environments=self.environments,
         )
 
         plan.verification_client.set_response_format(VerificationAssessment)

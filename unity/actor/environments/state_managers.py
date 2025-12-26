@@ -99,6 +99,17 @@ class StateManagerEnvironment(BaseEnvironment):
 
         return tools
 
+    def get_prompt_context(self) -> str:
+        """Markdown-formatted guidance for using state-manager primitives in plans."""
+
+        return (
+            "### State manager primitives (`primitives.*`)\n"
+            "- Use these tools to query or mutate durable assistant state (contacts, tasks, transcripts, etc.).\n"
+            "- Calls like `await primitives.contacts.ask(...)` may return a steerable handle; await `.result()` for the final answer.\n"
+            "- If a tool asks for clarification, wait for the user response and then answer via the handle's clarification API.\n"
+            "- Prefer `ask(...)` for read-only queries and `update(...)`/`execute(...)` only when mutations or tracked execution are intended.\n"
+        )
+
     async def capture_state(self) -> Dict[str, Any]:
         """State manager \"state\" is primarily evidenced via return values."""
         return {
