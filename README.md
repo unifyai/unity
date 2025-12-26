@@ -332,6 +332,7 @@ For surgical test runs, use the GitHub Actions UI:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `test_path` | `.` (all) | Path to test folder, file, or specific test |
+| `parallel_run_args` | *(empty)* | Extra args passed to `parallel_run.sh` (see below) |
 | `test_session_timeout` | 120 | Session timeout in minutes |
 | `runner_timeout` | 130 | Overall job timeout in minutes |
 | `test_timeout` | 240 | Per-test timeout in seconds |
@@ -363,21 +364,40 @@ After a CI run, logs are available in multiple formats:
 
 **Inline Failure Summaries**: Failed jobs display collapsible failure excerpts directly in the GitHub Actions Summary page—no download required for quick triage.
 
-### What's NOT Exposed in CI
+### Advanced Options (`parallel_run_args`)
 
-The following `parallel_run.sh` options are available locally but **not** in CI workflow inputs:
+The `parallel_run_args` input accepts any flags supported by `tests/parallel_run.sh`. This provides full flexibility—the CI experience matches local usage exactly.
 
-| Flag | Description | Workaround |
-|------|-------------|------------|
-| `-s` / `--serial` | One session per file | Tests run concurrently by default in CI |
-| `--eval-only` | Only `@pytest.mark.eval` tests | Run locally or request feature |
-| `--symbolic-only` | Only non-eval tests | Run locally or request feature |
-| `--repeat N` | Statistical sampling | Run locally |
-| `--tags` | Tag runs for filtering | Not exposed |
-| `-j` / `--jobs` | Concurrency limit | CI uses default (25) |
-| `--env KEY=VALUE` | Environment overrides | Set in workflow secrets/env |
+| Flag | Example | Description |
+|------|---------|-------------|
+| `--eval-only` | `--eval-only` | Only run `@pytest.mark.eval` tests |
+| `--symbolic-only` | `--symbolic-only` | Only run non-eval (symbolic) tests |
+| `--repeat N` | `--repeat 5` | Run each test N times (statistical sampling) |
+| `-s` / `--serial` | `-s` | One tmux session per file (vs. per test) |
+| `--tags` | `--tags experiment-1` | Tag runs for filtering/analysis |
+| `-j` / `--jobs` | `-j 10` | Limit concurrent sessions (default: 25) |
+| `--env KEY=VALUE` | `--env UNIFY_CACHE=false` | Set environment variable |
+| `--overwrite-scenarios` | `--overwrite-scenarios` | Delete and recreate test scenarios |
 
-To use these options, run tests locally with `tests/parallel_run.sh`.
+**Examples:**
+
+```bash
+# In the GitHub Actions "Run workflow" dialog:
+
+# Run only eval tests with 5 repetitions
+parallel_run_args: "--eval-only --repeat 5"
+
+# Run symbolic tests in serial mode
+parallel_run_args: "--symbolic-only -s"
+
+# Disable LLM cache for fresh inference
+parallel_run_args: "--env UNIFY_CACHE=false"
+
+# Combine multiple options
+parallel_run_args: "--eval-only --tags model-compare -j 15"
+```
+
+These flags work identically to local `tests/parallel_run.sh` usage. See `tests/parallel_run.sh --help` for the complete list.
 
 ---
 
