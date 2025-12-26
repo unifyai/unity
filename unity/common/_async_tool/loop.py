@@ -377,15 +377,7 @@ async def async_tool_loop_inner(
         # must prevent reasoning_effort from being sent. We temporarily clear the
         # client's _reasoning_effort so the generate call won't enable thinking.
         if _is_claude:
-            if tool_choice == "required":
-                # Clear reasoning_effort on the client to prevent thinking
-                if hasattr(client, "_reasoning_effort"):
-                    client._reasoning_effort = None
-                # Also remove from gen_kwargs in case it was explicitly set
-                gen_kwargs.pop("reasoning_effort", None)
-                gen_kwargs.pop("thinking", None)
-                _claude_thinking_disabled = True
-            else:
+            if tool_choice != "required":
                 # Always apply transformation wrapper for Claude to handle:
                 # 1. Seeded messages without thinking blocks (manually constructed)
                 # 2. Synthetic check_status_ messages (chronological ordering pairs)
