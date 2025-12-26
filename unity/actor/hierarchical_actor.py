@@ -4,6 +4,7 @@ import ast
 import asyncio
 import base64
 import copy
+import contextlib
 import datetime
 import enum
 import functools
@@ -87,6 +88,9 @@ class VerificationWorkItem:
     start_seq: int = -1
     full_call_stack_tuple: tuple = field(default_factory=tuple)
     scoped_context_snapshot: dict = field(default_factory=dict)
+    # Pane event capture (index-based boundaries; robust under concurrency)
+    pane_events: list = field(default_factory=list)
+    pane_event_boundary: int = 0
 
 
 @dataclass
@@ -3907,6 +3911,16 @@ async def main_plan():
         if self._recovery_task and not self._recovery_task.done():
             self._recovery_task.cancel()
 
+        # Cancel pane supervisor (independent of verification/recovery task presence).
+        if (
+            self._pane_supervisor_task is not None
+            and not self._pane_supervisor_task.done()
+        ):
+            self._pane_supervisor_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._pane_supervisor_task
+        self._pane_supervisor_task = None
+
         verifications_to_cancel = [
             handle
             for handle in self.pending_verifications.values()
@@ -5962,6 +5976,14 @@ class HierarchicalActor(BaseActor):
                     # if not plan.runtime.execution_mode.startswith("replay_"):
                     #     await self._ensure_precondition(plan, func_name)
 
+                    # Capture pane event boundary (index-based, robust for concurrent watcher emissions).
+                    pane_event_idx_before = 0
+                    try:
+                        if getattr(plan, "pane", None) is not None:
+                            pane_event_idx_before = len(plan.pane._events_log)
+                    except Exception:
+                        pane_event_idx_before = 0
+
                     # Gather pre-execution evidence from all active environments.
                     pre_state: dict[str, Any] = {}
                     active_envs = (
@@ -6243,6 +6265,21 @@ class HierarchicalActor(BaseActor):
                             self._get_scoped_context_from_plan_state(plan)
                         )
 
+                        # Capture pane events since boundary (index-based slice).
+                        captured_pane_events: list[Any] = []
+                        pane_event_idx_after = pane_event_idx_before
+                        try:
+                            if getattr(plan, "pane", None) is not None:
+                                pane_event_idx_after = len(plan.pane._events_log)
+                                captured_pane_events = list(
+                                    plan.pane._events_log[
+                                        pane_event_idx_before:pane_event_idx_after
+                                    ],
+                                )
+                        except Exception:
+                            captured_pane_events = []
+                            pane_event_idx_after = pane_event_idx_before
+
                         plan.verif_seq += 1
                         item = VerificationWorkItem(
                             ordinal=plan.verif_seq,
@@ -6264,6 +6301,8 @@ class HierarchicalActor(BaseActor):
                             start_seq=start_seq,
                             full_call_stack_tuple=captured_full_stack_tuple,
                             scoped_context_snapshot=captured_scoped_context_snapshot,
+                            pane_events=captured_pane_events,
+                            pane_event_boundary=pane_event_idx_after,
                         )
 
                         plan._spawn_async_verification(item)
