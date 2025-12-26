@@ -178,7 +178,9 @@ jobs:
     - name: Normalize test path
       id: normalize-path
       run: |
-        echo "test_path_normalized=$(echo '${{ matrix.test_path }}' | tr '/' '_')" >> $GITHUB_OUTPUT
+        # Extract just the module name (e.g., tests/test_actor -> actor)
+        normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/test_||' | tr '/' '_')
+        echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
 
     - name: Set up Python
       uses: actions/setup-python@v2
