@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import pytest
-import unify
 
 from unity.conductor.simulated import SimulatedConductor
 from unity.common.async_tool_loop import AsyncToolLoopHandle

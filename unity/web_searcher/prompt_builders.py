@@ -13,7 +13,6 @@ from typing import Dict, Callable, List
 
 from ..common.prompt_helpers import (
     sig_dict,
-    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     PromptSpec,
@@ -134,50 +133,52 @@ def _build_ask_tools_documentation(tools: Dict[str, Callable]) -> str:
 
 def _build_ask_guidance_sections() -> str:
     """Build static guidance sections for ask prompt."""
-    return "\n".join([
-        "General Rules and Guidance",
-        "--------------------------",
-        "- Keep queries concise; if complex, split into smaller, focused searches.",
-        "- Prefer a small, high-quality set of sources; cite them in the answer.",
-        "- Only fetch page content when you need details beyond snippets.",
-        "- Do not claim inability to log into personal accounts. When a Website entry exists and credentials are available, the Actor can attempt sign-in securely. If credentials are missing or login fails, proceed with public content and clearly state assumptions.",
-        "- If the request mentions a specific website (host like 'medium.com' or a human-friendly name like 'Medium'), first consult the Websites catalog:",
-        "  • Use `filter_websites` for exact host/name filters; use `search_websites` when only thematic notes are given.",
-        "  • If a row exists and `gated=True`, use `gated_website_search(queries=..., website=...)` to browse with login.",
-        "  • Otherwise, use general tools (`search`, `extract`, `crawl`, `map`).",
-        "",
-        "Website-aware Routing",
-        "----------------------",
-        "- Use `search_websites` to find relevant Website entries by notes similarity (catalog lookup only; does not browse).",
-        "- Use `filter_websites` for exact/boolean matches over columns (including host like 'medium.com' or name like 'Medium').",
-        "- When answering a question that targets a specific site:",
-        "  1) Look up the site using `filter_websites` or `search_websites`.",
-        "  2) If the site exists and `gated=True`, use `gated_website_search(queries=..., website=...)` to login with saved credentials and browse.",
-        "  3) If not gated or no matching Website entry exists, use general tools (`search`, then optionally `extract`/`crawl`/`map`).",
-        "- Do NOT use `search_websites` to read web content; it only searches the Websites catalog.",
-        "",
-        "Decision Policy and When to Stop",
-        "---------------------------------",
-        "1. Run a targeted search and read the snippets.",
-        "2. If snippets suffice, STOP and write the answer (no more tools).",
-        "3. Otherwise, extract at most one highly relevant URL.",
-        "4. If still insufficient, do one more targeted step (search OR extract), then STOP and answer.",
-        "5. Do not loop through many tools or repeat equivalent steps.",
-        "6. **Gated websites**: Call `gated_website_search` ONCE per site. Do NOT retry the same site.",
-        "   Pass multiple queries as a list to search different topics on the same site in one call.",
-        "   For multi-site queries, call consecutively for each site, then synthesize all results together.",
-        "7. **After gated search, STOP**: Once you have called `gated_website_search` ONCE per site for all requested sites,",
-        "   do NOT call `search`, `extract`, `crawl`, or `map` for additional content. Synthesize what you have and answer.",
-        "",
-        "Answer Requirements",
-        "-------------------",
-        "- Be precise and concise; cite sources inline (title or URL).",
-        "- If evidence is insufficient, do one targeted step; otherwise answer with best-supported facts.",
-        "- **For gated website results**: Synthesize the raw content into a coherent summary.",
-        "  If multiple sites were searched, combine findings and note which source each fact came from.",
-        "  Include inline citations (e.g., [Source Title](URL) or 'according to <title>') for each key fact.",
-        "- After you write the final answer, do not call further tools.",
-    ])
+    return "\n".join(
+        [
+            "General Rules and Guidance",
+            "--------------------------",
+            "- Keep queries concise; if complex, split into smaller, focused searches.",
+            "- Prefer a small, high-quality set of sources; cite them in the answer.",
+            "- Only fetch page content when you need details beyond snippets.",
+            "- Do not claim inability to log into personal accounts. When a Website entry exists and credentials are available, the Actor can attempt sign-in securely. If credentials are missing or login fails, proceed with public content and clearly state assumptions.",
+            "- If the request mentions a specific website (host like 'medium.com' or a human-friendly name like 'Medium'), first consult the Websites catalog:",
+            "  • Use `filter_websites` for exact host/name filters; use `search_websites` when only thematic notes are given.",
+            "  • If a row exists and `gated=True`, use `gated_website_search(queries=..., website=...)` to browse with login.",
+            "  • Otherwise, use general tools (`search`, `extract`, `crawl`, `map`).",
+            "",
+            "Website-aware Routing",
+            "----------------------",
+            "- Use `search_websites` to find relevant Website entries by notes similarity (catalog lookup only; does not browse).",
+            "- Use `filter_websites` for exact/boolean matches over columns (including host like 'medium.com' or name like 'Medium').",
+            "- When answering a question that targets a specific site:",
+            "  1) Look up the site using `filter_websites` or `search_websites`.",
+            "  2) If the site exists and `gated=True`, use `gated_website_search(queries=..., website=...)` to login with saved credentials and browse.",
+            "  3) If not gated or no matching Website entry exists, use general tools (`search`, then optionally `extract`/`crawl`/`map`).",
+            "- Do NOT use `search_websites` to read web content; it only searches the Websites catalog.",
+            "",
+            "Decision Policy and When to Stop",
+            "---------------------------------",
+            "1. Run a targeted search and read the snippets.",
+            "2. If snippets suffice, STOP and write the answer (no more tools).",
+            "3. Otherwise, extract at most one highly relevant URL.",
+            "4. If still insufficient, do one more targeted step (search OR extract), then STOP and answer.",
+            "5. Do not loop through many tools or repeat equivalent steps.",
+            "6. **Gated websites**: Call `gated_website_search` ONCE per site. Do NOT retry the same site.",
+            "   Pass multiple queries as a list to search different topics on the same site in one call.",
+            "   For multi-site queries, call consecutively for each site, then synthesize all results together.",
+            "7. **After gated search, STOP**: Once you have called `gated_website_search` ONCE per site for all requested sites,",
+            "   do NOT call `search`, `extract`, `crawl`, or `map` for additional content. Synthesize what you have and answer.",
+            "",
+            "Answer Requirements",
+            "-------------------",
+            "- Be precise and concise; cite sources inline (title or URL).",
+            "- If evidence is insufficient, do one targeted step; otherwise answer with best-supported facts.",
+            "- **For gated website results**: Synthesize the raw content into a coherent summary.",
+            "  If multiple sites were searched, combine findings and note which source each fact came from.",
+            "  Include inline citations (e.g., [Source Title](URL) or 'according to <title>') for each key fact.",
+            "- After you write the final answer, do not call further tools.",
+        ],
+    )
 
 
 def _build_update_tools_documentation(tools: Dict[str, Callable]) -> str:
@@ -256,7 +257,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     tools_doc = _build_ask_tools_documentation(tools)
 
     # Build usage examples
-    usage_examples = textwrap.dedent("""
+    usage_examples = textwrap.dedent(
+        """
 Examples
 --------
 - Login to my GitHub and summarize my profile:
@@ -286,7 +288,8 @@ Anti‑patterns to avoid
 • Do not loop through many tools or repeat equivalent steps.
 • Do not retry `gated_website_search` on the same site – call ONCE per site.
 • After gated search completes for all requested sites, do NOT call additional search/extract/crawl/map.
-    """).strip()
+    """,
+    ).strip()
 
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"

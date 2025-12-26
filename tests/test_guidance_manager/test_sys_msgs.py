@@ -180,7 +180,12 @@ def _build_prompt_in_subprocess(method: str) -> str:
         sys.stdout.write(prompt)
         """,
     )
-    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return proc.stdout
 
 
@@ -190,7 +195,7 @@ def test_ask_prompt_stable():
     p2 = _build_prompt_in_subprocess("ask")
     if p1 != p2:
         raise AssertionError(
-            "Ask prompt changed between sessions.\n\n" + first_diff_block(p1, p2)
+            "Ask prompt changed between sessions.\n\n" + first_diff_block(p1, p2),
         )
 
 
@@ -200,5 +205,5 @@ def test_update_prompt_stable():
     p2 = _build_prompt_in_subprocess("update")
     if p1 != p2:
         raise AssertionError(
-            "Update prompt changed between sessions.\n\n" + first_diff_block(p1, p2)
+            "Update prompt changed between sessions.\n\n" + first_diff_block(p1, p2),
         )

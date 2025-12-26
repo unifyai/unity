@@ -8,7 +8,6 @@ early in prompts and referenced throughout.
 
 from __future__ import annotations
 
-import json
 from typing import Dict, Callable, Union, List
 
 from .types.task import Task

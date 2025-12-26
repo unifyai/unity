@@ -22,4 +22,3 @@ class FunctionSettings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
-

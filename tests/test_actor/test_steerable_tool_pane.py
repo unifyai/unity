@@ -1381,7 +1381,9 @@ async def test_verification_captures_pane_events_for_contact_mutation(
     )
 
     cm = primitives.contacts
-    _ = primitives.knowledge  # ensure KM contexts exist for parity (real stack behavior)
+    _ = (
+        primitives.knowledge
+    )  # ensure KM contexts exist for parity (real stack behavior)
 
     seed_email = "jane_pane_test@example.com"
     cm._create_contact(first_name="JaneTest", surname="Doe", email_address=seed_email)
@@ -1426,7 +1428,9 @@ async def main_plan():
         assert updated, "JaneTest Doe should exist after update"
         assert getattr(updated[0], "phone_number", None) == "+15559998877"
 
-        pane_event_sizes = [len(getattr(it, "pane_events", []) or []) for it in seen_items]
+        pane_event_sizes = [
+            len(getattr(it, "pane_events", []) or []) for it in seen_items
+        ]
         assert seen_items, "Expected at least one verification work item to be spawned"
         assert any(
             sz > 0 for sz in pane_event_sizes
@@ -1501,13 +1505,18 @@ async def test_concurrent_handles_broadcast_interject_fans_out():
                 k=5,
             )
             contacts = res.get("contacts") or []
-            return any(getattr(c, "email_address", None) == seed_email for c in contacts)
+            return any(
+                getattr(c, "email_address", None) == seed_email for c in contacts
+            )
         except Exception:
             return False
 
     async def _office_hours_searchable() -> bool:
         try:
-            res = tm._search_messages(references={"content": "Office hours 9-5 PT"}, k=5)
+            res = tm._search_messages(
+                references={"content": "Office hours 9-5 PT"},
+                k=5,
+            )
             msgs = res.get("messages") or []
             return any("9-5" in str(getattr(m, "content", "")) for m in msgs)
         except Exception:
@@ -1549,6 +1558,7 @@ async def main_plan():
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:
+
         async def _checkpoint_reached() -> bool:
             return bool(h.runtime._checkpoint_event.is_set())
 
@@ -1591,7 +1601,9 @@ async def main_plan():
             or "office hours" in str(result).lower()
         )
         assert len(handles) >= 2, "Expected >=2 handles registered in the pane"
-        assert int(broadcast.get("count") or 0) >= 2, f"Expected fan-out, got: {broadcast}"
+        assert (
+            int(broadcast.get("count") or 0) >= 2
+        ), f"Expected fan-out, got: {broadcast}"
         assert len(steering_events) >= 2, "Expected >=2 steering_applied events"
     finally:
         with contextlib.suppress(Exception):
@@ -1676,6 +1688,7 @@ async def main_plan():
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:
+
         async def _handles_ready() -> bool:
             if not h.runtime._checkpoint_event.is_set():
                 return False
@@ -1792,6 +1805,7 @@ async def main_plan():
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:
+
         async def _have_ids() -> bool:
             if not h.runtime._checkpoint_event.is_set():
                 return False

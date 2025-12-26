@@ -175,7 +175,6 @@ class SteerableToolPane:
 
         return None
 
-
     async def _emit_event(self, event: dict[str, Any]) -> Optional[int]:
         """Append an event to the durable log and best-effort signal the wakeup queue.
 

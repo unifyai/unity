@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 
 # RAG Agent components
 from .rag_agent import IntranetRAGAgent
-from unity.common.llm_client import get_cache_setting, new_llm_client
+from unity.common.llm_client import new_llm_client
 
 # Import new Pydantic models
 try:
@@ -31,7 +31,6 @@ except ImportError:
     MODELS_AVAILABLE = False
 
 # AI/ML
-import unify
 
 # Web framework (FastAPI example)
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect

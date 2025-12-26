@@ -87,7 +87,9 @@ def append_images_with_source(
                 if int(iid) not in reg:
                     missing_ids.append(int(iid))
             if missing_ids:
-                from unity.manager_registry import ManagerRegistry  # local import to avoid cycles
+                from unity.manager_registry import (
+                    ManagerRegistry,
+                )  # local import to avoid cycles
 
                 manager = ManagerRegistry.get_image_manager()
                 handles = manager.get_images(missing_ids)

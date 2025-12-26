@@ -322,7 +322,9 @@ def test_manager_registry_has_all_implementations():
     from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 
     assert ManagerRegistry.get_class("knowledge", "real") is KnowledgeManager
-    assert ManagerRegistry.get_class("knowledge", "simulated") is SimulatedKnowledgeManager
+    assert (
+        ManagerRegistry.get_class("knowledge", "simulated") is SimulatedKnowledgeManager
+    )
 
 
 @_handle_project
