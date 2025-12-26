@@ -552,4 +552,57 @@ class SteerableToolPane:
             },
         )
 
+    async def _cleanup_handle(
+        self,
+        handle_id: str,
+        *,
+        emit_completed: bool = True,
+    ) -> None:
+        """Cancel a specific watcher task and best-effort mark handle completed."""
+
+        task: asyncio.Task[None] | None = None
+        async with self._lock:
+            task = self._watcher_tasks.pop(handle_id, None)
+
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(
+                    "Exception while cancelling watcher for handle_id=%s: %s",
+                    handle_id,
+                    e,
+                )
+
+        origin: PaneEventOrigin | None = None
+        async with self._lock:
+            meta = self._registry.get(handle_id)
+            if meta is not None:
+                if meta.status not in ("completed", "failed", "stopped"):
+                    meta.status = "completed"
+                origin = {
+                    "origin_tool": meta.origin_tool,
+                    "origin_step": meta.origin_step,
+                    "environment_namespace": meta.environment_namespace,
+                }
+
+            # Remove any pending clarifications for this handle.
+            for key in [
+                k for k in self._pending_clarifications.keys() if k[0] == handle_id
+            ]:
+                self._pending_clarifications.pop(key, None)
+
+        if emit_completed and origin is not None:
+            await self._emit_event(
+                {
+                    "type": "completed",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {},
+                },
+            )
+
     
