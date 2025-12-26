@@ -960,4 +960,59 @@ class SteerableToolPane:
             )
             return None
 
+    async def broadcast_interject(
+        self,
+        message: str,
+        *,
+        filter: BroadcastFilter | None = None,
+        origin_tool_prefixes: list[str] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> dict[str, Any]:
+        """Broadcast an interjection to a filtered set of in-flight handles."""
+
+        # Back-compat: allow callers to pass just origin_tool_prefixes.
+        if filter is None:
+            filter = BroadcastFilter(origin_tool_prefixes=origin_tool_prefixes)
+        elif origin_tool_prefixes is not None and filter.origin_tool_prefixes is None:
+            filter.origin_tool_prefixes = origin_tool_prefixes
+
+        async with self._lock:
+            metas = list(self._registry.values())
+
+        targets: list[str] = []
+        for m in metas:
+            if m.status not in (filter.statuses or []):
+                continue
+            if filter.origin_tool_prefixes is not None and not any(
+                m.origin_tool.startswith(p) for p in filter.origin_tool_prefixes
+            ):
+                continue
+            if filter.capabilities is not None and not all(
+                cap in m.capabilities for cap in filter.capabilities
+            ):
+                continue
+            if (
+                filter.created_after_step is not None
+                and m.origin_step <= filter.created_after_step
+            ):
+                continue
+            if (
+                filter.created_before_step is not None
+                and m.origin_step >= filter.created_before_step
+            ):
+                continue
+            targets.append(m.handle_id)
+
+        results: dict[str, Any] = {}
+        for hid in targets:
+            results[hid] = await self.interject(
+                hid,
+                message,
+                parent_chat_context_cont=parent_chat_context_cont,
+                images=images,
+            )
+
+        return {"targets": targets, "count": len(targets), "results": results}
+
     
