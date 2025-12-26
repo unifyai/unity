@@ -214,14 +214,19 @@ jobs:
           cache-ndjson-${{ runner.os }}-
 
     - name: Run tests via parallel_run.sh
+      id: run-tests
       run: |
         # Run tests using parallel_run.sh with --wait to block until completion
         # The -s flag runs tests serially within the folder (one tmux session per file)
         # This avoids excessive parallelism since we already parallelize at folder level
+        set +e
         xvfb-run tests/parallel_run.sh \
           -s \
           --wait ${{ inputs.test_session_timeout || 120 }}m \
           ${{ matrix.test_path }}
+        TEST_EXIT_CODE=$?
+        echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
+        exit $TEST_EXIT_CODE
       env:
         UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 120 }}
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
@@ -245,6 +250,58 @@ jobs:
         # Reduce overhead of memory manager callbacks
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
+
+    - name: Generate failure summary
+      if: failure()
+      run: |
+        echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Find all log files and extract failure information
+        if [ -d "pytest_logs" ]; then
+          for log_dir in pytest_logs/*/; do
+            if [ -d "$log_dir" ]; then
+              echo "### 📁 Log directory: \`$(basename "$log_dir")\`" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+
+              for log_file in "$log_dir"*.txt; do
+                if [ -f "$log_file" ]; then
+                  filename=$(basename "$log_file")
+                  # Check if this log contains failures (FAILED or ERROR)
+                  if grep -q -E "(FAILED|ERROR|Traceback)" "$log_file" 2>/dev/null; then
+                    echo "<details>" >> $GITHUB_STEP_SUMMARY
+                    echo "<summary>🔴 <code>$filename</code> (has failures)</summary>" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+                    # Extract last 150 lines which typically contain the failure summary
+                    tail -150 "$log_file" >> $GITHUB_STEP_SUMMARY
+                    echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+                    echo "</details>" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                  fi
+                fi
+              done
+            fi
+          done
+        else
+          echo "⚠️ No pytest_logs directory found" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "📥 Download full logs from the **Artifacts** section below." >> $GITHUB_STEP_SUMMARY
+
+    - name: Generate success summary
+      if: success()
+      run: |
+        echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Count test files
+        if [ -d "pytest_logs" ]; then
+          log_count=$(find pytest_logs -name "*.txt" -type f 2>/dev/null | wc -l)
+          echo "📊 **$log_count** test log file(s) generated" >> $GITHUB_STEP_SUMMARY
+        fi
 
     - name: Upload cache artifact
       if: always()
