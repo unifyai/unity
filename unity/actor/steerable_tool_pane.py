@@ -391,3 +391,95 @@ class SteerableToolPane:
             handle_id,
             origin_tool,
         )
+
+    async def _watch_handle(self, handle_id: str, handle: SteerableToolHandle) -> None:
+        """Watch a handle for bottom-up events (clarifications/notifications).
+
+        This watcher is purely event-driven: it races `next_clarification()` vs
+        `next_notification()` and processes whichever completes first.
+        """
+
+        clar_task: asyncio.Task | None = None
+        notif_task: asyncio.Task | None = None
+
+        try:
+            while True:
+                clar_task = asyncio.create_task(
+                    maybe_await(handle.next_clarification()),
+                    name=f"pane_clar_{handle_id[:8]}",
+                )
+                notif_task = asyncio.create_task(
+                    maybe_await(handle.next_notification()),
+                    name=f"pane_notif_{handle_id[:8]}",
+                )
+
+                done, pending = await asyncio.wait(
+                    {clar_task, notif_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # Cancel whichever didn't complete.
+                for t in pending:
+                    t.cancel()
+                for t in pending:
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+
+                # Process the completed event (exactly one should complete here).
+                t = next(iter(done))
+                if t is clar_task:
+                    clar = await t
+                    if isinstance(clar, dict):
+                        await self._handle_clarification(handle_id, clar)
+                else:
+                    notif = await t
+                    if isinstance(notif, dict):
+                        await self._handle_notification(handle_id, notif)
+
+        except asyncio.CancelledError:
+            logger.debug("Watcher cancelled for handle_id=%s", handle_id)
+            raise
+        except Exception as e:
+            logger.error(
+                "Watcher failed for handle_id=%s (%s): %s",
+                handle_id,
+                type(e).__name__,
+                str(e),
+            )
+            origin: PaneEventOrigin = {
+                "origin_tool": "unknown",
+                "origin_step": -1,
+                "environment_namespace": "unknown",
+            }
+            async with self._lock:
+                meta = self._registry.get(handle_id)
+                if meta is not None:
+                    meta.status = "failed"
+                    origin = {
+                        "origin_tool": meta.origin_tool,
+                        "origin_step": meta.origin_step,
+                        "environment_namespace": meta.environment_namespace,
+                    }
+
+            await self._emit_event(
+                {
+                    "type": "failed",
+                    "handle_id": handle_id,
+                    "origin": origin,
+                    "payload": {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                },
+            )
+        finally:
+            # Best-effort cleanup for any leftover inner tasks.
+            for t in (clar_task, notif_task):
+                if t is None:
+                    continue
+                if not t.done():
+                    t.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await t
