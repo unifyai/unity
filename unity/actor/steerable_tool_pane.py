@@ -268,4 +268,48 @@ class SteerableToolPane:
 
             return event_idx
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Introspection
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def list_handles(
+        self,
+        status: HandleStatus | None = None,
+    ) -> list[dict[str, Any]]:
+        """List registered handles (metadata only; never returns live handle objects)."""
+
+        async with self._lock:
+            metas = list(self._registry.values())
+
+        if status is not None:
+            metas = [m for m in metas if m.status == status]
+
+        return [
+            {
+                "handle_id": m.handle_id,
+                "parent_handle_id": m.parent_handle_id,
+                "origin_tool": m.origin_tool,
+                "origin_step": m.origin_step,
+                "environment_namespace": m.environment_namespace,
+                "created_at": m.created_at,
+                "status": m.status,
+                "capabilities": list(m.capabilities),
+                "call_stack": m.call_stack,
+            }
+            for m in metas
+        ]
+
+    def get_recent_events(self, n: int = 50) -> list[PaneEvent]:
+        """Return the last `n` events from the durable log."""
+
+        if n <= 0:
+            return []
+        return self._events_log[-n:]
+
+    async def get_pending_clarifications(self) -> list[PaneEvent]:
+        """Return all pending clarification events currently indexed by the pane."""
+
+        async with self._lock:
+            return list(self._pending_clarifications.values())
+
     
