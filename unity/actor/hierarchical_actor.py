@@ -4549,6 +4549,13 @@ async def main_plan():
         if self._is_complete:
             return f"Plan already in terminal state: {self._state.name}."
 
+        # Cleanup pane (watchers) best-effort.
+        try:
+            if getattr(self, "pane", None) is not None:
+                await self.pane.cleanup()
+        except Exception as e:
+            logger.debug(f"Pane cleanup failed: {e}", exc_info=True)
+
         if final_result is not None:
             base_msg = final_result
         else:
