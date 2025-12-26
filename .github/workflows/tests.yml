@@ -22,38 +22,6 @@ on:
         required: false
         type: boolean
         default: false
-      test_cli_log_level:
-        description: "CLI log level"
-        required: false
-        default: "ERROR"
-        type: choice
-        options:
-        - CRITICAL
-        - ERROR
-        - WARNING
-        - INFO
-        - DEBUG
-      test_log_file_level:
-        description: "Log file level"
-        required: false
-        default: "INFO"
-        type: choice
-        options:
-        - CRITICAL
-        - ERROR
-        - WARNING
-        - INFO
-        - DEBUG
-      test_show_slowest:
-        description: "Number of slowest tests to show"
-        required: false
-        type: number
-        default: 20
-      test_timeout:
-        description: "Per-test timeout in seconds"
-        required: false
-        type: number
-        default: 240
       test_session_timeout:
         description: "Test session timeout in minutes (for all tests)"
         required: false
