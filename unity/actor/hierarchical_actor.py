@@ -2430,6 +2430,59 @@ async def main_plan():
         except Exception as e:
             logger.debug(f"Pane supervisor failed: {e}", exc_info=True)
 
+    async def _handle_pane_clarification_event(self, event: dict[str, Any]) -> None:
+        """Handle a single clarification event from the pane."""
+
+        handle_id = str(event.get("handle_id", ""))
+        payload = event.get("payload") or {}
+        call_id = str(payload.get("call_id", ""))
+        question = str(payload.get("question", ""))
+        origin_tool = ""
+        try:
+            origin = event.get("origin") or {}
+            origin_tool = str(origin.get("origin_tool", ""))
+        except Exception:
+            origin_tool = ""
+
+        self.action_log.append(
+            f"PANE clarification from {origin_tool or '<unknown>'}: {question}",
+        )
+
+        if self.clarification_enabled:
+            # Pause the plan (non-immediate: avoids browser interrupt assumptions).
+            with contextlib.suppress(Exception):
+                await self.pause(immediate=False)
+
+            # Ask user via queues, then answer the clarification.
+            await self.clarification_up_q.put(question)
+            user_answer = await self.clarification_down_q.get()
+            self.action_log.append(
+                f"PANE clarification answered by user: {user_answer}",
+            )
+
+            # Forward into the specific in-flight handle via the pane.
+            await self.pane.answer_clarification(handle_id, call_id, user_answer)
+
+            # Also record as an interaction for verification traces (best-effort).
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                interactions_log.append(
+                    (
+                        "pane_steering",
+                        "answer_clarification",
+                        f"handle_id={handle_id} call_id={call_id}",
+                    ),
+                )
+
+            with contextlib.suppress(Exception):
+                await self.resume()
+        else:
+            # No user clarification channel available: best-effort forward a neutral response.
+            await self.pane.answer_clarification(
+                handle_id,
+                call_id,
+                "No user clarification channel is available. Please proceed with your best judgment.",
+            )
 
     async def _start_main_execution_loop(self):
         """
