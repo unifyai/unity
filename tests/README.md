@@ -199,6 +199,98 @@ Any pytest option or custom conftest option (like `--unify-stub`) can be passed 
 
 ---
 
+## Cloud Test Runs (GitHub Actions)
+
+For surgical test runs without straining your local machine, use GitHub Actions:
+
+- **No local CPU load** — tests run on GitHub's infrastructure
+- **No rate limiting** — GitHub runners have excellent network connectivity
+- **24 parallel jobs** — one per test folder, all running simultaneously
+- **Full `parallel_run.sh` support** — same flags work in CI as locally
+
+### Triggering Tests
+
+Tests are **off by default** to avoid unnecessary CI costs. Trigger them explicitly:
+
+| Method | How to Trigger | What Runs |
+|--------|----------------|-----------|
+| **`[run-tests]`** | Include in commit message or PR title | All 24 test folders (parallel workers) |
+| **`[parallel_run.sh ...]`** | Include in commit message or PR title | Specified paths/args (single worker) |
+| **Manual** | GitHub Actions UI → "Run workflow" | Configurable via inputs |
+
+**Examples:**
+
+```bash
+# Run ALL tests (24 parallel workers)
+git commit -m "Fix contact manager bug [run-tests]"
+
+# Run specific folder (single worker)
+git commit -m "Fix contact manager bug [parallel_run.sh tests/test_contact_manager]"
+
+# Run multiple folders (single worker, both run concurrently inside)
+git commit -m "Fix bugs [parallel_run.sh tests/test_contact_manager tests/test_transcript_manager]"
+
+# Run with extra args (single worker)
+git commit -m "Eval check [parallel_run.sh --eval-only tests/test_actor]"
+
+# Run specific test file
+git commit -m "Fix test [parallel_run.sh tests/test_actor/test_code_act.py]"
+
+# Regular commit (no tests)
+git commit -m "Update documentation"
+```
+
+The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything. Both `tests/test_foo` and `test_foo` work (paths are resolved relative to the `tests/` directory).
+
+### Manual Workflow Dispatch
+
+For maximum control, use the GitHub Actions UI:
+
+1. Go to **Actions** → **"Testing Unity with uv"**
+2. Click **"Run workflow"** dropdown
+3. Select your branch and configure inputs:
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `test_path` | `.` (all) | Path to test folder, file, or specific test |
+| `parallel_run_args` | *(empty)* | Extra args passed to `parallel_run.sh` |
+| `timeout_minutes` | 120 | `parallel_run.sh` timeout (minutes) |
+
+**Flexible Test Targeting:**
+
+| Input Value | What Runs |
+|-------------|-----------|
+| *(blank or `.`)* | All 24 test folders in parallel |
+| `tests/test_actor` | Only the `test_actor` folder |
+| `tests/test_actor/test_code_act.py` | Only that specific file |
+| `tests/test_actor/test_code_act.py::test_name` | Only that specific test |
+
+**Advanced Options (`parallel_run_args`):**
+
+| Flag | Example | Description |
+|------|---------|-------------|
+| `--eval-only` | `--eval-only` | Only `@pytest.mark.eval` tests |
+| `--symbolic-only` | `--symbolic-only` | Only non-eval tests |
+| `--repeat N` | `--repeat 5` | Run each test N times |
+| `-s` | `-s` | Serial mode (one session per file) |
+| `--tags` | `--tags exp-1` | Tag runs for filtering |
+| `-j N` | `-j 10` | Limit concurrent sessions |
+| `--env K=V` | `--env UNIFY_CACHE=false` | Set environment variable |
+
+### Accessing Test Logs
+
+After a CI run, logs are available in the GitHub Actions UI:
+
+| Artifact | Contents |
+|----------|----------|
+| `all-logs-consolidated` | **One-click download** of all logs combined |
+| `pytest-logs-{folder}` | Individual folder's pytest output |
+| `llm-io-debug-{folder}` | Individual folder's LLM I/O traces |
+
+**Inline Failure Summaries**: Failed jobs display collapsible failure excerpts directly in the Summary page—no download required for quick triage.
+
+---
+
 ## Parallel Runner Quick Reference
 
 ```bash
