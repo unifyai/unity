@@ -17,16 +17,11 @@ on:
         required: false
         type: string
         default: "."
-      test_session_timeout:
-        description: "Test session timeout in minutes (for all tests)"
+      timeout_minutes:
+        description: "Test timeout in minutes (job gets +10 min buffer for setup/cleanup)"
         required: false
         type: number
         default: 120
-      runner_timeout:
-        description: "Runner timeout in minutes"
-        required: false
-        type: number
-        default: 130
       parallel_run_args:
         description: |
           Extra args passed to parallel_run.sh. Examples:
@@ -141,7 +136,8 @@ jobs:
     name: pytest (${{ matrix.test_path }})
     runs-on: ubuntu-latest-8-cores
     environment: unity-testing
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 130 }}
+    # Job timeout = test timeout + 10 min buffer for setup/cleanup
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && fromJSON(inputs.timeout_minutes) || 120) + 10 }}
     needs: [should-run-tests, discover]
     if: needs.should-run-tests.outputs.run_tests == 'true'
     strategy:
@@ -198,8 +194,8 @@ jobs:
         # Default mode: one tmux session per test (maximum parallelism within each folder)
         # Combined with matrix parallelism across folders for full concurrency
         set +e
-        # Convert session timeout from minutes to seconds for --wait
-        WAIT_SECONDS=$(( (${{ inputs.test_session_timeout || 120 }}) * 60 ))
+        # Convert timeout from minutes to seconds for --wait
+        WAIT_SECONDS=$(( (${{ inputs.timeout_minutes || 120 }}) * 60 ))
         xvfb-run tests/parallel_run.sh \
           --wait $WAIT_SECONDS \
           ${{ inputs.parallel_run_args }} \
