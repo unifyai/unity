@@ -324,7 +324,7 @@ For maximum control, use the GitHub Actions UI:
 |-------|---------|-------------|
 | `test_path` | `.` (all) | Path to test folder, file, or specific test |
 | `parallel_run_args` | *(empty)* | Extra args passed to `parallel_run.sh` |
-| `timeout_minutes` | 120 | Test timeout in minutes (job gets +10 min buffer for setup/cleanup) |
+| `timeout_minutes` | 120 | `parallel_run.sh` timeout (minutes) |
 
 #### Flexible Test Targeting
 
