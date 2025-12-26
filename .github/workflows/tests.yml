@@ -131,7 +131,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.11'
+        python-version: '3.12'
 
     - name: Install black
       run: pip install black
@@ -199,6 +199,27 @@ jobs:
       fail-fast: false
       matrix:
         test_path: ${{ fromJSON(needs.discover.outputs.test_dirs) }}
+    # Environment variables at job level so ALL steps (including test collection) have access
+    env:
+      UNIFY_TESTS_RAND_PROJ: "true"
+      UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "true"
+      UNITY_SIM_ACTOR_DURATION: "20"
+      UNITY_TS_LOCAL_VIEW_OFF: "false"
+      UNIFY_KEY: ${{ secrets.USER_API_KEY }}
+      UNIFY_BASE_URL: https://api.unify.ai/v0
+      UNIFY_CACHE: "true"
+      UNIFY_DELETE_CONTEXT_ON_EXIT: "false"
+      UNIFY_OVERWRITE_PROJECT: "true"
+      UNIFY_CACHE_BENCHMARK: "true"
+      UNIFY_PRETEST_CONTEXT_CREATE: "false"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      FIRST_NAME: Rick
+      AGENT_FIRST: Rick
+      AGENT_LAST: Morty
+      AGENT_AGE: "29"
+      REGISTER_SUMMARY_CALLBACKS: "false"
+      REGISTER_UPDATE_CALLBACKS: "false"
     steps:
     - uses: actions/checkout@v2
 
@@ -225,7 +246,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.11'
+        python-version: '3.12'
 
     # Cache apt packages to avoid re-downloading 170+ packages on every run
     - name: Cache apt packages
@@ -303,27 +324,6 @@ jobs:
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
-      env:
-        UNIFY_TESTS_RAND_PROJ: true
-        UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true
-        UNITY_SIM_ACTOR_DURATION: 20
-        UNITY_TS_LOCAL_VIEW_OFF: false
-        UNIFY_KEY: ${{ secrets.USER_API_KEY }}
-        UNIFY_BASE_URL: https://api.unify.ai/v0
-        UNIFY_CACHE: true
-        UNIFY_DELETE_CONTEXT_ON_EXIT: false
-        UNIFY_OVERWRITE_PROJECT: true
-        UNIFY_CACHE_BENCHMARK: true
-        UNIFY_PRETEST_CONTEXT_CREATE: false
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-        FIRST_NAME: Rick
-        AGENT_FIRST: Rick
-        AGENT_LAST: Morty
-        AGENT_AGE: 29
-        # Reduce overhead of memory manager callbacks
-        REGISTER_SUMMARY_CALLBACKS: false
-        REGISTER_UPDATE_CALLBACKS: false
 
     - name: Generate failure summary
       if: failure()
