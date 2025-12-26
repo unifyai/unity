@@ -18,7 +18,7 @@ on:
         type: string
         default: "."
       timeout_minutes:
-        description: "Test timeout in minutes (job gets +10 min buffer for setup/cleanup)"
+        description: "parallel_run.sh timeout (minutes)"
         required: false
         type: number
         default: 120
