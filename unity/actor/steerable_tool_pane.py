@@ -175,4 +175,97 @@ class SteerableToolPane:
 
         return None
 
+
+    async def _emit_event(self, event: dict[str, Any]) -> Optional[int]:
+        """Append an event to the durable log and best-effort signal the wakeup queue.
+
+        Overflow semantics:
+        - The durable log has a hard cap (`MAX_EVENTS`).
+        - On overflow:
+          - Critical events fail-fast with `RuntimeError`.
+          - `notification` may be dropped, but only after emitting a one-time
+            `pane_overflow` marker (best-effort).
+        - The wakeup queue may drop *tokens* but the durable log remains canonical.
+        """
+
+        async with self._lock:
+            if self._cleanup_started:
+                # Best-effort: once cleanup begins, ignore new events.
+                return None
+
+            # Fill in shared metadata.
+            event["run_id"] = self.run_id
+            event["ts"] = time.monotonic()
+            event["emitted_at_step"] = self._get_current_actor_step()
+            # Ensure durable log entries always conform to PaneEvent schema.
+            if "payload" not in event:
+                event["payload"] = {}
+
+            # One-time overflow marker for notifications: if we're about to hit the cap,
+            # reserve the last slot for `pane_overflow` (and drop this notification).
+            if (
+                event["type"] == "notification"
+                and not self._overflow_occurred
+                and len(self._events_log) == self.MAX_EVENTS - 1
+            ):
+                self._overflow_occurred = True
+                logger.warning(
+                    "Pane event log at cap-1 (cap=%s); reserving final slot for pane_overflow and dropping notifications thereafter",
+                    self.MAX_EVENTS,
+                )
+                marker: PaneEvent = {
+                    "type": "pane_overflow",
+                    "run_id": self.run_id,
+                    "handle_id": event["handle_id"],
+                    "origin": event["origin"],
+                    "ts": time.monotonic(),
+                    "emitted_at_step": self._get_current_actor_step(),
+                    "payload": {
+                        "message": "Pane durable log reached cap; dropping notification events.",
+                        "cap": self.MAX_EVENTS,
+                    },
+                }
+                idx = len(self._events_log)
+                self._events_log.append(marker)
+                try:
+                    self._events_q.put_nowait(idx)
+                except asyncio.QueueFull:
+                    logger.debug(
+                        "Wakeup queue full; overflow marker idx=%s recorded in durable log",
+                        idx,
+                    )
+                return idx
+
+            if len(self._events_log) >= self.MAX_EVENTS:
+                if event["type"] in self._CRITICAL_OVERFLOW_TYPES:
+                    raise RuntimeError(
+                        f"SteerableToolPane events_log overflow (cap={self.MAX_EVENTS}). "
+                        f"Refusing to drop critical event type={event['type']}",
+                    )
+
+                if event["type"] == "notification":
+                    if not self._overflow_occurred:
+                        self._overflow_occurred = True
+                        logger.warning(
+                            "Pane event log overflow (cap=%s); dropping notifications thereafter",
+                            self.MAX_EVENTS,
+                        )
+                    return None
+
+                # Non-notification, non-critical: drop silently (should be rare).
+                return None
+
+            event_idx = len(self._events_log)
+            self._events_log.append(event)  # type: ignore[arg-type]
+
+            try:
+                self._events_q.put_nowait(event_idx)
+            except asyncio.QueueFull:
+                logger.debug(
+                    "Wakeup queue full; event idx=%s recorded in durable log",
+                    event_idx,
+                )
+
+            return event_idx
+
     
