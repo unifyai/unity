@@ -17,11 +17,6 @@ on:
         required: false
         type: string
         default: "."
-      test_enable_cli_logging:
-        description: "Enable CLI logging"
-        required: false
-        type: boolean
-        default: false
       test_session_timeout:
         description: "Test session timeout in minutes (for all tests)"
         required: false
@@ -213,8 +208,6 @@ jobs:
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
       env:
-        UNITY_TESTS_SESSION_TIMEOUT: ${{ inputs.test_session_timeout || 120 }}
-        UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_TESTS_RAND_PROJ: true
         UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true
         UNITY_SIM_ACTOR_DURATION: 20
