@@ -2,59 +2,67 @@
 
 This directory contains the test suite for Unity.
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Tools at a Glance](#tools-at-a-glance)
+- [Test Philosophy](#test-philosophy-symbolic--eval-spectrum)
+- [Parallel Runner Reference](#parallel-runner-reference)
+- [Common Workflows](#common-workflows)
+- [Cloud Test Runs (GitHub Actions)](#cloud-test-runs-github-actions)
+- [Worktree Support](#worktree-support-cursor-background-agents)
+- [Project Cleanup](#project-cleanup)
+- [Troubleshooting](#troubleshooting)
+- [Requirements](#requirements)
+- [Detailed Documentation](#detailed-documentation)
+
+---
+
 ## Quick Start
 
 ```bash
-# Shell setup (add to ~/.zshrc for permanent aliases)
-source /path/to/your/unity/clone/tests/shell_init.zsh
+# Run all tests in parallel (works immediately, no setup required)
+tests/parallel_run.sh tests/
 
-# Run all tests in parallel
+# Run a specific folder
+tests/parallel_run.sh tests/test_contact_manager/
+
+# Wait for completion
+tests/parallel_run.sh --wait tests/
+
+# Run on CI instead (no local CPU load)
+git commit -m "Fix bug [run-tests]"
+```
+
+**Optional shell aliases** (for convenience):
+
+```bash
+# Add to ~/.zshrc for permanent aliases
+source /path/to/unity/tests/shell_init.zsh
+
+# Then use shorter commands
 parallel_run tests/
-
-# Watch progress
 watch_tests
-
-# Attach to a failing test
-attach 'f ❌ test_contact_manager-test_ask'
-
-# Clean up
-kill_failed        # Kill failed sessions
-kill_server        # Kill tmux server + orphaned processes
+kill_failed
 ```
 
 ---
 
-## Worktree Support (Cursor Background Agents)
+## Tools at a Glance
 
-All test commands **automatically detect the current git repository** and use that repo's scripts. This means:
+| Command | Purpose |
+|---------|---------|
+| `parallel_run <tests>` | Run tests in parallel tmux sessions |
+| `watch_tests` | Monitor test progress in real-time |
+| `attach '<name>'` | Attach to a tmux session |
+| `list_runs` | List all active test runs across terminals |
+| `kill_failed` | Kill all failed sessions |
+| `kill_server` | Kill tmux server + purge orphaned processes |
+| `monitor_resources` | Launch resource monitoring dashboard |
+| `grid_search.sh` | Run tests across setting combinations |
+| `project_cleanup.sh` | Delete test projects from Unify backend |
 
-- ✅ Commands work correctly in **git worktrees** (e.g., Cursor Background Agents)
-- ✅ Tests run against the **current repo's code**, not a hardcoded path
-- ✅ Logs appear in the **current repo's** `pytest_logs/` directory
-- ✅ No manual path adjustments needed
-
-**How it works:** When you run `parallel_run`, the shell function checks `git rev-parse --show-toplevel` to find the current repo root, then uses that repo's `tests/parallel_run.sh`. If you're not in a git repo, it falls back to the originally configured path.
-
-### Browsing All Worktree Logs from Main Repo
-
-When tests run from a worktree (via any method - `parallel_run`, direct `pytest`, etc.), **symlinks are automatically created** in the main repo's log directories pointing to each worktree's logs:
-
-```
-/Users/you/unity/pytest_logs/
-├── 2025-12-05T14-30-45_unity_dev_ttys042/   # main repo's own logs
-├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/pytest_logs/
-├── worktree-xyz/  →  ~/.cursor/worktrees/unity/xyz/pytest_logs/
-└── ...
-
-/Users/you/unity/llm_io_debug/
-├── 2025-12-05T14-30-45_unity_dev_ttys042/    # main repo's logs (terminal A)
-├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/llm_io_debug/
-└── ...
-```
-
-This lets you browse **all logs from all worktrees** in one place (the main repo), while each worktree still maintains its own isolated log directories.
-
-**Note:** Symlinks are created by `conftest.py` during pytest session start, so they work regardless of how pytest was invoked
+All commands support `--help` for usage details.
 
 ---
 
@@ -101,21 +109,46 @@ parallel_run --symbolic-only tests   # Only symbolic tests
 
 ---
 
-## Tools at a Glance
+## Parallel Runner Reference
 
-| Command | Purpose |
-|---------|---------|
-| `parallel_run <tests>` | Run tests in parallel tmux sessions |
-| `watch_tests` | Monitor test progress in real-time |
-| `attach '<name>'` | Attach to a tmux session |
-| `list_runs` | List all active test runs across terminals |
-| `kill_failed` | Kill all failed sessions |
-| `kill_server` | Kill tmux server + purge orphaned processes |
-| `monitor_resources` | Launch resource monitoring dashboard |
-| `grid_search.sh` | Run tests across setting combinations |
-| `project_cleanup.sh` | Delete test projects from Unify backend |
+```bash
+parallel_run [options] <targets>
 
-All commands support `--help` for usage details.
+# Targeting
+parallel_run tests/                              # Directory
+parallel_run tests/test_foo.py                   # File
+parallel_run tests/test_foo.py::test_bar         # Specific test
+
+# Common flags
+parallel_run -w tests/                           # Wait for completion
+parallel_run -s tests/                           # Serial (per-file, not per-test)
+parallel_run -j 8 tests/                         # Limit to 8 concurrent
+parallel_run --eval-only tests/                  # Only eval tests
+parallel_run --symbolic-only tests/              # Only symbolic tests
+parallel_run --env KEY=VALUE tests/              # Set environment variable
+parallel_run --repeat 5 tests/                   # Run each test 5 times
+parallel_run --overwrite-scenarios tests/        # Delete and recreate test scenarios
+
+# Pass extra args directly to pytest (after --)
+parallel_run tests/ -- -v --tb=short            # Verbose with short tracebacks
+parallel_run tests/ -- --pdb                    # Drop into debugger on failure
+parallel_run tests/ -- --lf                     # Re-run last failed tests
+```
+
+| Flag | Description |
+|------|-------------|
+| `-w`, `--wait` | Wait for all tests to complete |
+| `-s`, `--serial` | One session per file (default: one per test) |
+| `-j N`, `--jobs N` | Limit concurrent sessions (default: 25) |
+| `--eval-only` | Only `@pytest.mark.eval` tests |
+| `--symbolic-only` | Only non-eval tests |
+| `--env K=V` | Set environment variable (repeatable) |
+| `--repeat N` | Run each test N times |
+| `--tags TAG` | Tag runs for filtering |
+| `--overwrite-scenarios` | Delete and recreate test scenarios |
+| `--` | Pass remaining args to pytest |
+
+See [Parallel Runner Guide](docs/parallel-runner.md) for full documentation.
 
 ---
 
@@ -177,26 +210,6 @@ parallel_run --overwrite-scenarios tests/test_contact_manager
 
 Use this when scenario seed data has changed (e.g., new contacts, updated transcript exchanges) and you need to regenerate the cached scenario state.
 
-### Pass extra args to pytest
-
-Use `--` to pass any additional arguments directly to pytest:
-
-```bash
-# Verbose output with short tracebacks
-parallel_run tests/ -- -v --tb=short
-
-# Drop into debugger on first failure
-parallel_run tests/ -- --pdb -x
-
-# Re-run only last failed tests
-parallel_run tests/ -- --lf
-
-# Combine with parallel_run flags
-parallel_run -w --overwrite-scenarios tests/test_contact_manager -- -v
-```
-
-Any pytest option or custom conftest option (like `--unify-stub`) can be passed this way.
-
 ---
 
 ## Cloud Test Runs (GitHub Actions)
@@ -216,7 +229,7 @@ Tests are **off by default** to avoid unnecessary CI costs. Trigger them explici
 |--------|----------------|-----------|
 | **`[run-tests]`** | Include in commit message or PR title | All 24 test folders (parallel workers) |
 | **`[parallel_run.sh ...]`** | Include in commit message or PR title | Specified paths/args (single worker) |
-| **Manual** | GitHub Actions UI → "Run workflow" | Configurable via inputs |
+| **Manual** | GitHub Actions UI or `gh` CLI | Configurable via inputs |
 
 **Examples:**
 
@@ -242,41 +255,6 @@ git commit -m "Update documentation"
 
 The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything. Both `tests/test_foo` and `test_foo` work (paths are resolved relative to the `tests/` directory).
 
-### Manual Workflow Dispatch
-
-For maximum control, use the GitHub Actions UI:
-
-1. Go to **Actions** → **"Testing Unity with uv"**
-2. Click **"Run workflow"** dropdown
-3. Select your branch and configure inputs:
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `test_path` | `.` (all) | Path to test folder, file, or specific test |
-| `parallel_run_args` | *(empty)* | Extra args passed to `parallel_run.sh` |
-| `timeout_minutes` | 120 | `parallel_run.sh` timeout (minutes) |
-
-**Flexible Test Targeting:**
-
-| Input Value | What Runs |
-|-------------|-----------|
-| *(blank or `.`)* | All 24 test folders in parallel |
-| `tests/test_actor` | Only the `test_actor` folder |
-| `tests/test_actor/test_code_act.py` | Only that specific file |
-| `tests/test_actor/test_code_act.py::test_name` | Only that specific test |
-
-**Advanced Options (`parallel_run_args`):**
-
-| Flag | Example | Description |
-|------|---------|-------------|
-| `--eval-only` | `--eval-only` | Only `@pytest.mark.eval` tests |
-| `--symbolic-only` | `--symbolic-only` | Only non-eval tests |
-| `--repeat N` | `--repeat 5` | Run each test N times |
-| `-s` | `-s` | Serial mode (one session per file) |
-| `--tags` | `--tags exp-1` | Tag runs for filtering |
-| `-j N` | `-j 10` | Limit concurrent sessions |
-| `--env K=V` | `--env UNIFY_CACHE=false` | Set environment variable |
-
 ### CLI Trigger (`gh`)
 
 The fastest way to trigger CI tests without commits or the web UI:
@@ -301,11 +279,6 @@ gh workflow run tests.yml --repo unifyai/unity --ref main \
 # Run on a different branch
 gh workflow run tests.yml --repo unifyai/unity --ref my-feature-branch \
   -f test_path="tests/test_contact_manager"
-
-# Custom timeout (minutes)
-gh workflow run tests.yml --repo unifyai/unity --ref main \
-  -f test_path="." \
-  -f timeout_minutes="180"
 ```
 
 **Available inputs:**
@@ -313,22 +286,31 @@ gh workflow run tests.yml --repo unifyai/unity --ref main \
 | Flag | Description |
 |------|-------------|
 | `-f test_path="..."` | Path to test folder/file (default: `.` for all) |
-| `-f parallel_run_args="..."` | Extra args for `parallel_run.sh` |
+| `-f parallel_run_args="..."` | Extra args (see [Parallel Runner Reference](#parallel-runner-reference)) |
 | `-f timeout_minutes="N"` | Timeout in minutes (default: 120) |
 | `--ref <branch>` | Branch to run tests on |
 
 **Watch the run:**
 
 ```bash
-# List recent runs
 gh run list --repo unifyai/unity --workflow tests.yml
-
-# Watch a specific run
 gh run watch --repo unifyai/unity <run-id>
-
-# View run logs
 gh run view --repo unifyai/unity <run-id> --log
 ```
+
+### Manual Workflow Dispatch (UI)
+
+For maximum control, use the GitHub Actions UI:
+
+1. Go to **Actions** → **"Testing Unity with uv"**
+2. Click **"Run workflow"** dropdown
+3. Select your branch and configure inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `test_path` | `.` (all) | Path to test folder, file, or specific test |
+| `parallel_run_args` | *(empty)* | Extra args (see [Parallel Runner Reference](#parallel-runner-reference)) |
+| `timeout_minutes` | 120 | `parallel_run.sh` timeout (minutes) |
 
 ### Accessing Test Logs
 
@@ -344,53 +326,37 @@ After a CI run, logs are available in the GitHub Actions UI:
 
 ---
 
-## Parallel Runner Quick Reference
+## Worktree Support (Cursor Background Agents)
 
-```bash
-parallel_run [options] <targets>
+All test commands **automatically detect the current git repository** and use that repo's scripts. This means:
 
-# Targeting
-parallel_run tests/                              # Directory
-parallel_run tests/test_foo.py                   # File
-parallel_run tests/test_foo.py::test_bar         # Specific test
+- ✅ Commands work correctly in **git worktrees** (e.g., Cursor Background Agents)
+- ✅ Tests run against the **current repo's code**, not a hardcoded path
+- ✅ Logs appear in the **current repo's** `pytest_logs/` directory
+- ✅ No manual path adjustments needed
 
-# Common flags
-parallel_run -w tests/                           # Wait for completion
-parallel_run -s tests/                           # Serial (per-file, not per-test)
-parallel_run -j 8 tests/                         # Limit to 8 concurrent
-parallel_run --eval-only tests/                  # Only eval tests
-parallel_run --env KEY=VALUE tests/              # Set environment variable
-parallel_run --repeat 5 tests/                   # Run each test 5 times
-parallel_run --overwrite-scenarios tests/        # Delete and recreate test scenarios
+**How it works:** When you run `parallel_run`, the shell function checks `git rev-parse --show-toplevel` to find the current repo root, then uses that repo's `tests/parallel_run.sh`. If you're not in a git repo, it falls back to the originally configured path.
 
-# Pass extra args directly to pytest (after --)
-parallel_run tests/ -- -v --tb=short            # Verbose with short tracebacks
-parallel_run tests/ -- --pdb                    # Drop into debugger on failure
-parallel_run tests/ -- --lf                     # Re-run last failed tests
+### Browsing All Worktree Logs from Main Repo
+
+When tests run from a worktree (via any method - `parallel_run`, direct `pytest`, etc.), **symlinks are automatically created** in the main repo's log directories pointing to each worktree's logs:
+
+```
+/Users/you/unity/pytest_logs/
+├── 2025-12-05T14-30-45_unity_dev_ttys042/   # main repo's own logs
+├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/pytest_logs/
+├── worktree-xyz/  →  ~/.cursor/worktrees/unity/xyz/pytest_logs/
+└── ...
+
+/Users/you/unity/llm_io_debug/
+├── 2025-12-05T14-30-45_unity_dev_ttys042/    # main repo's logs (terminal A)
+├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/llm_io_debug/
+└── ...
 ```
 
-See [Parallel Runner Guide](docs/parallel-runner.md) for full documentation.
+This lets you browse **all logs from all worktrees** in one place (the main repo), while each worktree still maintains its own isolated log directories.
 
----
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| `tmux: command not found` | `brew install tmux` |
-| High resource usage after tests | `kill_server --global` |
-| "error connecting to ... (No such file or directory)" | Socket was deleted; re-run tests |
-| Tests not found | Check that path exists and isn't in `EXCLUDE_DIRS` |
-| Permission denied | `chmod +x tests/*.sh` |
-
----
-
-## Detailed Documentation
-
-- **[Parallel Runner](docs/parallel-runner.md)** — Full guide to `parallel_run`, tmux isolation, flags, and troubleshooting
-- **[Grid Search](docs/grid-search.md)** — Running tests across setting combinations for model comparisons and ablations
-- **[Resource Monitor](docs/resource-monitor.md)** — Dashboard for monitoring CPU, memory, network, and file descriptors
-- **[Logging & Data](docs/logging.md)** — Log directory structure, remote telemetry, and analyzing test data
+**Note:** Symlinks are created by `conftest.py` during pytest session start, so they work regardless of how pytest was invoked.
 
 ---
 
@@ -420,9 +386,30 @@ project_cleanup.sh --random-only
 
 ---
 
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `tmux: command not found` | `brew install tmux` |
+| High resource usage after tests | `kill_server --global` |
+| "error connecting to ... (No such file or directory)" | Socket was deleted; re-run tests |
+| Tests not found | Check that path exists and isn't in `EXCLUDE_DIRS` |
+| Permission denied | `chmod +x tests/*.sh` |
+
+---
+
 ## Requirements
 
 - **tmux**: `brew install tmux`
 - **coreutils** (macOS): `brew install coreutils` — provides `timeout` for helper scripts
 - **Python virtualenv**: Repo-local `.venv/` (create/sync via `uv sync --all-groups`)
 - **Environment**: Optional `.env` file at repo root (`.env`) for `UNIFY_KEY`, etc.
+
+---
+
+## Detailed Documentation
+
+- **[Parallel Runner](docs/parallel-runner.md)** — Full guide to `parallel_run`, tmux isolation, flags, and troubleshooting
+- **[Grid Search](docs/grid-search.md)** — Running tests across setting combinations for model comparisons and ablations
+- **[Resource Monitor](docs/resource-monitor.md)** — Dashboard for monitoring CPU, memory, network, and file descriptors
+- **[Logging & Data](docs/logging.md)** — Log directory structure, remote telemetry, and analyzing test data
