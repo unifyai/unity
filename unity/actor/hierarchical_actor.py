@@ -1047,12 +1047,14 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
         self,
         real_handle: SteerableToolHandle,
         plan: "HierarchicalActorHandle",
+        handle_id: str | None,
         call_repr: str,
         cache_key: tuple,
         meta: dict,
     ):
         self._real_handle = real_handle
         self._plan = plan
+        self._handle_id = handle_id
         self._call_repr = call_repr
         self._cache_key = cache_key
         self._meta = meta
@@ -1177,6 +1179,21 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
             "meta": self._meta,
         }
 
+        # Best-effort completion marking for pane (only reliable when `.result()` is awaited).
+        try:
+            if (
+                getattr(self._plan, "pane", None) is not None
+                and self._handle_id is not None
+            ):
+                await self._plan.pane._cleanup_handle(
+                    self._handle_id,
+                    emit_completed=True,
+                )
+        except Exception as e:
+            logger.debug(
+                f"Pane completion marking failed for handle_id={self._handle_id}: {e}",
+            )
+
         return final_result
 
 
@@ -1244,6 +1261,7 @@ class _SteerableToolHandleProxy:
                     return _HistoryCapturingHandleProxy(
                         real_handle,
                         self._plan,
+                        handle_id,
                         call_repr,
                         original_cache_key,
                         meta,
@@ -1281,6 +1299,19 @@ class _SteerableToolHandleProxy:
             logger.debug(f"CACHE MISS for: {call_repr}")
 
             output = await real_attr(*args, **kwargs)
+
+            # Best-effort completion marking for pane: when `.result()` is awaited on a top-level handle proxy.
+            if name == "result":
+                try:
+                    if getattr(self._plan, "pane", None) is not None:
+                        await self._plan.pane._cleanup_handle(
+                            self._handle_id,
+                            emit_completed=True,
+                        )
+                except Exception as e:
+                    logger.debug(
+                        f"Pane completion marking failed for handle_id={self._handle_id}: {e}",
+                    )
 
             if isinstance(output, SteerableToolHandle):
                 sub_handle_name = f"{name}_handle"
@@ -1349,12 +1380,33 @@ class _SteerableToolHandleProxy:
                 return _HistoryCapturingHandleProxy(
                     output,
                     self._plan,
+                    sub_handle_id,
                     call_repr,
                     cache_key,
                     meta,
                 )
             else:
-                interaction_to_cache = ("handle_method_call", call_repr, str(output))
+                # Special-case `.result()`: capture sub-loop history (when available) as a 4th tuple element.
+                # This allows verification prompts to treat handle history as "low-level trace" evidence.
+                if name == "result":
+                    sub_loop_history: list[Any] = []
+                    if hasattr(self._real_handle, "get_history"):
+                        try:
+                            sub_loop_history = self._real_handle.get_history()  # type: ignore[attr-defined]
+                        except Exception:
+                            sub_loop_history = []
+                    interaction_to_cache = (
+                        "handle_method_call",
+                        call_repr,
+                        str(output),
+                        sub_loop_history,
+                    )
+                else:
+                    interaction_to_cache = (
+                        "handle_method_call",
+                        call_repr,
+                        str(output),
+                    )
                 interactions_log = current_interaction_sink_var.get()
                 if interactions_log is not None:
                     interactions_log.append(interaction_to_cache)
@@ -1409,7 +1461,22 @@ class _SteerableToolHandleProxy:
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = real_attr(*args, **kwargs)
-            interaction_to_cache = ("handle_method_call", call_repr, str(output))
+            # Special-case `.result()`: best-effort capture of sub-loop history (when available).
+            if name == "result":
+                sub_loop_history: list[Any] = []
+                if hasattr(self._real_handle, "get_history"):
+                    try:
+                        sub_loop_history = self._real_handle.get_history()  # type: ignore[attr-defined]
+                    except Exception:
+                        sub_loop_history = []
+                interaction_to_cache = (
+                    "handle_method_call",
+                    call_repr,
+                    str(output),
+                    sub_loop_history,
+                )
+            else:
+                interaction_to_cache = ("handle_method_call", call_repr, str(output))
             interactions_log = current_interaction_sink_var.get()
             if interactions_log is not None:
                 interactions_log.append(interaction_to_cache)
