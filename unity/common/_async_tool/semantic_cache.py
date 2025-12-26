@@ -116,12 +116,7 @@ class _SemanticCacheSaver:
         tool_trajectory,
     ):
         # store_context is captured at call-time to avoid thread-local context loss
-        try:
-            unify.create_context(store_context)
-        except unify.RequestError as e:
-            body = getattr(e.response, "text", "") or str(e)
-            if "already exists" not in body.lower():
-                raise
+        unify.create_context(store_context)
 
         log_id = unity_log(
             context=store_context,
@@ -424,12 +419,7 @@ def search_semantic_cache(
     global _CONFIG
     store_context = _CONFIG.context
 
-    try:
-        unify.create_context(store_context)
-    except unify.RequestError as e:
-        body = getattr(e.response, "text", "") or str(e)
-        if "already exists" not in body.lower():
-            raise
+    unify.create_context(store_context)
 
     _escaped = escape_single_quotes(user_message)
     metric_expr = f"cosine({_USER_MESSAGE_EMBEDDING_FIELD_NAME}, embed('{_escaped}', model='{_CONFIG.embedding_model}', async_embeddings=False))"
