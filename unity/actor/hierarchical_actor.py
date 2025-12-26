@@ -4026,6 +4026,25 @@ async def main_plan():
                     context_dict,
                 )
 
+                # Snapshot steerable pane state for routing decisions (best-effort).
+                pane_snapshot: dict[str, Any] | None = None
+                try:
+                    if hasattr(self, "pane") and self.pane is not None:
+                        all_handles = await self.pane.list_handles(status=None)
+                        in_flight = [
+                            h
+                            for h in all_handles
+                            if h.get("status")
+                            in ("running", "paused", "waiting_for_clarification")
+                        ]
+                        pending_clars = await self.pane.get_pending_clarifications()
+                        pane_snapshot = {
+                            "active_handles": in_flight,
+                            "pending_clarifications_count": len(pending_clars),
+                        }
+                except Exception as e:
+                    logger.debug(f"Could not build pane snapshot for interjection: {e}")
+
                 static_prompt, dynamic_prompt = (
                     prompt_builders.build_interjection_prompt(
                         interjection=message,
@@ -4038,6 +4057,7 @@ async def main_plan():
                         tools=self.actor.tools,
                         environments=self.actor.environments,
                         images=images,
+                        pane_snapshot=pane_snapshot,
                     )
                 )
 
@@ -4060,7 +4080,17 @@ async def main_plan():
                     f"Interjection Decision: {decision.action} - {decision.reason}",
                 )
 
+                # Apply routing to in-flight handles via pane.
+                # Do this *before* executing potentially expensive interjection actions (e.g. modify_task),
+                # to minimize propagation latency to in-flight manager loops.
+                routing_status = await self._apply_interjection_routing(
+                    decision=decision,
+                    original_message=message,
+                    images=images,
+                )
                 status_message = await self._execute_interjection_decision(decision)
+                if routing_status:
+                    status_message = f"{status_message}\n{routing_status}"
 
                 return status_message
 
@@ -4069,13 +4099,138 @@ async def main_plan():
                 self.action_log.append(f"ERROR during interjection: {e}")
                 return f"Error processing interjection: {e}"
             finally:
-                should_resume = decision is None or decision.action not in (
-                    "modify_task",
-                    "replace_task",
-                    "clarify",
+                # Resume by default after interjection handling, except when we are
+                # intentionally waiting for follow-up user input or replacing the plan.
+                #
+                # `modify_task` only blocks resume when patches are present; when no patches
+                # are provided, we treat it as a no-op.
+                should_resume = decision is None or (
+                    decision.action not in ("replace_task", "clarify")
+                    and not (decision.action == "modify_task" and decision.patches)
                 )
                 if self._state == _HierarchicalHandleState.PAUSED and should_resume:
                     await self.resume()
+
+    async def _apply_interjection_routing(
+        self,
+        *,
+        decision: InterjectionDecision,
+        original_message: str,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+    ) -> str:
+        """Apply routing from an interjection decision to in-flight handles via the pane.
+
+        This is deterministic runtime logic: it does not perform an additional LLM call.
+        Returns a short status message summarizing routing actions (or '' for no routing).
+        """
+
+        if not hasattr(self, "pane") or self.pane is None:
+            return ""
+
+        routing_action = getattr(decision, "routing_action", None) or "none"
+        if routing_action == "none":
+            return ""
+
+        routed_message = getattr(decision, "routed_message", None) or original_message
+
+        try:
+            if routing_action == "targeted":
+                target_ids = getattr(decision, "target_handle_ids", None) or []
+                if not target_ids:
+                    logger.warning(
+                        "Interjection routing requested targeted but no target_handle_ids provided",
+                    )
+                    return ""
+
+                # Best-effort status summary: use current pane registry snapshot (metadata only).
+                try:
+                    known = {
+                        h["handle_id"]: h.get("status")
+                        for h in await self.pane.list_handles(status=None)
+                    }
+                except Exception:
+                    known = {}
+
+                results: list[str] = []
+                for hid in target_ids:
+                    # Always call pane.interject so the pane emits a canonical `steering_applied` event
+                    # (even when the handle is not found or already terminal).
+                    await self.pane.interject(
+                        hid,
+                        routed_message,
+                        parent_chat_context_cont=self.parent_chat_context,
+                        images=images,
+                    )
+                    st = known.get(hid)
+                    if st is None:
+                        results.append(
+                            f"- {hid}: dispatched (handle not found at snapshot time)",
+                        )
+                    elif st in ("completed", "failed", "stopped"):
+                        results.append(
+                            f"- {hid}: dispatched (handle already {st} at snapshot time)",
+                        )
+                    else:
+                        results.append(f"- {hid}: dispatched")
+
+                status = (
+                    f"Routed interjection to {len(target_ids)} handle(s):\n"
+                    + "\n".join(
+                        results,
+                    )
+                )
+                self.action_log.append(f"ROUTING: {status}")
+                return status
+
+            if routing_action == "broadcast_filtered":
+                from unity.actor.steerable_tool_pane import BroadcastFilter
+
+                # Micro-optimization / log hygiene: if there are no in-flight handles at all,
+                # don't attempt a broadcast (avoids "0 handle(s)" noise).
+                try:
+                    all_handles = await self.pane.list_handles(status=None)
+                    in_flight = [
+                        h
+                        for h in all_handles
+                        if h.get("status")
+                        in ("running", "paused", "waiting_for_clarification")
+                    ]
+                    if not in_flight:
+                        return ""
+                except Exception:
+                    # Best-effort; if introspection fails, proceed with broadcast.
+                    pass
+
+                filter_dict = getattr(decision, "broadcast_filter", None) or {}
+                statuses = filter_dict.get(
+                    "statuses",
+                    ["running", "paused", "waiting_for_clarification"],
+                )
+                bfilter = BroadcastFilter(
+                    statuses=statuses,
+                    origin_tool_prefixes=filter_dict.get("origin_tool_prefixes"),
+                    capabilities=filter_dict.get("capabilities"),
+                    created_after_step=filter_dict.get("created_after_step"),
+                    created_before_step=filter_dict.get("created_before_step"),
+                )
+                result = await self.pane.broadcast_interject(
+                    routed_message,
+                    filter=bfilter,
+                    parent_chat_context_cont=self.parent_chat_context,
+                    images=images,
+                )
+                status = f"Broadcast interjection to {int(result.get('count') or 0)} handle(s)"
+                self.action_log.append(f"ROUTING: {status}")
+                return status
+
+            logger.warning(f"Unknown routing_action: {routing_action}")
+            return ""
+
+        except Exception as e:
+            logger.error(f"Error applying interjection routing: {e}", exc_info=True)
+            msg = f"Routing error: {e}"
+            self.action_log.append(f"ROUTING ERROR: {msg}")
+            return msg
 
     async def _execute_interjection_decision(
         self,
@@ -4293,7 +4448,7 @@ async def main_plan():
                 f"Executing decision: refactor_and_generalize. Context: '{decision.generalization_context}'",
             )
             logger.debug(
-                "Refactor and generalize triggered. Proceeding to Phase 2 implementation.",
+                "Refactor and generalize triggered. Generating a refactored plan and restarting execution.",
             )
 
             run_id_being_cancelled = self.run_id
@@ -4537,6 +4692,13 @@ async def main_plan():
         elif decision.action == "complete_task":
             self.action_log.append("Executing decision: complete_task.")
             return await self.stop(final_result="Plan completed by user instruction.")
+
+        # If the LLM chooses modify_task without patches, treat it as "no plan change needed".
+        if decision.action == "modify_task" and not decision.patches:
+            self.action_log.append(
+                "Interjection chose modify_task but provided no patches; treating as no-op.",
+            )
+            return "No plan modifications provided; continuing execution."
 
         return "Error: Unknown or unsupported interjection action."
 
