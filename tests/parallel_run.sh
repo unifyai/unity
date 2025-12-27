@@ -336,25 +336,26 @@ fi
 if (( ! USE_STAGING )); then
   _local_orchestra_script="$SCRIPT_DIR/start_local_orchestra.sh"
   if [[ -x "$_local_orchestra_script" ]]; then
-    # Check if already running
-    if _local_url=$("$_local_orchestra_script" --check 2>/dev/null); then
-      echo "Using local orchestra: $_local_url"
-      export UNIFY_BASE_URL="$_local_url"
-      export UNIFY_KEY="unity-local-test-api-key"
-    else
-      # Try to start local orchestra
-      echo "Starting local orchestra..."
-      if "$_local_orchestra_script" start >/dev/null 2>&1; then
-        if _local_url=$("$_local_orchestra_script" --check 2>/dev/null); then
-          echo "Using local orchestra: $_local_url"
-          export UNIFY_BASE_URL="$_local_url"
-          export UNIFY_KEY="unity-local-test-api-key"
-        else
-          echo "Warning: Local orchestra started but not responding, using staging" >&2
-        fi
+    # Always restart local orchestra to ensure fresh state and correct settings
+    "$_local_orchestra_script" --stop >/dev/null 2>&1 || true
+    # Remove any existing PostgreSQL container so we get fresh one with correct max_connections
+    for _container in $(docker ps -a --filter "publish=5432" --format "{{.Names}}" 2>/dev/null); do
+      docker stop "$_container" >/dev/null 2>&1 || true
+      docker rm "$_container" >/dev/null 2>&1 || true
+    done
+    unset _container
+
+    echo "Starting local orchestra..."
+    if "$_local_orchestra_script" start >/dev/null 2>&1; then
+      if _local_url=$("$_local_orchestra_script" --check 2>/dev/null); then
+        echo "Using local orchestra: $_local_url"
+        export UNIFY_BASE_URL="$_local_url"
+        export UNIFY_KEY="unity-local-test-api-key"
       else
-        echo "Warning: Could not start local orchestra, using staging" >&2
+        echo "Warning: Local orchestra started but not responding, using staging" >&2
       fi
+    else
+      echo "Warning: Could not start local orchestra, using staging" >&2
     fi
   fi
   unset _local_orchestra_script _local_url
