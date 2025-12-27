@@ -1,5 +1,4 @@
 import argparse
-import sys
 from pathlib import Path
 from typing import List
 
@@ -78,11 +77,13 @@ def main() -> int:
 
     cache_files: List[Path] = []
     if not artifacts_dir.exists() or not artifacts_dir.is_dir():
-        print(
-            f"Artifacts directory does not exist or is not a directory: {artifacts_dir}",
-            file=sys.stderr,
-        )
-        return 1
+        # No artifacts uploaded (e.g., tests made no LLM calls) - this is OK
+        print(f"No cache artifacts found (directory {artifacts_dir} does not exist)")
+        print("This is normal for tests that don't make LLM calls.")
+        # Ensure existing cache is preserved (if any)
+        if output_file.exists():
+            print(f"Existing cache preserved: {output_file}")
+        return 0
     else:
         cache_files = find_cache_files(artifacts_dir)
 
@@ -92,7 +93,10 @@ def main() -> int:
             print(f"  {path}")
     else:
         print("  <none>")
-        return 1
+        # No diff files but directory exists - preserve existing cache
+        if output_file.exists():
+            print(f"Existing cache preserved: {output_file}")
+        return 0
 
     total_lines = concatenate_files(
         cache_files,
