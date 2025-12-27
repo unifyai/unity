@@ -498,14 +498,22 @@ start_orchestra_server() {
   fi
   log_info "Starting Orchestra with $num_cores workers (matching CPU cores)"
 
-  # Start the server in background with nohup and disown to fully detach.
-  # - nohup: ignore SIGHUP signals
-  # - disown: remove from shell's job table (prevents SIGHUP on shell exit)
-  # This is critical for GitHub Actions where step completion can terminate
-  # background processes that are still in the shell's job table.
-  ORCHESTRA_WORKERS_COUNT="$num_cores" nohup poetry run python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
+  # Get the virtualenv python path - bypass poetry run which may interfere
+  # with process management (poetry run can cause subprocess cleanup issues)
+  local venv_python
+  venv_python=$(poetry env info --executable 2>/dev/null)
+  if [[ -z "$venv_python" || ! -x "$venv_python" ]]; then
+    log_warn "Could not get virtualenv python path, falling back to poetry run"
+    venv_python="poetry run python"
+  else
+    log_info "Using virtualenv python: $venv_python"
+  fi
+
+  # Start server directly with the virtualenv python (not via poetry run)
+  # This avoids potential subprocess management issues with poetry
+  ORCHESTRA_WORKERS_COUNT="$num_cores" nohup $venv_python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
   local pid=$!
-  disown $pid 2>/dev/null || true  # disown may not be available in all shells
+  disown $pid 2>/dev/null || true
   echo "$pid" > "$ORCHESTRA_SERVER_PIDFILE"
 
   log_info "Orchestra server started with PID $pid"
