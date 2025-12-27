@@ -238,7 +238,9 @@ jobs:
         # =====================================================================
 
         # CI defaults for project management (can be overridden)
-        DELETE_ON_START="true"   # Default: delete project before tests
+        # With local orchestra (default), these are ignored - each job has fresh DB
+        # Only relevant when using --staging flag to use deployed orchestra
+        DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
 
@@ -450,9 +452,7 @@ jobs:
       UNIFY_TESTS_RAND_PROJ: "false"              # Shared project mode
       UNIFY_TESTS_DELETE_PROJ_ON_START: "false"   # Handled by setup job at workflow level
       UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"    # Keep project after tests
-      # API credentials
-      UNIFY_BASE_URL: https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0
-      UNIFY_KEY: ${{ secrets.USER_API_KEY }}
+      # API credentials (UNIFY_BASE_URL set by local orchestra startup)
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
@@ -461,6 +461,13 @@ jobs:
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
     - uses: actions/checkout@v2
+
+    - name: Clone orchestra repo for local deployment
+      uses: actions/checkout@v2
+      with:
+        repository: unifyai/orchestra
+        path: ../orchestra
+        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Setup environment from env_file_content
       if: inputs.env_file_content != ''
@@ -546,8 +553,10 @@ jobs:
           libxcomposite1 libxdamage1 libxrandr2 xvfb
         version: 1.0
 
-    - name: Install uv
-      run: pip install uv
+    - name: Install uv and poetry
+      run: |
+        pip install uv
+        pip install poetry
 
     # Cache uv dependencies to avoid re-downloading on every run
     - name: Cache uv dependencies
@@ -589,6 +598,18 @@ jobs:
         restore-keys: |
           cache-ndjson-${{ runner.os }}-
 
+    - name: Start local orchestra
+      run: |
+        echo "Starting local orchestra for CI testing..."
+        # Install orchestra dependencies
+        cd ../orchestra
+        poetry install --no-interaction
+        cd -
+
+        # Start local orchestra (includes PostgreSQL container + FastAPI server)
+        tests/start_local_orchestra.sh start
+        echo "Local orchestra is ready"
+
     - name: Run tests via parallel_run.sh
       id: run-tests
       run: |
@@ -609,6 +630,7 @@ jobs:
         # Ensure Xvfb is cleaned up on exit
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
+        # Local orchestra is started in previous step, parallel_run.sh will detect it
         echo "Running: parallel_run.sh --timeout $TIMEOUT $EXTRA_ARGS $TEST_PATH"
         tests/parallel_run.sh --timeout "$TIMEOUT" $EXTRA_ARGS "$TEST_PATH"
         TEST_EXIT_CODE=$?
@@ -728,7 +750,14 @@ jobs:
         echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
         # Kill all unity tmux servers and purge orphaned test processes
         tests/kill_server.sh --all || true
+        # Stop local orchestra
+        tests/start_local_orchestra.sh --stop || true
         echo "Cleanup complete."
+
+    - name: Stop local orchestra
+      if: always()
+      run: |
+        tests/start_local_orchestra.sh --stop || true
 
     - name: Upload cache artifact
       if: always()
