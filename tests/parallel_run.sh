@@ -366,6 +366,31 @@ is_random_projects_mode() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: delete the shared project (script-level, not per-session)
+# Used for UNIFY_TESTS_DELETE_PROJ_ON_START/EXIT in shared project mode
+# ---------------------------------------------------------------------------
+delete_shared_project() {
+  local phase="$1"  # "start" or "exit"
+  echo "Deleting shared project ($phase)..."
+  "$VENV_PY" - << 'PYEOF'
+import os
+import sys
+try:
+    import unify
+    project_name = os.environ.get("UNIFY_PROJECT", "UnityTests")
+    try:
+        unify.delete_project(project_name)
+        print(f"Deleted project '{project_name}'")
+    except Exception as e:
+        # Project may not exist yet (on start) or already deleted
+        print(f"Note: Could not delete project '{project_name}': {e}")
+except ImportError:
+    print("Warning: unify module not available, skipping project deletion")
+    sys.exit(0)
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
 # Helper: check if a var name is in the --env overrides
 # Usage: is_var_in_env_overrides VAR_NAME
 # ---------------------------------------------------------------------------
@@ -397,7 +422,11 @@ build_env_exports() {
   done
 
   # Propagate relevant system environment variables if not already set via --env
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_TESTS_DELETE_PROJ_ON_START UNIFY_TESTS_DELETE_PROJ_ON_EXIT UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP"
+  # Note: UNIFY_TESTS_DELETE_PROJ_ON_START and UNIFY_TESTS_DELETE_PROJ_ON_EXIT are intentionally
+  # NOT propagated to individual sessions. They are handled at the script level to avoid race
+  # conditions where multiple sessions try to delete the shared project simultaneously.
+  # Exception: In random projects mode, deletion is safe per-session (handled in run_cmd).
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP"
   for var_name in $propagate_vars; do
     if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
       exports="$exports ${var_name}=${!var_name}"
@@ -510,6 +539,11 @@ if [[ -n "${UNITY_SKIP_SHARED_PROJECT_PREP:-}" ]]; then
 elif is_random_projects_mode; then
   echo "Random projects mode detected; skipping shared project preparation..."
 else
+  # Handle DELETE_ON_START at script level (before any sessions start)
+  # This is done here (not per-session) to avoid race conditions
+  if is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_START"; then
+    delete_shared_project "start"
+  fi
   echo "Preparing shared UnityTests project..."
   if [[ -f "$SCRIPT_DIR/_prepare_shared_project.py" ]]; then
     "$VENV_PY" "$SCRIPT_DIR/_prepare_shared_project.py"
@@ -530,8 +564,16 @@ run_cmd() {
   # Always export UTF-8 locale for proper emoji handling in session names
   env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8'
   if is_random_projects_mode; then
-    # Random projects mode: each session gets its own project
-    env_exports="$env_exports UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True"
+    # Random projects mode: each session gets its own isolated project.
+    # Per-session deletion is safe here since projects don't overlap.
+    env_exports="$env_exports UNIFY_TESTS_RAND_PROJ=True"
+    # Pass delete flags only in random mode (safe per-session)
+    if is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_START"; then
+      env_exports="$env_exports UNIFY_TESTS_DELETE_PROJ_ON_START=True"
+    fi
+    if is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_EXIT"; then
+      env_exports="$env_exports UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True"
+    fi
   else
     # Shared project mode: skip session setup (already done by prepare script)
     env_exports="$env_exports UNIFY_SKIP_SESSION_SETUP=True"
@@ -1114,6 +1156,12 @@ for sid in "${session_ids[@]}"; do
     failed_sessions+=( "$current_name" )
   fi
 done
+
+# Handle DELETE_ON_EXIT at script level (after all sessions complete)
+# This is done here (not per-session) to avoid race conditions in shared mode
+if ! is_random_projects_mode && is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_EXIT"; then
+  delete_shared_project "exit"
+fi
 
 if (( ${#failed_sessions[@]} > 0 )); then
   echo ""
