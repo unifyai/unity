@@ -17,21 +17,21 @@ on:
         required: false
         type: string
         default: "."
-      timeout_minutes:
-        description: "timeout_minutes: session timeout"
-        required: false
-        type: number
-        default: 120
-      parallel_run_args:
-        description: "parallel_run_args: extra arguments (highest priority)"
-        required: false
-        type: string
-        default: ""
       env_file_content:
         description: "env_file: paste .env contents (raw or base64; sensitive values masked)"
         required: false
         type: string
         default: ""
+      parallel_run_args:
+        description: "parallel_run_args: extra arguments (highest priority)"
+        required: false
+        type: string
+        default: ""
+      timeout_minutes:
+        description: "timeout_minutes: session timeout"
+        required: false
+        type: number
+        default: 120
 
   # Push events - tests only run if commit message contains [run-tests]
   push:
