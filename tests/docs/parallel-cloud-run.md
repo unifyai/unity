@@ -13,9 +13,15 @@ parallel_cloud_run.sh .
 
 # Run multiple folders
 parallel_cloud_run.sh tests/test_actor tests/test_conductor
+
+# Override a .env setting
+parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
 ```
 
-The script automatically handles uncommitted changes and unpushed commits, pushing them to a staging branch for CI while leaving your local state unchanged.
+The script automatically:
+- **Loads your `.env`** and passes all settings to CI (API keys, `UNIFY_BASE_URL`, etc.)
+- **Handles uncommitted changes** by pushing to a staging branch
+- **Displays the direct run URL** after triggering (polls until the run appears)
 
 ---
 
@@ -90,11 +96,12 @@ The staging branch is automatically created on first use and updated on each sub
 ## Usage
 
 ```bash
-parallel_cloud_run.sh [test_paths...]
+parallel_cloud_run.sh [--env KEY=VALUE ...] [test_paths...]
 ```
 
 | Argument | Description |
 |----------|-------------|
+| `--env KEY=VALUE` | Override an environment variable (repeatable) |
 | `test_paths` | Paths to test (default: `.` for all tests) |
 
 **Examples:**
@@ -112,6 +119,27 @@ parallel_cloud_run.sh tests/test_actor/test_code_act.py
 # All tests
 parallel_cloud_run.sh .
 parallel_cloud_run.sh   # equivalent
+
+# Override settings
+parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
+parallel_cloud_run.sh --env UNIFY_CACHE=false --env UNIFY_MODEL=gpt-4o tests/
+```
+
+---
+
+## Environment Variables
+
+The script automatically loads your local `.env` file and passes **all** values to the CI workflow via `--env` arguments. This means CI runs use your personal settings:
+
+- `UNIFY_KEY` — your API key
+- `UNIFY_BASE_URL` — your preferred backend (staging/production)
+- `UNIFY_CACHE`, `UNIFY_MODEL`, etc.
+
+**Override order**: `.env` values are loaded first, then explicit `--env` args are appended. Later values win, so command-line overrides take precedence.
+
+```bash
+# .env has UNIFY_CACHE=true, but this overrides it to false
+parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
 ```
 
 ---
@@ -151,6 +179,21 @@ Use `parallel_cloud_run.sh` when you want to test uncommitted work without creat
 
 ---
 
+## Run URL
+
+After triggering, the script polls GitHub (up to 30 seconds) until the workflow run appears, then displays its direct URL:
+
+```
+Waiting for run to appear....
+
+✓ Workflow triggered!
+  https://github.com/unifyai/unity/actions/runs/12345678
+```
+
+Click the link to go directly to your run—no need to search through the Actions list.
+
+---
+
 ## Workflow Example
 
 ```bash
@@ -159,9 +202,9 @@ vim unity/contact_manager/manager.py
 
 # 2. Test them on CI without committing
 parallel_cloud_run.sh tests/test_contact_manager
+# Output includes direct link to the run
 
-# 3. Watch the run
-gh run list --repo unifyai/unity --workflow tests.yml
+# 3. Click the link or watch via CLI
 gh run watch --repo unifyai/unity <run-id>
 
 # 4. If tests pass, commit your changes
