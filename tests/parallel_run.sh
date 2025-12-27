@@ -15,6 +15,16 @@ if [ -f "$_ENV_FILE" ]; then
 fi
 unset _ENV_FILE
 
+# ---- Local Orchestra Override ----
+# If local orchestra is running, use it instead of staging/production.
+# This eliminates network latency and staging server bottlenecks.
+# To start local orchestra: ./start_local_orchestra.sh
+if _local_url=$("$SCRIPT_DIR/start_local_orchestra.sh" --check 2>/dev/null); then
+  export UNIFY_BASE_URL="$_local_url"
+  export UNIFY_KEY="unity-local-test-api-key"
+fi
+unset _local_url
+
 # Source common utilities (socket derivation, locale, timeout handling)
 source "$SCRIPT_DIR/_shell_common.sh"
 
