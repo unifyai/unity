@@ -86,7 +86,7 @@ When local changes exist, the script creates a **unique staging branch** named `
 **Why unique branches?**
 
 - **Natural isolation**: Each CI run has its own branch—no interference between runs
-- **Agent-friendly**: Cloud-based agents (e.g., Cursor) can reference the exact branch
+- **Agent-friendly**: Cloud-based agents (e.g., Cursor) can checkout the exact branch to debug failures
 - **Clear history**: Easy to see what code each CI run tested
 
 **Tradeoff**: Unique branches accumulate over time. Periodically clean up stale branches:
@@ -199,7 +199,7 @@ Waiting for run to appear....
   https://github.com/unifyai/unity/actions/runs/12345678
 ```
 
-Click the link to go directly to your run—no need to search through the Actions list.
+Click the link to go directly to your run—no need to search through the Actions list. CI also generates `pytest-logs-*` artifacts containing full test output, which can be shared with Cursor agents to help debug any failures.
 
 ---
 
