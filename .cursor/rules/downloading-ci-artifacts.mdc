@@ -1,0 +1,44 @@
+# Downloading GitHub Actions Artifacts
+
+When a user shares a GitHub Actions artifact URL, extract the artifact ID and download directly—no name guessing required.
+
+## URL Format
+
+```
+https://github.com/{owner}/{repo}/actions/runs/{run_id}/artifacts/{artifact_id}
+                                            ↑                      ↑
+                                         run_id              artifact_id
+```
+
+## Download Command
+
+Use the artifact ID directly with the GitHub API:
+
+```bash
+# Download and extract (Python works in all environments; unzip may not be installed)
+gh api repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip > /tmp/artifact.zip && \
+  python3 -c "import zipfile; zipfile.ZipFile('/tmp/artifact.zip').extractall('/tmp/artifact-contents/')"
+```
+
+**Example** for URL `https://github.com/unifyai/unity/actions/runs/20537719146/artifacts/4974812109`:
+
+```bash
+gh api repos/unifyai/unity/actions/artifacts/4974812109/zip > /tmp/artifact.zip && \
+  python3 -c "import zipfile; zipfile.ZipFile('/tmp/artifact.zip').extractall('/tmp/pytest-logs/')"
+```
+
+## Why This Approach
+
+- **Direct**: Uses the artifact ID from the URL—no API calls to discover artifact names
+- **Reliable**: Artifact IDs are unique and stable; names can vary
+- **Fast**: Single command, no trial-and-error
+
+## Alternative: Download All Artifacts from a Run
+
+If you only have a run ID (no artifact ID), download everything:
+
+```bash
+gh run download {run_id} --repo {owner}/{repo} -D /tmp/artifacts/
+```
+
+This works when there's one artifact or when you need all of them.
