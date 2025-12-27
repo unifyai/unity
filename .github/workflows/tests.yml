@@ -571,9 +571,26 @@ jobs:
           fi
         done
 
+        # Aggregate LLM cache stats from all test sessions
+        CACHE_STATS=""
+        if [ -d "pytest_logs" ]; then
+          TOTAL_HITS=0
+          TOTAL_MISSES=0
+          for f in $(find pytest_logs -name "*.cache_stats.json" 2>/dev/null); do
+            hits=$(python3 -c "import json; print(json.load(open('$f')).get('hits', 0))" 2>/dev/null || echo 0)
+            misses=$(python3 -c "import json; print(json.load(open('$f')).get('misses', 0))" 2>/dev/null || echo 0)
+            TOTAL_HITS=$((TOTAL_HITS + hits))
+            TOTAL_MISSES=$((TOTAL_MISSES + misses))
+          done
+          if [ $((TOTAL_HITS + TOTAL_MISSES)) -gt 0 ]; then
+            HIT_RATE=$(python3 -c "print(f'{$TOTAL_HITS * 100.0 / ($TOTAL_HITS + $TOTAL_MISSES):.1f}')")
+            CACHE_STATS=" | 🔄 Cache: ${HIT_RATE}% hits (${TOTAL_HITS}/${TOTAL_MISSES})"
+          fi
+        fi
+
         # Echo to step output (foldable view)
         echo "=== Test Results ==="
-        echo "✅ $PASS_COUNT passed, ❌ $FAIL_COUNT failed"
+        echo "✅ $PASS_COUNT passed, ❌ $FAIL_COUNT failed$CACHE_STATS"
         echo ""
         echo "Failed tests:"
         echo "$FAILED_SESSIONS"
@@ -583,7 +600,7 @@ jobs:
         # Write to GitHub Summary page
         echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed$CACHE_STATS — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Failed tests:" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
@@ -601,16 +618,33 @@ jobs:
           log_count=$(find pytest_logs -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
         fi
 
+        # Aggregate LLM cache stats from all test sessions
+        CACHE_STATS=""
+        if [ -d "pytest_logs" ]; then
+          TOTAL_HITS=0
+          TOTAL_MISSES=0
+          for f in $(find pytest_logs -name "*.cache_stats.json" 2>/dev/null); do
+            hits=$(python3 -c "import json; print(json.load(open('$f')).get('hits', 0))" 2>/dev/null || echo 0)
+            misses=$(python3 -c "import json; print(json.load(open('$f')).get('misses', 0))" 2>/dev/null || echo 0)
+            TOTAL_HITS=$((TOTAL_HITS + hits))
+            TOTAL_MISSES=$((TOTAL_MISSES + misses))
+          done
+          if [ $((TOTAL_HITS + TOTAL_MISSES)) -gt 0 ]; then
+            HIT_RATE=$(python3 -c "print(f'{$TOTAL_HITS * 100.0 / ($TOTAL_HITS + $TOTAL_MISSES):.1f}')")
+            CACHE_STATS=" | 🔄 Cache: ${HIT_RATE}% hits (${TOTAL_HITS}/${TOTAL_MISSES})"
+          fi
+        fi
+
         # Echo to step output (foldable view)
         echo "=== All tests passed ==="
-        echo "✅ $log_count passed"
+        echo "✅ $log_count passed$CACHE_STATS"
         echo ""
         echo "View logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
         echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ $log_count** passed$CACHE_STATS — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
     - name: Upload cache artifact
       if: always()
