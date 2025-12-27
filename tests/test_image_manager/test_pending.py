@@ -347,7 +347,7 @@ async def test_pending_update_persists_after_resolution_and_backend_reflects(
             backend_caption = rows[0].caption
             if backend_caption == "label-final":
                 break
-        _time.sleep(0.05)
+        await asyncio.sleep(0.05)
 
     assert backend_caption == "label-final"
     assert rid in ds and ds[rid].get("caption") == "label-final"
@@ -394,7 +394,7 @@ async def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypat
     # Wait for one call to update_images and backend to reflect v3
     deadline = _time.time() + 2.0
     while _time.time() < deadline and len(captured_payloads) == 0:
-        _time.sleep(0.02)
+        await asyncio.sleep(0.02)
 
     assert len(captured_payloads) == 1
     last_payload = captured_payloads[0][0]
@@ -410,7 +410,7 @@ async def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypat
             backend_caption = rows[0].caption
             if backend_caption == "v3":
                 break
-        _time.sleep(0.05)
+        await asyncio.sleep(0.05)
 
     assert backend_caption == "v3"
 
