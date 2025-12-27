@@ -23,7 +23,12 @@ on:
         type: number
         default: 120
       parallel_run_args:
-        description: "parallel_run_args: extra arguments"
+        description: "parallel_run_args: extra arguments (highest priority)"
+        required: false
+        type: string
+        default: ""
+      env_file_content:
+        description: "env_file: paste .env contents (⚠️ values visible in logs)"
         required: false
         type: string
         default: ""
@@ -220,12 +225,77 @@ jobs:
         echo "test_dirs=$json" >> "$GITHUB_OUTPUT"
         echo "Matrix paths: $json" >&2
 
-        # Detect project deletion flags and random projects mode from FLAGS
-        # These need workflow-level handling to avoid race conditions across runners
-        # CI defaults: shared project mode, delete on start, keep on exit
+        # =====================================================================
+        # Process environment variables with correct precedence:
+        # 1. CI defaults (lowest priority)
+        # 2. env_file_content (middle priority - can override defaults)
+        # 3. parallel_run_args/FLAGS (highest priority - overrides everything)
+        # =====================================================================
+
+        # CI defaults for project management (can be overridden)
         DELETE_ON_START="true"   # Default: delete project before tests
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
+
+        # Collect env vars from env_file (will be passed to runners)
+        declare -a ENV_FILE_VARS=()
+
+        # Parse env_file_content input (middle priority)
+        ENV_FILE_CONTENT="${{ inputs.env_file_content }}"
+        if [[ -n "$ENV_FILE_CONTENT" ]]; then
+          echo "Parsing env_file_content..." >&2
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            # Skip empty lines and comments
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+            # Extract KEY=VALUE (handles quotes)
+            if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
+              key="${BASH_REMATCH[1]}"
+              value="${BASH_REMATCH[2]}"
+
+              # Strip surrounding quotes if present
+              if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
+                value="${BASH_REMATCH[1]}"
+              fi
+
+              # Check for project management flags (handle at workflow level)
+              case "$key=$value" in
+                UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
+                  DELETE_ON_START="true"
+                  echo "  env_file: DELETE_ON_START=true" >&2
+                  ;;
+                UNIFY_TESTS_DELETE_PROJ_ON_START=false|UNIFY_TESTS_DELETE_PROJ_ON_START=False|UNIFY_TESTS_DELETE_PROJ_ON_START=0)
+                  DELETE_ON_START="false"
+                  echo "  env_file: DELETE_ON_START=false" >&2
+                  ;;
+                UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=1)
+                  DELETE_ON_EXIT="true"
+                  echo "  env_file: DELETE_ON_EXIT=true" >&2
+                  ;;
+                UNIFY_TESTS_DELETE_PROJ_ON_EXIT=false|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=False|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=0)
+                  DELETE_ON_EXIT="false"
+                  echo "  env_file: DELETE_ON_EXIT=false" >&2
+                  ;;
+                UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
+                  RANDOM_PROJECTS="true"
+                  ENV_FILE_VARS+=("--env" "$key=$value")  # Keep for runners
+                  echo "  env_file: RANDOM_PROJECTS=true" >&2
+                  ;;
+                UNIFY_TESTS_RAND_PROJ=false|UNIFY_TESTS_RAND_PROJ=False|UNIFY_TESTS_RAND_PROJ=0)
+                  RANDOM_PROJECTS="false"
+                  echo "  env_file: RANDOM_PROJECTS=false" >&2
+                  ;;
+                *)
+                  # Regular env var - pass to runners
+                  ENV_FILE_VARS+=("--env" "$key=$value")
+                  echo "  env_file: $key=..." >&2
+                  ;;
+              esac
+            fi
+          done <<< "$ENV_FILE_CONTENT"
+        fi
+
+        # Process FLAGS (from parallel_run_args) - highest priority
         declare -a CLEANED_FLAGS=()
         skip_next=false
 
@@ -238,48 +308,44 @@ jobs:
           flag="${FLAGS[$i]}"
           next_val="${FLAGS[$((i+1))]:-}"
 
-          # Check for --env with delete flags or random projects
+          # Check for --env with project management flags
           if [[ "$flag" == "--env" ]]; then
             case "$next_val" in
-              # DELETE_ON_START overrides
               UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
                 DELETE_ON_START="true"
                 skip_next=true
-                echo "Detected DELETE_ON_START=true (will handle at workflow level)" >&2
+                echo "  args: DELETE_ON_START=true (override)" >&2
                 continue
                 ;;
               UNIFY_TESTS_DELETE_PROJ_ON_START=false|UNIFY_TESTS_DELETE_PROJ_ON_START=False|UNIFY_TESTS_DELETE_PROJ_ON_START=0)
                 DELETE_ON_START="false"
                 skip_next=true
-                echo "Detected DELETE_ON_START=false (override default)" >&2
+                echo "  args: DELETE_ON_START=false (override)" >&2
                 continue
                 ;;
-              # DELETE_ON_EXIT overrides
               UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=1)
                 DELETE_ON_EXIT="true"
                 skip_next=true
-                echo "Detected DELETE_ON_EXIT=true (will handle at workflow level)" >&2
+                echo "  args: DELETE_ON_EXIT=true (override)" >&2
                 continue
                 ;;
               UNIFY_TESTS_DELETE_PROJ_ON_EXIT=false|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=False|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=0)
                 DELETE_ON_EXIT="false"
                 skip_next=true
-                echo "Detected DELETE_ON_EXIT=false (override default)" >&2
+                echo "  args: DELETE_ON_EXIT=false (override)" >&2
                 continue
                 ;;
-              # RAND_PROJ overrides
               UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
                 RANDOM_PROJECTS="true"
-                # Keep this flag - it's safe per-runner
-                CLEANED_FLAGS+=("$flag" "$next_val")
+                CLEANED_FLAGS+=("$flag" "$next_val")  # Keep for runners
                 skip_next=true
-                echo "Detected RANDOM_PROJECTS=true mode" >&2
+                echo "  args: RANDOM_PROJECTS=true (override)" >&2
                 continue
                 ;;
               UNIFY_TESTS_RAND_PROJ=false|UNIFY_TESTS_RAND_PROJ=False|UNIFY_TESTS_RAND_PROJ=0)
                 RANDOM_PROJECTS="false"
                 skip_next=true
-                echo "Detected RANDOM_PROJECTS=false (override)" >&2
+                echo "  args: RANDOM_PROJECTS=false (override)" >&2
                 continue
                 ;;
             esac
@@ -288,15 +354,25 @@ jobs:
           CLEANED_FLAGS+=("$flag")
         done
 
+        echo "" >&2
+        echo "Final settings:" >&2
+        echo "  DELETE_ON_START=$DELETE_ON_START" >&2
+        echo "  DELETE_ON_EXIT=$DELETE_ON_EXIT" >&2
+        echo "  RANDOM_PROJECTS=$RANDOM_PROJECTS" >&2
+
         echo "delete_on_start=$DELETE_ON_START" >> "$GITHUB_OUTPUT"
         echo "delete_on_exit=$DELETE_ON_EXIT" >> "$GITHUB_OUTPUT"
         echo "random_projects=$RANDOM_PROJECTS" >> "$GITHUB_OUTPUT"
 
-        # Build flags string for parallel_run_args (with deletion flags removed)
-        if (( ${#CLEANED_FLAGS[@]} > 0 )); then
-          flags_str="${CLEANED_FLAGS[*]}"
+        # Build flags string: env_file vars first, then explicit args (for correct precedence)
+        declare -a ALL_FLAGS=()
+        ALL_FLAGS+=("${ENV_FILE_VARS[@]}")
+        ALL_FLAGS+=("${CLEANED_FLAGS[@]}")
+
+        if (( ${#ALL_FLAGS[@]} > 0 )); then
+          flags_str="${ALL_FLAGS[*]}"
           echo "parallel_run_args=$flags_str" >> "$GITHUB_OUTPUT"
-          echo "Flags (cleaned): $flags_str" >&2
+          echo "Flags: $flags_str" >&2
         else
           echo "parallel_run_args=" >> "$GITHUB_OUTPUT"
         fi
