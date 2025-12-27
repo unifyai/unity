@@ -18,12 +18,12 @@ on:
         type: string
         default: "."
       env_file_content:
-        description: "env_file: paste .env contents (raw or base64; sensitive values masked)"
+        description: "env_file: paste .env contents (sensitive values masked)"
         required: false
         type: string
         default: ""
       parallel_run_args:
-        description: "parallel_run_args: extra arguments (highest priority)"
+        description: "parallel_run_args: extra arguments (env args override env_file)"
         required: false
         type: string
         default: ""
