@@ -139,3 +139,134 @@ def test_system_contacts_have_is_system_flag(monkeypatch):
     users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert len(users) == 1, "Exactly one user contact (ID 1) should exist"
     assert users[0].is_system is True, "User contact should have is_system=True"
+
+
+# ---------------------------------------------------------------------------
+#  Org member provisioning tests
+# ---------------------------------------------------------------------------
+
+
+@_handle_project
+def test_org_members_provisioned_as_system_contacts(monkeypatch):
+    """Org members should be created as system contacts with correct fields."""
+    # Mock org members API to return test data
+    fake_org_members = [
+        {"email": "alice@org.com", "name": "Alice Johnson"},
+        {"email": "bob@org.com", "name": "Bob"},  # Single name (no surname)
+    ]
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._fetch_org_members",
+        lambda: fake_org_members,
+    )
+
+    cm = ContactManager()
+
+    # Find Alice
+    alice_contacts = cm.filter_contacts(filter="email_address == 'alice@org.com'")[
+        "contacts"
+    ]
+    assert len(alice_contacts) == 1, "Alice should be created"
+    alice = alice_contacts[0]
+    assert alice.first_name == "Alice"
+    assert alice.surname == "Johnson"
+    assert alice.is_system is True, "Org member should have is_system=True"
+    assert alice.respond_to is True, "Org member should have respond_to=True"
+    assert alice.response_policy == "", "Org member should have blank response_policy"
+
+    # Find Bob (single name case)
+    bob_contacts = cm.filter_contacts(filter="email_address == 'bob@org.com'")[
+        "contacts"
+    ]
+    assert len(bob_contacts) == 1, "Bob should be created"
+    bob = bob_contacts[0]
+    assert bob.first_name == "Bob"
+    assert bob.surname is None, "Single name should have no surname"
+    assert bob.is_system is True
+
+
+@_handle_project
+def test_org_member_skips_primary_user_email(monkeypatch):
+    """Org member with same email as primary user (id=1) should be skipped."""
+    from unity.session_details import DEFAULT_USER_EMAIL
+
+    # Include the primary user's email in org members list
+    fake_org_members = [
+        {"email": DEFAULT_USER_EMAIL, "name": "Primary User Duplicate"},
+        {"email": "other@org.com", "name": "Other Member"},
+    ]
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._fetch_org_members",
+        lambda: fake_org_members,
+    )
+
+    cm = ContactManager()
+
+    # Primary user should still be id=1, not duplicated
+    primary_users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
+    assert len(primary_users) == 1
+    # The name should NOT be overwritten to "Primary User Duplicate"
+    assert primary_users[0].first_name != "Primary"
+
+    # Other member should be created
+    other_contacts = cm.filter_contacts(filter="email_address == 'other@org.com'")[
+        "contacts"
+    ]
+    assert len(other_contacts) == 1, "Other org member should be created"
+
+
+@_handle_project
+def test_existing_contact_updated_to_system_for_org_member(monkeypatch):
+    """If contact with org member email exists, it should be marked is_system=True."""
+    # First create ContactManager with no org members to create a regular contact
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._fetch_org_members",
+        lambda: [],
+    )
+    cm = ContactManager()
+
+    # Create a regular contact
+    result = cm._create_contact(
+        first_name="PreExisting",
+        email_address="preexisting@org.com",
+    )
+    cid = result["details"]["contact_id"]
+
+    # Verify it's not a system contact
+    contacts = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    assert contacts[0].is_system is False
+
+    # Now simulate org members API returning this email
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._fetch_org_members",
+        lambda: [{"email": "preexisting@org.com", "name": "Pre Existing"}],
+    )
+
+    # Re-sync by calling provision directly
+    from unity.contact_manager.system_contacts import provision_org_member_contacts
+
+    provision_org_member_contacts(cm)
+
+    # Contact should now be marked as system
+    contacts = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    assert contacts[0].is_system is True, "Existing contact should be updated to system"
+
+
+@_handle_project
+def test_no_org_members_when_personal_api_key(monkeypatch):
+    """When _fetch_org_members returns empty (personal key), no extra contacts created."""
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._fetch_org_members",
+        lambda: [],
+    )
+
+    cm = ContactManager()
+
+    # Should only have assistant (0) and user (1)
+    all_contacts = cm.filter_contacts()["contacts"]
+    contact_ids = {c.contact_id for c in all_contacts}
+
+    # Only system contacts should exist
+    assert 0 in contact_ids, "Assistant should exist"
+    assert 1 in contact_ids, "User should exist"
+    # No other contacts created from org members
+    assert len(contact_ids) == 2, "Only assistant and user should exist"
