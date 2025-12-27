@@ -20,7 +20,7 @@ parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
 
 The script automatically:
 - **Loads your `.env`** and passes all settings to CI (API keys, `UNIFY_BASE_URL`, etc.)
-- **Handles uncommitted changes** by pushing to a staging branch
+- **Handles uncommitted changes** by pushing to a unique staging branch
 - **Displays the direct run URL** after triggering (polls until the run appears)
 
 ---
@@ -60,9 +60,9 @@ If you have uncommitted changes or unpushed commits:
 └─────────────────────────────────────────────┘
                     │
      1. Stash uncommitted changes
-     2. Create/reset staging branch
+     2. Create unique staging branch
      3. Apply stash + commit
-     4. Force push staging branch
+     4. Push staging branch
      5. Trigger CI on staging branch
      6. Return to feature branch
      7. Restore stash (preserving staged/unstaged)
@@ -73,7 +73,7 @@ If you have uncommitted changes or unpushed commits:
 │  - file1.py still staged                    │
 │  - file2.py still unstaged                  │
 │                                             │
-│  CI runs on: ci-staging-your-name           │
+│  CI runs on: ci-staging-your-name-2025-...  │
 └─────────────────────────────────────────────┘
 ```
 
@@ -81,15 +81,24 @@ If you have uncommitted changes or unpushed commits:
 
 ## The Staging Branch
 
-When local changes exist, the script uses a persistent staging branch named `ci-staging-{username}` (derived from your git username).
+When local changes exist, the script creates a **unique staging branch** named `ci-staging-{username}-{datetime}`.
 
-**Why persistent?**
+**Why unique branches?**
 
-- **No timing issues**: If we created and immediately deleted a temp branch, the CI run might fail because GitHub hasn't finished cloning yet
-- **No branch pollution**: One branch per developer, reused across runs
-- **Fast**: Force-push overwrites previous state instantly
+- **Natural isolation**: Each CI run has its own branch—no interference between runs
+- **Agent-friendly**: Cloud-based agents (e.g., Cursor) can reference the exact branch
+- **Clear history**: Easy to see what code each CI run tested
 
-The staging branch is automatically created on first use and updated on each subsequent run.
+**Tradeoff**: Unique branches accumulate over time. Periodically clean up stale branches:
+
+```bash
+# Delete all remote ci-staging-* branches
+git branch -r | grep 'ci-staging-' | sed 's|origin/||' | xargs -I{} git push origin --delete {}
+
+# Or delete branches older than 7 days (requires gh CLI)
+gh api repos/unifyai/unity/branches --paginate -q '.[].name' | \
+  grep 'ci-staging-' | xargs -I{} git push origin --delete {}
+```
 
 ---
 
