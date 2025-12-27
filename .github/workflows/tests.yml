@@ -472,6 +472,10 @@ jobs:
         path: orchestra
         token: ${{ secrets.ORCHESTRA_TOKEN }}
 
+    - name: Get orchestra commit SHA
+      id: orchestra-sha
+      run: echo "sha=$(git -C orchestra rev-parse HEAD)" >> $GITHUB_OUTPUT
+
     - name: Setup environment from env_file_content
       if: inputs.env_file_content != ''
       run: |
@@ -600,6 +604,15 @@ jobs:
         key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
         restore-keys: |
           cache-ndjson-${{ runner.os }}-
+
+    # Cache orchestra's poetry dependencies keyed on orchestra's commit SHA
+    - name: Cache orchestra poetry dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pypoetry
+        key: poetry-orchestra-${{ runner.os }}-${{ steps.orchestra-sha.outputs.sha }}
+        restore-keys: |
+          poetry-orchestra-${{ runner.os }}-
 
     - name: Start local orchestra
       run: |
