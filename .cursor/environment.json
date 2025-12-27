@@ -4,7 +4,7 @@
     "dockerfile": "Dockerfile"
   },
   "install": "cd /workspace && uv sync --all-groups",
-  "start": "sudo service redis-server start",
+  "start": "cd /workspace && ./scripts/configure-git-identity.sh && ./scripts/install-git-hooks.sh && sudo service redis-server start",
   "terminals": [
     {
       "name": "Tests",
