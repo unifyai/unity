@@ -54,20 +54,21 @@ get_run_url() {
       # Use Python to filter and select the best matching run:
       # 1. Must be created after trigger_time (required)
       # 2. Prefer runs whose name contains test_path (soft preference)
+      # Note: Pipe JSON via stdin to avoid heredoc escaping issues with special chars
       local run_id
-      run_id=$(python3 << EOF
+      run_id=$(echo "$runs_json" | python3 -c "
 import json
 import sys
 from datetime import datetime
 
-runs = json.loads('''$runs_json''')
-trigger_time = datetime.fromisoformat("$trigger_time".replace("Z", "+00:00"))
-test_path = "$test_path".lower()
+runs = json.load(sys.stdin)
+trigger_time = datetime.fromisoformat('$trigger_time'.replace('Z', '+00:00'))
+test_path = '$test_path'.lower()
 
 # Filter to runs created after trigger
 candidates = []
 for run in runs:
-    created = datetime.fromisoformat(run["createdAt"].replace("Z", "+00:00"))
+    created = datetime.fromisoformat(run['createdAt'].replace('Z', '+00:00'))
     if created >= trigger_time:
         candidates.append(run)
 
@@ -75,18 +76,18 @@ if not candidates:
     sys.exit(0)
 
 # Prefer runs whose name contains the test path (case-insensitive)
-if test_path and test_path != ".":
+if test_path and test_path != '.':
     for run in candidates:
-        name = (run.get("name") or "").lower()
+        name = (run.get('name') or '').lower()
         # Check if test path or its basename is in the name
-        path_parts = test_path.replace("tests/", "").split("/")
+        path_parts = test_path.replace('tests/', '').split('/')
         if any(part in name for part in path_parts if part):
-            print(run["databaseId"])
+            print(run['databaseId'])
             sys.exit(0)
 
 # Fall back to first timestamp-matched run
-print(candidates[0]["databaseId"])
-EOF
+print(candidates[0]['databaseId'])
+"
       )
 
       if [[ -n "$run_id" ]]; then
