@@ -78,6 +78,10 @@ project_cleanup() {
     "$(_unity_resolve_script project_cleanup.sh)" "$@"
 }
 
+start_local_orchestra() {
+    "$(_unity_resolve_script start_local_orchestra.sh)" "$@"
+}
+
 # ---- Completion: attach ----
 _unity_attach_complete() {
     local -a sessions
