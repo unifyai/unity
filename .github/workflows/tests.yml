@@ -452,6 +452,8 @@ jobs:
       UNIFY_TESTS_RAND_PROJ: "false"              # Shared project mode
       UNIFY_TESTS_DELETE_PROJ_ON_START: "false"   # Handled by setup job at workflow level
       UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"    # Keep project after tests
+      # Local orchestra path (cloned into workspace, not sibling directory)
+      ORCHESTRA_REPO_PATH: ${{ github.workspace }}/orchestra
       # API credentials (UNIFY_BASE_URL set by local orchestra startup)
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -467,7 +469,7 @@ jobs:
       with:
         repository: unifyai/orchestra
         ref: staging
-        path: ../orchestra
+        path: orchestra
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Setup environment from env_file_content
@@ -602,8 +604,8 @@ jobs:
     - name: Start local orchestra
       run: |
         echo "Starting local orchestra for CI testing..."
-        # Install orchestra dependencies
-        cd ../orchestra
+        # Install orchestra dependencies (cloned into workspace/orchestra)
+        cd "$ORCHESTRA_REPO_PATH"
         poetry install --no-interaction
         cd -
 
