@@ -155,10 +155,16 @@ REPEAT_COUNT=1
 # With --overwrite-scenarios: delete and recreate test scenarios from scratch
 OVERWRITE_SCENARIOS=0
 
-# Maximum concurrent sessions (default 40 for balanced parallelism)
+# Maximum concurrent sessions (default: number of CPU cores)
 # With -j/--jobs N: limit to N concurrent running sessions
 # Use -j 0 (or -j none/unlimited) for no limit (not recommended for large test suites)
-MAX_JOBS=25
+# Detect CPU cores for default MAX_JOBS (works on macOS and Linux/GitHub Actions)
+if [[ "$(uname)" == "Darwin" ]]; then
+  _NUM_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+else
+  _NUM_CORES=$(nproc 2>/dev/null || echo 4)
+fi
+MAX_JOBS=$_NUM_CORES
 
 # Use staging/remote orchestra instead of local
 # With --staging: skip local orchestra, use UNIFY_BASE_URL from .env
@@ -278,7 +284,7 @@ while (( "$#" )); do
       echo "  -s, --serial         One session per file (default: one per test)"
       echo "  -m, --match PATTERN  Filter files by glob pattern"
       echo "  -e, --env KEY=VALUE  Set environment variable (repeatable)"
-      echo "  -j, --jobs N         Max concurrent sessions (default: 25)"
+      echo "  -j, --jobs N         Max concurrent sessions (default: CPU cores, currently $_NUM_CORES)"
       echo "  --eval-only          Run only @pytest.mark.eval tests"
       echo "  --symbolic-only      Run only non-eval tests"
       echo "  --repeat N           Run each test N times"
