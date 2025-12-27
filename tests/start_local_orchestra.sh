@@ -497,8 +497,15 @@ start_orchestra_server() {
     num_cores=$(nproc 2>/dev/null || echo 4)
   fi
   log_info "Starting Orchestra with $num_cores workers (matching CPU cores)"
+
+  # Start the server in background with nohup and disown to fully detach.
+  # - nohup: ignore SIGHUP signals
+  # - disown: remove from shell's job table (prevents SIGHUP on shell exit)
+  # This is critical for GitHub Actions where step completion can terminate
+  # background processes that are still in the shell's job table.
   ORCHESTRA_WORKERS_COUNT="$num_cores" nohup poetry run python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
   local pid=$!
+  disown $pid 2>/dev/null || true  # disown may not be available in all shells
   echo "$pid" > "$ORCHESTRA_SERVER_PIDFILE"
 
   log_info "Orchestra server started with PID $pid"
