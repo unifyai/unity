@@ -15,6 +15,8 @@ set -euo pipefail
 #   parallel_cloud_run.sh tests/test_contact_manager
 #   parallel_cloud_run.sh tests/test_actor tests/test_conductor
 #   parallel_cloud_run.sh .                    # All tests
+#   parallel_cloud_run.sh -s                   # All tests, serial mode (implicit ".")
+#   parallel_cloud_run.sh -s tests/            # Specific path, serial mode
 #   parallel_cloud_run.sh --env UNIFY_CACHE=false tests/  # Override .env
 #
 # Each run creates a unique branch (ci-staging-{user}-{datetime}) for isolation.
@@ -127,10 +129,11 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 # ============================================================================
-# Parse arguments: separate --env flags from test paths
+# Parse arguments: separate flags from test paths
 # ============================================================================
 
 declare -a EXTRA_ENV_ARGS=()
+declare -a PASSTHROUGH_ARGS=()
 declare -a TEST_PATHS=()
 
 while (( $# > 0 )); do
@@ -148,6 +151,11 @@ while (( $# > 0 )); do
       EXTRA_ENV_ARGS+=("--env" "${1#--env=}")
       shift
       ;;
+    -*)
+      # Any other flag (e.g., -s, --timeout, --no-cache) passes through to parallel_run.sh
+      PASSTHROUGH_ARGS+=("$1")
+      shift
+      ;;
     *)
       TEST_PATHS+=("$1")
       shift
@@ -155,7 +163,7 @@ while (( $# > 0 )); do
   esac
 done
 
-# Build test_path from remaining arguments
+# Build test_path from remaining arguments (default to "." for full suite)
 if (( ${#TEST_PATHS[@]} == 0 )); then
   TEST_PATH="."
 else
@@ -174,11 +182,14 @@ if [[ -f "$ENV_FILE" ]]; then
   ENV_FILE_CONTENT_B64=$(base64 < "$ENV_FILE" | tr -d '\n')
 fi
 
-# Build parallel_run_args from ONLY explicit --env CLI args (not .env file)
+# Build parallel_run_args from passthrough flags and explicit --env CLI args
 # These are intentionally visible in logs since user explicitly passed them
 PARALLEL_RUN_ARGS=""
+if (( ${#PASSTHROUGH_ARGS[@]} > 0 )); then
+  PARALLEL_RUN_ARGS="${PASSTHROUGH_ARGS[*]}"
+fi
 if (( ${#EXTRA_ENV_ARGS[@]} > 0 )); then
-  PARALLEL_RUN_ARGS="${EXTRA_ENV_ARGS[*]}"
+  PARALLEL_RUN_ARGS="${PARALLEL_RUN_ARGS:+$PARALLEL_RUN_ARGS }${EXTRA_ENV_ARGS[*]}"
 fi
 
 # ============================================================================
