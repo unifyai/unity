@@ -7,16 +7,23 @@ set -euo pipefail
 # If there are local changes (uncommitted or unpushed), uses a persistent staging
 # branch to push the current state, triggers CI, then restores the local state.
 #
+# Environment variables from .env are automatically passed to CI. Explicit --env
+# args override .env values (later values win).
+#
 # Usage:
 #   parallel_cloud_run.sh tests/test_contact_manager
 #   parallel_cloud_run.sh tests/test_actor tests/test_conductor
 #   parallel_cloud_run.sh .                    # All tests
+#   parallel_cloud_run.sh --env UNIFY_CACHE=false tests/  # Override .env
 #
 # The staging branch (ci-staging-{username}) persists for CI reruns.
 
 REPO="unifyai/unity"
 WORKFLOW="tests.yml"
 POLL_TIMEOUT=30  # seconds to wait for run to appear
+
+# Find repo root
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 # ============================================================================
 # Helper: Poll for the workflow run URL after triggering
@@ -77,11 +84,77 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-# Build test_path from arguments
-if (( $# == 0 )); then
+# ============================================================================
+# Parse arguments: separate --env flags from test paths
+# ============================================================================
+
+declare -a EXTRA_ENV_ARGS=()
+declare -a TEST_PATHS=()
+
+while (( $# > 0 )); do
+  case "$1" in
+    --env)
+      if [[ -n "${2:-}" ]]; then
+        EXTRA_ENV_ARGS+=("--env" "$2")
+        shift 2
+      else
+        echo "Error: --env requires a KEY=VALUE argument" >&2
+        exit 1
+      fi
+      ;;
+    --env=*)
+      EXTRA_ENV_ARGS+=("--env" "${1#--env=}")
+      shift
+      ;;
+    *)
+      TEST_PATHS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Build test_path from remaining arguments
+if (( ${#TEST_PATHS[@]} == 0 )); then
   TEST_PATH="."
 else
-  TEST_PATH="$*"
+  TEST_PATH="${TEST_PATHS[*]}"
+fi
+
+# ============================================================================
+# Load .env file and build parallel_run_args
+# ============================================================================
+
+declare -a ENV_ARGS=()
+
+# Parse .env file if it exists (values from .env come first, can be overridden)
+ENV_FILE="$REPO_ROOT/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip empty lines and comments
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+    # Extract KEY=VALUE (handles quotes, strips leading/trailing whitespace)
+    if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+
+      # Strip surrounding quotes if present
+      if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      fi
+
+      ENV_ARGS+=("--env" "$key=$value")
+    fi
+  done < "$ENV_FILE"
+fi
+
+# Append explicit --env args (these override .env values since they come later)
+ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
+
+# Build the parallel_run_args string
+PARALLEL_RUN_ARGS=""
+if (( ${#ENV_ARGS[@]} > 0 )); then
+  PARALLEL_RUN_ARGS="${ENV_ARGS[*]}"
 fi
 
 # ============================================================================
@@ -106,12 +179,21 @@ has_unpushed_commits() {
 if ! has_uncommitted_changes && ! has_unpushed_commits; then
   echo "Branch is clean and pushed. Triggering CI on: $CURRENT_BRANCH"
   echo "Test path: $TEST_PATH"
+  [[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Extra args: $PARALLEL_RUN_ARGS"
   echo ""
 
-  gh workflow run "$WORKFLOW" \
-    --repo "$REPO" \
-    --ref "$CURRENT_BRANCH" \
-    -f test_path="$TEST_PATH"
+  if [[ -n "$PARALLEL_RUN_ARGS" ]]; then
+    gh workflow run "$WORKFLOW" \
+      --repo "$REPO" \
+      --ref "$CURRENT_BRANCH" \
+      -f test_path="$TEST_PATH" \
+      -f parallel_run_args="$PARALLEL_RUN_ARGS"
+  else
+    gh workflow run "$WORKFLOW" \
+      --repo "$REPO" \
+      --ref "$CURRENT_BRANCH" \
+      -f test_path="$TEST_PATH"
+  fi
 
   echo ""
   RUN_URL=$(get_run_url "$CURRENT_BRANCH")
@@ -192,12 +274,21 @@ git checkout "$CURRENT_BRANCH"
 echo ""
 echo "Triggering CI on staging branch: $STAGING_BRANCH"
 echo "Test path: $TEST_PATH"
+[[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Extra args: $PARALLEL_RUN_ARGS"
 echo ""
 
-gh workflow run "$WORKFLOW" \
-  --repo "$REPO" \
-  --ref "$STAGING_BRANCH" \
-  -f test_path="$TEST_PATH"
+if [[ -n "$PARALLEL_RUN_ARGS" ]]; then
+  gh workflow run "$WORKFLOW" \
+    --repo "$REPO" \
+    --ref "$STAGING_BRANCH" \
+    -f test_path="$TEST_PATH" \
+    -f parallel_run_args="$PARALLEL_RUN_ARGS"
+else
+  gh workflow run "$WORKFLOW" \
+    --repo "$REPO" \
+    --ref "$STAGING_BRANCH" \
+    -f test_path="$TEST_PATH"
+fi
 
 echo ""
 RUN_URL=$(get_run_url "$STAGING_BRANCH")
