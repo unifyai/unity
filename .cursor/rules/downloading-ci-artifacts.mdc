@@ -1,8 +1,24 @@
 # Downloading GitHub Actions Artifacts
 
-When a user shares a GitHub Actions artifact URL, extract the artifact ID and download directly—no name guessing required.
+When a user shares a GitHub Actions artifact URL, use the convenience script to download logs directly into `pytest_logs/`.
+
+## Usage
+
+```bash
+tests/download_ci_logs.sh <artifact_url>
+```
+
+**Example:**
+
+```bash
+tests/download_ci_logs.sh https://github.com/unifyai/unity/actions/runs/20537719146/artifacts/4974812109
+```
+
+This downloads and extracts the artifact directly into `pytest_logs/`, placing CI logs alongside any local test logs.
 
 ## URL Format
+
+The script automatically extracts the artifact ID from the URL:
 
 ```
 https://github.com/{owner}/{repo}/actions/runs/{run_id}/artifacts/{artifact_id}
@@ -10,35 +26,25 @@ https://github.com/{owner}/{repo}/actions/runs/{run_id}/artifacts/{artifact_id}
                                          run_id              artifact_id
 ```
 
-## Download Command
+## After Downloading
 
-Use the artifact ID directly with the GitHub API:
+View the logs using Shell (`ls`) and Read tools (see `gitignored-directory-access.mdc`):
 
 ```bash
-# Download and extract (Python works in all environments; unzip may not be installed)
+# List downloaded log directories
+ls pytest_logs/
+
+# List files in a specific run
+ls pytest_logs/2025-12-27T10-15-40_unitypid3272/
+```
+
+Then use the Read tool to inspect specific log files.
+
+## Manual Alternative
+
+If the script isn't available, download directly via the GitHub API:
+
+```bash
 gh api repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip > /tmp/artifact.zip && \
-  python3 -c "import zipfile; zipfile.ZipFile('/tmp/artifact.zip').extractall('/tmp/artifact-contents/')"
+  python3 -c "import zipfile; zipfile.ZipFile('/tmp/artifact.zip').extractall('pytest_logs/')"
 ```
-
-**Example** for URL `https://github.com/unifyai/unity/actions/runs/20537719146/artifacts/4974812109`:
-
-```bash
-gh api repos/unifyai/unity/actions/artifacts/4974812109/zip > /tmp/artifact.zip && \
-  python3 -c "import zipfile; zipfile.ZipFile('/tmp/artifact.zip').extractall('/tmp/pytest-logs/')"
-```
-
-## Why This Approach
-
-- **Direct**: Uses the artifact ID from the URL—no API calls to discover artifact names
-- **Reliable**: Artifact IDs are unique and stable; names can vary
-- **Fast**: Single command, no trial-and-error
-
-## Alternative: Download All Artifacts from a Run
-
-If you only have a run ID (no artifact ID), download everything:
-
-```bash
-gh run download {run_id} --repo {owner}/{repo} -D /tmp/artifacts/
-```
-
-This works when there's one artifact or when you need all of them.
