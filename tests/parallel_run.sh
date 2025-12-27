@@ -295,6 +295,11 @@ while (( "$#" )); do
       PYTEST_EXTRA_ARGS=("$@")
       break
       ;;
+    -*)
+      echo "Error: Unknown option: $1" >&2
+      echo "Run with -h for usage information." >&2
+      exit 2
+      ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
       shift
