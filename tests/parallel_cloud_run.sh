@@ -163,40 +163,22 @@ else
 fi
 
 # ============================================================================
-# Load .env file and build parallel_run_args
+# Load .env file content (will be passed securely to CI, not as CLI args)
 # ============================================================================
 
-declare -a ENV_ARGS=()
-
-# Parse .env file if it exists (values from .env come first, can be overridden)
 ENV_FILE="$REPO_ROOT/.env"
+ENV_FILE_CONTENT_B64=""
 if [[ -f "$ENV_FILE" ]]; then
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    # Skip empty lines and comments
-    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-
-    # Extract KEY=VALUE (handles quotes, strips leading/trailing whitespace)
-    if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
-      key="${BASH_REMATCH[1]}"
-      value="${BASH_REMATCH[2]}"
-
-      # Strip surrounding quotes if present
-      if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
-        value="${BASH_REMATCH[1]}"
-      fi
-
-      ENV_ARGS+=("--env" "$key=$value")
-    fi
-  done < "$ENV_FILE"
+  # Base64 encode the entire .env file for safe transport to CI
+  # CI will decode it, write to .env on runner, and mask sensitive values
+  ENV_FILE_CONTENT_B64=$(base64 < "$ENV_FILE" | tr -d '\n')
 fi
 
-# Append explicit --env args (these override .env values since they come later)
-ENV_ARGS+=("${EXTRA_ENV_ARGS[@]}")
-
-# Build the parallel_run_args string
+# Build parallel_run_args from ONLY explicit --env CLI args (not .env file)
+# These are intentionally visible in logs since user explicitly passed them
 PARALLEL_RUN_ARGS=""
-if (( ${#ENV_ARGS[@]} > 0 )); then
-  PARALLEL_RUN_ARGS="${ENV_ARGS[*]}"
+if (( ${#EXTRA_ENV_ARGS[@]} > 0 )); then
+  PARALLEL_RUN_ARGS="${EXTRA_ENV_ARGS[*]}"
 fi
 
 # ============================================================================
@@ -221,24 +203,25 @@ has_unpushed_commits() {
 if ! has_uncommitted_changes && ! has_unpushed_commits; then
   echo "Branch is clean and pushed. Triggering CI on: $CURRENT_BRANCH"
   echo "Test path: $TEST_PATH"
-  [[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Extra args: $PARALLEL_RUN_ARGS"
+  [[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Explicit overrides: $PARALLEL_RUN_ARGS"
+  [[ -n "$ENV_FILE_CONTENT_B64" ]] && echo "Environment: .env file (contents hidden)"
   echo ""
 
   # Capture timestamp before triggering (for accurate run detection)
   TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  if [[ -n "$PARALLEL_RUN_ARGS" ]]; then
-    gh workflow run "$WORKFLOW" \
-      --repo "$REPO" \
-      --ref "$CURRENT_BRANCH" \
-      -f test_path="$TEST_PATH" \
-      -f parallel_run_args="$PARALLEL_RUN_ARGS"
-  else
-    gh workflow run "$WORKFLOW" \
-      --repo "$REPO" \
-      --ref "$CURRENT_BRANCH" \
-      -f test_path="$TEST_PATH"
-  fi
+  # Build workflow dispatch command
+  # Note: env_file_content is base64-encoded and passed securely (not echoed)
+  gh_args=(
+    workflow run "$WORKFLOW"
+    --repo "$REPO"
+    --ref "$CURRENT_BRANCH"
+    -f "test_path=$TEST_PATH"
+  )
+  [[ -n "$PARALLEL_RUN_ARGS" ]] && gh_args+=(-f "parallel_run_args=$PARALLEL_RUN_ARGS")
+  [[ -n "$ENV_FILE_CONTENT_B64" ]] && gh_args+=(-f "env_file_content=$ENV_FILE_CONTENT_B64")
+
+  gh "${gh_args[@]}"
 
   echo ""
   RUN_URL=$(get_run_url "$CURRENT_BRANCH" "$TRIGGER_TIME" "$TEST_PATH")
@@ -320,24 +303,25 @@ git checkout "$CURRENT_BRANCH"
 echo ""
 echo "Triggering CI on staging branch: $STAGING_BRANCH"
 echo "Test path: $TEST_PATH"
-[[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Extra args: $PARALLEL_RUN_ARGS"
+[[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Explicit overrides: $PARALLEL_RUN_ARGS"
+[[ -n "$ENV_FILE_CONTENT_B64" ]] && echo "Environment: .env file (contents hidden)"
 echo ""
 
 # Capture timestamp before triggering (for accurate run detection)
 TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-if [[ -n "$PARALLEL_RUN_ARGS" ]]; then
-  gh workflow run "$WORKFLOW" \
-    --repo "$REPO" \
-    --ref "$STAGING_BRANCH" \
-    -f test_path="$TEST_PATH" \
-    -f parallel_run_args="$PARALLEL_RUN_ARGS"
-else
-  gh workflow run "$WORKFLOW" \
-    --repo "$REPO" \
-    --ref "$STAGING_BRANCH" \
-    -f test_path="$TEST_PATH"
-fi
+# Build workflow dispatch command
+# Note: env_file_content is base64-encoded and passed securely (not echoed)
+gh_args=(
+  workflow run "$WORKFLOW"
+  --repo "$REPO"
+  --ref "$STAGING_BRANCH"
+  -f "test_path=$TEST_PATH"
+)
+[[ -n "$PARALLEL_RUN_ARGS" ]] && gh_args+=(-f "parallel_run_args=$PARALLEL_RUN_ARGS")
+[[ -n "$ENV_FILE_CONTENT_B64" ]] && gh_args+=(-f "env_file_content=$ENV_FILE_CONTENT_B64")
+
+gh "${gh_args[@]}"
 
 echo ""
 RUN_URL=$(get_run_url "$STAGING_BRANCH" "$TRIGGER_TIME" "$TEST_PATH")

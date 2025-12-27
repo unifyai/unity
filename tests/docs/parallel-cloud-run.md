@@ -19,7 +19,7 @@ parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
 ```
 
 The script automatically:
-- **Loads your `.env`** and passes all settings to CI (API keys, `UNIFY_BASE_URL`, etc.)
+- **Loads your `.env`** and passes settings securely to CI (sensitive values masked in logs)
 - **Handles uncommitted changes** by pushing to a unique staging branch
 - **Displays the direct run URL** after triggering (polls until the run appears)
 
@@ -138,16 +138,24 @@ parallel_cloud_run.sh --env UNIFY_CACHE=false --env UNIFY_MODEL=gpt-4o tests/
 
 ## Environment Variables
 
-The script automatically loads your local `.env` file and passes **all** values to the CI workflow via `--env` arguments. This means CI runs use your personal settings:
+The script automatically loads your local `.env` file and passes it securely to CI. The content is base64-encoded in transit and sensitive values (like API keys) are automatically masked in logs using GitHub's secret masking.
 
-- `UNIFY_KEY` — your API key
-- `UNIFY_BASE_URL` — your preferred backend (staging/production)
-- `UNIFY_CACHE`, `UNIFY_MODEL`, etc.
+This means CI runs use your personal settings without exposing secrets:
 
-**Override order**: `.env` values are loaded first, then explicit `--env` args are appended. Later values win, so command-line overrides take precedence.
+- `UNIFY_KEY` — your API key (masked)
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. (masked)
+- `UNIFY_BASE_URL`, `UNIFY_CACHE`, etc. (visible, non-sensitive)
+
+**What appears in logs:**
+- ✅ Explicit `--env` overrides you pass on the command line
+- ✅ Test paths and timeout settings
+- ❌ Contents of your `.env` file (hidden)
+
+**Override order**: `.env` values are sourced first on the runner, then explicit `--env` args take precedence.
 
 ```bash
 # .env has UNIFY_CACHE=true, but this overrides it to false
+# Only the explicit override is visible in CI logs
 parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
 ```
 
