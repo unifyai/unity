@@ -31,24 +31,62 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 get_run_url() {
   local branch="$1"
-  local start_time
-  start_time=$(date +%s)
+  local trigger_time="$2"  # ISO timestamp from before triggering
+  local test_path="$3"     # For soft name matching
+
+  local poll_start
+  poll_start=$(date +%s)
 
   echo -n "Waiting for run to appear"
 
   while true; do
-    # Get the most recent run on this branch
-    local run_info
-    run_info=$(gh run list \
+    # Get recent runs on this branch (fetch several to find the right one)
+    local runs_json
+    runs_json=$(gh run list \
       --repo "$REPO" \
       --workflow "$WORKFLOW" \
       --branch "$branch" \
-      --limit 1 \
-      --json databaseId,createdAt,status 2>/dev/null || echo "")
+      --limit 10 \
+      --json databaseId,createdAt,name 2>/dev/null || echo "[]")
 
-    if [[ -n "$run_info" && "$run_info" != "[]" ]]; then
+    if [[ -n "$runs_json" && "$runs_json" != "[]" ]]; then
+      # Use Python to filter and select the best matching run:
+      # 1. Must be created after trigger_time (required)
+      # 2. Prefer runs whose name contains test_path (soft preference)
       local run_id
-      run_id=$(echo "$run_info" | grep -o '"databaseId":[0-9]*' | head -1 | cut -d: -f2)
+      run_id=$(python3 << EOF
+import json
+import sys
+from datetime import datetime
+
+runs = json.loads('''$runs_json''')
+trigger_time = datetime.fromisoformat("$trigger_time".replace("Z", "+00:00"))
+test_path = "$test_path".lower()
+
+# Filter to runs created after trigger
+candidates = []
+for run in runs:
+    created = datetime.fromisoformat(run["createdAt"].replace("Z", "+00:00"))
+    if created >= trigger_time:
+        candidates.append(run)
+
+if not candidates:
+    sys.exit(0)
+
+# Prefer runs whose name contains the test path (case-insensitive)
+if test_path and test_path != ".":
+    for run in candidates:
+        name = (run.get("name") or "").lower()
+        # Check if test path or its basename is in the name
+        path_parts = test_path.replace("tests/", "").split("/")
+        if any(part in name for part in path_parts if part):
+            print(run["databaseId"])
+            sys.exit(0)
+
+# Fall back to first timestamp-matched run
+print(candidates[0]["databaseId"])
+EOF
+      )
 
       if [[ -n "$run_id" ]]; then
         echo ""
@@ -58,7 +96,7 @@ get_run_url() {
     fi
 
     # Check timeout
-    local elapsed=$(( $(date +%s) - start_time ))
+    local elapsed=$(( $(date +%s) - poll_start ))
     if (( elapsed >= POLL_TIMEOUT )); then
       echo ""
       echo "https://github.com/$REPO/actions/workflows/$WORKFLOW"
@@ -182,6 +220,9 @@ if ! has_uncommitted_changes && ! has_unpushed_commits; then
   [[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Extra args: $PARALLEL_RUN_ARGS"
   echo ""
 
+  # Capture timestamp before triggering (for accurate run detection)
+  TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
   if [[ -n "$PARALLEL_RUN_ARGS" ]]; then
     gh workflow run "$WORKFLOW" \
       --repo "$REPO" \
@@ -196,7 +237,7 @@ if ! has_uncommitted_changes && ! has_unpushed_commits; then
   fi
 
   echo ""
-  RUN_URL=$(get_run_url "$CURRENT_BRANCH")
+  RUN_URL=$(get_run_url "$CURRENT_BRANCH" "$TRIGGER_TIME" "$TEST_PATH")
   echo ""
   echo "✓ Workflow triggered!"
   echo "  $RUN_URL"
@@ -277,6 +318,9 @@ echo "Test path: $TEST_PATH"
 [[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Extra args: $PARALLEL_RUN_ARGS"
 echo ""
 
+# Capture timestamp before triggering (for accurate run detection)
+TRIGGER_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
 if [[ -n "$PARALLEL_RUN_ARGS" ]]; then
   gh workflow run "$WORKFLOW" \
     --repo "$REPO" \
@@ -291,7 +335,7 @@ else
 fi
 
 echo ""
-RUN_URL=$(get_run_url "$STAGING_BRANCH")
+RUN_URL=$(get_run_url "$STAGING_BRANCH" "$TRIGGER_TIME" "$TEST_PATH")
 echo ""
 echo "✓ Workflow triggered!"
 echo "  $RUN_URL"
