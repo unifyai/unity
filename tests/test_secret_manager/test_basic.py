@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import pytest
 
 from unity.secret_manager.secret_manager import SecretManager
 
@@ -46,23 +46,25 @@ def test_delete_secret(secret_manager_context):
     assert len(rows) == 0
 
 
-def test_from_placeholder_public_method(secret_manager_context):
+@pytest.mark.asyncio
+async def test_from_placeholder_public_method(secret_manager_context):
     sm = SecretManager()
     sm._create_secret(name="page_username", value="user123")
     sm._create_secret(name="page_password", value="pass456")
 
     cmd = "input username as ${page_username} and password as ${page_password}"
-    resolved = asyncio.get_event_loop().run_until_complete(sm.from_placeholder(cmd))
+    resolved = await sm.from_placeholder(cmd)
     assert "user123" in resolved and "pass456" in resolved
 
 
-def test_to_placeholder_public_method(secret_manager_context):
+@pytest.mark.asyncio
+async def test_to_placeholder_public_method(secret_manager_context):
     sm = SecretManager()
     sm._create_secret(name="api_key", value="sk-live-abc", description="api")
     sm._create_secret(name="db_password", value="p@ssw0rd", description="db")
 
     text = "Use sk-live-abc to authenticate and p@ssw0rd for the database."
-    out = asyncio.get_event_loop().run_until_complete(sm.to_placeholder(text))
+    out = await sm.to_placeholder(text)
     assert "${api_key}" in out and "${db_password}" in out
 
 
