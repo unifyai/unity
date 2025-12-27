@@ -234,13 +234,17 @@ parallel_cloud_run.sh tests/test_contact_manager
 
 # Run all tests
 parallel_cloud_run.sh .
+
+# Override a setting from .env
+parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
 ```
 
 The script automatically:
-1. Stashes uncommitted changes
-2. Pushes to a staging branch (`ci-staging-{username}`)
-3. Triggers the CI workflow
-4. Restores your local state (staged/unstaged preserved)
+1. Loads your `.env` file and passes all values to CI
+2. Stashes uncommitted changes
+3. Pushes to a staging branch (`ci-staging-{username}`)
+4. Triggers the CI workflow and displays the direct run URL
+5. Restores your local state (staged/unstaged preserved)
 
 See [Cloud Runner Guide](docs/parallel-cloud-run.md) for details.
 
