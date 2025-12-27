@@ -1,6 +1,8 @@
 import sys
 import os
+import json
 import pytest
+import unify
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -511,6 +513,24 @@ def pytest_unconfigure(config):
             setattr(tr._tw, _TEE_STREAM_ATTR, _TEE_ORIG_STREAM)
         _TEE_ORIG_STREAM = None
         _TEE_STREAM_ATTR = None
+
+    # Write cache stats to JSON for CI aggregation
+    if _TEE_LOG_PATH is not None:
+        try:
+            stats = unify.get_cache_stats()
+            cache_stats_file = _TEE_LOG_PATH.with_suffix(".cache_stats.json")
+            cache_stats_file.write_text(
+                json.dumps(
+                    {
+                        "hits": stats.hits,
+                        "misses": stats.misses,
+                        "hit_rate": stats.get_percentage_of_cache_hits(),
+                    },
+                ),
+            )
+        except Exception:
+            pass  # Best effort - don't fail tests if cache stats can't be written
+
     _TEE_LOG_PATH = None
     # No sys.stdout/sys.stderr monkeypatch remains; nothing to restore here.
 
