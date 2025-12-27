@@ -556,20 +556,26 @@ jobs:
       run: |
         ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
 
-        # Collect session counts and failed session list from tmux
+        # Count total tests from log files (robust - doesn't depend on tmux session timing)
+        TOTAL_COUNT=0
+        if [ -d "pytest_logs" ]; then
+          TOTAL_COUNT=$(find pytest_logs -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
+        fi
+
+        # Get failed sessions from tmux (these persist, unlike passing sessions which auto-close)
         FAILED_SESSIONS=""
-        PASS_COUNT=0
         FAIL_COUNT=0
         for sock in /tmp/tmux-$(id -u)/unity*; do
           if [ -S "$sock" ]; then
             socket_name=$(basename "$sock")
-            ALL_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' || true)
-            FAILED_SESSIONS=$(echo "$ALL_SESSIONS" | grep '^f ' || true)
-            PASS_COUNT=$(echo "$ALL_SESSIONS" | grep -c '^p ' || echo 0)
+            FAILED_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' | grep '^f ' || true)
             FAIL_COUNT=$(echo "$FAILED_SESSIONS" | grep -c '^f ' || echo 0)
             break
           fi
         done
+
+        # Infer passes from total - failures (robust to timing of session auto-close)
+        PASS_COUNT=$((TOTAL_COUNT - FAIL_COUNT))
 
         # Aggregate LLM cache stats from all test sessions
         CACHE_STATS=""
