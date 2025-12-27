@@ -393,7 +393,7 @@ def provision_org_member_contacts(self) -> None:
                     email_address=email,
                     is_system=True,
                     respond_to=True,
-                    response_policy=self.USER_MANAGER_RESPONSE_POLICY,
+                    response_policy="",
                 )
         except Exception:
             # Best-effort: continue with other members
