@@ -28,7 +28,7 @@ on:
         type: string
         default: ""
       env_file_content:
-        description: "env_file: base64-encoded .env contents (values masked in logs)"
+        description: "env_file: paste .env contents (raw or base64; sensitive values masked)"
         required: false
         type: string
         default: ""
@@ -242,11 +242,15 @@ jobs:
 
         # Parse env_file_content for project management flags only
         # (actual env vars are written to .env in pytest job, not passed as --env args)
-        ENV_FILE_CONTENT_B64="${{ inputs.env_file_content }}"
-        if [[ -n "$ENV_FILE_CONTENT_B64" ]]; then
+        ENV_FILE_CONTENT_RAW="${{ inputs.env_file_content }}"
+        if [[ -n "$ENV_FILE_CONTENT_RAW" ]]; then
           echo "Parsing env_file_content for project management flags..." >&2
-          # Decode base64 content
-          ENV_FILE_CONTENT=$(echo "$ENV_FILE_CONTENT_B64" | base64 -d 2>/dev/null || echo "")
+          # Try to decode as base64; if it fails or produces garbage, assume raw content
+          if DECODED=$(echo "$ENV_FILE_CONTENT_RAW" | base64 -d 2>/dev/null) && [[ "$DECODED" == *$'\n'* || "$DECODED" == *"="* ]]; then
+            ENV_FILE_CONTENT="$DECODED"
+          else
+            ENV_FILE_CONTENT="$ENV_FILE_CONTENT_RAW"
+          fi
           if [[ -n "$ENV_FILE_CONTENT" ]]; then
             while IFS= read -r line || [[ -n "$line" ]]; do
               # Skip empty lines and comments
@@ -459,9 +463,19 @@ jobs:
     - name: Setup environment from env_file_content
       if: inputs.env_file_content != ''
       run: |
-        # Decode base64 env_file_content and write to .env
-        # Mask sensitive values so they don't appear in logs
-        echo "${{ inputs.env_file_content }}" | base64 -d > .env
+        # Write env_file_content to .env, handling both base64-encoded and raw formats
+        # - parallel_cloud_run.sh sends base64-encoded content
+        # - Manual UI paste can be raw .env content (more convenient)
+        CONTENT="${{ inputs.env_file_content }}"
+
+        # Try to decode as base64; if it fails or produces binary garbage, assume raw content
+        if DECODED=$(echo "$CONTENT" | base64 -d 2>/dev/null) && [[ "$DECODED" == *$'\n'* || "$DECODED" == *"="* ]]; then
+          echo "$DECODED" > .env
+          echo "✓ Decoded base64 env_file_content"
+        else
+          echo "$CONTENT" > .env
+          echo "✓ Using raw env_file_content"
+        fi
 
         # Mask values for sensitive variable names (these patterns catch most secrets)
         # Sensitive patterns: *_KEY, *_SECRET, *_PASSWORD, *_TOKEN, *_CREDENTIAL*, *_API_*
