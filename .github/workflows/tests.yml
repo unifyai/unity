@@ -556,12 +556,14 @@ jobs:
       run: |
         ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
 
-        # Collect failed sessions from tmux (passed ones auto-close after 10s)
+        # Collect ONLY failed sessions from tmux (filter by "f ❌" prefix)
+        # Don't rely on passed sessions auto-closing - explicitly filter
         FAILED_SESSIONS=""
         for sock in /tmp/tmux-$(id -u)/unity*; do
           if [ -S "$sock" ]; then
             socket_name=$(basename "$sock")
-            FAILED_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' || true)
+            # Get session names, filter to only failed ones (start with "f")
+            FAILED_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' | grep '^f ' || true)
             break
           fi
         done
