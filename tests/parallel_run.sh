@@ -15,16 +15,6 @@ if [ -f "$_ENV_FILE" ]; then
 fi
 unset _ENV_FILE
 
-# ---- Local Orchestra Override ----
-# If local orchestra is running, use it instead of staging/production.
-# This eliminates network latency and staging server bottlenecks.
-# To start local orchestra: ./start_local_orchestra.sh
-if _local_url=$("$SCRIPT_DIR/start_local_orchestra.sh" --check 2>/dev/null); then
-  export UNIFY_BASE_URL="$_local_url"
-  export UNIFY_KEY="unity-local-test-api-key"
-fi
-unset _local_url
-
 # Source common utilities (socket derivation, locale, timeout handling)
 source "$SCRIPT_DIR/_shell_common.sh"
 
@@ -170,6 +160,10 @@ OVERWRITE_SCENARIOS=0
 # Use -j 0 (or -j none/unlimited) for no limit (not recommended for large test suites)
 MAX_JOBS=25
 
+# Use staging/remote orchestra instead of local
+# With --staging: skip local orchestra, use UNIFY_BASE_URL from .env
+USE_STAGING=0
+
 # Environment variable overrides (accumulated via --env KEY=VALUE)
 declare -a ENV_OVERRIDES=()
 
@@ -239,6 +233,10 @@ while (( "$#" )); do
       OVERWRITE_SCENARIOS=1
       shift
       ;;
+    --staging)
+      USE_STAGING=1
+      shift
+      ;;
     --tags)
       if [[ -n "${2-}" ]]; then
         # Split on comma and add each tag to TAGS array
@@ -286,6 +284,7 @@ while (( "$#" )); do
       echo "  --repeat N           Run each test N times"
       echo "  --tags TAG           Tag runs for filtering (repeatable)"
       echo "  --overwrite-scenarios  Delete and recreate test scenarios"
+      echo "  --staging            Use staging orchestra (skip local)"
       echo "  -h, --help           Show this help"
       echo "  --                   Pass remaining args directly to pytest"
       echo ""
@@ -321,6 +320,40 @@ done
 if (( EVAL_ONLY && SYMBOLIC_ONLY )); then
   echo "Error: --eval-only and --symbolic-only are mutually exclusive." >&2
   exit 2
+fi
+
+# ---------------------------------------------------------------------------
+# Local Orchestra Setup
+# ---------------------------------------------------------------------------
+# By default, start and use local orchestra to eliminate network latency.
+# Use --staging to skip this and use the deployed orchestra from .env.
+if (( ! USE_STAGING )); then
+  _local_orchestra_script="$SCRIPT_DIR/start_local_orchestra.sh"
+  if [[ -x "$_local_orchestra_script" ]]; then
+    # Check if already running
+    if _local_url=$("$_local_orchestra_script" --check 2>/dev/null); then
+      echo "Using local orchestra: $_local_url"
+      export UNIFY_BASE_URL="$_local_url"
+      export UNIFY_KEY="unity-local-test-api-key"
+    else
+      # Try to start local orchestra
+      echo "Starting local orchestra..."
+      if "$_local_orchestra_script" start >/dev/null 2>&1; then
+        if _local_url=$("$_local_orchestra_script" --check 2>/dev/null); then
+          echo "Using local orchestra: $_local_url"
+          export UNIFY_BASE_URL="$_local_url"
+          export UNIFY_KEY="unity-local-test-api-key"
+        else
+          echo "Warning: Local orchestra started but not responding, using staging" >&2
+        fi
+      else
+        echo "Warning: Could not start local orchestra, using staging" >&2
+      fi
+    fi
+  fi
+  unset _local_orchestra_script _local_url
+else
+  echo "Using staging orchestra (--staging flag)"
 fi
 
 # Build pytest marker filter based on flags
