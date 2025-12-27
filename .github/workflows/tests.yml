@@ -470,7 +470,7 @@ jobs:
         repository: unifyai/orchestra
         ref: staging
         path: orchestra
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.ORCHESTRA_TOKEN }}
 
     - name: Setup environment from env_file_content
       if: inputs.env_file_content != ''
