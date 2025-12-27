@@ -556,20 +556,26 @@ jobs:
       run: |
         ARTIFACTS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts"
 
-        # Collect ONLY failed sessions from tmux (filter by "f ❌" prefix)
-        # Don't rely on passed sessions auto-closing - explicitly filter
+        # Collect session counts and failed session list from tmux
         FAILED_SESSIONS=""
+        PASS_COUNT=0
+        FAIL_COUNT=0
         for sock in /tmp/tmux-$(id -u)/unity*; do
           if [ -S "$sock" ]; then
             socket_name=$(basename "$sock")
-            # Get session names, filter to only failed ones (start with "f")
-            FAILED_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' | grep '^f ' || true)
+            ALL_SESSIONS=$(tmux -L "$socket_name" ls 2>/dev/null | sed 's/: .*//' || true)
+            FAILED_SESSIONS=$(echo "$ALL_SESSIONS" | grep '^f ' || true)
+            PASS_COUNT=$(echo "$ALL_SESSIONS" | grep -c '^p ' || echo 0)
+            FAIL_COUNT=$(echo "$FAILED_SESSIONS" | grep -c '^f ' || echo 0)
             break
           fi
         done
 
         # Echo to step output (foldable view)
-        echo "=== Failed tests ==="
+        echo "=== Test Results ==="
+        echo "✅ $PASS_COUNT passed, ❌ $FAIL_COUNT failed"
+        echo ""
+        echo "Failed tests:"
         echo "$FAILED_SESSIONS"
         echo ""
         echo "Download logs: $ARTIFACTS_URL"
@@ -577,12 +583,12 @@ jobs:
         # Write to GitHub Summary page
         echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Failed tests:" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "$FAILED_SESSIONS" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "📥 **[Download full logs]($ARTIFACTS_URL)**" >> $GITHUB_STEP_SUMMARY
 
     - name: Generate success summary
       if: success()
@@ -597,14 +603,14 @@ jobs:
 
         # Echo to step output (foldable view)
         echo "=== All tests passed ==="
-        echo "$log_count tests passed"
+        echo "✅ $log_count passed"
         echo ""
         echo "View logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
         echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "📊 **$log_count** tests passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
     - name: Upload cache artifact
       if: always()
