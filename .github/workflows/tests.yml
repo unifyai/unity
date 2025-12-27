@@ -466,6 +466,7 @@ jobs:
       uses: actions/checkout@v2
       with:
         repository: unifyai/orchestra
+        ref: staging
         path: ../orchestra
         token: ${{ secrets.GITHUB_TOKEN }}
 
