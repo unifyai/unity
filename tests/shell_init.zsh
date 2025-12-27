@@ -46,6 +46,10 @@ parallel_run() {
     "$(_unity_resolve_script parallel_run.sh)" "$@"
 }
 
+parallel_cloud_run() {
+    "$(_unity_resolve_script parallel_cloud_run.sh)" "$@"
+}
+
 watch_tests() {
     "$(_unity_resolve_script watch_tests.sh)" "$@"
 }
@@ -105,6 +109,15 @@ _unity_parallel_run_complete() {
         '*:test path:_files'
 }
 compdef _unity_parallel_run_complete parallel_run
+
+# ---- Completion: parallel_cloud_run ----
+# Completes --env flags and test directories/files
+_unity_parallel_cloud_run_complete() {
+    _arguments \
+        '*--env[Set environment variable]:var:' \
+        '*:test path:_files'
+}
+compdef _unity_parallel_cloud_run_complete parallel_cloud_run
 
 # ---- Completion: list_runs ----
 _unity_list_runs_complete() {
