@@ -171,6 +171,18 @@ Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available wh
 
 The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
 
+### Cursor Cloud Agent Secrets (Required)
+
+Cursor Cloud Agents run in isolated VMs and need user-specific secrets. Add these in **Cursor Settings → Cloud Agents → Secrets**:
+
+| Secret Name | Value |
+|-------------|-------|
+| `UNIFY_KEY` | Your personal Unify API key |
+| `GIT_USER_NAME` | Your full name (e.g., `Daniel Lenton`) |
+| `GIT_USER_EMAIL` | Your email (e.g., `daniel@unify.ai`) |
+
+The git identity secrets ensure commits are attributed to you rather than `cursoragent@cursor.com`. A pre-commit hook blocks commits from `cursoragent@cursor.com` as a safety net.
+
 ### Local Unify Development (Optional)
 
 If you're developing features in the [unify](https://github.com/unifyai/unify) package alongside Unity, you can bind your `.venv` to a local clone:
