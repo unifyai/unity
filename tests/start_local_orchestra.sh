@@ -307,6 +307,91 @@ ON CONFLICT (key) DO NOTHING;
   fi
 }
 
+seed_models_and_endpoints() {
+  # Seed the database with models and endpoints required by Unity tests
+  # This includes gpt-5.2@openai and other commonly used endpoints
+
+  log_info "Seeding models and endpoints for Unity tests..."
+
+  # Find the running postgres container
+  local db_container
+  db_container=$(docker ps --filter "publish=${ORCHESTRA_DB_PORT}" --format "{{.Names}}" 2>/dev/null | head -1)
+
+  if [[ -z "$db_container" ]]; then
+    log_error "No PostgreSQL container found"
+    return 1
+  fi
+
+  # Check if models already seeded
+  local model_exists
+  model_exists=$(docker exec "$db_container" psql -U orchestra -d orchestra -tAc \
+    "SELECT 1 FROM model WHERE mdl_code = 'gpt-5.2'" 2>/dev/null || echo "")
+
+  if [[ "$model_exists" == "1" ]]; then
+    log_success "Models and endpoints already seeded"
+    return 0
+  fi
+
+  log_info "Creating models, providers, and endpoints..."
+
+  # Seed all required data for Unity tests
+  # Schema: provider(id, name, image_url, display_name)
+  #         model(id, mdl_code, uploaded_at, task, active)
+  #         endpoint(id, mdl_id, provider_id, created_at, active)
+  docker exec "$db_container" psql -U orchestra -d orchestra -c "
+-- Task and modality (required for models)
+INSERT INTO modality (name) VALUES ('text_generation')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO task (name, modality) VALUES ('chat', 'text_generation')
+ON CONFLICT (name) DO NOTHING;
+
+-- Providers (id, name, image_url, display_name)
+INSERT INTO provider (id, name, image_url, display_name) VALUES
+  (1, 'openai', '', 'OpenAI'),
+  (12, 'anthropic', '', 'Anthropic'),
+  (36, 'vertex-ai', '', 'Google Vertex AI'),
+  (37, 'deepseek', '', 'DeepSeek')
+ON CONFLICT (id) DO NOTHING;
+
+-- Models used by Unity tests (id, mdl_code, uploaded_at, task, active)
+INSERT INTO model (id, mdl_code, uploaded_at, task, active) VALUES
+  (100, 'gpt-5.2', NOW(), 'chat', true),
+  (101, 'gpt-4o', NOW(), 'chat', true),
+  (102, 'gpt-4o-mini', NOW(), 'chat', true),
+  (103, 'gpt-3.5-turbo', NOW(), 'chat', true),
+  (104, 'claude-3-5-sonnet', NOW(), 'chat', true),
+  (105, 'claude-3-haiku', NOW(), 'chat', true),
+  (106, 'claude-4.5-sonnet', NOW(), 'chat', true),
+  (107, 'gemini-1.5-flash', NOW(), 'chat', true),
+  (108, 'gemini-1.5-pro', NOW(), 'chat', true),
+  (109, 'deepseek-v3', NOW(), 'chat', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Endpoints (id, mdl_id, provider_id, created_at, active)
+INSERT INTO endpoint (id, mdl_id, provider_id, created_at, active) VALUES
+  (100, 100, 1, NOW(), true),   -- gpt-5.2@openai
+  (101, 101, 1, NOW(), true),   -- gpt-4o@openai
+  (102, 102, 1, NOW(), true),   -- gpt-4o-mini@openai
+  (103, 103, 1, NOW(), true),   -- gpt-3.5-turbo@openai
+  (104, 104, 12, NOW(), true),  -- claude-3-5-sonnet@anthropic
+  (105, 105, 12, NOW(), true),  -- claude-3-haiku@anthropic
+  (106, 106, 12, NOW(), true),  -- claude-4.5-sonnet@anthropic
+  (107, 107, 36, NOW(), true),  -- gemini-1.5-flash@vertex-ai
+  (108, 108, 36, NOW(), true),  -- gemini-1.5-pro@vertex-ai
+  (109, 109, 37, NOW(), true)   -- deepseek-v3@deepseek
+ON CONFLICT (id) DO NOTHING;
+" 2>&1
+
+  if [[ $? -eq 0 ]]; then
+    log_success "Models and endpoints seeded"
+    return 0
+  else
+    log_error "Failed to seed models and endpoints"
+    return 1
+  fi
+}
+
 # Test API key that should be used with local orchestra
 get_test_api_key() {
   echo "unity-local-test-api-key"
@@ -435,6 +520,9 @@ stop_orchestra_server() {
     rm -f "$ORCHESTRA_SERVER_PIDFILE"
   fi
 
+  # Also kill any orphaned orchestra processes
+  pkill -9 -f "python -m orchestra" 2>/dev/null || true
+
   log_success "Orchestra server stopped"
 }
 
@@ -484,6 +572,10 @@ cmd_start() {
 
   if ! seed_test_user; then
     log_warn "Failed to seed test user (tests may fail without auth)"
+  fi
+
+  if ! seed_models_and_endpoints; then
+    log_warn "Failed to seed models/endpoints (tests may fail without valid endpoints)"
   fi
 
   if ! start_orchestra_server "$ORCHESTRA_REPO_PATH"; then
