@@ -248,7 +248,8 @@ def test_await_pending_multiple_and_datastore_updates():
 
 
 @_handle_project
-def test_temp_image_id_persists_after_resolution():
+@pytest.mark.asyncio
+async def test_temp_image_id_persists_after_resolution():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
@@ -264,11 +265,7 @@ def test_temp_image_id_persists_after_resolution():
         return_handles=True,
     )
     pid = h.image_id
-    mapping = (
-        __import__("asyncio")
-        .get_event_loop()
-        .run_until_complete(im.await_pending([pid]))
-    )
+    mapping = await im.await_pending([pid])
     rid = mapping[pid]
     row = ds[rid]
     assert row.get("temp_image_id") == pid
@@ -300,7 +297,10 @@ def test_await_pending_omits_missing_rows():
 
 
 @_handle_project
-def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypatch):
+@pytest.mark.asyncio
+async def test_pending_update_persists_after_resolution_and_backend_reflects(
+    monkeypatch,
+):
     im = ImageManager()
     from unity.common.data_store import DataStore as _DS
 
@@ -334,11 +334,7 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
     monkeypatch.setattr(im, "update_images", _wrapped_update_images)
 
     # Resolve now; deferred persistence should run shortly thereafter
-    rid = (
-        __import__("asyncio")
-        .get_event_loop()
-        .run_until_complete(h.wait_until_resolved())
-    )
+    rid = await h.wait_until_resolved()
 
     # Poll until backend reflects the final label or timeout
     import time as _time
@@ -360,7 +356,8 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
 
 
 @_handle_project
-def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
+@pytest.mark.asyncio
+async def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
     im = ImageManager()
 
     [h] = im.add_images(
@@ -390,11 +387,7 @@ def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
     monkeypatch.setattr(im, "update_images", _wrapped_update_images)
 
     # Resolve and wait briefly for deferred persist to run
-    rid = (
-        __import__("asyncio")
-        .get_event_loop()
-        .run_until_complete(h.wait_until_resolved())
-    )
+    rid = await h.wait_until_resolved()
 
     import time as _time
 

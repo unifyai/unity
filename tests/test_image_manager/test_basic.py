@@ -84,7 +84,8 @@ def test_add_images_return_handles_mode():
 
 
 @_handle_project
-def test_add_images_async_mode_returns_handles_and_schedules_uploads():
+@pytest.mark.asyncio
+async def test_add_images_async_mode_returns_handles_and_schedules_uploads():
     im = ImageManager()
 
     handles = im.add_images(
@@ -108,10 +109,9 @@ def test_add_images_async_mode_returns_handles_and_schedules_uploads():
     assert all(h is None or h.is_pending for h in handles)
 
     # Await resolution of all pending handles to ensure uploads were scheduled
-    import asyncio as _asyncio
 
     pids = [h.image_id for h in handles if h is not None]
-    mapping = _asyncio.get_event_loop().run_until_complete(im.await_pending(pids))
+    mapping = await im.await_pending(pids)
     assert set(mapping.keys()) == set(pids)
 
 
