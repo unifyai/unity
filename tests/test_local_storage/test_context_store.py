@@ -26,7 +26,9 @@ def test_ensure_creates_and_idempotent(monkeypatch):
 
     calls = {"create_context": 0, "create_fields": 0}
 
-    def _create_context(ctx, *, unique_keys=None, auto_counting=None, description=None):
+    def _create_context(
+        ctx, *, unique_keys=None, auto_counting=None, description=None, foreign_keys=None
+    ):
         calls["create_context"] += 1
         # Basic argument sanity
         assert ctx == "Test/Contacts"
