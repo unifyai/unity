@@ -598,8 +598,19 @@ jobs:
         TEST_PATH="${{ steps.normalize-path.outputs.test_args }}"
         TIMEOUT="${{ steps.normalize-path.outputs.timeout_seconds }}"
 
+        # Start Xvfb manually instead of using xvfb-run.
+        # xvfb-run doesn't propagate signals to child processes, making
+        # workflow cancellation ineffective. This approach ensures SIGTERM
+        # reaches parallel_run.sh directly.
+        Xvfb :99 -screen 0 1920x1080x24 &
+        XVFB_PID=$!
+        export DISPLAY=:99
+
+        # Ensure Xvfb is cleaned up on exit
+        trap "kill $XVFB_PID 2>/dev/null" EXIT
+
         echo "Running: parallel_run.sh --timeout $TIMEOUT $EXTRA_ARGS $TEST_PATH"
-        xvfb-run tests/parallel_run.sh --timeout "$TIMEOUT" $EXTRA_ARGS "$TEST_PATH"
+        tests/parallel_run.sh --timeout "$TIMEOUT" $EXTRA_ARGS "$TEST_PATH"
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
@@ -711,6 +722,14 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $log_count** passed$CACHE_STATS — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
+    - name: Cleanup on cancellation
+      if: cancelled()
+      run: |
+        echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
+        # Kill all unity tmux servers and purge orphaned test processes
+        tests/kill_server.sh --all || true
+        echo "Cleanup complete."
+
     - name: Upload cache artifact
       if: always()
       uses: actions/upload-artifact@v4
@@ -739,18 +758,19 @@ jobs:
         if-no-files-found: ignore
         retention-days: 7
 
-  # Cleanup job: runs ONCE after all pytest jobs (if delete_on_exit is true)
+  # Cleanup job: runs ONCE after all pytest jobs complete or are cancelled
   # Handles project deletion at workflow level to avoid race conditions
   cleanup:
     name: Cleanup
     runs-on: ubuntu-latest
     needs: [should-run-tests, discover, pytest]
-    # Only run if DELETE_ON_EXIT is requested AND we're in shared project mode
+    # Run if: (delete_on_exit requested in shared mode) OR (any job was cancelled)
+    # Cancelled runs likely left partial test data that should be cleaned up
     if: |
       always() &&
       needs.should-run-tests.outputs.run_tests == 'true' &&
-      needs.discover.outputs.delete_on_exit == 'true' &&
-      needs.discover.outputs.random_projects != 'true'
+      needs.discover.outputs.random_projects != 'true' &&
+      (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
       UNIFY_KEY: ${{ secrets.USER_API_KEY }}
       UNIFY_BASE_URL: https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0
