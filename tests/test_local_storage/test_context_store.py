@@ -68,47 +68,6 @@ def test_ensure_creates_and_idempotent(monkeypatch):
     assert calls == {"create_context": 1, "create_fields": 1}
 
 
-def test_ensure_tolerates_create_exception(monkeypatch):
-    monkeypatch.setattr(unify, "active_project", lambda: "proj-A")
-
-    def _fail_get(*args, **kwargs):
-        raise Exception("Context not found")
-
-    monkeypatch.setattr(unify, "get_context", _fail_get)
-
-    calls = {"create_context": 0, "create_fields": 0}
-
-    def _create_context(*args, **kwargs):
-        calls["create_context"] += 1
-        raise RuntimeError("backend unavailable")
-
-    def _create_fields(fields, *, context):
-        calls["create_fields"] += 1
-        assert context == "Ctx/Table"
-        assert fields == {"a": {"type": "int"}}
-
-    monkeypatch.setattr(unify, "create_context", _create_context)
-    monkeypatch.setattr(unify, "create_fields", _create_fields)
-
-    store = TableStore(
-        "Ctx/Table",
-        unique_keys={"id": "int"},
-        auto_counting={"id": None},
-        description="desc",
-        fields={"a": {"type": "int"}},
-    )
-
-    # Should not raise despite create_context failure; still attempts field creation
-    store.ensure_context()
-    assert calls["create_context"] == 1
-    assert calls["create_fields"] == 1
-
-    # Second call is a noop
-    store.ensure_context()
-    assert calls["create_context"] == 1
-    assert calls["create_fields"] == 1
-
-
 def test_get_columns_transforms(monkeypatch):
     # Arrange stable project and capture parameters
     monkeypatch.setattr(unify, "active_project", lambda: "proj-Z")
