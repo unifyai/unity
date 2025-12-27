@@ -52,7 +52,6 @@ async def update_contacts_and_search():
 | `primitives.secrets` | SecretManager | `ask`, `update` |
 | `primitives.guidance` | GuidanceManager | `ask`, `update` |
 | `primitives.web` | WebSearcher | `ask` |
-| `primitives.skills` | SkillManager | `ask` |
 | `primitives.computer` | ComputerPrimitives | `navigate`, `act`, `observe`, `query`, `reason` |
 
 ---

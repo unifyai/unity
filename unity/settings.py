@@ -24,7 +24,6 @@ from unity.image_manager.settings import ImageSettings
 from unity.knowledge_manager.settings import KnowledgeSettings
 from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
-from unity.skill_manager.settings import SkillSettings
 from unity.task_scheduler.settings import TaskSettings
 from unity.transcript_manager.settings import TranscriptSettings
 from unity.web_searcher.settings import WebSettings
@@ -125,7 +124,7 @@ class ProductionSettings(BaseSettings):
     # Foundational managers (cannot be disabled, only implementation switched):
     #   - Actor, ContactManager, TranscriptManager, TaskScheduler, ConversationManager
     # Optional managers (can be disabled via ENABLED=False):
-    #   - KnowledgeManager, GuidanceManager, SecretManager, SkillManager,
+    #   - KnowledgeManager, GuidanceManager, SecretManager,
     #     WebSearcher, GlobalFileManager
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -144,7 +143,6 @@ class ProductionSettings(BaseSettings):
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     secret: SecretSettings = Field(default_factory=SecretSettings)
-    skill: SkillSettings = Field(default_factory=SkillSettings)
     task: TaskSettings = Field(default_factory=TaskSettings)
     transcript: TranscriptSettings = Field(default_factory=TranscriptSettings)
     web: WebSettings = Field(default_factory=WebSettings)

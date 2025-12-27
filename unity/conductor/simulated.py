@@ -9,7 +9,6 @@ from ..settings import SETTINGS
 from ..contact_manager.base import BaseContactManager
 from ..transcript_manager.base import BaseTranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
-from ..skill_manager.base import BaseSkillManager
 from ..task_scheduler.base import BaseTaskScheduler
 from ..web_searcher.base import BaseWebSearcher
 from ..actor.base import BaseActor
@@ -22,7 +21,6 @@ from ..secret_manager.simulated import SimulatedSecretManager
 from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
-from ..skill_manager.simulated import SimulatedSkillManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 from ..web_searcher.simulated import SimulatedWebSearcher
 from ..actor.simulated import SimulatedActor
@@ -58,7 +56,6 @@ class SimulatedConductor(Conductor):
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         guidance_manager: Optional[BaseGuidanceManager] = None,
         secret_manager: Optional[BaseSecretManager] = None,
-        skill_manager: Optional[BaseSkillManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
         actor: Optional[BaseActor] = None,
@@ -127,17 +124,6 @@ class SimulatedConductor(Conductor):
             )
         )
 
-        _skill_manager = (
-            skill_manager
-            if skill_manager is not None
-            else SimulatedSkillManager(
-                description=description,
-                log_events=log_events,
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
-                simulation_guidance=simulation_guidance,
-            )
-        )
-
         _task_scheduler = (
             task_scheduler
             if task_scheduler is not None
@@ -188,7 +174,6 @@ class SimulatedConductor(Conductor):
             knowledge_manager=_knowledge_manager,
             guidance_manager=_guidance_manager,
             secret_manager=_secret_manager,
-            skill_manager=_skill_manager,
             task_scheduler=_task_scheduler,
             web_searcher=_web_searcher,
             actor=_actor,

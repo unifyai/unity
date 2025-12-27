@@ -271,66 +271,6 @@ async def test_conductor_nested_steer_interject_reaches_secretmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_nested_steer_interject_reaches_skillmanager_ask():
-    cond = Conductor()
-    h = await cond.request(
-        "What high-level skills do you have for spreadsheets and CSVs?",
-    )
-
-    try:
-        client = getattr(h, "_client", None)
-        assert (
-            client is not None
-        ), "Expected AsyncToolLoopHandle to expose its client for tests"
-        await _wait_for_tool_request(client, "SkillManager_ask")
-
-        async def _child_adopted():
-            return (await _adopted_child_handle(h, "SkillManager_ask")) is not None
-
-        await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
-
-        msg = "conductor→skill nested-steer interjection"
-        spec = {
-            "children": [
-                {
-                    "tool": "SkillManager.ask",
-                    "steps": [{"method": "interject", "args": msg}],
-                },
-            ],
-        }
-        await h.nested_steer(spec)  # type: ignore[attr-defined]
-
-        child = await _adopted_child_handle(h, "SkillManager_ask")
-        assert child is not None, "Expected SkillManager.ask handle to be adopted"
-
-        async def _interjection_visible_on_inner():
-            try:
-                hist = getattr(child, "_user_visible_history", [])  # type: ignore[attr-defined]
-                return _msg_in_user_visible_history(hist, msg)
-            except Exception:
-                return False
-
-        await _wait_for_condition(
-            _interjection_visible_on_inner,
-            poll=0.01,
-            timeout=60.0,
-        )
-
-        outer_hist = getattr(h, "_user_visible_history", [])  # type: ignore[attr-defined]
-        assert not _msg_in_user_visible_history(outer_hist, msg)
-    finally:
-        try:
-            h.stop("cleanup")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(h.result(), timeout=120)  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-
-@pytest.mark.asyncio
-@_handle_project
 async def test_conductor_nested_steer_interject_reaches_taskscheduler_ask():
     cond = Conductor()
     h = await cond.request("What tasks are scheduled for today?")

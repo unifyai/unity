@@ -38,8 +38,6 @@ if TYPE_CHECKING:
     from unity.task_scheduler.task_scheduler import TaskScheduler
     from unity.secret_manager.secret_manager import SecretManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
-    from unity.web_searcher.web_searcher import WebSearcher
-    from unity.skill_manager.skill_manager import SkillManager
     from unity.controller.browser import Browser
 
 logger = logging.getLogger(__name__)
@@ -327,10 +325,6 @@ PRIMITIVE_SOURCES: List[Tuple[str, List[str]]] = [
         "unity.web_searcher.web_searcher.WebSearcher",
         ["ask"],
     ),
-    (
-        "unity.skill_manager.skill_manager.SkillManager",
-        ["ask"],
-    ),
     # ComputerPrimitives browser/reasoning methods (now in this module)
     (
         "unity.function_manager.primitives.ComputerPrimitives",
@@ -486,7 +480,6 @@ _CLASS_TO_GETTER: Dict[str, str] = {
     "SecretManager": "get_secret_manager",
     "GuidanceManager": "get_guidance_manager",
     "WebSearcher": "get_web_searcher",
-    "SkillManager": "get_skill_manager",
     "FunctionManager": "get_function_manager",
     "ImageManager": "get_image_manager",
 }
@@ -578,7 +571,6 @@ class Primitives:
         self._secrets: Optional["SecretManager"] = None
         self._guidance: Optional["GuidanceManager"] = None
         self._web: Optional["WebSearcher"] = None
-        self._skills: Optional["SkillManager"] = None
         self._computer: Optional[ComputerPrimitives] = None
 
     @property
@@ -643,15 +635,6 @@ class Primitives:
 
             self._web = ManagerRegistry.get_web_searcher()
         return self._web
-
-    @property
-    def skills(self) -> "SkillManager":
-        """Skill discovery primitives (ask)."""
-        if self._skills is None:
-            from unity.manager_registry import ManagerRegistry
-
-            self._skills = ManagerRegistry.get_skill_manager()
-        return self._skills
 
     @property
     def computer(self) -> ComputerPrimitives:

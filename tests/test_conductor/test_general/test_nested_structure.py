@@ -235,63 +235,6 @@ async def test_conductor_nested_structure_secretmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_nested_structure_skillmanager_ask():
-    """
-    Verify Conductor.request → SkillManager.ask nested structure.
-    """
-    cond = Conductor()
-    h = await cond.request(
-        "What high-level skills do you have for spreadsheets and CSVs?",
-    )
-
-    try:
-        client = getattr(h, "_client", None)  # internal test-only access
-        assert (
-            client is not None
-        ), "Expected AsyncToolLoopHandle to expose its client for tests"
-        await _wait_for_tool_request(client, "SkillManager_ask")
-
-        async def _child_adopted():
-            try:
-                task_info = getattr(getattr(h, "_task", None), "task_info", {})  # type: ignore[attr-defined]
-                if isinstance(task_info, dict):
-                    return any(
-                        getattr(meta, "name", None) == "SkillManager_ask"
-                        and getattr(meta, "handle", None) is not None
-                        for meta in task_info.values()
-                    )
-            except Exception:
-                return False
-            return False
-
-        await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
-
-        structure = await h.nested_structure()  # type: ignore[attr-defined]
-        expected = {
-            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
-            "tool": "Conductor.request",
-            "children": [
-                {
-                    "handle": "ReadOnlyAskGuardHandle(AsyncToolLoopHandle)",
-                    "tool": "SkillManager.ask",
-                    "children": [],
-                },
-            ],
-        }
-        assert structure == expected
-    finally:
-        try:
-            h.stop("cleanup")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(h.result(), timeout=120)  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-
-@pytest.mark.asyncio
-@_handle_project
 async def test_conductor_nested_structure_taskscheduler_ask():
     """
     Verify Conductor.request → TaskScheduler.ask nested structure.

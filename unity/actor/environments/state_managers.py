@@ -68,7 +68,6 @@ class StateManagerEnvironment(BaseEnvironment):
                 "Contact": "contacts",
                 "Transcript": "transcripts",
                 "Secret": "secrets",
-                "Skill": "skills",
                 "Web": "web",
             }
             for k, v in special.items():
