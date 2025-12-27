@@ -614,8 +614,18 @@ jobs:
         restore-keys: |
           poetry-orchestra-${{ runner.os }}-
 
-    - name: Start local orchestra
+    - name: Start orchestra and run tests
+      id: run-tests
       run: |
+        set +e
+
+        # =====================================================================
+        # Start local orchestra in the SAME step as tests.
+        # GitHub Actions terminates all processes spawned by a step when it
+        # completes, even with nohup/disown. Running orchestra and tests in
+        # the same step ensures the server stays alive for the test duration.
+        # =====================================================================
+
         echo "Starting local orchestra for CI testing..."
         # Install orchestra dependencies (cloned into workspace/orchestra)
         cd "$ORCHESTRA_REPO_PATH"
@@ -626,10 +636,6 @@ jobs:
         tests/start_local_orchestra.sh start
         echo "Local orchestra is ready"
 
-    - name: Run tests via parallel_run.sh
-      id: run-tests
-      run: |
-        set +e
         # parallel_run_args comes from discover job (parsed from commit message or inputs)
         EXTRA_ARGS="${{ needs.discover.outputs.parallel_run_args }}"
         TEST_PATH="${{ steps.normalize-path.outputs.test_args }}"
@@ -646,7 +652,6 @@ jobs:
         # Ensure Xvfb is cleaned up on exit
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
-        # Local orchestra is started in previous step, parallel_run.sh will detect it
         echo "Running: parallel_run.sh --timeout $TIMEOUT $EXTRA_ARGS $TEST_PATH"
         tests/parallel_run.sh --timeout "$TIMEOUT" $EXTRA_ARGS "$TEST_PATH"
         TEST_EXIT_CODE=$?
