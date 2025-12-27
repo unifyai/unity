@@ -16,6 +16,52 @@ set -euo pipefail
 
 REPO="unifyai/unity"
 WORKFLOW="tests.yml"
+POLL_TIMEOUT=30  # seconds to wait for run to appear
+
+# ============================================================================
+# Helper: Poll for the workflow run URL after triggering
+# ============================================================================
+
+get_run_url() {
+  local branch="$1"
+  local start_time
+  start_time=$(date +%s)
+
+  echo -n "Waiting for run to appear"
+
+  while true; do
+    # Get the most recent run on this branch
+    local run_info
+    run_info=$(gh run list \
+      --repo "$REPO" \
+      --workflow "$WORKFLOW" \
+      --branch "$branch" \
+      --limit 1 \
+      --json databaseId,createdAt,status 2>/dev/null || echo "")
+
+    if [[ -n "$run_info" && "$run_info" != "[]" ]]; then
+      local run_id
+      run_id=$(echo "$run_info" | grep -o '"databaseId":[0-9]*' | head -1 | cut -d: -f2)
+
+      if [[ -n "$run_id" ]]; then
+        echo ""
+        echo "https://github.com/$REPO/actions/runs/$run_id"
+        return 0
+      fi
+    fi
+
+    # Check timeout
+    local elapsed=$(( $(date +%s) - start_time ))
+    if (( elapsed >= POLL_TIMEOUT )); then
+      echo ""
+      echo "https://github.com/$REPO/actions/workflows/$WORKFLOW"
+      return 1
+    fi
+
+    echo -n "."
+    sleep 1
+  done
+}
 
 # Get current branch
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -68,8 +114,10 @@ if ! has_uncommitted_changes && ! has_unpushed_commits; then
     -f test_path="$TEST_PATH"
 
   echo ""
+  RUN_URL=$(get_run_url "$CURRENT_BRANCH")
+  echo ""
   echo "✓ Workflow triggered!"
-  echo "  https://github.com/$REPO/actions/workflows/$WORKFLOW"
+  echo "  $RUN_URL"
   exit 0
 fi
 
@@ -152,7 +200,9 @@ gh workflow run "$WORKFLOW" \
   -f test_path="$TEST_PATH"
 
 echo ""
+RUN_URL=$(get_run_url "$STAGING_BRANCH")
+echo ""
 echo "✓ Workflow triggered!"
-echo "  https://github.com/$REPO/actions/workflows/$WORKFLOW"
+echo "  $RUN_URL"
 echo ""
 echo "Staging branch '$STAGING_BRANCH' persists for future runs."
