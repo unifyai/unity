@@ -28,7 +28,7 @@ on:
         type: string
         default: ""
       env_file_content:
-        description: "env_file: paste .env contents (⚠️ values visible in logs)"
+        description: "env_file: base64-encoded .env contents (values masked in logs)"
         required: false
         type: string
         default: ""
@@ -226,10 +226,13 @@ jobs:
         echo "Matrix paths: $json" >&2
 
         # =====================================================================
-        # Process environment variables with correct precedence:
+        # Process project management flags with correct precedence:
         # 1. CI defaults (lowest priority)
         # 2. env_file_content (middle priority - can override defaults)
         # 3. parallel_run_args/FLAGS (highest priority - overrides everything)
+        #
+        # Note: env_file_content is base64-encoded and will be decoded/written
+        # to .env in the pytest job. We only parse it here for project mgmt flags.
         # =====================================================================
 
         # CI defaults for project management (can be overridden)
@@ -237,65 +240,62 @@ jobs:
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
 
-        # Collect env vars from env_file (will be passed to runners)
-        declare -a ENV_FILE_VARS=()
+        # Parse env_file_content for project management flags only
+        # (actual env vars are written to .env in pytest job, not passed as --env args)
+        ENV_FILE_CONTENT_B64="${{ inputs.env_file_content }}"
+        if [[ -n "$ENV_FILE_CONTENT_B64" ]]; then
+          echo "Parsing env_file_content for project management flags..." >&2
+          # Decode base64 content
+          ENV_FILE_CONTENT=$(echo "$ENV_FILE_CONTENT_B64" | base64 -d 2>/dev/null || echo "")
+          if [[ -n "$ENV_FILE_CONTENT" ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              # Skip empty lines and comments
+              [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
 
-        # Parse env_file_content input (middle priority)
-        ENV_FILE_CONTENT="${{ inputs.env_file_content }}"
-        if [[ -n "$ENV_FILE_CONTENT" ]]; then
-          echo "Parsing env_file_content..." >&2
-          while IFS= read -r line || [[ -n "$line" ]]; do
-            # Skip empty lines and comments
-            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+              # Extract KEY=VALUE (handles quotes)
+              if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
+                key="${BASH_REMATCH[1]}"
+                value="${BASH_REMATCH[2]}"
 
-            # Extract KEY=VALUE (handles quotes)
-            if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
-              key="${BASH_REMATCH[1]}"
-              value="${BASH_REMATCH[2]}"
+                # Strip surrounding quotes if present
+                if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
+                  value="${BASH_REMATCH[1]}"
+                fi
 
-              # Strip surrounding quotes if present
-              if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
-                value="${BASH_REMATCH[1]}"
+                # Only check for project management flags (other vars handled via .env file)
+                case "$key=$value" in
+                  UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
+                    DELETE_ON_START="true"
+                    echo "  env_file: DELETE_ON_START=true" >&2
+                    ;;
+                  UNIFY_TESTS_DELETE_PROJ_ON_START=false|UNIFY_TESTS_DELETE_PROJ_ON_START=False|UNIFY_TESTS_DELETE_PROJ_ON_START=0)
+                    DELETE_ON_START="false"
+                    echo "  env_file: DELETE_ON_START=false" >&2
+                    ;;
+                  UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=1)
+                    DELETE_ON_EXIT="true"
+                    echo "  env_file: DELETE_ON_EXIT=true" >&2
+                    ;;
+                  UNIFY_TESTS_DELETE_PROJ_ON_EXIT=false|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=False|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=0)
+                    DELETE_ON_EXIT="false"
+                    echo "  env_file: DELETE_ON_EXIT=false" >&2
+                    ;;
+                  UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
+                    RANDOM_PROJECTS="true"
+                    echo "  env_file: RANDOM_PROJECTS=true" >&2
+                    ;;
+                  UNIFY_TESTS_RAND_PROJ=false|UNIFY_TESTS_RAND_PROJ=False|UNIFY_TESTS_RAND_PROJ=0)
+                    RANDOM_PROJECTS="false"
+                    echo "  env_file: RANDOM_PROJECTS=false" >&2
+                    ;;
+                esac
               fi
-
-              # Check for project management flags (handle at workflow level)
-              case "$key=$value" in
-                UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
-                  DELETE_ON_START="true"
-                  echo "  env_file: DELETE_ON_START=true" >&2
-                  ;;
-                UNIFY_TESTS_DELETE_PROJ_ON_START=false|UNIFY_TESTS_DELETE_PROJ_ON_START=False|UNIFY_TESTS_DELETE_PROJ_ON_START=0)
-                  DELETE_ON_START="false"
-                  echo "  env_file: DELETE_ON_START=false" >&2
-                  ;;
-                UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=1)
-                  DELETE_ON_EXIT="true"
-                  echo "  env_file: DELETE_ON_EXIT=true" >&2
-                  ;;
-                UNIFY_TESTS_DELETE_PROJ_ON_EXIT=false|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=False|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=0)
-                  DELETE_ON_EXIT="false"
-                  echo "  env_file: DELETE_ON_EXIT=false" >&2
-                  ;;
-                UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
-                  RANDOM_PROJECTS="true"
-                  ENV_FILE_VARS+=("--env" "$key=$value")  # Keep for runners
-                  echo "  env_file: RANDOM_PROJECTS=true" >&2
-                  ;;
-                UNIFY_TESTS_RAND_PROJ=false|UNIFY_TESTS_RAND_PROJ=False|UNIFY_TESTS_RAND_PROJ=0)
-                  RANDOM_PROJECTS="false"
-                  echo "  env_file: RANDOM_PROJECTS=false" >&2
-                  ;;
-                *)
-                  # Regular env var - pass to runners
-                  ENV_FILE_VARS+=("--env" "$key=$value")
-                  echo "  env_file: $key=..." >&2
-                  ;;
-              esac
-            fi
-          done <<< "$ENV_FILE_CONTENT"
+            done <<< "$ENV_FILE_CONTENT"
+          fi
         fi
 
         # Process FLAGS (from parallel_run_args) - highest priority
+        # These are explicit --env args passed via commit message or workflow dispatch
         declare -a CLEANED_FLAGS=()
         skip_next=false
 
@@ -308,7 +308,7 @@ jobs:
           flag="${FLAGS[$i]}"
           next_val="${FLAGS[$((i+1))]:-}"
 
-          # Check for --env with project management flags
+          # Check for --env with project management flags (strip them, handle at workflow level)
           if [[ "$flag" == "--env" ]]; then
             case "$next_val" in
               UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
@@ -364,15 +364,12 @@ jobs:
         echo "delete_on_exit=$DELETE_ON_EXIT" >> "$GITHUB_OUTPUT"
         echo "random_projects=$RANDOM_PROJECTS" >> "$GITHUB_OUTPUT"
 
-        # Build flags string: env_file vars first, then explicit args (for correct precedence)
-        declare -a ALL_FLAGS=()
-        ALL_FLAGS+=("${ENV_FILE_VARS[@]}")
-        ALL_FLAGS+=("${CLEANED_FLAGS[@]}")
-
-        if (( ${#ALL_FLAGS[@]} > 0 )); then
-          flags_str="${ALL_FLAGS[*]}"
+        # Build parallel_run_args from explicit flags only (not env_file content)
+        # env_file content is handled separately by writing to .env on the runner
+        if (( ${#CLEANED_FLAGS[@]} > 0 )); then
+          flags_str="${CLEANED_FLAGS[*]}"
           echo "parallel_run_args=$flags_str" >> "$GITHUB_OUTPUT"
-          echo "Flags: $flags_str" >&2
+          echo "Explicit args: $flags_str" >&2
         else
           echo "parallel_run_args=" >> "$GITHUB_OUTPUT"
         fi
@@ -458,6 +455,46 @@ jobs:
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
     - uses: actions/checkout@v2
+
+    - name: Setup environment from env_file_content
+      if: inputs.env_file_content != ''
+      run: |
+        # Decode base64 env_file_content and write to .env
+        # Mask sensitive values so they don't appear in logs
+        echo "${{ inputs.env_file_content }}" | base64 -d > .env
+
+        # Mask values for sensitive variable names (these patterns catch most secrets)
+        # Sensitive patterns: *_KEY, *_SECRET, *_PASSWORD, *_TOKEN, *_CREDENTIAL*, *_API_*
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          # Skip empty lines and comments
+          [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+          # Extract KEY=VALUE
+          if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+
+            # Strip surrounding quotes if present
+            if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
+              value="${BASH_REMATCH[1]}"
+            fi
+
+            # Skip empty values
+            [[ -z "$value" ]] && continue
+
+            # Mask if key matches sensitive patterns
+            key_upper="${key^^}"
+            if [[ "$key_upper" == *_KEY || "$key_upper" == *_SECRET || \
+                  "$key_upper" == *_PASSWORD || "$key_upper" == *_TOKEN || \
+                  "$key_upper" == *_CREDENTIAL* || "$key_upper" == *_API_* || \
+                  "$key_upper" == *APIKEY* ]]; then
+              echo "::add-mask::$value"
+              echo "Masked: $key"
+            fi
+          fi
+        done < .env
+
+        echo "✓ Environment file written to .env (sensitive values masked)"
 
     - name: Normalize test path
       id: normalize-path

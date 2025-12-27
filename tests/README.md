@@ -240,7 +240,7 @@ parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
 ```
 
 The script automatically:
-1. Loads your `.env` file and passes all values to CI
+1. Loads your `.env` file and passes it securely to CI (sensitive values masked in logs)
 2. Stashes uncommitted changes
 3. Pushes to a unique staging branch (`ci-staging-{user}-{datetime}`)
 4. Triggers the CI workflow and displays the direct run URL
