@@ -103,7 +103,7 @@ async def test_join_used_for_department_query(monkeypatch):
     # 3️⃣  Ask the question ---------------------------------------------------
     handle = await km.ask(
         "How many people are in John Smith's department? "
-        "Please use the tool '_filter_join' to answer the question.",
+        "Please use the tool 'filter_join' to answer the question.",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
