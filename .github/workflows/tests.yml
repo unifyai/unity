@@ -145,7 +145,7 @@ jobs:
     if: needs.should-run-tests.outputs.run_tests == 'true'
     outputs:
       test_dirs: ${{ steps.set-matrix.outputs.test_dirs }}
-      parallel_run_cmd: ${{ needs.should-run-tests.outputs.parallel_run_cmd }}
+      parallel_run_args: ${{ steps.set-matrix.outputs.parallel_run_args }}
       job_timeout: ${{ steps.set-matrix.outputs.job_timeout }}
     steps:
     - uses: actions/checkout@v2
@@ -153,33 +153,79 @@ jobs:
     - id: set-matrix
       shell: bash
       run: |
-        # Priority order:
-        # 1. [parallel_run.sh ...] from commit/PR → single job with extracted args
-        # 2. workflow_dispatch test_path input → single job (if not '.')
-        # 3. Default → discover all test folders for matrix
+        # Parse test paths and flags, then create matrix entries for each path.
+        # Each unique path gets its own parallel GitHub runner.
+        #
+        # Sources (priority order):
+        # 1. [parallel_run.sh ...] from commit/PR → parse paths and flags
+        # 2. workflow_dispatch inputs → test_path + parallel_run_args
+        # 3. Default (test_path=".") → discover all test folders
 
         PARALLEL_CMD="${{ needs.should-run-tests.outputs.parallel_run_cmd }}"
+        INPUT_PATH="${{ inputs.test_path }}"
+        INPUT_ARGS="${{ inputs.parallel_run_args }}"
+
+        # Initialize
+        declare -a PATHS=()
+        declare -a FLAGS=()
 
         if [[ -n "$PARALLEL_CMD" ]]; then
-          # Extract just the paths from the command (for matrix), full cmd used later
-          # Use the entire command as a single matrix entry
-          dirs="__parallel_run_cmd__"
-          echo "Using [parallel_run.sh $PARALLEL_CMD] from commit/PR" >&2
-        elif [[ -n "${{ inputs.test_path }}" && "${{ inputs.test_path }}" != "." ]]; then
-          dirs="${{ inputs.test_path }}"
-          echo "Using test_path input: $dirs" >&2
+          # Parse [parallel_run.sh ...] from commit/PR message
+          # Separate flags (--env, --eval-only, etc.) from paths
+          echo "Parsing [parallel_run.sh $PARALLEL_CMD]" >&2
+          for token in $PARALLEL_CMD; do
+            if [[ "$token" == --* ]]; then
+              # It's a flag - collect it and its value if needed
+              FLAGS+=("$token")
+            elif [[ "${FLAGS[-1]:-}" == "--env" || "${FLAGS[-1]:-}" == "--tags" || "${FLAGS[-1]:-}" == "-j" || "${FLAGS[-1]:-}" == "--jobs" || "${FLAGS[-1]:-}" == "-t" || "${FLAGS[-1]:-}" == "--timeout" ]]; then
+              # Previous token was a flag that takes a value
+              FLAGS+=("$token")
+            else
+              # It's a path
+              PATHS+=("$token")
+            fi
+          done
+        elif [[ -n "$INPUT_PATH" && "$INPUT_PATH" != "." ]]; then
+          # workflow_dispatch with specific path(s)
+          # Split space-separated paths into array
+          read -ra PATHS <<< "$INPUT_PATH"
+          # Flags come from parallel_run_args input
+          if [[ -n "$INPUT_ARGS" ]]; then
+            read -ra FLAGS <<< "$INPUT_ARGS"
+          fi
+          echo "Using test_path input: ${PATHS[*]}" >&2
         else
-          dirs=$(find tests -mindepth 1 -maxdepth 1 -type d -name 'test*' -printf '%p\n' | sort)
-          echo "Discovered test dirs:" >&2
-          echo "$dirs" >&2
+          # Default: discover all test folders
+          while IFS= read -r dir; do
+            PATHS+=("$dir")
+          done < <(find tests -mindepth 1 -maxdepth 1 -type d -name 'test*' | sort)
+          # Flags come from parallel_run_args input (if any)
+          if [[ -n "$INPUT_ARGS" ]]; then
+            read -ra FLAGS <<< "$INPUT_ARGS"
+          fi
+          echo "Discovered ${#PATHS[@]} test directories" >&2
         fi
 
-        json=$(printf '%s\n' "$dirs" | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+        # Build JSON array of paths for matrix
+        if (( ${#PATHS[@]} == 0 )); then
+          echo "Error: No test paths found" >&2
+          exit 1
+        fi
+
+        json=$(printf '%s\n' "${PATHS[@]}" | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
         echo "test_dirs=$json" >> "$GITHUB_OUTPUT"
+        echo "Matrix paths: $json" >&2
+
+        # Build flags string for parallel_run_args
+        if (( ${#FLAGS[@]} > 0 )); then
+          flags_str="${FLAGS[*]}"
+          echo "parallel_run_args=$flags_str" >> "$GITHUB_OUTPUT"
+          echo "Flags: $flags_str" >&2
+        else
+          echo "parallel_run_args=" >> "$GITHUB_OUTPUT"
+        fi
 
         # Compute job timeout (test timeout + 10 min buffer)
-        # GitHub expressions don't support arithmetic, so compute here
-        # Note: inputs context doesn't exist for push/PR events, so use shell fallback
         BASE_TIMEOUT="${{ inputs.timeout_minutes }}"
         if [[ -z "$BASE_TIMEOUT" || "$BASE_TIMEOUT" == "null" ]]; then
           BASE_TIMEOUT=120
@@ -188,7 +234,7 @@ jobs:
         echo "job_timeout=$JOB_TIMEOUT" >> "$GITHUB_OUTPUT"
 
   pytest:
-    name: pytest (${{ matrix.test_path == '__parallel_run_cmd__' && 'from commit' || matrix.test_path }})
+    name: pytest (${{ matrix.test_path }})
     runs-on: ubuntu-latest-8-cores
     environment: unity-testing
     # Fixed timeout - dynamic timeout from needs.discover.outputs caused silent job creation failure
@@ -215,22 +261,13 @@ jobs:
     - name: Normalize test path
       id: normalize-path
       run: |
-        # Determine if we're using [parallel_run.sh ...] from commit/PR
-        if [[ '${{ matrix.test_path }}' == '__parallel_run_cmd__' ]]; then
-          # Use the extracted command from commit/PR message
-          PARALLEL_CMD='${{ needs.discover.outputs.parallel_run_cmd }}'
-          echo "test_args=$PARALLEL_CMD" >> $GITHUB_OUTPUT
-          # Normalize for artifact naming (use first path or 'custom')
-          first_path=$(echo "$PARALLEL_CMD" | grep -oE 'tests/[^ ]+' | head -1 || echo "custom")
-          normalized=$(echo "$first_path" | sed 's|^tests/test_||' | tr '/' '_')
-          if [[ -z "$normalized" ]]; then normalized="custom"; fi
-          echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
-        else
-          # Normal matrix path
-          echo "test_args=${{ matrix.test_path }}" >> $GITHUB_OUTPUT
-          normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/test_||' | tr '/' '_')
-          echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
-        fi
+        # Each matrix entry is a single test path
+        echo "test_args=${{ matrix.test_path }}" >> $GITHUB_OUTPUT
+
+        # Normalize for artifact naming
+        normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/test_||' | sed 's|^tests/||' | tr '/' '_')
+        if [[ -z "$normalized" || "$normalized" == "." ]]; then normalized="all"; fi
+        echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
 
         # Calculate timeout in seconds (default 120 minutes)
         TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
@@ -302,7 +339,13 @@ jobs:
       id: run-tests
       run: |
         set +e
-        xvfb-run tests/parallel_run.sh --timeout ${{ steps.normalize-path.outputs.timeout_seconds }} ${{ inputs.parallel_run_args }} ${{ steps.normalize-path.outputs.test_args }}
+        # parallel_run_args comes from discover job (parsed from commit message or inputs)
+        EXTRA_ARGS="${{ needs.discover.outputs.parallel_run_args }}"
+        TEST_PATH="${{ steps.normalize-path.outputs.test_args }}"
+        TIMEOUT="${{ steps.normalize-path.outputs.timeout_seconds }}"
+
+        echo "Running: parallel_run.sh --timeout $TIMEOUT $EXTRA_ARGS $TEST_PATH"
+        xvfb-run tests/parallel_run.sh --timeout "$TIMEOUT" $EXTRA_ARGS "$TEST_PATH"
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
