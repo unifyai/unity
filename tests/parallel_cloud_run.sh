@@ -74,14 +74,17 @@ candidates = []
 for run in runs:
     created = datetime.fromisoformat(run['createdAt'].replace('Z', '+00:00'))
     if created >= trigger_time:
-        candidates.append(run)
+        candidates.append((created, run))
 
 if not candidates:
     sys.exit(0)
 
+# Sort by creation time descending (most recent first)
+candidates.sort(key=lambda x: x[0], reverse=True)
+
 # Prefer runs whose name contains the test path (case-insensitive)
 if test_path and test_path != '.':
-    for run in candidates:
+    for created, run in candidates:
         name = (run.get('name') or '').lower()
         # Check if test path or its basename is in the name
         path_parts = test_path.replace('tests/', '').split('/')
@@ -89,8 +92,8 @@ if test_path and test_path != '.':
             print(run['databaseId'])
             sys.exit(0)
 
-# Fall back to first timestamp-matched run
-print(candidates[0]['databaseId'])
+# Fall back to most recent timestamp-matched run
+print(candidates[0][1]['databaseId'])
 "
       )
 
