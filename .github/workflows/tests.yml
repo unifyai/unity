@@ -53,6 +53,12 @@ jobs:
     steps:
     - name: Check if tests should run
       id: check
+      env:
+        # Pass these via env to avoid shell interpretation of special chars
+        # (backticks, quotes, $() in commit messages would otherwise be executed)
+        EVENT_NAME: ${{ github.event_name }}
+        COMMIT_MSG: ${{ github.event.head_commit.message }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
       run: |
         # Helper function to extract [parallel_run.sh ...] content
         extract_parallel_cmd() {
@@ -64,7 +70,7 @@ jobs:
         }
 
         # workflow_dispatch always runs tests
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+        if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
           echo "run_tests=true" >> "$GITHUB_OUTPUT"
           echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
           echo "Tests triggered by workflow_dispatch"
@@ -72,9 +78,7 @@ jobs:
         fi
 
         # For push events, check commit message
-        if [[ "${{ github.event_name }}" == "push" ]]; then
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-
+        if [[ "$EVENT_NAME" == "push" ]]; then
           # Check for [parallel_run.sh ...] first
           PARALLEL_CMD=$(extract_parallel_cmd "$COMMIT_MSG")
           if [[ -n "$PARALLEL_CMD" ]]; then
@@ -98,9 +102,7 @@ jobs:
         fi
 
         # For pull_request events, check PR title
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          PR_TITLE="${{ github.event.pull_request.title }}"
-
+        if [[ "$EVENT_NAME" == "pull_request" ]]; then
           # Check for [parallel_run.sh ...] first
           PARALLEL_CMD=$(extract_parallel_cmd "$PR_TITLE")
           if [[ -n "$PARALLEL_CMD" ]]; then
