@@ -222,9 +222,10 @@ jobs:
 
         # Detect project deletion flags and random projects mode from FLAGS
         # These need workflow-level handling to avoid race conditions across runners
-        DELETE_ON_START="false"
-        DELETE_ON_EXIT="false"
-        RANDOM_PROJECTS="false"
+        # CI defaults: shared project mode, delete on start, keep on exit
+        DELETE_ON_START="true"   # Default: delete project before tests
+        DELETE_ON_EXIT="false"   # Default: keep project after tests
+        RANDOM_PROJECTS="false"  # Default: shared project mode
         declare -a CLEANED_FLAGS=()
         skip_next=false
 
@@ -240,24 +241,45 @@ jobs:
           # Check for --env with delete flags or random projects
           if [[ "$flag" == "--env" ]]; then
             case "$next_val" in
+              # DELETE_ON_START overrides
               UNIFY_TESTS_DELETE_PROJ_ON_START=true|UNIFY_TESTS_DELETE_PROJ_ON_START=True|UNIFY_TESTS_DELETE_PROJ_ON_START=1)
                 DELETE_ON_START="true"
                 skip_next=true
-                echo "Detected DELETE_ON_START (will handle at workflow level)" >&2
+                echo "Detected DELETE_ON_START=true (will handle at workflow level)" >&2
                 continue
                 ;;
+              UNIFY_TESTS_DELETE_PROJ_ON_START=false|UNIFY_TESTS_DELETE_PROJ_ON_START=False|UNIFY_TESTS_DELETE_PROJ_ON_START=0)
+                DELETE_ON_START="false"
+                skip_next=true
+                echo "Detected DELETE_ON_START=false (override default)" >&2
+                continue
+                ;;
+              # DELETE_ON_EXIT overrides
               UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=1)
                 DELETE_ON_EXIT="true"
                 skip_next=true
-                echo "Detected DELETE_ON_EXIT (will handle at workflow level)" >&2
+                echo "Detected DELETE_ON_EXIT=true (will handle at workflow level)" >&2
                 continue
                 ;;
+              UNIFY_TESTS_DELETE_PROJ_ON_EXIT=false|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=False|UNIFY_TESTS_DELETE_PROJ_ON_EXIT=0)
+                DELETE_ON_EXIT="false"
+                skip_next=true
+                echo "Detected DELETE_ON_EXIT=false (override default)" >&2
+                continue
+                ;;
+              # RAND_PROJ overrides
               UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
                 RANDOM_PROJECTS="true"
                 # Keep this flag - it's safe per-runner
                 CLEANED_FLAGS+=("$flag" "$next_val")
                 skip_next=true
-                echo "Detected RANDOM_PROJECTS mode" >&2
+                echo "Detected RANDOM_PROJECTS=true mode" >&2
+                continue
+                ;;
+              UNIFY_TESTS_RAND_PROJ=false|UNIFY_TESTS_RAND_PROJ=False|UNIFY_TESTS_RAND_PROJ=0)
+                RANDOM_PROJECTS="false"
+                skip_next=true
+                echo "Detected RANDOM_PROJECTS=false (override)" >&2
                 continue
                 ;;
             esac
@@ -344,8 +366,12 @@ jobs:
       fail-fast: false
       matrix:
         test_path: ${{ fromJSON(needs.discover.outputs.test_dirs) }}
-    # Only secrets/credentials - all behavioral settings use defaults
     env:
+      # CI project management defaults (explicit, not relying on code defaults)
+      UNIFY_TESTS_RAND_PROJ: "false"              # Shared project mode
+      UNIFY_TESTS_DELETE_PROJ_ON_START: "false"   # Handled by setup job at workflow level
+      UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"    # Keep project after tests
+      # API credentials
       UNIFY_BASE_URL: https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0
       UNIFY_KEY: ${{ secrets.USER_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
