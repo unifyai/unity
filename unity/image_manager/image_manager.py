@@ -460,17 +460,15 @@ class ImageHandle:
                 "image_url": {"url": f"data:{mime};base64,{data_str}"},
             }
 
-        client.append_messages(
-            [
-                {
-                    "role": "user",
-                    "content": [content_block],
-                },
-            ],
-        )
+        messages = [
+            {
+                "role": "user",
+                "content": [content_block, {"type": "text", "text": question}],
+            },
+        ]
 
         # Single shot – no nested tool loop
-        answer = await client.generate(user_message=question)
+        answer = await client.generate(messages=messages)
         return answer
 
     async def wait_until_resolved(self, timeout: Optional[float] = None) -> int:
