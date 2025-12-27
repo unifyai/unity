@@ -485,7 +485,7 @@ start_orchestra_server() {
     num_cores=$(nproc 2>/dev/null || echo 4)
   fi
   log_info "Starting Orchestra with $num_cores workers (matching CPU cores)"
-  WORKERS_COUNT="$num_cores" nohup poetry run python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
+  ORCHESTRA_WORKERS_COUNT="$num_cores" nohup poetry run python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$ORCHESTRA_SERVER_PIDFILE"
 
