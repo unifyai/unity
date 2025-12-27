@@ -653,6 +653,32 @@ jobs:
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
 
+    - name: Dump orchestra logs on failure
+      if: failure()
+      run: |
+        echo "=== Orchestra Server Logs ==="
+        if [ -f /tmp/unity-orchestra-server.log ]; then
+          cat /tmp/unity-orchestra-server.log
+        else
+          echo "No orchestra log file found at /tmp/unity-orchestra-server.log"
+        fi
+        echo ""
+        echo "=== Orchestra Server Process Status ==="
+        if [ -f /tmp/unity-orchestra-server.pid ]; then
+          PID=$(cat /tmp/unity-orchestra-server.pid)
+          echo "Expected PID: $PID"
+          if ps -p "$PID" > /dev/null 2>&1; then
+            echo "Process is still running"
+          else
+            echo "Process is NOT running"
+          fi
+        else
+          echo "No PID file found"
+        fi
+        echo ""
+        echo "=== Any orchestra-related processes ==="
+        ps aux | grep -E "(orchestra|uvicorn)" | grep -v grep || echo "None found"
+
     - name: Generate failure summary
       if: failure()
       run: |
