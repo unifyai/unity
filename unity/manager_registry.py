@@ -34,7 +34,6 @@ Available typed methods:
     - get_knowledge_manager()
     - get_memory_manager()
     - get_secret_manager()
-    - get_skill_manager()
     - get_task_scheduler()
     - get_transcript_manager()
     - get_web_searcher()
@@ -58,7 +57,6 @@ if TYPE_CHECKING:
     from .knowledge_manager.base import BaseKnowledgeManager
     from .memory_manager.base import BaseMemoryManager
     from .secret_manager.base import BaseSecretManager
-    from .skill_manager.base import BaseSkillManager
     from .task_scheduler.base import BaseTaskScheduler
     from .transcript_manager.base import BaseTranscriptManager
     from .web_searcher.base import BaseWebSearcher
@@ -514,24 +512,6 @@ class ManagerRegistry:
         )
 
     @classmethod
-    def get_skill_manager(
-        cls,
-        *,
-        description: str | None = None,
-        simulation_guidance: str | None = None,
-        _force_new: bool = False,
-        **kwargs: Any,
-    ) -> "BaseSkillManager":
-        """Get the SkillManager singleton (respects IMPL settings)."""
-        return cls.get(
-            "skills",
-            description=description,
-            simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
-            **kwargs,
-        )
-
-    @classmethod
     def get_task_scheduler(
         cls,
         *,
@@ -633,7 +613,6 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("knowledge", lambda: SETTINGS.knowledge)
     ManagerRegistry.register_settings("guidance", lambda: SETTINGS.guidance)
     ManagerRegistry.register_settings("secrets", lambda: SETTINGS.secret)
-    ManagerRegistry.register_settings("skills", lambda: SETTINGS.skill)
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
     ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
@@ -724,15 +703,6 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("secrets", "real", SecretManager)
     ManagerRegistry.register_class("secrets", "simulated", SimulatedSecretManager)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SkillManager implementations
-    # ─────────────────────────────────────────────────────────────────────────
-    from .skill_manager.skill_manager import SkillManager
-    from .skill_manager.simulated import SimulatedSkillManager
-
-    ManagerRegistry.register_class("skills", "real", SkillManager)
-    ManagerRegistry.register_class("skills", "simulated", SimulatedSkillManager)
 
     # ─────────────────────────────────────────────────────────────────────────
     # WebSearcher implementations

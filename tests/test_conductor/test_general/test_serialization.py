@@ -288,62 +288,6 @@ async def test_serialize_secret_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_skill_ask():
-    cond = Conductor()
-    h = await cond.request(
-        "What high-level skills do you have for spreadsheets and CSVs?",
-    )
-
-    try:
-        client = getattr(h, "_client", None)
-        assert client is not None
-        await _wait_for_tool_request(client, "SkillManager_ask")
-
-        async def _child_adopted():
-            try:
-                task_info = getattr(getattr(h, "_task", None), "task_info", {})  # type: ignore[attr-defined]
-                if isinstance(task_info, dict):
-                    return any(
-                        getattr(meta, "name", None) == "SkillManager_ask"
-                        and getattr(meta, "handle", None) is not None
-                        for meta in task_info.values()
-                    )
-            except Exception:
-                return False
-            return False
-
-        await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
-
-        snap = h.serialize(recursive=True)  # type: ignore[attr-defined]
-        expected = {
-            "version": 1,
-            "root": {
-                "tool": "Conductor.request",
-                "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
-            },
-            "children": [
-                {
-                    "tool": "SkillManager.ask",
-                },
-            ],
-        }
-        _assert_dict_subset(expected, snap)
-        assert snap.get("loop_id", "").startswith("Conductor.request")
-        assert isinstance(snap.get("assistant"), list)
-        assert isinstance(snap.get("tools"), list)
-    finally:
-        try:
-            h.stop("cleanup")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(h.result(), timeout=120)  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-
-@pytest.mark.asyncio
-@_handle_project
 async def test_serialize_task_ask():
     cond = Conductor()
     h = await cond.request("What tasks are scheduled for today?")
@@ -649,48 +593,6 @@ async def test_deserialize_continue_secret_ask():
 
     resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
     interjection_text = "Prefer short answer"
-    await resumed.interject(interjection_text)  # type: ignore[attr-defined]
-    out = await asyncio.wait_for(resumed.result(), timeout=240)  # type: ignore[attr-defined]
-    assert isinstance(out, str) and len(out) > 0
-    hist = resumed.get_history()  # type: ignore[attr-defined]
-    assert isinstance(hist, list)
-    seen = [
-        m
-        for m in hist
-        if isinstance(m, dict)
-        and m.get("role") == "user"
-        and interjection_text in str(m.get("content", ""))
-    ]
-    assert len(seen) == 1
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_deserialize_continue_skill_ask():
-    snap = {
-        "version": 1,
-        "loop_id": "Conductor.request(static-skill)",
-        "root": {
-            "tool": "Conductor.request",
-            "handle": "ConductorRequestHandle(AsyncToolLoopHandle)",
-        },
-        "system_message": "You are helpful.",
-        "initial_user_message": "What high-level skills do you have for spreadsheets and CSVs?",
-        "assistant": [],
-        "tools": [],
-        "children": [
-            {
-                "call_id": None,
-                "tool": "SkillManager.ask",
-                "handle": "ReadOnlyAskGuardHandle(AsyncToolLoopHandle)",
-                "passthrough": False,
-                "state": "done",
-            },
-        ],
-    }
-
-    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
-    interjection_text = "Prefer bullet list"
     await resumed.interject(interjection_text)  # type: ignore[attr-defined]
     out = await asyncio.wait_for(resumed.result(), timeout=240)  # type: ignore[attr-defined]
     assert isinstance(out, str) and len(out) > 0

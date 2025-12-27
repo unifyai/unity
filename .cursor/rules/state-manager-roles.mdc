@@ -18,7 +18,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Scope**: `ask` (read‑only across managers), `request` (mutations via the appropriate managers). Wires in‑flight handles (e.g., `Actor.act`) to `ConversationManager` for real‑time steering passthrough.
 - **Connections**:
   - **Steered by**: `ConversationManager` (primary caller of `ask`/`request`).
-  - **Steers**: `ContactManager`, `TranscriptManager`, `KnowledgeManager`, `GuidanceManager`, `SecretManager`, `SkillManager`, `TaskScheduler`, `WebSearcher`, `Actor` and the `ConversationManager` handle (`ask`/`interject`/`get_full_transcript`). Does not call `FunctionManager` or `FileManager` directly.
+  - **Steers**: `ContactManager`, `TranscriptManager`, `KnowledgeManager`, `GuidanceManager`, `SecretManager`, `TaskScheduler`, `WebSearcher`, `Actor` and the `ConversationManager` handle (`ask`/`interject`/`get_full_transcript`). Does not call `FunctionManager` or `FileManager` directly.
 
 ### Conductor routing playbook
 - **Read‑only questions**
@@ -26,7 +26,6 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - Contacts → `ContactManager.ask`
   - Transcripts → `TranscriptManager.ask` (may call `ContactManager.ask` for participants)
   - Knowledge → `KnowledgeManager.ask`
-  - Skills discovery (“what can you do?”) → `SkillManager.ask` (reads `FunctionManager`)
   - Secrets (metadata/placeholders only) → `SecretManager.ask`
   - Time‑sensitive/web (“today/latest/now”) → `WebSearcher.ask`
   - About a specific received file (filename known) → `FileManager.ask`
@@ -45,9 +44,6 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Images**
   - Use `ImageManager` only through managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`). Pass image_ids and helpful annotations.
   - `ScreenShareManager` is a producer of live images. When screen sharing is active, it emits curated, annotated screenshots that `ConversationManager` forwards through `Conductor` via the `images` argument on downstream calls.
-- **Skills vs. Functions**
-  - Skills discovery → `SkillManager.ask`
-  - Function code/exec is accessed by `SkillManager` (read) and `Actor` (exec). The `Conductor` never calls `FunctionManager` directly.
 
 ### ImageManager
 - **Role**: Low‑level image store/retrieval and the cross‑cutting "visual communication" surface used by managers.
@@ -153,16 +149,9 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Role**: Catalogue of user‑supplied Python functions and metadata.
 - **Scope**: add/list/get_precondition/delete/search/search_by_similarity over functions.
 - **Connections**:
-  - **Steered by**: `SkillManager` (read‑only listing/search); `Actor` (loads/executes functions during actions). `GuidanceManager` reads function rows via the shared "Functions" context (no direct API calls).
+  - **Steered by**: `Actor` (loads/executes functions during actions). `GuidanceManager` reads function rows via the shared "Functions" context (no direct API calls).
   - **Steers**: —
 
-### SkillManager
-- **Role**: Human‑friendly catalogue of assistant capabilities (“skills”).
-- **Scope**: ask (discover skills, how to invoke them, and their mapping to functions); read‑only over the catalogue.
-- **Edge**: Use for discovery and explanation; execution is delegated to the appropriate manager/tool.
-- **Connections**:
-  - **Steered by**: `Conductor.ask` (and visible under `request`).
-  - **Steers**: `FunctionManager` (lists/searches/preconditions to answer skills questions).
 
 ### GuidanceManager
 - **Role**: Owner of internal guidance/policies/instructions.

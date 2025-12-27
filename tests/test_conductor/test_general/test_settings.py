@@ -29,7 +29,6 @@ def test_default_settings_disable_optional_managers():
     assert SETTINGS.knowledge.ENABLED is False
     assert SETTINGS.guidance.ENABLED is False
     assert SETTINGS.secret.ENABLED is False
-    assert SETTINGS.skill.ENABLED is False
     assert SETTINGS.web.ENABLED is False
     assert SETTINGS.file.ENABLED is False
 
@@ -50,7 +49,6 @@ def test_default_settings_use_real_implementations():
     assert SETTINGS.knowledge.IMPL == "real"
     assert SETTINGS.guidance.IMPL == "real"
     assert SETTINGS.secret.IMPL == "real"
-    assert SETTINGS.skill.IMPL == "real"
     assert SETTINGS.web.IMPL == "real"
     assert SETTINGS.file.IMPL == "real"
 
@@ -81,7 +79,6 @@ def test_conductor_optional_managers_disabled_by_default():
     assert conductor._knowledge_manager is None
     assert conductor._guidance_manager is None
     assert conductor._secret_manager is None
-    assert conductor._skill_manager is None
     assert conductor._web_searcher is None
     assert conductor._file_manager is None
 
@@ -109,7 +106,6 @@ def test_simulated_conductor_bypasses_settings():
     assert conductor._knowledge_manager is not None
     assert conductor._guidance_manager is not None
     assert conductor._secret_manager is not None
-    assert conductor._skill_manager is not None
     assert conductor._web_searcher is not None
     assert conductor._file_manager is not None
 
@@ -213,7 +209,6 @@ def test_disabled_sentinel_overrides_explicit_enable_via_patch():
         mock_settings.knowledge.IMPL = "simulated"
         mock_settings.guidance.ENABLED = False
         mock_settings.secret.ENABLED = False
-        mock_settings.skill.ENABLED = False
         mock_settings.web.ENABLED = False
         mock_settings.file.ENABLED = False
         mock_settings.actor.IMPL = "hierarchical"
@@ -255,7 +250,6 @@ def test_disabled_managers_have_no_tools():
     assert not any("KnowledgeManager" in t for t in ask_tools)
     assert not any("GuidanceManager" in t for t in ask_tools)
     assert not any("SecretManager" in t for t in ask_tools)
-    assert not any("SkillManager" in t for t in ask_tools)
     assert not any("WebSearcher" in t for t in ask_tools)
     assert not any("GlobalFileManager" in t for t in ask_tools)
 

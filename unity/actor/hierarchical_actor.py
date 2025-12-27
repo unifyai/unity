@@ -2094,7 +2094,6 @@ class _PrimitivesProxy:
             "secrets",
             "guidance",
             "web",
-            "skills",
         }:
             env = None
             if hasattr(self._plan, "environments") and isinstance(

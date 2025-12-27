@@ -37,7 +37,6 @@ from ..contact_manager.base import BaseContactManager
 from ..transcript_manager.base import BaseTranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
 from ..guidance_manager.base import BaseGuidanceManager
-from ..skill_manager.base import BaseSkillManager
 from ..task_scheduler.base import BaseTaskScheduler
 from ..task_scheduler.active_queue import ActiveQueue
 from ..web_searcher.base import BaseWebSearcher
@@ -81,7 +80,6 @@ class Conductor(BaseConductor):
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         guidance_manager: Optional[BaseGuidanceManager] = None,
         secret_manager: Optional[BaseSecretManager] = None,
-        skill_manager: Optional[BaseSkillManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
         actor: Optional[BaseActor] = None,
@@ -202,20 +200,6 @@ class Conductor(BaseConductor):
                 simulation_guidance=simulation_guidance,
             )
 
-        # SkillManager
-        if isinstance(skill_manager, _DisabledSentinel):
-            self._skill_manager = None
-        elif skill_manager is not None:
-            self._skill_manager = skill_manager
-        elif not SETTINGS.skill.ENABLED:
-            self._skill_manager = None
-        else:
-            self._skill_manager = ManagerRegistry.get_skill_manager(
-                description=description,
-                simulation_guidance=simulation_guidance,
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
-            )
-
         # WebSearcher
         if isinstance(web_searcher, _DisabledSentinel):
             self._web_searcher = None
@@ -263,8 +247,6 @@ class Conductor(BaseConductor):
             passive_methods.append(self._guidance_manager.ask)
         if self._secret_manager is not None:
             passive_methods.append(self._secret_manager.ask)
-        if self._skill_manager is not None:
-            passive_methods.append(self._skill_manager.ask)
         if self._web_searcher is not None:
             passive_methods.append(self._web_searcher.ask)
         if self._file_manager is not None:

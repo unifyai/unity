@@ -36,7 +36,7 @@ Unity's architecture resembles a "back office" where specialized managers handle
 │                         State Managers                                │
 │                                                                       │
 │  ContactManager    KnowledgeManager   TaskScheduler   SecretManager   │
-│  TranscriptManager GuidanceManager    WebSearcher     SkillManager    │
+│  TranscriptManager GuidanceManager    WebSearcher                     │
 │  FileManager       FunctionManager    ImageManager    MemoryManager   │
 │                                                                       │
 │                             Actor                                     │
@@ -83,7 +83,6 @@ Each manager owns a specific domain. The Conductor routes requests to the approp
 | **Actor** | Ephemeral, real-time action executor. Can invoke functions, control browsers, read files, or use any available capability. Returns a live steerable handle. |
 | **TaskScheduler** | Durable task management and execution. Use `execute` to start work, not `update`. |
 | **FunctionManager** | Catalogue of reusable Python functions (created by the Actor or provided by the user). |
-| **SkillManager** | Human-friendly catalogue of assistant capabilities. Read-only discovery. |
 
 ### Perception & Communication
 
@@ -316,7 +315,6 @@ unity/
 │   ├── memory_manager/      # Offline maintenance
 │   ├── screen_share_manager/ # Screen perception
 │   ├── secret_manager/      # Secrets storage
-│   ├── skill_manager/       # Capability catalogue
 │   ├── task_scheduler/      # Task execution
 │   ├── transcript_manager/  # Message transcripts
 │   ├── web_searcher/        # Web research
