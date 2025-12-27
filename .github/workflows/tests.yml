@@ -582,9 +582,12 @@ jobs:
             TOTAL_HITS=$((TOTAL_HITS + hits))
             TOTAL_MISSES=$((TOTAL_MISSES + misses))
           done
-          if [ $((TOTAL_HITS + TOTAL_MISSES)) -gt 0 ]; then
-            HIT_RATE=$(python3 -c "print(f'{$TOTAL_HITS * 100.0 / ($TOTAL_HITS + $TOTAL_MISSES):.1f}')")
-            CACHE_STATS=" | 🔄 Cache: ${HIT_RATE}% hits (${TOTAL_HITS}/${TOTAL_MISSES})"
+          TOTAL=$((TOTAL_HITS + TOTAL_MISSES))
+          if [ $TOTAL -gt 0 ]; then
+            HIT_RATE=$(python3 -c "print(f'{$TOTAL_HITS * 100.0 / $TOTAL:.1f}')")
+            CACHE_STATS=" | 🔄 Cache: ${HIT_RATE}% hits (${TOTAL_HITS}/${TOTAL})"
+          else
+            CACHE_STATS=" | 🔄 Cache: N/A (no LLM calls)"
           fi
         fi
 
@@ -629,9 +632,12 @@ jobs:
             TOTAL_HITS=$((TOTAL_HITS + hits))
             TOTAL_MISSES=$((TOTAL_MISSES + misses))
           done
-          if [ $((TOTAL_HITS + TOTAL_MISSES)) -gt 0 ]; then
-            HIT_RATE=$(python3 -c "print(f'{$TOTAL_HITS * 100.0 / ($TOTAL_HITS + $TOTAL_MISSES):.1f}')")
-            CACHE_STATS=" | 🔄 Cache: ${HIT_RATE}% hits (${TOTAL_HITS}/${TOTAL_MISSES})"
+          TOTAL=$((TOTAL_HITS + TOTAL_MISSES))
+          if [ $TOTAL -gt 0 ]; then
+            HIT_RATE=$(python3 -c "print(f'{$TOTAL_HITS * 100.0 / $TOTAL:.1f}')")
+            CACHE_STATS=" | 🔄 Cache: ${HIT_RATE}% hits (${TOTAL_HITS}/${TOTAL})"
+          else
+            CACHE_STATS=" | 🔄 Cache: N/A (no LLM calls)"
           fi
         fi
 
