@@ -48,6 +48,11 @@ class TestingSettings(ProductionSettings):
     UNIFY_SKIP_SESSION_SETUP: bool = False  # Skip project/context creation (pre-done)
     UNITY_TEST_PROJECT_NAME: str = "UnityTests"
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # File Lock Settings (for parallel test coordination)
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_FILE_LOCK_TIMEOUT: float = 3600.0  # 1 hour - handles slow tests under load
+
     @computed_field
     @property
     def test_project_name(self) -> str:
