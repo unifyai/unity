@@ -606,7 +606,7 @@ def _acquire_file_lock_with_timeout(
 
 
 @contextmanager
-def scenario_file_lock(lock_name: str, timeout: float = 600.0):
+def scenario_file_lock(lock_name: str, timeout: float | None = None):
     """
     File-based lock for coordinating parallel test scenario seeding.
 
@@ -617,8 +617,8 @@ def scenario_file_lock(lock_name: str, timeout: float = 600.0):
     Args:
         lock_name: Unique name for this scenario's lock file.
                    Will be created in system temp directory.
-        timeout: Maximum seconds to wait for the lock (default 600s / 10 min).
-                 Scenario seeding can be slow, especially under heavy parallel load.
+        timeout: Maximum seconds to wait for the lock. Defaults to
+                 SETTINGS.UNITY_FILE_LOCK_TIMEOUT (3600s / 1 hour).
 
     Raises:
         TimeoutError: If the lock cannot be acquired within the timeout.
@@ -633,6 +633,8 @@ def scenario_file_lock(lock_name: str, timeout: float = 600.0):
                 # Seed the scenario
                 seed_all_data()
     """
+    if timeout is None:
+        timeout = SETTINGS.UNITY_FILE_LOCK_TIMEOUT
     lock_path = os.path.join(tempfile.gettempdir(), f"unity_{lock_name}.lock")
     lock_file = open(lock_path, "w")
     try:
@@ -644,7 +646,7 @@ def scenario_file_lock(lock_name: str, timeout: float = 600.0):
 
 
 @contextmanager
-def mutation_test_lock(lock_name: str, timeout: float = 300.0):
+def mutation_test_lock(lock_name: str, timeout: float | None = None):
     """
     File-based lock for serializing mutation tests in parallel execution.
 
@@ -661,8 +663,8 @@ def mutation_test_lock(lock_name: str, timeout: float = 300.0):
     Args:
         lock_name: Unique name for this lock (e.g., "cm_mutation").
                    Will be created in system temp directory.
-        timeout: Maximum seconds to wait for the lock (default 600s / 10 min).
-                 Tests with multiple LLM calls can be slow under heavy parallel load.
+        timeout: Maximum seconds to wait for the lock. Defaults to
+                 SETTINGS.UNITY_FILE_LOCK_TIMEOUT (3600s / 1 hour).
 
     Raises:
         TimeoutError: If the lock cannot be acquired within the timeout.
@@ -675,6 +677,8 @@ def mutation_test_lock(lock_name: str, timeout: float = 300.0):
             with mutation_test_lock("cm_mutation"):
                 yield cm, id_map
     """
+    if timeout is None:
+        timeout = SETTINGS.UNITY_FILE_LOCK_TIMEOUT
     lock_path = os.path.join(tempfile.gettempdir(), f"unity_{lock_name}.lock")
     lock_file = open(lock_path, "w")
     try:
