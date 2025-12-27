@@ -294,11 +294,17 @@ def get_test_log_format(config):
 def pytest_sessionstart(session):
     # ------------------------------------------------------------------
     #  Optionally delete the project before starting (clean slate)
+    #  Skip in shared project mode (UNIFY_SKIP_SESSION_SETUP) because
+    #  parallel_run.sh handles deletion at the script level to avoid
+    #  race conditions between parallel sessions.
     # ------------------------------------------------------------------
 
     project_name = SETTINGS.test_project_name
 
-    if SETTINGS.UNIFY_TESTS_DELETE_PROJ_ON_START:
+    if (
+        SETTINGS.UNIFY_TESTS_DELETE_PROJ_ON_START
+        and not SETTINGS.UNIFY_SKIP_SESSION_SETUP
+    ):
         try:
             unify.delete_project(project_name)
         except Exception:

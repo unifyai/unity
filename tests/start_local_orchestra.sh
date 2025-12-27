@@ -476,8 +476,16 @@ start_orchestra_server() {
   export ORCHESTRA_RELOAD=false
   export ORCHESTRA_WORKERS_COUNT=1
 
-  # Start server in background
-  nohup poetry run python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
+  # Start server in background with workers matching CPU cores to handle parallel test load
+  # Default uvicorn has 1 worker which can't handle 25+ concurrent test sessions
+  local num_cores
+  if [[ "$(uname)" == "Darwin" ]]; then
+    num_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+  else
+    num_cores=$(nproc 2>/dev/null || echo 4)
+  fi
+  log_info "Starting Orchestra with $num_cores workers (matching CPU cores)"
+  WORKERS_COUNT="$num_cores" nohup poetry run python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$ORCHESTRA_SERVER_PIDFILE"
 
