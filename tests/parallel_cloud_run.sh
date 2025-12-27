@@ -4,8 +4,9 @@ set -euo pipefail
 # Trigger CI tests on the current code state via GitHub Actions.
 #
 # If the branch is clean and pushed, triggers CI directly on the current branch.
-# If there are local changes (uncommitted or unpushed), uses a persistent staging
-# branch to push the current state, triggers CI, then restores the local state.
+# If there are local changes (uncommitted or unpushed), creates a unique staging
+# branch with a datetime suffix, pushes the current state, triggers CI, then
+# restores the local state.
 #
 # Environment variables from .env are automatically passed to CI. Explicit --env
 # args override .env values (later values win).
@@ -16,7 +17,7 @@ set -euo pipefail
 #   parallel_cloud_run.sh .                    # All tests
 #   parallel_cloud_run.sh --env UNIFY_CACHE=false tests/  # Override .env
 #
-# The staging branch (ci-staging-{username}) persists for CI reruns.
+# Each run creates a unique branch (ci-staging-{user}-{datetime}) for isolation.
 
 REPO="unifyai/unity"
 WORKFLOW="tests.yml"
@@ -248,12 +249,13 @@ fi
 # Staging branch approach for local changes
 # ============================================================================
 
-echo "Local changes detected. Using staging branch..."
+echo "Local changes detected. Creating unique staging branch..."
 echo ""
 
-# Generate staging branch name based on git username
+# Generate unique staging branch name with datetime suffix
 TEMP_USER=$(git config user.name 2>/dev/null | tr ' ' '-' | tr '[:upper:]' '[:lower:]' || whoami)
-STAGING_BRANCH="ci-staging-${TEMP_USER}"
+DATETIME=$(date +%Y-%m-%dT%H-%M-%S)
+STAGING_BRANCH="ci-staging-${TEMP_USER}-${DATETIME}"
 
 # Save list of staged files for restoration (preserves staged vs unstaged distinction)
 STAGED_FILES=$(git diff --cached --name-only)
@@ -293,9 +295,9 @@ if has_uncommitted_changes; then
   NEED_RESTORE="yes"
 fi
 
-# Create/reset staging branch to current HEAD (includes unpushed commits)
-echo "Creating staging branch: $STAGING_BRANCH"
-git checkout -B "$STAGING_BRANCH"
+# Create unique staging branch from current HEAD (includes unpushed commits)
+echo "Creating branch: $STAGING_BRANCH"
+git checkout -b "$STAGING_BRANCH"
 
 # Apply and commit stashed changes if we stashed anything
 if [[ -n "$NEED_RESTORE" ]]; then
@@ -304,9 +306,9 @@ if [[ -n "$NEED_RESTORE" ]]; then
   git commit -m "CI: local changes from $CURRENT_BRANCH ($(date +%Y-%m-%d\ %H:%M))"
 fi
 
-# Force push to remote
+# Push to remote (new unique branch, no force needed)
 echo "Pushing to origin/$STAGING_BRANCH..."
-git push -f origin "$STAGING_BRANCH"
+git push origin "$STAGING_BRANCH"
 
 # Return to original branch (cleanup will handle stash restoration)
 git checkout "$CURRENT_BRANCH"
@@ -340,4 +342,6 @@ echo ""
 echo "✓ Workflow triggered!"
 echo "  $RUN_URL"
 echo ""
-echo "Staging branch '$STAGING_BRANCH' persists for future runs."
+echo "Branch: $STAGING_BRANCH"
+echo "Note: Delete stale ci-staging-* branches periodically with:"
+echo "  git branch -r | grep 'ci-staging-' | sed 's|origin/||' | xargs -I{} git push origin --delete {}"
