@@ -178,14 +178,26 @@ start_db_container() {
     return 1
   fi
 
-  # Start the container
+  # Calculate max_connections based on CPU cores (num_cores * 100)
+  # This ensures enough connections for parallel test workers
+  local num_cores
+  if [[ "$(uname)" == "Darwin" ]]; then
+    num_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+  else
+    num_cores=$(nproc 2>/dev/null || echo 4)
+  fi
+  local max_connections=$((num_cores * 100))
+  log_info "Setting PostgreSQL max_connections=$max_connections (${num_cores} cores × 100)"
+
+  # Start the container with increased max_connections
   docker run -d \
     --name "$ORCHESTRA_DB_CONTAINER" \
     -p "${ORCHESTRA_DB_PORT}:5432" \
     -e POSTGRES_PASSWORD=orchestra \
     -e POSTGRES_USER=orchestra \
     -e POSTGRES_DB=orchestra \
-    pgvector/pgvector:pg15 >/dev/null
+    pgvector/pgvector:pg15 \
+    postgres -c max_connections="$max_connections" >/dev/null
 
   log_info "Waiting for PostgreSQL to be ready..."
 
