@@ -23,8 +23,10 @@ REPO="unifyai/unity"
 WORKFLOW="tests.yml"
 POLL_TIMEOUT=30  # seconds to wait for run to appear
 
-# Find repo root
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# Find repo root and cd into it (allows calling from anywhere)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 # ============================================================================
 # Helper: Poll for the workflow run URL after triggering
