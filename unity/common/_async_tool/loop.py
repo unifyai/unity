@@ -1,5 +1,5 @@
 import asyncio
-import unify
+import unillm
 import json
 import inspect
 import copy
@@ -186,7 +186,7 @@ def _check_valid_response_format(response_format: Any):
 
 
 async def async_tool_loop_inner(
-    client: unify.AsyncUnify,
+    client: unillm.AsyncUnify,
     message: str | dict | list[str | dict],
     tools: Dict[str, Union[Callable, ToolSpec]],
     *,
@@ -249,7 +249,7 @@ async def async_tool_loop_inner(
 
     Parameters
     ----------
-    client : ``unify.AsyncUnify``
+    client : ``unillm.AsyncUnify``
         Pre-initialised Unify client that provides ``append_messages`` and
         ``generate``.  All tokens sent to / received from the LLM flow
         through this object.
@@ -352,7 +352,7 @@ async def async_tool_loop_inner(
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # ── Model family detection (centralized) ──────────────────────────────────────
-    _model_name = str(getattr(client, "model", "") or "")
+    _model_name = str(getattr(client, "_model", "") or "")
     _model_base = _model_name.split("@")[0]
     _is_claude = _model_base.startswith("claude")
 
@@ -377,15 +377,7 @@ async def async_tool_loop_inner(
         # must prevent reasoning_effort from being sent. We temporarily clear the
         # client's _reasoning_effort so the generate call won't enable thinking.
         if _is_claude:
-            if tool_choice == "required":
-                # Clear reasoning_effort on the client to prevent thinking
-                if hasattr(client, "_reasoning_effort"):
-                    client._reasoning_effort = None
-                # Also remove from gen_kwargs in case it was explicitly set
-                gen_kwargs.pop("reasoning_effort", None)
-                gen_kwargs.pop("thinking", None)
-                _claude_thinking_disabled = True
-            else:
+            if tool_choice != "required":
                 # Always apply transformation wrapper for Claude to handle:
                 # 1. Seeded messages without thinking blocks (manually constructed)
                 # 2. Synthetic check_status_ messages (chronological ordering pairs)
@@ -431,12 +423,15 @@ async def async_tool_loop_inner(
                         # Check 2: Seeded messages without thinking blocks (those
                         # passed in initially via the message parameter). These
                         # are manually constructed and lack Claude's thinking.
+                        provider_fields = m.get("provider_specific_fields") or {}
+                        thinking_blocks = provider_fields.get("thinking_blocks")
+
+                        if thinking_blocks is None:
+                            return True
+
                         idx = msg_indices.get(id(m), 999999)
                         if idx >= _seeded_msg_count:
                             return False  # Not a seeded message
-                        provider_fields = m.get("provider_specific_fields") or {}
-                        thinking_blocks = provider_fields.get("thinking_blocks")
-                        return thinking_blocks is None
 
                     msgs = transform_tool_calls_to_context(
                         msgs,

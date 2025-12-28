@@ -547,7 +547,7 @@ async def test_interject_routing_multi_task(monkeypatch):
             }
             return _json.dumps(payload)
 
-    monkeypatch.setattr("unify.AsyncUnify", _FakeRouterClient, raising=True)
+    monkeypatch.setattr("unillm.AsyncUnify", _FakeRouterClient, raising=True)
 
     # Start queue at A and issue one multi-task interjection
     h = await ts.execute(task_id=a_id)
@@ -637,7 +637,7 @@ async def test_handle_ask_includes_queue_context(monkeypatch):
             # Deterministic synthesized answer
             return "OK"
 
-    monkeypatch.setattr("unify.AsyncUnify", _FakeQueueClient, raising=True)
+    monkeypatch.setattr("unillm.AsyncUnify", _FakeQueueClient, raising=True)
 
     h = await ts.execute(task_id=a)
 

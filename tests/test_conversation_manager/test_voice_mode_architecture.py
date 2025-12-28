@@ -934,7 +934,7 @@ class TestStage3TTSFastBrain:
 
 class TestUnifyLLMAdapter:
     """
-    Tests for the UnifyLLM adapter that wraps unify.AsyncUnify for LiveKit.
+    Tests for the UnifyLLM adapter that wraps unillm.AsyncUnify for LiveKit.
 
     The adapter provides:
     - Local caching for CI (via Unify's cache system)

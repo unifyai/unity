@@ -7,7 +7,7 @@ import functools
 import threading
 from typing import List, Dict, Any, Optional, Type, Union, TYPE_CHECKING
 
-import unify
+import unillm
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unillm.Unify,
         initial_text: str,
         *,
         _return_reasoning_steps: bool,

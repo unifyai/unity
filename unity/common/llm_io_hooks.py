@@ -225,12 +225,6 @@ def _wrap_generate_non_stream(
                 endpoint=endpoint,
                 stream=False,
                 stream_options=None,
-                use_custom_keys=kwargs.get("use_custom_keys", False),
-                tags=kwargs.get("tags"),
-                drop_params=kwargs.get("drop_params"),
-                region=kwargs.get("region"),
-                log_query_body=kwargs.get("log_query_body"),
-                log_response_body=kwargs.get("log_response_body"),
             )
 
             # Log the request
@@ -276,12 +270,6 @@ def _wrap_generate_non_stream(
                 endpoint=endpoint,
                 stream=False,
                 stream_options=None,
-                use_custom_keys=kwargs.get("use_custom_keys", False),
-                tags=kwargs.get("tags"),
-                drop_params=kwargs.get("drop_params"),
-                region=kwargs.get("region"),
-                log_query_body=kwargs.get("log_query_body"),
-                log_response_body=kwargs.get("log_response_body"),
             )
 
             # Log the request
@@ -330,7 +318,7 @@ def install_llm_io_hooks() -> bool:
         return False
 
     try:
-        from unify.universal_api.clients.uni_llm import AsyncUnify, Unify
+        from unillm import AsyncUnify, Unify
 
         # Wrap the non-stream methods (these are where cache + API calls happen)
         Unify._generate_non_stream = _wrap_generate_non_stream(

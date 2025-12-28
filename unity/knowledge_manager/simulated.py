@@ -5,7 +5,7 @@ import functools
 import threading
 from typing import List, Dict, Any, Optional, Type
 
-import unify
+import unillm
 from pydantic import BaseModel
 from .base import BaseKnowledgeManager
 from ..common.async_tool_loop import SteerableToolHandle
@@ -44,7 +44,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unillm.Unify,
         initial_text: str,
         *,
         mode: str,
