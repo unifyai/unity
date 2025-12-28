@@ -105,82 +105,64 @@ def metric_timer(metric_name: str):
     return decorator
 
 
-def _log_reduce_call(
+def _timed_tool(
     metric_name: str,
-    table: str,
-    metric: str,
-    keys: str,
-    filter_expr: Optional[str],
-    group_by: Optional[str],
-) -> None:
-    """Log details of a reduce tool call."""
-    logger.debug(
-        f"[{metric_name}] Calling reduce: table={table.split('.')[-1]}, "
-        f"metric={metric}, keys={keys}, filter={filter_expr[:50] if filter_expr else 'None'}..., "
-        f"group_by={group_by}",
-    )
-    # Log full filter for debugging
-    if filter_expr:
-        logger.debug(f"[{metric_name}] Full filter: {filter_expr}")
-
-
-def _log_reduce_result(
-    metric_name: str,
-    raw_result: Any,
-    label: str = "Raw result",
-) -> None:
-    """Log the raw result from a reduce call for debugging."""
-    if raw_result is None:
-        logger.debug(f"[{metric_name}] {label}: None")
-    elif isinstance(raw_result, dict):
-        # Log first few keys if dict is large
-        keys_preview = list(raw_result.keys())[:5]
-        total_keys = len(raw_result)
-        logger.debug(
-            f"[{metric_name}] {label}: dict with {total_keys} keys. "
-            f"First keys: {keys_preview}",
-        )
-        # Show sample values for debugging
-        for i, (k, v) in enumerate(raw_result.items()):
-            if i >= 3:  # Only show first 3 entries
-                logger.debug(f"[{metric_name}]   ... and {total_keys - 3} more entries")
-                break
-            logger.debug(f"[{metric_name}]   '{k}': {v}")
-    elif isinstance(raw_result, list):
-        logger.debug(
-            f"[{metric_name}] {label}: list with {len(raw_result)} items",
-        )
-        for i, item in enumerate(raw_result[:3]):
-            logger.debug(f"[{metric_name}]   [{i}]: {item}")
-        if len(raw_result) > 3:
-            logger.debug(f"[{metric_name}]   ... and {len(raw_result) - 3} more items")
-    else:
-        logger.debug(
-            f"[{metric_name}] {label}: {type(raw_result).__name__} = {raw_result}",
-        )
-
-
-def _call_reduce_with_logging(
-    metric_name: str,
-    reduce_tool: Callable,
-    table: str,
-    metric: str,
-    keys: str,
-    filter_expr: Optional[str],
-    group_by: Optional[str],
-    label: str = "reduce",
+    tool_name: str,
+    tool: Callable,
+    label: str = "",
+    **kwargs: Any,
 ) -> Any:
-    """Call reduce tool with comprehensive before/after logging."""
-    _log_reduce_call(metric_name, table, metric, keys, filter_expr, group_by)
-    raw_result = reduce_tool(
-        table=table,
-        metric=metric,
-        keys=keys,
-        filter=filter_expr,
-        group_by=group_by,
+    """
+    Generic timing wrapper for any file manager tool call.
+
+    Parameters
+    ----------
+    metric_name : str
+        Name of the metric (for log prefix)
+    tool_name : str
+        Name of the tool being called (e.g., "reduce", "filter_files")
+    tool : Callable
+        The tool function to call
+    label : str, optional
+        Additional context label for the log message
+    **kwargs : Any
+        Arguments to pass to the tool
+
+    Returns
+    -------
+    Any
+        The result from the tool call
+
+    Example
+    -------
+    >>> result = _timed_tool(
+    ...     "jobs_completed_per_day", "reduce", reduce_tool,
+    ...     label="count jobs",
+    ...     table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+    ...     filter=filter_expr, group_by=group_by_field,
+    ... )
+    """
+    start_time = time.perf_counter()
+    result = tool(**kwargs)
+    elapsed = time.perf_counter() - start_time
+
+    # Generic result summary based on type
+    if result is None:
+        summary = "None"
+    elif isinstance(result, dict):
+        summary = f"{len(result)} items"
+    elif isinstance(result, list):
+        summary = f"{len(result)} rows"
+    elif isinstance(result, (int, float)):
+        summary = str(result)
+    else:
+        summary = f"{type(result).__name__}"
+
+    label_str = f" ({label})" if label else ""
+    logger.debug(
+        f"[{metric_name}] {tool_name}{label_str} took {_format_duration(elapsed)}: {summary}",
     )
-    _log_reduce_result(metric_name, raw_result, f"{label} result")
-    return raw_result
+    return result
 
 
 def _extract_count(value: Any) -> int:
@@ -341,12 +323,17 @@ def _diagnose_table(
     logger.debug(f"[{metric_name}] Available tools ({len(tool_names)}): {tool_names}")
 
     # Try to list columns - could be list_columns or _list_columns
-    list_columns = tools.get("list_columns") or tools.get("_list_columns")
-    if list_columns:
+    list_columns_tool = tools.get("list_columns") or tools.get("_list_columns")
+    if list_columns_tool:
         try:
-            columns = list_columns(table=table)
+            start_time = time.perf_counter()
+            columns = list_columns_tool(table=table)
+            elapsed = time.perf_counter() - start_time
             col_count = len(columns) if columns else 0
-            logger.debug(f"[{metric_name}] Table columns ({col_count} total):")
+            logger.debug(
+                f"[{metric_name}] list_columns took {_format_duration(elapsed)}, "
+                f"returned {col_count} columns",
+            )
             if columns:
                 # Log first 15 columns
                 items = (
@@ -369,12 +356,17 @@ def _diagnose_table(
         logger.warning(f"[{metric_name}] list_columns tool not available")
 
     # Try to get sample data - could be filter_files or _filter_files
-    filter_files = tools.get("filter_files") or tools.get("_filter_files")
-    if filter_files:
+    filter_files_tool = tools.get("filter_files") or tools.get("_filter_files")
+    if filter_files_tool:
         try:
-            sample = filter_files(tables=table, limit=3)
+            start_time = time.perf_counter()
+            sample = filter_files_tool(tables=table, limit=3)
+            elapsed = time.perf_counter() - start_time
             sample_count = len(sample) if sample else 0
-            logger.debug(f"[{metric_name}] Sample data ({sample_count} rows):")
+            logger.debug(
+                f"[{metric_name}] filter_files took {_format_duration(elapsed)}, "
+                f"returned {sample_count} rows",
+            )
             if sample:
                 for i, row in enumerate(sample[:3]):
                     row_keys = list(row.keys()) if isinstance(row, dict) else []
@@ -403,6 +395,7 @@ def _diagnose_table(
     if reduce_tool:
         # Test 1: Count all rows (no filter)
         try:
+            start_time = time.perf_counter()
             count_all = reduce_tool(
                 table=table,
                 metric="count",
@@ -410,14 +403,17 @@ def _diagnose_table(
                 filter=None,
                 group_by=None,
             )
+            elapsed = time.perf_counter() - start_time
             logger.debug(
-                f"[{metric_name}] Test 1 - Total rows (no filter): {count_all}",
+                f"[{metric_name}] Test 1 - Total rows (no filter): {count_all} "
+                f"[{_format_duration(elapsed)}]",
             )
         except Exception as e:
             logger.error(f"[{metric_name}] Test 1 failed: {type(e).__name__}: {e}")
 
         # Test 2: Filter WITHOUT backticks in column names
         try:
+            start_time = time.perf_counter()
             count_filter_no_bt = reduce_tool(
                 table=table,
                 metric="count",
@@ -425,14 +421,17 @@ def _diagnose_table(
                 filter="WorksOrderStatusDescription in ['Complete', 'Closed']",
                 group_by=None,
             )
+            elapsed = time.perf_counter() - start_time
             logger.debug(
-                f"[{metric_name}] Test 2 - Filter WITHOUT backticks: {count_filter_no_bt}",
+                f"[{metric_name}] Test 2 - Filter WITHOUT backticks: {count_filter_no_bt} "
+                f"[{_format_duration(elapsed)}]",
             )
         except Exception as e:
             logger.error(f"[{metric_name}] Test 2 failed: {type(e).__name__}: {e}")
 
         # Test 3: Filter WITH backticks in column names (current approach)
         try:
+            start_time = time.perf_counter()
             count_filter_bt = reduce_tool(
                 table=table,
                 metric="count",
@@ -440,14 +439,17 @@ def _diagnose_table(
                 filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
                 group_by=None,
             )
+            elapsed = time.perf_counter() - start_time
             logger.debug(
-                f"[{metric_name}] Test 3 - Filter WITH backticks: {count_filter_bt}",
+                f"[{metric_name}] Test 3 - Filter WITH backticks: {count_filter_bt} "
+                f"[{_format_duration(elapsed)}]",
             )
         except Exception as e:
             logger.error(f"[{metric_name}] Test 3 failed: {type(e).__name__}: {e}")
 
         # Test 4: Group by (no filter)
         try:
+            start_time = time.perf_counter()
             grouped = reduce_tool(
                 table=table,
                 metric="count",
@@ -455,9 +457,11 @@ def _diagnose_table(
                 filter=None,
                 group_by="OperativeWhoCompletedJob",
             )
+            elapsed = time.perf_counter() - start_time
             grouped_count = len(grouped) if isinstance(grouped, dict) else "N/A"
             logger.debug(
-                f"[{metric_name}] Test 4 - Group by (no filter): {grouped_count} groups",
+                f"[{metric_name}] Test 4 - Group by (no filter): {grouped_count} groups "
+                f"[{_format_duration(elapsed)}]",
             )
             # Show sample groups
             if isinstance(grouped, dict) and grouped:
@@ -468,6 +472,7 @@ def _diagnose_table(
 
         # Test 5: Group by + filter with backticks
         try:
+            start_time = time.perf_counter()
             grouped_filtered = reduce_tool(
                 table=table,
                 metric="count",
@@ -475,11 +480,13 @@ def _diagnose_table(
                 filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
                 group_by="OperativeWhoCompletedJob",
             )
+            elapsed = time.perf_counter() - start_time
             grouped_count = (
                 len(grouped_filtered) if isinstance(grouped_filtered, dict) else "N/A"
             )
             logger.debug(
-                f"[{metric_name}] Test 5 - Group by + filter: {grouped_count} groups",
+                f"[{metric_name}] Test 5 - Group by + filter: {grouped_count} groups "
+                f"[{_format_duration(elapsed)}]",
             )
         except Exception as e:
             logger.error(f"[{metric_name}] Test 5 failed: {type(e).__name__}: {e}")
@@ -626,15 +633,16 @@ async def jobs_completed_per_day(
         logger.debug(f"[{metric_name}] Group by: {group_by_field}")
 
         # Count completed jobs grouped by dimension
-        raw_result = _call_reduce_with_logging(
-            metric_name=metric_name,
-            reduce_tool=reduce_tool,
+        raw_result = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="completed jobs",
             table=REPAIRS_TABLE,
             metric="count",
             keys="JobTicketReference",
-            filter_expr=filter_expr,
+            filter=filter_expr,
             group_by=group_by_field,
-            label="completed jobs",
         )
 
         # Format results - normalize nested reduce output
@@ -720,15 +728,16 @@ async def no_access_rate(
 
         # Count no-access jobs
         no_access_filter = _build_date_filter(NO_ACCESS_FILTER, start_date, end_date)
-        raw_no_access = _call_reduce_with_logging(
-            metric_name=metric_name,
-            reduce_tool=reduce_tool,
+        raw_no_access = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="no-access jobs",
             table=REPAIRS_TABLE,
             metric="count",
             keys="JobTicketReference",
-            filter_expr=no_access_filter,
+            filter=no_access_filter,
             group_by=group_by_field,
-            label="no-access jobs",
         )
 
         # Normalize results
@@ -763,15 +772,16 @@ async def no_access_rate(
                 start_date,
                 end_date,
             )
-            raw_total = _call_reduce_with_logging(
-                metric_name=metric_name,
-                reduce_tool=reduce_tool,
+            raw_total = _timed_tool(
+                metric_name,
+                "reduce",
+                reduce_tool,
+                label="total completed",
                 table=REPAIRS_TABLE,
                 metric="count",
                 keys="JobTicketReference",
-                filter_expr=completed_filter,
+                filter=completed_filter,
                 group_by=group_by_field,
-                label="total completed",
             )
 
             # Normalize total results
@@ -881,15 +891,16 @@ async def first_time_fix_rate(
 
     # Count first-time-fix jobs
     ftf_filter = _build_date_filter(FIRST_TIME_FIX_FILTER, start_date, end_date)
-    raw_ftf = _call_reduce_with_logging(
-        metric_name=metric_name,
-        reduce_tool=reduce_tool,
+    raw_ftf = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="first-time-fix jobs",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
-        filter_expr=ftf_filter,
+        filter=ftf_filter,
         group_by=group_by_field,
-        label="first-time-fix jobs",
     )
 
     # Normalize results
@@ -913,15 +924,16 @@ async def first_time_fix_rate(
     else:
         # Calculate percentages
         completed_filter = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
-        raw_total = _call_reduce_with_logging(
-            metric_name=metric_name,
-            reduce_tool=reduce_tool,
+        raw_total = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="total completed",
             table=REPAIRS_TABLE,
             metric="count",
             keys="JobTicketReference",
-            filter_expr=completed_filter,
+            filter=completed_filter,
             group_by=group_by_field,
-            label="total completed",
         )
 
         # Normalize total results
@@ -1015,6 +1027,7 @@ async def follow_on_required_rate(
     MetricResult
         Rate or count of jobs requiring follow-on
     """
+    metric_name = "follow_on_required_rate"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1023,7 +1036,11 @@ async def follow_on_required_rate(
 
     # Count follow-on jobs
     fo_filter = _build_date_filter(FOLLOW_ON_FILTER, start_date, end_date)
-    raw_fo = reduce_tool(
+    raw_fo = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="follow-on count",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
@@ -1047,7 +1064,11 @@ async def follow_on_required_rate(
     else:
         # Calculate percentages
         completed_filter = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
-        raw_total = reduce_tool(
+        raw_total = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="total completed",
             table=REPAIRS_TABLE,
             metric="count",
             keys="JobTicketReference",
@@ -1148,6 +1169,7 @@ async def follow_on_materials_rate(
     """
     # Note: This searches FollowOnDescription/FollowOnNotes for material-related keywords
     # This is a heuristic approach since there's no dedicated "materials" flag
+    metric_name = "follow_on_materials_rate"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1158,7 +1180,11 @@ async def follow_on_materials_rate(
     fo_filter = _build_date_filter(FOLLOW_ON_FILTER, start_date, end_date)
 
     # Count total follow-on jobs
-    raw_total_fo = reduce_tool(
+    raw_total_fo = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="total follow-on",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
@@ -1179,7 +1205,11 @@ async def follow_on_materials_rate(
         start_date,
         end_date,
     )
-    raw_materials_fo = reduce_tool(
+    raw_materials_fo = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="materials follow-on",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
@@ -1290,6 +1320,7 @@ async def job_completed_on_time_rate(
         Rate or count of jobs completed on time
     """
     # Compare WorksOrderReportedCompletedDate vs WorksOrderTargetDate
+    metric_name = "job_completed_on_time_rate"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1302,7 +1333,11 @@ async def job_completed_on_time_rate(
         start_date,
         end_date,
     )
-    raw_on_time = reduce_tool(
+    raw_on_time = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="on-time count",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
@@ -1326,7 +1361,11 @@ async def job_completed_on_time_rate(
     else:
         # Calculate percentage of all completed jobs
         completed_filter = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
-        raw_total = reduce_tool(
+        raw_total = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="total completed",
             table=REPAIRS_TABLE,
             metric="count",
             keys="JobTicketReference",
@@ -1423,7 +1462,8 @@ async def merchant_stops_per_day(
         Count of merchant stops grouped by dimension
     """
     # Search telematics EndLocation for known merchant names
-    filter_files = tools["filter_files"]
+    metric_name = "merchant_stops_per_day"
+    filter_files_tool = tools["filter_files"]
 
     # Build filter to match merchant locations
     merchant_filter_parts = [
@@ -1439,7 +1479,11 @@ async def merchant_stops_per_day(
         for merchant in MERCHANT_NAMES:
             try:
                 # Try to filter by each merchant name
-                rows = filter_files(
+                rows = _timed_tool(
+                    metric_name,
+                    "filter_files",
+                    filter_files_tool,
+                    label=f"{merchant}@{table.split('.')[-1]}",
                     filter=f"'{merchant}' in `EndLocation`",
                     tables=[table],
                     limit=1000,
@@ -1580,6 +1624,7 @@ async def distance_travelled_per_day(
     MetricResult
         Distance travelled (in miles/km) grouped by dimension
     """
+    metric_name = "distance_travelled_per_day"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1595,7 +1640,11 @@ async def distance_travelled_per_day(
     grand_total = 0.0
 
     for table in ALL_TELEMATICS_TABLES:
-        raw_result = reduce_tool(
+        raw_result = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label=f"distance sum ({table.split('.')[-1]})",
             table=table,
             metric="sum",
             keys="Business distance",
@@ -1620,7 +1669,7 @@ async def distance_travelled_per_day(
         results = [{"group": "total", "distance_miles": round(grand_total, 2)}]
 
     return _build_metric_result(
-        metric_name="distance_travelled_per_day",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -1673,6 +1722,7 @@ async def avg_time_travelling(
     """
     # Telematics has "Trip travel time" in HH:MM:SS format
     # Summing string times requires parsing; return event count as proxy
+    metric_name = "avg_time_travelling"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1683,7 +1733,11 @@ async def avg_time_travelling(
     grand_total = 0
 
     for table in ALL_TELEMATICS_TABLES:
-        raw_result = reduce_tool(
+        raw_result = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label=f"trip count ({table.split('.')[-1]})",
             table=table,
             metric="count",
             keys="Trip travel time",
@@ -1705,7 +1759,7 @@ async def avg_time_travelling(
         results = [{"group": "total", "trip_count": grand_total}]
 
     return _build_metric_result(
-        metric_name="avg_time_travelling",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -1760,6 +1814,7 @@ async def repairs_completed_per_day(
     MetricResult
         Total repair count grouped by dimension
     """
+    metric_name = "repairs_completed_per_day"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1767,7 +1822,11 @@ async def repairs_completed_per_day(
     group_by_field = _resolve_group_by(group_by)
     filter_expr = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
 
-    raw_result = reduce_tool(
+    raw_result = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="completed repairs",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
@@ -1786,7 +1845,7 @@ async def repairs_completed_per_day(
         total = count_val
 
     return _build_metric_result(
-        metric_name="repairs_completed_per_day",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -1836,6 +1895,7 @@ async def jobs_issued_per_day(
     MetricResult
         Count of jobs issued grouped by dimension
     """
+    metric_name = "jobs_issued_per_day"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1850,7 +1910,11 @@ async def jobs_issued_per_day(
         date_column="`WorksOrderIssuedDate`",
     )
 
-    raw_result = reduce_tool(
+    raw_result = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="issued jobs",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
@@ -1869,7 +1933,7 @@ async def jobs_issued_per_day(
         total = count_val
 
     return _build_metric_result(
-        metric_name="jobs_issued_per_day",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -1922,6 +1986,7 @@ async def jobs_requiring_materials_rate(
     """
     # Note: No dedicated "materials required" column exists
     # Proxy: jobs with FollowOnDescription mentioning materials/parts
+    metric_name = "jobs_requiring_materials_rate"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -1934,7 +1999,11 @@ async def jobs_requiring_materials_rate(
         start_date,
         end_date,
     )
-    raw_materials = reduce_tool(
+    raw_materials = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="materials jobs",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
@@ -1957,7 +2026,11 @@ async def jobs_requiring_materials_rate(
             total = materials_result
     else:
         completed_filter = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
-        raw_total = reduce_tool(
+        raw_total = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="total completed",
             table=REPAIRS_TABLE,
             metric="count",
             keys="JobTicketReference",
@@ -2058,6 +2131,7 @@ async def avg_repairs_per_property(
     MetricResult
         Average repairs per property, with list of properties having multiple repairs
     """
+    metric_name = "avg_repairs_per_property"
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
@@ -2065,7 +2139,11 @@ async def avg_repairs_per_property(
     filter_expr = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
 
     # Group by FullAddress to count repairs per property
-    raw_property_counts = reduce_tool(
+    raw_property_counts = _timed_tool(
+        metric_name,
+        "reduce",
+        reduce_tool,
+        label="property counts",
         table=REPAIRS_TABLE,
         metric="count",
         keys="JobTicketReference",
