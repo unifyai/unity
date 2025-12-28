@@ -336,14 +336,18 @@ fi
 if (( ! USE_STAGING )); then
   _local_orchestra_script="$SCRIPT_DIR/start_local_orchestra.sh"
   if [[ -x "$_local_orchestra_script" ]]; then
-    # Always restart local orchestra to ensure fresh state and correct settings
+    # Stop any existing orchestra to ensure fresh state and correct settings
     "$_local_orchestra_script" --stop >/dev/null 2>&1 || true
+
     # Remove any existing PostgreSQL container so we get fresh one with correct max_connections
     for _container in $(docker ps -a --filter "publish=5432" --format "{{.Names}}" 2>/dev/null); do
       docker stop "$_container" >/dev/null 2>&1 || true
       docker rm "$_container" >/dev/null 2>&1 || true
     done
     unset _container
+
+    # Wait for port to be fully released after stopping
+    sleep 2
 
     echo "Starting local orchestra..."
     if "$_local_orchestra_script" start >/dev/null 2>&1; then
