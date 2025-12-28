@@ -10,6 +10,7 @@ This module provides the concrete TaskScheduler which:
 from __future__ import annotations
 
 import unify
+import unillm
 import asyncio
 import functools
 import json
@@ -3864,7 +3865,7 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _start_loop(
         self,
-        client: "unify.AsyncUnify",
+        client: "unillm.AsyncUnify",
         text: str,
         tools: ToolsDict,
         *,
@@ -3912,7 +3913,7 @@ class TaskScheduler(BaseTaskScheduler):
     def _wrap_result_with_messages(
         self,
         handle: SteerableToolHandle,
-        client: "unify.AsyncUnify",
+        client: "unillm.AsyncUnify",
     ) -> SteerableToolHandle:
         """Wrap handle.result() so it returns (answer, client.messages)."""
         original_result = handle.result

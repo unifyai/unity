@@ -6,7 +6,7 @@ import threading
 from typing import List, Dict, Any, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
-import unify
+import unillm
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from .prompt_builders import build_ask_prompt, build_update_prompt
@@ -38,7 +38,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.AsyncUnify,
+        llm: unillm.AsyncUnify,
         initial_text: str,
         *,
         _return_reasoning_steps: bool,

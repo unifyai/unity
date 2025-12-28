@@ -7,7 +7,7 @@ import functools
 import threading
 from typing import List, Dict, Any, Optional, Type, TYPE_CHECKING
 
-import unify
+import unillm
 from pydantic import BaseModel, Field
 from .base import BaseContactManager
 from .types.contact import Contact
@@ -194,7 +194,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unillm.Unify,
         initial_text: str,
         *,
         mode: str,

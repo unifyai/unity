@@ -11,7 +11,7 @@ import threading
 import functools
 from typing import List, Optional, Callable, Type, Any
 
-import unify
+import unillm
 from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
@@ -41,7 +41,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unillm.Unify,
         initial_text: str,
         *,
         mode: str,

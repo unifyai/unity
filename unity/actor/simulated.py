@@ -2,7 +2,7 @@ import asyncio
 import threading
 import time
 
-import unify
+import unillm
 from .base import BaseActor, BaseActorHandle
 import functools
 from typing import Optional, Type
@@ -36,7 +36,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.AsyncUnify,
+        llm: unillm.AsyncUnify,
         description: str,
         *,
         steps: int | None,

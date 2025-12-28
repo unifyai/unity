@@ -1,5 +1,5 @@
 from typing import List
-import unify
+import unillm
 import asyncio
 
 # --------------------------------------------------------------------------- #
@@ -44,7 +44,7 @@ async def _wait_for_condition(predicate, poll: float, timeout: float):
 
 
 async def _wait_for_tool_request(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     tool_name: str,
     *,
     timeout: float = 300.0,
@@ -118,7 +118,7 @@ async def _wait_for_tools_scheduled(
 
 
 async def _wait_for_tool_requested_and_scheduled(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     outer_handle,
     tool_name: str,
     *,
@@ -137,7 +137,7 @@ async def _wait_for_tool_requested_and_scheduled(
 
 
 async def _wait_for_tools_requested_and_scheduled(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     outer_handle,
     tool_names: list[str],
     *,
@@ -157,7 +157,7 @@ async def _wait_for_tools_requested_and_scheduled(
 
 
 async def _wait_for_tool_result(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     tool_name: str | None = None,
     *,
     min_results: int = 1,
@@ -185,7 +185,7 @@ async def _wait_for_tool_result(
 
 
 async def _wait_for_assistant_call_prefix(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     prefix: str,
     *,
     timeout: float = 300.0,
@@ -237,7 +237,7 @@ async def _wait_for_assistant_call_prefix(
 
 
 async def _wait_for_tool_message_prefix(
-    client: "unify.AsyncUnify",
+    client: "unillm.AsyncUnify",
     prefix: str,
     *,
     timeout: float = 300.0,

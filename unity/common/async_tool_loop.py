@@ -1,5 +1,6 @@
 import asyncio
 import unify
+import unillm
 import functools
 import json
 from datetime import datetime, timezone
@@ -311,7 +312,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         cancel_event: asyncio.Event,
         stop_event: asyncio.Event,
         pause_event: Optional[asyncio.Event] = None,
-        client: "unify.AsyncUnify | None" = None,
+        client: "unillm.AsyncUnify | None" = None,
         loop_id: str = "",
         initial_user_message: Optional[Any] = None,
     ):
@@ -2802,7 +2803,7 @@ async def _nested_structure_on(
 # 3.  A convenience wrapper that *starts* the loop and returns the handle
 # ─────────────────────────────────────────────────────────────────────────────
 def start_async_tool_loop(
-    client: unify.AsyncUnify,
+    client: unillm.AsyncUnify,
     message: str | dict | list[str | dict],
     tools: Dict[str, Callable],
     *,

@@ -65,7 +65,7 @@ class Assistant(Agent):
     TTS Fast Brain - handles real-time conversation independently.
 
     Uses a lightweight LLM (gpt-5-nano via UnifyLLM adapter) for fast
-    conversational responses. Routes through unify.AsyncUnify for local
+    conversational responses. Routes through unillm.AsyncUnify for local
     caching (CI) and usage tracking.
     Receives guidance from the Main CM Brain (slow brain) via Redis pub/sub.
     """

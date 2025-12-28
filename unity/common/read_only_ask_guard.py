@@ -6,7 +6,7 @@ import textwrap
 from contextlib import suppress
 from typing import Any, Optional
 
-import unify
+import unillm
 
 from .llm_client import new_llm_client
 from .async_tool_loop import AsyncToolLoopHandle
@@ -59,7 +59,7 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
         cancel_event: asyncio.Event,
         stop_event: asyncio.Event,
         pause_event: Optional[asyncio.Event] = None,
-        client: "unify.AsyncUnify | None" = None,
+        client: "unillm.AsyncUnify | None" = None,
         loop_id: str = "",
         initial_user_message: Optional[Any] = None,
     ):

@@ -1,5 +1,5 @@
 """
-Adapter that wraps unify.AsyncUnify to expose the LiveKit llm.LLM interface.
+Adapter that wraps unillm.AsyncUnify to expose the LiveKit llm.LLM interface.
 
 This allows the TTS voice pipeline to route through our Unify client,
 giving us local caching (helpful for CI) and usage tracking.
@@ -24,7 +24,7 @@ from unity.common.llm_client import new_llm_client
 
 
 class UnifyLLM(llm.LLM):
-    """LiveKit-compatible LLM that uses unify.AsyncUnify under the hood.
+    """LiveKit-compatible LLM that uses unillm.AsyncUnify under the hood.
 
     This adapter provides:
     - Local caching for CI (via Unify's cache system)

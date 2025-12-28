@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import pytest
-import unify
+import unillm
 
 from tests.helpers import _handle_project
 
@@ -54,7 +54,7 @@ async def test_guard_blocks_mutation(monkeypatch):
         )
         return None
 
-    monkeypatch.setattr(unify.AsyncUnify, "generate", _stub_generate, raising=True)
+    monkeypatch.setattr(unillm.AsyncUnify, "generate", _stub_generate, raising=True)
 
     # Define a long-running tool so the loop would otherwise wait
     async def long_job(seconds: int) -> str:  # noqa: D401
@@ -110,7 +110,7 @@ async def test_guard_allows_readonly(monkeypatch):
         )
         return None
 
-    monkeypatch.setattr(unify.AsyncUnify, "generate", _stub_generate, raising=True)
+    monkeypatch.setattr(unillm.AsyncUnify, "generate", _stub_generate, raising=True)
 
     client = new_llm_client()
     client.set_system_message("Answer normally without tools.")

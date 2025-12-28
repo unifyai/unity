@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Type
 import typing
 import types
 import weakref
-import unify
+import unillm
 from pydantic import BaseModel, Field
 
 from unity.common.llm_client import new_llm_client
@@ -517,7 +517,7 @@ class _HierarchicalHandleState(enum.Enum):
 
 
 async def llm_call(
-    client: unify.AsyncUnify,
+    client: unillm.AsyncUnify,
     prompt: str,
     screenshot: bytes | str | None = None,
     images: Optional[dict[str, Any]] = None,
@@ -2360,37 +2360,37 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
                 pass
             self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
 
-        self.plan_generation_client: unify.AsyncUnify = new_llm_client(
+        self.plan_generation_client: unillm.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
-        self.verification_client: unify.AsyncUnify = new_llm_client(
+        self.verification_client: unillm.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
-        self.implementation_client: unify.AsyncUnify = new_llm_client(
+        self.implementation_client: unillm.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
-        self.summarization_client: unify.AsyncUnify = new_llm_client(
+        self.summarization_client: unillm.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
-        self.modification_client: unify.AsyncUnify = new_llm_client(
+        self.modification_client: unillm.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
-        self.ask_client: unify.AsyncUnify = new_llm_client(
+        self.ask_client: unillm.AsyncUnify = new_llm_client(
             "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,

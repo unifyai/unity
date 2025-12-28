@@ -6,7 +6,7 @@ import threading
 import functools
 from typing import List, Optional, Dict, Any, Type, Union
 
-import unify
+import unillm
 from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
@@ -41,7 +41,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unillm.Unify,
         initial_text: str,
         *,
         _return_reasoning_steps: bool,
