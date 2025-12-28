@@ -463,6 +463,8 @@ jobs:
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
     - uses: actions/checkout@v2
+      with:
+        fetch-depth: 1
 
     - name: Clone orchestra repo for local deployment
       uses: actions/checkout@v2
@@ -471,6 +473,7 @@ jobs:
         ref: staging
         path: orchestra
         token: ${{ secrets.ORCHESTRA_TOKEN }}
+        fetch-depth: 1
 
     - name: Get orchestra commit SHA
       id: orchestra-sha
