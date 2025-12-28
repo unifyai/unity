@@ -576,6 +576,13 @@ jobs:
         restore-keys: |
           uv-${{ runner.os }}-
 
+    - name: Configure git for private repos
+      run: |
+        # Allow uv to clone private GitHub repos (e.g., unillm)
+        git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+      env:
+        GH_TOKEN: ${{ secrets.UNILLM_TOKEN }}
+
     - name: Sync dependencies with uv
       run: |
         # Install project and dev dependencies from pyproject.toml
