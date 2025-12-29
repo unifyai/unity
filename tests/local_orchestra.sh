@@ -271,7 +271,7 @@ start_db_container() {
       return 0
     fi
     sleep 1
-    ((attempt++))
+    ((attempt++)) || true
   done
 
   log_error "PostgreSQL failed to start within 30 seconds"
@@ -502,7 +502,7 @@ wait_for_server() {
       return 0
     fi
     sleep 1
-    ((attempt++))
+    ((attempt++)) || true
   done
 
   log_error "Orchestra server failed to start within 60 seconds"
@@ -604,7 +604,7 @@ stop_orchestra_server() {
           break
         fi
         sleep 1
-        ((attempt++))
+        ((attempt++)) || true
       done
 
       # Force kill if still running
