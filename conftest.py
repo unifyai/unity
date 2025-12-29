@@ -3,7 +3,6 @@ import os
 import json
 import re
 import pytest
-import unify
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -523,7 +522,9 @@ def pytest_unconfigure(config):
     # Write cache stats to JSON for CI aggregation
     if _TEE_LOG_PATH is not None:
         try:
-            stats = unify.get_cache_stats()
+            from unity.common.llm_io_hooks import get_cache_stats
+
+            stats = get_cache_stats()
             # Determine llm_io_debug directory path (same subdir as pytest_logs)
             log_subdir = _get_log_subdir()
             log_root = _get_log_root(config.rootpath)
@@ -533,11 +534,12 @@ def pytest_unconfigure(config):
             cache_stats_file.write_text(
                 json.dumps(
                     {
-                        "hits": stats.hits,
-                        "misses": stats.misses,
-                        "hit_rate": stats.get_percentage_of_cache_hits(),
+                        "hits": stats["hits"],
+                        "misses": stats["misses"],
+                        "hit_rate": stats["hit_rate"],
                         "llm_io_debug_dir": str(llm_io_debug_dir),
                     },
+                    indent=2,
                 ),
             )
         except Exception:
