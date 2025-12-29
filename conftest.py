@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import re
 import pytest
 import unify
 from pathlib import Path
@@ -377,13 +378,18 @@ def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
 
 
 class _TeeStream:
+    # Regex to strip ANSI escape sequences (colors, cursor movement, etc.)
+    _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
     def __init__(self, primary, mirror):
         self._primary = primary
         self._mirror = mirror
         self.encoding = getattr(primary, "encoding", "utf-8")
 
     def write(self, s):
-        self._mirror.write(s)
+        # Strip ANSI codes from file output for clean logs
+        clean = self._ANSI_ESCAPE_RE.sub("", s)
+        self._mirror.write(clean)
         self._mirror.flush()
         return self._primary.write(s)
 
