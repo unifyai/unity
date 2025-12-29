@@ -20,7 +20,6 @@
 #   ORCHESTRA_REPO_PATH     Override path to orchestra repo (default: ../orchestra)
 #   ORCHESTRA_PORT          Override FastAPI port (default: 8000)
 #   ORCHESTRA_DB_PORT       Override PostgreSQL port (default: 5432)
-#   LOCAL_ORCHESTRA_BRANCH  Git branch to checkout and pull (default: auto-detect from unity)
 #
 # On success, exports:
 #   UNIFY_BASE_URL=http://127.0.0.1:8000/v0
@@ -38,8 +37,6 @@ ORCHESTRA_DB_PORT="${ORCHESTRA_DB_PORT:-5432}"
 ORCHESTRA_DB_CONTAINER="unity-orchestra-db"
 ORCHESTRA_SERVER_PIDFILE="/tmp/unity-orchestra-server.pid"
 ORCHESTRA_SERVER_LOGFILE="/tmp/unity-orchestra-server.log"
-# Branch to use for orchestra repo (if set, will checkout and pull)
-LOCAL_ORCHESTRA_BRANCH="${LOCAL_ORCHESTRA_BRANCH:-}"
 
 # Local base URL that will be exported
 LOCAL_ORCHESTRA_URL="http://127.0.0.1:${ORCHESTRA_PORT}/v0"
@@ -106,63 +103,6 @@ check_poetry() {
     return 1
   fi
   log_success "Poetry is available"
-  return 0
-}
-
-switch_orchestra_branch() {
-  local repo_path="$1"
-  local target_branch="${LOCAL_ORCHESTRA_BRANCH:-}"
-
-  # Auto-detect target branch if not explicitly set
-  # Sync with unity repo: main→main, otherwise→staging
-  if [[ -z "$target_branch" ]]; then
-    local unity_branch
-    unity_branch=$(git -C "$UNITY_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    if [[ "$unity_branch" == "main" ]]; then
-      target_branch="main"
-    else
-      target_branch="staging"
-    fi
-    log_info "Auto-detected orchestra branch: $target_branch (unity is on '$unity_branch')"
-  fi
-
-  cd "$repo_path"
-
-  # Fetch latest from remote
-  log_info "Fetching orchestra branch '$target_branch'..."
-  if ! git fetch origin "$target_branch" 2>/dev/null; then
-    log_error "Failed to fetch branch '$target_branch' from origin"
-    return 1
-  fi
-
-  # Get current branch
-  local current_branch
-  current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-
-  if [[ "$current_branch" == "$target_branch" ]]; then
-    # Already on target branch, just pull
-    log_info "Already on branch '$target_branch', pulling latest..."
-    if git pull --ff-only origin "$target_branch" 2>/dev/null; then
-      log_success "Updated to latest '$target_branch'"
-    else
-      log_warn "Could not fast-forward, using current state"
-    fi
-  else
-    # Switch to target branch
-    log_info "Checking out branch '$target_branch'..."
-    if git checkout "$target_branch" 2>/dev/null; then
-      # Pull latest after checkout
-      if git pull --ff-only origin "$target_branch" 2>/dev/null; then
-        log_success "Switched to '$target_branch' and pulled latest"
-      else
-        log_warn "Switched to '$target_branch' but could not fast-forward"
-      fi
-    else
-      log_error "Failed to checkout branch '$target_branch'"
-      return 1
-    fi
-  fi
-
   return 0
 }
 
@@ -652,11 +592,6 @@ cmd_start() {
     return 1
   fi
 
-  # Switch to specified branch if LOCAL_ORCHESTRA_BRANCH is set
-  if ! switch_orchestra_branch "$ORCHESTRA_REPO_PATH"; then
-    log_warn "Could not switch orchestra branch, continuing with current branch"
-  fi
-
   echo ""
 
   # Start components
@@ -836,7 +771,6 @@ main() {
       echo "  ORCHESTRA_REPO_PATH      Path to orchestra repo (default: ../orchestra)"
       echo "  ORCHESTRA_PORT           FastAPI port (default: 8000)"
       echo "  ORCHESTRA_DB_PORT        PostgreSQL port (default: 5432)"
-      echo "  LOCAL_ORCHESTRA_BRANCH   Git branch to checkout and pull (default: auto-detect from unity)"
       echo ""
       echo "Quick usage:"
       echo "  eval \"\$($0 env)\"  # Set env vars if local orchestra running"
