@@ -263,9 +263,9 @@ run_migrations() {
 
 seed_test_user() {
   # Seed the database with a test user for Unity tests
-  # Uses a deterministic test user ID and API key
+  # Uses the API key from UNIFY_KEY env var (or falls back to a default)
   local test_user_id="unity-test-user-001"
-  local test_api_key="unity-local-test-api-key"
+  local test_api_key="${UNIFY_KEY:-unity-local-test-api-key}"
   local test_email="unity-test@debug.local"
 
   log_info "Checking if test user exists..."
@@ -406,7 +406,7 @@ ON CONFLICT (id) DO NOTHING;
 
 # Test API key that should be used with local orchestra
 get_test_api_key() {
-  echo "unity-local-test-api-key"
+  echo "${UNIFY_KEY:-unity-local-test-api-key}"
 }
 
 # =============================================================================
