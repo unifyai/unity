@@ -246,14 +246,24 @@ jobs:
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
 
-        # Orchestra branch: sync with unity repo branch (main→main, otherwise→staging)
-        UNITY_BRANCH="${{ github.ref_name }}"
-        if [[ "$UNITY_BRANCH" == "main" ]]; then
-          ORCHESTRA_BRANCH="main"
+        # Orchestra branch precedence (highest to lowest):
+        # 1. --env LOCAL_ORCHESTRA_BRANCH=xxx (handled below in FLAGS parsing)
+        # 2. env_file_content LOCAL_ORCHESTRA_BRANCH=xxx (handled below)
+        # 3. Repository variable LOCAL_ORCHESTRA_BRANCH (if set)
+        # 4. Auto-detect from unity branch (main→main, otherwise→staging)
+        REPO_VAR_BRANCH="${{ vars.LOCAL_ORCHESTRA_BRANCH }}"
+        if [[ -n "$REPO_VAR_BRANCH" ]]; then
+          ORCHESTRA_BRANCH="$REPO_VAR_BRANCH"
+          echo "Orchestra branch from repo variable: $ORCHESTRA_BRANCH" >&2
         else
-          ORCHESTRA_BRANCH="staging"
+          UNITY_BRANCH="${{ github.ref_name }}"
+          if [[ "$UNITY_BRANCH" == "main" ]]; then
+            ORCHESTRA_BRANCH="main"
+          else
+            ORCHESTRA_BRANCH="staging"
+          fi
+          echo "Orchestra branch auto-detected: $ORCHESTRA_BRANCH (unity on '$UNITY_BRANCH')" >&2
         fi
-        echo "Unity branch: $UNITY_BRANCH → Orchestra branch: $ORCHESTRA_BRANCH" >&2
 
         # Parse env_file_content for project management flags only
         # (actual env vars are written to .env in pytest job, not passed as --env args)
