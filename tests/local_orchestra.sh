@@ -19,7 +19,7 @@
 #   ORCHESTRA_REPO_PATH     Override path to orchestra repo (default: ../orchestra)
 #   ORCHESTRA_PORT          Override FastAPI port (default: 8000)
 #   ORCHESTRA_DB_PORT       Override PostgreSQL port (default: 5432)
-#   LOCAL_ORCHESTRA_BRANCH  Git branch to checkout and pull (default: use current)
+#   LOCAL_ORCHESTRA_BRANCH  Git branch to checkout and pull (default: auto-detect from unity)
 #
 # On success, exports:
 #   UNIFY_BASE_URL=http://127.0.0.1:8000/v0
@@ -112,16 +112,23 @@ switch_orchestra_branch() {
   local repo_path="$1"
   local target_branch="${LOCAL_ORCHESTRA_BRANCH:-}"
 
-  # Skip if no branch specified
+  # Auto-detect target branch if not explicitly set
+  # Sync with unity repo: main→main, otherwise→staging
   if [[ -z "$target_branch" ]]; then
-    return 0
+    local unity_branch
+    unity_branch=$(git -C "$UNITY_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ "$unity_branch" == "main" ]]; then
+      target_branch="main"
+    else
+      target_branch="staging"
+    fi
+    log_info "Auto-detected orchestra branch: $target_branch (unity is on '$unity_branch')"
   fi
-
-  log_info "Switching orchestra to branch: $target_branch"
 
   cd "$repo_path"
 
   # Fetch latest from remote
+  log_info "Fetching orchestra branch '$target_branch'..."
   if ! git fetch origin "$target_branch" 2>/dev/null; then
     log_error "Failed to fetch branch '$target_branch' from origin"
     return 1
@@ -817,7 +824,7 @@ main() {
       echo "  ORCHESTRA_REPO_PATH      Path to orchestra repo (default: ../orchestra)"
       echo "  ORCHESTRA_PORT           FastAPI port (default: 8000)"
       echo "  ORCHESTRA_DB_PORT        PostgreSQL port (default: 5432)"
-      echo "  LOCAL_ORCHESTRA_BRANCH   Git branch to checkout and pull (default: use current)"
+      echo "  LOCAL_ORCHESTRA_BRANCH   Git branch to checkout and pull (default: auto-detect from unity)"
       echo ""
       echo "Quick usage:"
       echo "  eval \"\$($0 env)\"  # Set env vars if local orchestra running"

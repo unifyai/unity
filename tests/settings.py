@@ -52,7 +52,7 @@ class TestingSettings(ProductionSettings):
     # Local Orchestra Settings
     # ─────────────────────────────────────────────────────────────────────────
     LOCAL_ORCHESTRA_BRANCH: str = (
-        ""  # Git branch to checkout for local orchestra (default: use current)
+        ""  # Git branch for local orchestra (default: auto-detect from unity branch)
     )
 
     # ─────────────────────────────────────────────────────────────────────────
