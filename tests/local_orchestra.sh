@@ -536,7 +536,16 @@ stop_orchestra_server() {
 
     if kill -0 "$pid" 2>/dev/null; then
       log_info "Stopping Orchestra server (PID $pid)..."
-      kill "$pid" 2>/dev/null || true
+
+      # Kill the entire process group to include uvicorn workers
+      # The negative PID sends signal to all processes in the group
+      local pgid
+      pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+      if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+        kill -- -"$pgid" 2>/dev/null || true
+      else
+        kill "$pid" 2>/dev/null || true
+      fi
 
       # Wait for graceful shutdown
       local attempt=0
@@ -548,17 +557,39 @@ stop_orchestra_server() {
         ((attempt++)) || true
       done
 
-      # Force kill if still running
+      # Force kill process group if still running
       if kill -0 "$pid" 2>/dev/null; then
-        kill -9 "$pid" 2>/dev/null || true
+        if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+          kill -9 -- -"$pgid" 2>/dev/null || true
+        else
+          kill -9 "$pid" 2>/dev/null || true
+        fi
       fi
     fi
 
     rm -f "$ORCHESTRA_SERVER_PIDFILE"
   fi
 
-  # Also kill any orphaned orchestra processes
-  pkill -9 -f "python -m orchestra" 2>/dev/null || true
+  # Kill any orphaned orchestra processes (pattern matches full venv path)
+  pkill -9 -f -- "-m orchestra" 2>/dev/null || true
+
+  # Kill any processes still listening on the orchestra port (orphaned workers)
+  local port_pids
+  port_pids=$(lsof -t -i ":${ORCHESTRA_PORT}" 2>/dev/null || true)
+  if [[ -n "$port_pids" ]]; then
+    log_info "Killing orphaned processes on port $ORCHESTRA_PORT..."
+    echo "$port_pids" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  fi
+
+  # Clear prometheus multiprocess directory to prevent mmap corruption on restart
+  # Orchestra uses $(python -c "from tempfile import gettempdir; print(gettempdir())")/prom
+  local prom_dir
+  prom_dir="$(python3 -c 'from tempfile import gettempdir; print(gettempdir())' 2>/dev/null)/prom"
+  if [[ -d "$prom_dir" ]]; then
+    rm -rf "$prom_dir"
+    log_info "Cleared prometheus directory: $prom_dir"
+  fi
 
   log_success "Orchestra server stopped"
 }
