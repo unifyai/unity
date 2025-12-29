@@ -511,9 +511,21 @@ start_orchestra_server() {
     log_info "Using virtualenv python: $venv_python"
   fi
 
+  # Increase file descriptor limit for the orchestra server
+  # macOS defaults to 256, which is easily exhausted by parallel test sessions
+  # Each test opens HTTP connections, DB connections, and gRPC pipes
+  # Scale with core count since parallel_run.sh spawns num_cores concurrent tests
+  # Formula: num_cores * 750 (with minimum floor of 4096)
+  local fd_limit=$((num_cores * 750))
+  if (( fd_limit < 4096 )); then
+    fd_limit=4096
+  fi
+  log_info "Setting file descriptor limit to $fd_limit for orchestra server (${num_cores} cores × 750)"
+
   # Start server directly with the virtualenv python (not via poetry run)
   # This avoids potential subprocess management issues with poetry
-  ORCHESTRA_WORKERS_COUNT="$num_cores" nohup $venv_python -m orchestra > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
+  # Wrap in bash -c to ensure ulimit is applied to the Python process
+  bash -c "ulimit -n $fd_limit; exec env ORCHESTRA_WORKERS_COUNT=$num_cores $venv_python -m orchestra" > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
   local pid=$!
   disown $pid 2>/dev/null || true
   echo "$pid" > "$ORCHESTRA_SERVER_PIDFILE"
