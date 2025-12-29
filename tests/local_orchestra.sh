@@ -235,11 +235,19 @@ start_db_container() {
   # First check if our named container is already running
   if is_db_container_running; then
     log_success "PostgreSQL container '$ORCHESTRA_DB_CONTAINER' already running"
+    # Ensure log streaming is started even for existing containers
+    if [[ "$VERBOSE_DB" == "true" ]]; then
+      start_db_log_streaming
+    fi
     return 0
   fi
 
   # Check if there's another compatible container we can use
   if is_compatible_db_running; then
+    # Ensure log streaming is started even for existing containers
+    if [[ "$VERBOSE_DB" == "true" ]]; then
+      start_db_log_streaming
+    fi
     return 0
   fi
 
@@ -259,12 +267,30 @@ start_db_container() {
     if docker run --rm --network host pgvector/pgvector:pg15 \
          pg_isready -h localhost -p "$ORCHESTRA_DB_PORT" -U orchestra &>/dev/null 2>&1; then
       log_success "PostgreSQL already available on port $ORCHESTRA_DB_PORT"
+      # Try to find the container and start log streaming
+      if [[ "$VERBOSE_DB" == "true" ]]; then
+        local container
+        container=$(docker ps --filter "publish=${ORCHESTRA_DB_PORT}" --format "{{.Names}}" 2>/dev/null | head -1)
+        if [[ -n "$container" ]]; then
+          ORCHESTRA_DB_CONTAINER="$container"
+          start_db_log_streaming
+        fi
+      fi
       return 0
     fi
 
     # Try using psql to check if orchestra database exists
     if PGPASSWORD=orchestra psql -h localhost -p "$ORCHESTRA_DB_PORT" -U orchestra -d orchestra -c "SELECT 1" &>/dev/null 2>&1; then
       log_success "PostgreSQL with orchestra database available on port $ORCHESTRA_DB_PORT"
+      # Try to find the container and start log streaming
+      if [[ "$VERBOSE_DB" == "true" ]]; then
+        local container
+        container=$(docker ps --filter "publish=${ORCHESTRA_DB_PORT}" --format "{{.Names}}" 2>/dev/null | head -1)
+        if [[ -n "$container" ]]; then
+          ORCHESTRA_DB_CONTAINER="$container"
+          start_db_log_streaming
+        fi
+      fi
       return 0
     fi
 
