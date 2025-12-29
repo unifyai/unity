@@ -245,7 +245,15 @@ jobs:
         DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
-        ORCHESTRA_BRANCH="staging"  # Default: staging branch for local orchestra
+
+        # Orchestra branch: sync with unity repo branch (main→main, otherwise→staging)
+        UNITY_BRANCH="${{ github.ref_name }}"
+        if [[ "$UNITY_BRANCH" == "main" ]]; then
+          ORCHESTRA_BRANCH="main"
+        else
+          ORCHESTRA_BRANCH="staging"
+        fi
+        echo "Unity branch: $UNITY_BRANCH → Orchestra branch: $ORCHESTRA_BRANCH" >&2
 
         # Parse env_file_content for project management flags only
         # (actual env vars are written to .env in pytest job, not passed as --env args)
