@@ -14,7 +14,11 @@ from pydantic import BaseModel
 
 from unity.common.llm_io_hooks import (
     _serialize_kw,
-    _write_llm_io,
+    _write_request_pending,
+    _append_response_and_finalize,
+    _record_cache_status,
+    get_cache_stats,
+    reset_cache_stats,
     install_llm_io_hooks,
 )
 from unity.settings import SETTINGS
@@ -109,12 +113,12 @@ def test_serialize_kw_non_json_serializable():
 
 
 # --------------------------------------------------------------------------- #
-#  _write_llm_io tests
+#  File writing tests (combined request+response files)
 # --------------------------------------------------------------------------- #
 
 
-def test_write_llm_io_creates_file(tmp_path, monkeypatch):
-    """Writing creates a timestamped file with correct format."""
+def test_write_request_pending_creates_file(tmp_path, monkeypatch):
+    """Writing a pending request creates a timestamped file."""
     io_dir = tmp_path / "llm_io_debug" / "test_session"
     io_dir.mkdir(parents=True)
 
@@ -122,18 +126,19 @@ def test_write_llm_io_creates_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
-    _write_llm_io("LLM request ➡️:", {"model": "gpt-4"}, label="test")
+    path = _write_request_pending({"model": "gpt-4"}, label="test")
 
-    files = list(io_dir.glob("*.txt"))
-    assert len(files) == 1
+    assert path is not None
+    assert path.exists()
+    assert "_pending" in path.name
 
-    content = files[0].read_text()
-    assert "🔄 [test] LLM request ➡️:" in content
+    content = path.read_text()
+    assert "🔄 [test] LLM request ➡️" in content
     assert '"model": "gpt-4"' in content
 
 
-def test_write_llm_io_handles_string_body(tmp_path, monkeypatch):
-    """String bodies are written directly."""
+def test_append_response_and_finalize(tmp_path, monkeypatch):
+    """Appending response and finalizing renames the file."""
     io_dir = tmp_path / "llm_io_debug" / "test_session"
     io_dir.mkdir(parents=True)
 
@@ -141,14 +146,32 @@ def test_write_llm_io_handles_string_body(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
-    _write_llm_io("LLM response ⬅️:", "The answer is 42", label="test")
+    # Write pending request
+    pending_path = _write_request_pending({"model": "gpt-4"}, label="test")
+    assert pending_path is not None
 
-    files = list(io_dir.glob("*.txt"))
-    content = files[0].read_text()
-    assert "The answer is 42" in content
+    # Append response and finalize
+    _append_response_and_finalize(
+        pending_path,
+        {"choices": [{"message": {"content": "Hello"}}]},
+        "hit",
+        label="test",
+    )
+
+    # Pending file should be gone
+    assert not pending_path.exists()
+
+    # Should have a _hit file now
+    hit_files = list(io_dir.glob("*_hit.txt"))
+    assert len(hit_files) == 1
+
+    content = hit_files[0].read_text()
+    assert "LLM request ➡️" in content
+    assert "LLM response ⬅️" in content
+    assert "[cache: hit]" in content
 
 
-def test_write_llm_io_without_label(tmp_path, monkeypatch):
+def test_write_request_without_label(tmp_path, monkeypatch):
     """Writing without a label omits the label prefix."""
     io_dir = tmp_path / "llm_io_debug" / "test_session"
     io_dir.mkdir(parents=True)
@@ -157,16 +180,15 @@ def test_write_llm_io_without_label(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
-    _write_llm_io("Test header:", {"data": 1})
+    path = _write_request_pending({"data": 1})
 
-    files = list(io_dir.glob("*.txt"))
-    content = files[0].read_text()
-    assert "🔄 Test header:" in content
+    content = path.read_text()
+    assert "🔄 LLM request ➡️" in content
     # No label brackets in the header line
     assert "[" not in content.split("\n")[0]
 
 
-def test_write_llm_io_multiple_writes_unique_filenames(tmp_path, monkeypatch):
+def test_multiple_writes_unique_filenames(tmp_path, monkeypatch):
     """Multiple writes create unique files."""
     io_dir = tmp_path / "llm_io_debug" / "test_session"
     io_dir.mkdir(parents=True)
@@ -175,11 +197,98 @@ def test_write_llm_io_multiple_writes_unique_filenames(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
+    paths = []
     for i in range(3):
-        _write_llm_io(f"Request {i}:", {"i": i})
+        path = _write_request_pending({"i": i})
+        paths.append(path)
 
-    files = list(io_dir.glob("*.txt"))
+    # All paths should be unique
+    assert len(set(paths)) == 3
+    files = list(io_dir.glob("*_pending.txt"))
     assert len(files) == 3
+
+
+# --------------------------------------------------------------------------- #
+#  Cache stats tests
+# --------------------------------------------------------------------------- #
+
+
+def test_get_cache_stats_initial():
+    """Cache stats should track hits and misses."""
+    # Reset to known state
+    reset_cache_stats()
+
+    stats = get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 0
+    assert stats["hit_rate"] == 0.0
+
+
+def test_record_cache_status_hit():
+    """Recording a hit increments the hit counter."""
+    reset_cache_stats()
+
+    _record_cache_status("hit")
+    _record_cache_status("hit")
+
+    stats = get_cache_stats()
+    assert stats["hits"] == 2
+    assert stats["misses"] == 0
+    assert stats["hit_rate"] == 100.0
+
+
+def test_record_cache_status_miss():
+    """Recording a miss increments the miss counter."""
+    reset_cache_stats()
+
+    _record_cache_status("miss")
+    _record_cache_status("miss")
+    _record_cache_status("miss")
+
+    stats = get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 3
+    assert stats["hit_rate"] == 0.0
+
+
+def test_record_cache_status_mixed():
+    """Mixed hits and misses calculate correct hit rate."""
+    reset_cache_stats()
+
+    _record_cache_status("hit")
+    _record_cache_status("miss")
+    _record_cache_status("hit")
+    _record_cache_status("miss")
+
+    stats = get_cache_stats()
+    assert stats["hits"] == 2
+    assert stats["misses"] == 2
+    assert stats["hit_rate"] == 50.0
+
+
+def test_record_cache_status_unknown_ignored():
+    """Unknown cache status is ignored."""
+    reset_cache_stats()
+
+    _record_cache_status("hit")
+    _record_cache_status("unknown")
+    _record_cache_status("miss")
+
+    stats = get_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+
+
+def test_reset_cache_stats():
+    """Resetting cache stats clears all counters."""
+    _record_cache_status("hit")
+    _record_cache_status("miss")
+
+    reset_cache_stats()
+
+    stats = get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -189,7 +298,7 @@ def test_write_llm_io_multiple_writes_unique_filenames(tmp_path, monkeypatch):
 
 def test_hooks_wrap_generate_methods():
     """After installation, _generate_non_stream methods are wrapped."""
-    from unify.universal_api.clients.uni_llm import AsyncUnify, Unify
+    from unillm import AsyncUnify, Unify
 
     # Hooks should already be installed via unity/__init__.py
     # Verify the methods have __wrapped__ attribute from functools.wraps
@@ -225,7 +334,7 @@ async def test_hooks_capture_request_and_response(tmp_path, monkeypatch):
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
     # Create a mock unify client
-    from unify.universal_api.clients.uni_llm import AsyncUnify
+    from unillm import AsyncUnify
 
     # Create a mock response
     class MockChoice:
@@ -273,14 +382,15 @@ async def test_hooks_capture_request_and_response(tmp_path, monkeypatch):
         original = AsyncUnify._generate_non_stream
 
         async def wrapped_for_test(self, endpoint, prompt, **kwargs):
-            # Simulate the hook behavior
+            # Simulate the hook behavior with new combined file approach
             kw = {"model": endpoint, "messages": [{"role": "user", "content": "test"}]}
-            hooks_mod._write_llm_io("LLM request ➡️:", kw, label=endpoint)
+            pending_path = hooks_mod._write_request_pending(kw, label=endpoint)
             result = await original(self, endpoint, prompt, **kwargs)
             if hasattr(result, "model_dump"):
-                hooks_mod._write_llm_io(
-                    "LLM response ⬅️:",
+                hooks_mod._append_response_and_finalize(
+                    pending_path,
                     result.model_dump(),
+                    "miss",
                     label=endpoint,
                 )
             return result
@@ -306,14 +416,11 @@ async def test_hooks_capture_request_and_response(tmp_path, monkeypatch):
             cache_backend="local",
         )
 
-    # Check files were created
+    # Check files were created - should be a single combined file now
     files = sorted(io_dir.glob("*.txt"))
-    assert len(files) >= 2, f"Expected at least 2 files, got {len(files)}: {files}"
+    assert len(files) >= 1, f"Expected at least 1 file, got {len(files)}: {files}"
 
-    # Verify request file
-    request_files = [f for f in files if "request" in f.read_text().lower()]
-    assert len(request_files) >= 1, "Should have at least one request file"
-
-    # Verify response file
-    response_files = [f for f in files if "response" in f.read_text().lower()]
-    assert len(response_files) >= 1, "Should have at least one response file"
+    # The file should contain both request and response
+    content = files[0].read_text()
+    assert "LLM request ➡️" in content, "File should contain request"
+    assert "LLM response ⬅️" in content, "File should contain response"
