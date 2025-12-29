@@ -130,6 +130,7 @@ def _write_llm_io(
     *,
     label: str | None = None,
     kind: str = "io",
+    cache_status: str | None = None,
 ) -> None:
     """Write a single LLM I/O artifact to the debug folder.
 
@@ -139,6 +140,7 @@ def _write_llm_io(
         label: Optional label (e.g., endpoint name) to include in header.
         kind: Type of I/O - "request" or "response". Included in filename
               after timestamp to maintain alphabetical ordering.
+        cache_status: For responses, "hit" or "miss" indicating cache status.
     """
     io_dir = _ensure_io_dir()
     if io_dir is None:
@@ -148,8 +150,11 @@ def _write_llm_io(
         now = datetime.now(timezone.utc)
         hhmmss = now.strftime("%H%M%S")
         ns = time.time_ns() % 1_000_000_000
-        # Include kind in filename after timestamp for alphabetical ordering
-        base = f"{hhmmss}_{ns:09d}_{kind}"
+        # Include kind and cache_status in filename for easy filtering
+        if cache_status:
+            base = f"{hhmmss}_{ns:09d}_{kind}_{cache_status}"
+        else:
+            base = f"{hhmmss}_{ns:09d}_{kind}"
         path = Path(io_dir) / f"{base}.txt"
 
         # Handle filename collision
@@ -213,12 +218,14 @@ def _wrap_generate_non_stream(
     *,
     is_async: bool,
 ) -> Callable:
-    """Wrap _generate_non_stream to capture exact request/response."""
+    """Wrap _generate_non_stream to capture exact request/response and cache status."""
 
     if is_async:
 
         @functools.wraps(original_fn)
         async def async_wrapper(self, endpoint, prompt, **kwargs):
+            from unillm import acapture_cache_events
+
             # Build the kw dict the same way the original does
             kw = self._handle_kw(
                 prompt=prompt,
@@ -238,20 +245,25 @@ def _wrap_generate_non_stream(
             except Exception:
                 pass
 
-            # Call original
-            result = await original_fn(self, endpoint, prompt, **kwargs)
+            # Call original with cache event capture
+            async with acapture_cache_events() as events:
+                result = await original_fn(self, endpoint, prompt, **kwargs)
 
-            # Log the response
+            # Extract cache status
+            cache_status = events[0]["cache_status"] if events else "unknown"
+
+            # Log the response with cache status
             try:
                 if hasattr(result, "model_dump"):
                     resp_body = result.model_dump()
                 else:
                     resp_body = result
                 _write_llm_io(
-                    "LLM response ⬅️:",
+                    f"LLM response ⬅️ [cache: {cache_status}]:",
                     resp_body,
                     label=endpoint,
                     kind="response",
+                    cache_status=cache_status,
                 )
             except Exception:
                 pass
@@ -264,6 +276,8 @@ def _wrap_generate_non_stream(
 
         @functools.wraps(original_fn)
         def sync_wrapper(self, endpoint, prompt, **kwargs):
+            from unillm import capture_cache_events
+
             # Build the kw dict the same way the original does
             kw = self._handle_kw(
                 prompt=prompt,
@@ -283,20 +297,25 @@ def _wrap_generate_non_stream(
             except Exception:
                 pass
 
-            # Call original
-            result = original_fn(self, endpoint, prompt, **kwargs)
+            # Call original with cache event capture
+            with capture_cache_events() as events:
+                result = original_fn(self, endpoint, prompt, **kwargs)
 
-            # Log the response
+            # Extract cache status
+            cache_status = events[0]["cache_status"] if events else "unknown"
+
+            # Log the response with cache status
             try:
                 if hasattr(result, "model_dump"):
                     resp_body = result.model_dump()
                 else:
                     resp_body = result
                 _write_llm_io(
-                    "LLM response ⬅️:",
+                    f"LLM response ⬅️ [cache: {cache_status}]:",
                     resp_body,
                     label=endpoint,
                     kind="response",
+                    cache_status=cache_status,
                 )
             except Exception:
                 pass
