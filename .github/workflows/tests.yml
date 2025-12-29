@@ -158,6 +158,8 @@ jobs:
       delete_on_start: ${{ steps.set-matrix.outputs.delete_on_start }}
       delete_on_exit: ${{ steps.set-matrix.outputs.delete_on_exit }}
       random_projects: ${{ steps.set-matrix.outputs.random_projects }}
+      # Orchestra branch for local deployment
+      orchestra_branch: ${{ steps.set-matrix.outputs.orchestra_branch }}
     steps:
     - uses: actions/checkout@v2
 
@@ -243,6 +245,7 @@ jobs:
         DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
+        ORCHESTRA_BRANCH="staging"  # Default: staging branch for local orchestra
 
         # Parse env_file_content for project management flags only
         # (actual env vars are written to .env in pytest job, not passed as --env args)
@@ -295,6 +298,10 @@ jobs:
                   UNIFY_TESTS_RAND_PROJ=false|UNIFY_TESTS_RAND_PROJ=False|UNIFY_TESTS_RAND_PROJ=0)
                     RANDOM_PROJECTS="false"
                     echo "  env_file: RANDOM_PROJECTS=false" >&2
+                    ;;
+                  LOCAL_ORCHESTRA_BRANCH=*)
+                    ORCHESTRA_BRANCH="$value"
+                    echo "  env_file: ORCHESTRA_BRANCH=$value" >&2
                     ;;
                 esac
               fi
@@ -356,6 +363,12 @@ jobs:
                 echo "  args: RANDOM_PROJECTS=false (override)" >&2
                 continue
                 ;;
+              LOCAL_ORCHESTRA_BRANCH=*)
+                ORCHESTRA_BRANCH="${next_val#LOCAL_ORCHESTRA_BRANCH=}"
+                skip_next=true
+                echo "  args: ORCHESTRA_BRANCH=${ORCHESTRA_BRANCH} (override)" >&2
+                continue
+                ;;
             esac
           fi
 
@@ -371,6 +384,7 @@ jobs:
         echo "delete_on_start=$DELETE_ON_START" >> "$GITHUB_OUTPUT"
         echo "delete_on_exit=$DELETE_ON_EXIT" >> "$GITHUB_OUTPUT"
         echo "random_projects=$RANDOM_PROJECTS" >> "$GITHUB_OUTPUT"
+        echo "orchestra_branch=$ORCHESTRA_BRANCH" >> "$GITHUB_OUTPUT"
 
         # Build parallel_run_args from explicit flags only (not env_file content)
         # env_file content is handled separately by writing to .env on the runner
@@ -470,7 +484,7 @@ jobs:
       uses: actions/checkout@v2
       with:
         repository: unifyai/orchestra
-        ref: staging
+        ref: ${{ needs.discover.outputs.orchestra_branch }}
         path: orchestra
         token: ${{ secrets.ORCHESTRA_TOKEN }}
         fetch-depth: 1

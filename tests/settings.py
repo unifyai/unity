@@ -49,6 +49,13 @@ class TestingSettings(ProductionSettings):
     UNITY_TEST_PROJECT_NAME: str = "UnityTests"
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Local Orchestra Settings
+    # ─────────────────────────────────────────────────────────────────────────
+    LOCAL_ORCHESTRA_BRANCH: str = (
+        ""  # Git branch to checkout for local orchestra (default: use current)
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
     # File Lock Settings (for parallel test coordination)
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_FILE_LOCK_TIMEOUT: float = 3600.0  # 1 hour - handles slow tests under load
