@@ -101,6 +101,8 @@ def _resolve_user_details(self) -> Dict[str, Any]:
         "first_name": data.get("first"),
         "last_name": data.get("last"),
         "email": data.get("email"),
+        "bio": data.get("bio"),
+        "timezone": data.get("timezone"),
     }
     user_info.update({k: v for k, v in mapped.items() if v is not None})
 
@@ -162,23 +164,31 @@ def provision_assistant_contact(self, assistant_log) -> None:
             },
         )
 
-    # Hard-code system contacts to UTC so a timezone exists for these
-    # canonical contacts until frontend configuration is available.
-    base_fields["timezone"] = "UTC"
+    # Use fetched timezone if available, fallback to UTC
+    if selected is not None:
+        base_fields["timezone"] = selected.get("timezone") or "UTC"
+    else:
+        base_fields["timezone"] = "UTC"
 
     if assistant_log is not None:
         try:
             entries = assistant_log.entries
+            fetched_bio = selected.get("about") if selected else None
+            fetched_tz = selected.get("timezone") if selected else None
+
             needs_timezone = not entries.get("timezone")
+            needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_is_system = entries.get("is_system") is not True
 
-            if needs_timezone or needs_is_system:
+            if needs_timezone or needs_bio or needs_is_system:
                 update_kwargs: Dict[str, Any] = {
                     "contact_id": 0,
                     "_log_id": assistant_log.id,
                 }
                 if needs_timezone:
-                    update_kwargs["timezone"] = "UTC"
+                    update_kwargs["timezone"] = fetched_tz or "UTC"
+                if needs_bio:
+                    update_kwargs["bio"] = fetched_bio
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 self.update_contact(**update_kwargs)
@@ -218,7 +228,7 @@ def provision_user_contact(self, user_log) -> None:
     base_fields: Dict[str, Any] = {
         fld: None
         for fld in self._BUILTIN_FIELDS
-        if fld not in {"contact_id", "bio", "rolling_summary"}
+        if fld not in {"contact_id", "rolling_summary"}
     }
     base_fields["respond_to"] = True
     base_fields["is_system"] = True
@@ -228,13 +238,13 @@ def provision_user_contact(self, user_log) -> None:
             "surname": user_info.get("last_name"),
             "email_address": user_info.get("email"),
             "phone_number": user_info.get("phone_number"),
+            "bio": user_info.get("bio"),
             "response_policy": self.USER_MANAGER_RESPONSE_POLICY,
         },
     )
 
-    # Hard-code system contacts to UTC so a timezone exists for these
-    # canonical contacts until frontend configuration is available.
-    base_fields["timezone"] = "UTC"
+    # Use fetched timezone if available, fallback to UTC
+    base_fields["timezone"] = user_info.get("timezone") or "UTC"
 
     extra_fields = {
         k: v
@@ -253,16 +263,22 @@ def provision_user_contact(self, user_log) -> None:
     if user_log is not None:
         try:
             entries = user_log.entries
+            fetched_bio = user_info.get("bio")
+            fetched_tz = user_info.get("timezone")
+
             needs_timezone = not entries.get("timezone")
+            needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_is_system = entries.get("is_system") is not True
 
-            if needs_timezone or needs_is_system:
+            if needs_timezone or needs_bio or needs_is_system:
                 update_kwargs: Dict[str, Any] = {
                     "contact_id": 1,
                     "_log_id": user_log.id,
                 }
                 if needs_timezone:
-                    update_kwargs["timezone"] = "UTC"
+                    update_kwargs["timezone"] = fetched_tz or "UTC"
+                if needs_bio:
+                    update_kwargs["bio"] = fetched_bio
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 self.update_contact(**update_kwargs)
@@ -378,19 +394,33 @@ def provision_org_member_contacts(self) -> None:
             if existing:
                 log = existing[0]
                 entries = log.entries
-                # Update to mark as system if needed
-                if not entries.get("is_system"):
-                    self.update_contact(
-                        contact_id=int(entries["contact_id"]),
-                        is_system=True,
-                        _log_id=log.id,
-                    )
+                fetched_bio = member.get("bio")
+                fetched_tz = member.get("timezone")
+
+                needs_is_system = not entries.get("is_system")
+                needs_bio = fetched_bio and entries.get("bio") != fetched_bio
+                needs_timezone = not entries.get("timezone")
+
+                if needs_is_system or needs_bio or needs_timezone:
+                    update_kwargs: Dict[str, Any] = {
+                        "contact_id": int(entries["contact_id"]),
+                        "_log_id": log.id,
+                    }
+                    if needs_is_system:
+                        update_kwargs["is_system"] = True
+                    if needs_bio:
+                        update_kwargs["bio"] = fetched_bio
+                    if needs_timezone:
+                        update_kwargs["timezone"] = fetched_tz or "UTC"
+                    self.update_contact(**update_kwargs)
             else:
                 # Create new contact for org member
                 self._create_contact(
                     first_name=first_name,
                     surname=surname,
                     email_address=email,
+                    bio=member.get("bio"),
+                    timezone=member.get("timezone") or "UTC",
                     is_system=True,
                     respond_to=True,
                     response_policy="",
