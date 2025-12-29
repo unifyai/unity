@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
 SCRIPT_PATH = TESTS_DIR / "parallel_run.sh"
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
-PYTEST_LOGS_DIR = REPO_ROOT / "pytest_logs"
+PYTEST_LOGS_DIR = REPO_ROOT / "logs" / "pytest"
 
 
 def get_unity_sockets() -> List[str]:
@@ -421,11 +421,11 @@ class ParallelRunner:
                 no_progress_timeout=completion_timeout,
             )
 
-        # Parse log subdir from script output (format: "📁 Test logs for THIS run: pytest_logs/{subdir}/")
+        # Parse log subdir from script output (format: "📁 Test logs for THIS run: logs/pytest/{subdir}/")
         # This is more robust than trying to predict the datetime-prefixed name
         log_subdir = None
         log_subdir_match = re.search(
-            r"Test logs for THIS run: pytest_logs/([^/]+)/",
+            r"Test logs for THIS run: logs/pytest/([^/]+)/",
             stdout,
         )
         if log_subdir_match:

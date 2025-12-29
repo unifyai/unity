@@ -1101,8 +1101,8 @@ declare -a session_ids=()
 # Print log directory info first (before session creation starts)
 echo
 echo "========================================================================"
-echo "📁 Test logs for THIS run: pytest_logs/$LOG_SUBDIR/"
-echo "📂 All log directories:    pytest_logs/*/"
+echo "📁 Test logs for THIS run: logs/pytest/$LOG_SUBDIR/"
+echo "📂 All log directories:    logs/pytest/*/"
 echo "========================================================================"
 echo
 
@@ -1245,7 +1245,7 @@ if (( ${#failed_sessions[@]} > 0 )); then
     echo "  - $name"
   done
   echo ""
-  echo "Logs: pytest_logs/$LOG_SUBDIR/"
+  echo "Logs: logs/pytest/$LOG_SUBDIR/"
   exit 1
 else
   echo "All tests passed!"

@@ -727,8 +727,8 @@ jobs:
 
         # Count total tests from log files (robust - doesn't depend on tmux session timing)
         TOTAL_COUNT=0
-        if [ -d "pytest_logs" ]; then
-          TOTAL_COUNT=$(find pytest_logs -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
+        if [ -d "logs/pytest" ]; then
+          TOTAL_COUNT=$(find logs/pytest -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
         fi
 
         # Get failed sessions from tmux (these persist, unlike passing sessions which auto-close)
@@ -772,8 +772,8 @@ jobs:
 
         # Count test files
         log_count=0
-        if [ -d "pytest_logs" ]; then
-          log_count=$(find pytest_logs -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
+        if [ -d "logs/pytest" ]; then
+          log_count=$(find logs/pytest -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
         fi
 
         # Echo to step output (foldable view)
@@ -817,7 +817,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: pytest-logs-${{ steps.normalize-path.outputs.test_path_normalized }}
-        path: pytest_logs/
+        path: logs/pytest/
         if-no-files-found: ignore
         retention-days: 7
 
@@ -826,7 +826,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: llm-io-debug-${{ steps.normalize-path.outputs.test_path_normalized }}
-        path: llm_io_debug/
+        path: logs/llm/
         if-no-files-found: ignore
         retention-days: 7
 

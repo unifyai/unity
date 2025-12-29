@@ -18,7 +18,7 @@
 #
 # Flags:
 #   --verbose-db            Enable comprehensive PostgreSQL query logging
-#                           Logs are written to orchestra_logs/<timestamp>/
+#                           Logs are written to logs/orchestra/<timestamp>/
 #
 # Environment:
 #   ORCHESTRA_REPO_PATH     Override path to orchestra repo (default: ../orchestra)
@@ -46,8 +46,8 @@ ORCHESTRA_SERVER_LOGFILE="/tmp/unity-orchestra-server.log"
 # Verbose DB logging (can be set via --verbose-db flag or environment)
 VERBOSE_DB="${ORCHESTRA_VERBOSE_DB:-false}"
 
-# Orchestra logs directory (adjacent to pytest_logs/ and llm_io_debug/)
-ORCHESTRA_LOGS_DIR="$UNITY_ROOT/orchestra_logs"
+# Orchestra logs directory (under logs/ alongside pytest and llm)
+ORCHESTRA_LOGS_DIR="$UNITY_ROOT/logs/orchestra"
 ORCHESTRA_DB_LOG_PIDFILE="/tmp/unity-orchestra-db-logger.pid"
 CURRENT_LOG_SESSION_DIR=""
 
@@ -75,10 +75,10 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 # =============================================================================
 
 setup_orchestra_logs_dir() {
-  # Create the orchestra_logs directory if it doesn't exist
+  # Create the logs/orchestra directory if it doesn't exist
   mkdir -p "$ORCHESTRA_LOGS_DIR"
 
-  # Create a timestamped session directory (matching pytest_logs format)
+  # Create a timestamped session directory (matching logs/pytest format)
   local timestamp
   timestamp="$(date +%Y-%m-%dT%H-%M-%S)"
   CURRENT_LOG_SESSION_DIR="$ORCHESTRA_LOGS_DIR/$timestamp"
@@ -997,7 +997,7 @@ main() {
       echo "Flags:"
       echo "  --verbose-db    Enable comprehensive PostgreSQL query logging"
       echo "                  Logs all SQL with timestamps, durations, lock waits"
-      echo "                  Output: orchestra_logs/<timestamp>/postgresql.log"
+      echo "                  Output: logs/orchestra/<timestamp>/postgresql.log"
       echo ""
       echo "Environment:"
       echo "  ORCHESTRA_REPO_PATH      Path to orchestra repo (default: ../orchestra)"

@@ -10,11 +10,11 @@ Tests run in tmux sessions and stream results inline. For long test runs, you ca
 
 ## The Mental Model
 
-When you run `parallel_run.sh`, each test spawns in its own tmux session. The script blocks until all tests complete, streaming pass/fail results inline as tests finish. Log files are written to `pytest_logs/` as each test completes.
+When you run `parallel_run.sh`, each test spawns in its own tmux session. The script blocks until all tests complete, streaming pass/fail results inline as tests finish. Log files are written to `logs/pytest/` as each test completes.
 
 For long-running test suites, you can run in the background and analyze failures incrementally:
 1. Start tests with `is_background: true`
-2. Read log files as they appear in `pytest_logs/`
+2. Read log files as they appear in `logs/pytest/`
 3. Analyze failures immediately
 4. Check back later for final results
 
@@ -25,7 +25,7 @@ For long-running test suites, you can run in the background and analyze failures
 tests/parallel_run.sh tests/test_some_module/
 
 # 2. Check what logs exist (tests write here as they complete)
-ls pytest_logs/<latest-run-dir>/
+ls logs/pytest/<latest-run-dir>/
 
 # 3. Read and analyze any failures that have appeared
 # (Use the Read tool on specific log files)
@@ -44,4 +44,4 @@ This doesn't mean being hasty or sacrificing thoroughness. It means: **don't wai
 
 - **`surgical-verification-before-tests.mdc`**: Covers *pre-test* optimization (quick verification scripts)
 - **This rule**: Covers *mid-test* optimization (incremental analysis)
-- **`gitignored-directory-access.mdc`**: Explains how to read from `pytest_logs/` (use Shell for `ls`, Read tool for file contents)
+- **`gitignored-directory-access.mdc`**: Explains how to read from `logs/pytest/` (use Shell for `ls`, Read tool for file contents)

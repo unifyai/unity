@@ -10,7 +10,7 @@ Install via :pyfunc:`install_llm_io_hooks` early at startup (called
 automatically from ``unity/__init__.py``).
 
 When ``LLM_IO_DEBUG`` is enabled, request+response payloads are written to
-``llm_io_debug/<session>/`` as combined files:
+``logs/llm/<session>/`` as combined files:
 
 - During the call: ``{timestamp}_pending.txt`` (contains request only)
 - After completion: ``{timestamp}_hit.txt`` or ``{timestamp}_miss.txt``
@@ -147,7 +147,7 @@ def _ensure_io_dir() -> str | None:
     Returns None if LLM_IO_DEBUG is not enabled (file writing is skipped).
 
     Directory structure:
-        llm_io_debug/{datetime}_{socket_name}/{session_id}/
+        logs/llm/{datetime}_{socket_name}/{session_id}/
     """
     global _LLM_IO_DIR
     if _LLM_IO_DIR is not None:
@@ -165,7 +165,7 @@ def _ensure_io_dir() -> str | None:
     try:
         # Socket-scoped subdirectory for terminal isolation
         socket_subdir = _get_socket_subdir()
-        root = _get_repo_root() / "llm_io_debug" / socket_subdir
+        root = _get_repo_root() / "logs" / "llm" / socket_subdir
         root.mkdir(parents=True, exist_ok=True)
         session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", str(SESSION_ID))
         session_dir = root / session_safe

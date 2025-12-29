@@ -352,9 +352,9 @@ def test_get_current_lineage_empty_by_default():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_llm_io_debug_files_created(tmp_path, monkeypatch):
+async def test_llm_log_files_created(tmp_path, monkeypatch):
     """
-    Verify that LLM IO debug files are created when using SimulatedConversationManagerHandle.
+    Verify that LLM log files are created when using SimulatedConversationManagerHandle.
 
     The LLM IO hooks capture all LLM requests/responses at the unify client level,
     so ConversationManager LLM calls should produce debug files.
@@ -362,7 +362,7 @@ async def test_llm_io_debug_files_created(tmp_path, monkeypatch):
     import unity.common.llm_io_hooks as hooks_mod
 
     # Set up temp directory for IO debug files
-    io_dir = tmp_path / "llm_io_debug" / "test_session"
+    io_dir = tmp_path / "logs" / "llm" / "test_session"
     io_dir.mkdir(parents=True)
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
@@ -392,16 +392,16 @@ async def test_llm_io_debug_files_created(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_llm_io_debug_logs_to_terminal(tmp_path, monkeypatch, caplog):
+async def test_llm_log_writes_to_terminal(tmp_path, monkeypatch, caplog):
     """
-    Verify that LLM IO debug writes emit "📝 LLM request/response written to" log messages.
+    Verify that LLM log writes emit "📝 LLM request/response written to" log messages.
 
     These terminal logs help developers see where debug files are being written.
     """
     import unity.common.llm_io_hooks as hooks_mod
 
     # Set up temp directory for IO debug files
-    io_dir = tmp_path / "llm_io_debug" / "test_session"
+    io_dir = tmp_path / "logs" / "llm" / "test_session"
     io_dir.mkdir(parents=True)
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
@@ -431,14 +431,14 @@ async def test_llm_io_debug_logs_to_terminal(tmp_path, monkeypatch, caplog):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_llm_io_debug_file_contains_messages(tmp_path, monkeypatch):
+async def test_llm_log_file_contains_messages(tmp_path, monkeypatch):
     """
-    Verify that LLM IO debug files contain the actual message content.
+    Verify that LLM log files contain the actual message content.
     """
     import unity.common.llm_io_hooks as hooks_mod
 
     # Set up temp directory for IO debug files
-    io_dir = tmp_path / "llm_io_debug" / "test_session"
+    io_dir = tmp_path / "logs" / "llm" / "test_session"
     io_dir.mkdir(parents=True)
     monkeypatch.setattr(hooks_mod, "_LLM_IO_DIR", str(io_dir))
 
