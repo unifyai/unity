@@ -2,7 +2,7 @@
   "setup-worktree": [
     "cp \"$ROOT_WORKTREE_PATH/.env\" .env",
     "ln -sf \"$ROOT_WORKTREE_PATH/.venv\" .venv",
-    "mkdir -p pytest_logs && ln -sf \"$ROOT_WORKTREE_PATH/pytest_logs\" pytest_logs/_root",
-    "mkdir -p llm_io_debug && ln -sf \"$ROOT_WORKTREE_PATH/llm_io_debug\" llm_io_debug/_root"
+    "mkdir -p logs/pytest && ln -sf \"$ROOT_WORKTREE_PATH/logs/pytest\" logs/pytest/_root",
+    "mkdir -p logs/llm && ln -sf \"$ROOT_WORKTREE_PATH/logs/llm\" logs/llm/_root"
   ]
 }

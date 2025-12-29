@@ -66,7 +66,7 @@ tests/parallel_run.sh --timeout 300 tests/test_contact_manager/
 ### Failure Handling
 - If the script exits with code 1, failures were detected.
 - Do **NOT** inspect `tmux` panes directly.
-- **ALWAYS** read the corresponding log file in `pytest_logs/` for the failed session.
+- **ALWAYS** read the corresponding log file in `logs/pytest/` for the failed session.
 
 ### Log Directory Naming
 Log directories use a **datetime-prefixed format** for natural time-based ordering in the filesystem:
@@ -81,7 +81,7 @@ Log directories use a **datetime-prefixed format** for natural time-based orderi
 
 **Example directory listing:**
 ```
-pytest_logs/
+logs/pytest/
 ├── 2025-12-05T09-15-22_unity_dev_ttys004/
 ├── 2025-12-05T10-30-45_unity_dev_ttys026/
 ├── 2025-12-05T14-22-18_unity_dev_ttys004/
@@ -93,8 +93,8 @@ pytest_logs/
 - `UNITY_TEST_SOCKET`: The terminal socket name for tmux isolation (e.g., `unity_dev_ttys004`)
 
 ### Cleanup (REQUIRED)
-- **ALWAYS** kill failed tmux sessions after extracting failure info from `pytest_logs/`.
-- Logs are persisted in `pytest_logs/`; keeping sessions open is unnecessary.
+- **ALWAYS** kill failed tmux sessions after extracting failure info from `logs/pytest/`.
+- Logs are persisted in `logs/pytest/`; keeping sessions open is unnecessary.
 - Run: `tests/kill_failed.sh` to kill all failed sessions from YOUR terminal.
 - Run: `tests/kill_server.sh` to kill the entire tmux server for YOUR terminal.
 - For cross-terminal cleanup: `tests/kill_failed.sh --all` or `tests/kill_server.sh --all`

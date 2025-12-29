@@ -137,7 +137,7 @@ def _get_llm_io_dir() -> Path | None:
     """Get the LLM I/O debug directory for the current session.
 
     Directory structure:
-        llm_io_debug/{datetime}_{socket_name}/{session_id}/
+        logs/llm/{datetime}_{socket_name}/{session_id}/
     """
     try:
         from unity.constants import SESSION_ID
@@ -147,7 +147,7 @@ def _get_llm_io_dir() -> Path | None:
     import re
 
     socket_subdir = _get_socket_subdir()
-    root = _get_repo_root() / "llm_io_debug" / socket_subdir
+    root = _get_repo_root() / "logs" / "llm" / socket_subdir
     if not root.exists():
         return None
 

@@ -5,12 +5,7 @@
 # to be buggy (see: forum.cursor.com/t/bug-prefix-in-gitignore-and-cursorignore-is-not-honored)
 # We include these patterns anyway in anticipation of future bug fixes.
 
-# Test output logs
-!pytest_logs/
-!pytest_logs/**
-!pytest_logs/*
-
-# LLM request/response debug traces
-!llm_io_debug/
-!llm_io_debug/**
-!llm_io_debug/*
+# All logs (pytest, llm, orchestra)
+!logs/
+!logs/**
+!logs/*

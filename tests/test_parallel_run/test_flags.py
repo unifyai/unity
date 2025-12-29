@@ -65,7 +65,7 @@ class TestBlockingBehavior:
         assert result.exit_code != 0, "Should return non-zero on partial failure"
 
     def test_creates_log_files(self, runner):
-        """Script should create log files in pytest_logs/{socket}/."""
+        """Script should create log files in logs/pytest/{socket}/."""
         result = runner.run(
             runner.fixture_path("test_always_pass.py"),
         )

@@ -119,7 +119,7 @@ def test_serialize_kw_non_json_serializable():
 
 def test_write_request_pending_creates_file(tmp_path, monkeypatch):
     """Writing a pending request creates a timestamped file."""
-    io_dir = tmp_path / "llm_io_debug" / "test_session"
+    io_dir = tmp_path / "logs" / "llm" / "test_session"
     io_dir.mkdir(parents=True)
 
     import unity.common.llm_io_hooks as hooks_mod
@@ -139,7 +139,7 @@ def test_write_request_pending_creates_file(tmp_path, monkeypatch):
 
 def test_append_response_and_finalize(tmp_path, monkeypatch):
     """Appending response and finalizing renames the file."""
-    io_dir = tmp_path / "llm_io_debug" / "test_session"
+    io_dir = tmp_path / "logs" / "llm" / "test_session"
     io_dir.mkdir(parents=True)
 
     import unity.common.llm_io_hooks as hooks_mod
@@ -173,7 +173,7 @@ def test_append_response_and_finalize(tmp_path, monkeypatch):
 
 def test_write_request_without_label(tmp_path, monkeypatch):
     """Writing without a label omits the label prefix."""
-    io_dir = tmp_path / "llm_io_debug" / "test_session"
+    io_dir = tmp_path / "logs" / "llm" / "test_session"
     io_dir.mkdir(parents=True)
 
     import unity.common.llm_io_hooks as hooks_mod
@@ -190,7 +190,7 @@ def test_write_request_without_label(tmp_path, monkeypatch):
 
 def test_multiple_writes_unique_filenames(tmp_path, monkeypatch):
     """Multiple writes create unique files."""
-    io_dir = tmp_path / "llm_io_debug" / "test_session"
+    io_dir = tmp_path / "logs" / "llm" / "test_session"
     io_dir.mkdir(parents=True)
 
     import unity.common.llm_io_hooks as hooks_mod
@@ -326,7 +326,7 @@ def test_install_is_idempotent():
 async def test_hooks_capture_request_and_response(tmp_path, monkeypatch):
     """Integration test: hooks capture actual LLM request/response payloads."""
     # Set up temp directory for this test
-    io_dir = tmp_path / "llm_io_debug" / "integration_test"
+    io_dir = tmp_path / "logs" / "llm" / "integration_test"
     io_dir.mkdir(parents=True)
 
     import unity.common.llm_io_hooks as hooks_mod

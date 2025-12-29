@@ -1,10 +1,10 @@
 ---
-description: How to navigate gitignored directories like pytest_logs/ and llm_io_debug/
+description: How to navigate gitignored log directories (logs/pytest/, logs/llm/, logs/orchestra/)
 globs: ["**/*"]
 alwaysApply: true
 ---
 
-# Navigating Gitignored Directories (pytest_logs/, llm_io_debug/)
+# Navigating Gitignored Directories (logs/)
 
 ## Tool Behavior Summary
 
@@ -21,15 +21,15 @@ alwaysApply: true
 **Step 1: Explore directories with Shell**
 ```bash
 # List log directories (sorted by time, newest last)
-ls pytest_logs/
+ls logs/pytest/
 
 # List contents of a specific run
-ls pytest_logs/2025-12-05T14-30-45_unity_dev_ttys042/
+ls logs/pytest/2025-12-05T14-30-45_unity_dev_ttys042/
 ```
 
 **Step 2: Read files with Read tool**
 ```
-Read: pytest_logs/2025-12-05T14-30-45_unity_dev_ttys042/test_contact_manager-test_ask.txt
+Read: logs/pytest/2025-12-05T14-30-45_unity_dev_ttys042/test_contact_manager-test_ask.txt
 ```
 
 The `Read` tool works perfectly for gitignored files - use it directly once you know the path.
@@ -45,29 +45,30 @@ The `Read` tool works perfectly for gitignored files - use it directly once you 
 
 | Directory | Purpose |
 |-----------|---------|
-| `pytest_logs/` | Test output logs (datetime-prefixed subdirs per run) |
-| `llm_io_debug/` | Raw LLM request/response traces |
+| `logs/pytest/` | Test output logs (datetime-prefixed subdirs per run) |
+| `logs/llm/` | Raw LLM request/response traces |
+| `logs/orchestra/` | PostgreSQL and Orchestra server logs |
 
 ## Worktree Symlinks
 
-In worktrees, the `pytest_logs/` and `llm_io_debug/` directories contain a `_root` symlink pointing to the main repository's corresponding log folder. Use this when looking for logs from tests run in the main repo rather than the worktree.
+In worktrees, the log directories contain a `_root` symlink pointing to the main repository's corresponding log folder. Use this when looking for logs from tests run in the main repo rather than the worktree.
 
 ```bash
 # List main repo's logs from a worktree
-ls pytest_logs/_root/
+ls logs/pytest/_root/
 ```
 
 ## Example: Debugging a Test Failure
 
 ```bash
 # 1. Find recent log directories
-ls pytest_logs/
+ls logs/pytest/
 
 # 2. List logs in the most recent run
-ls pytest_logs/2025-12-21T16-00-00_unity_dev_ttys042/
+ls logs/pytest/2025-12-21T16-00-00_unity_dev_ttys042/
 ```
 
 Then use the Read tool:
 ```
-Read: pytest_logs/2025-12-21T16-00-00_unity_dev_ttys042/test_contact_manager-test_ask.txt
+Read: logs/pytest/2025-12-21T16-00-00_unity_dev_ttys042/test_contact_manager-test_ask.txt
 ```

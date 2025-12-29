@@ -165,7 +165,7 @@ class TestAutoClose:
 
 
 class TestLogFiles:
-    """Tests for log file creation in pytest_logs/{socket}/."""
+    """Tests for log file creation in logs/pytest/{socket}/."""
 
     def test_creates_log_file(self, runner):
         """Script should create log file for each session."""
