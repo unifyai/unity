@@ -334,10 +334,10 @@ fi
 # By default, start and use local orchestra to eliminate network latency.
 # Use --staging to skip this and use the deployed orchestra from .env.
 if (( ! USE_STAGING )); then
-  _local_orchestra_script="$SCRIPT_DIR/start_local_orchestra.sh"
+  _local_orchestra_script="$SCRIPT_DIR/local_orchestra.sh"
   if [[ -x "$_local_orchestra_script" ]]; then
     # Stop any existing orchestra to ensure fresh state and correct settings
-    "$_local_orchestra_script" --stop >/dev/null 2>&1 || true
+    "$_local_orchestra_script" stop >/dev/null 2>&1 || true
 
     # Remove any existing PostgreSQL container so we get fresh one with correct max_connections
     for _container in $(docker ps -a --filter "publish=5432" --format "{{.Names}}" 2>/dev/null); do
@@ -352,7 +352,7 @@ if (( ! USE_STAGING )); then
     _waited=0
     while lsof -i ":$_db_port" &>/dev/null && (( _waited < _max_wait )); do
       sleep 1
-      (( _waited++ ))
+      (( ++_waited ))
     done
     if (( _waited > 0 )); then
       echo "Waited ${_waited}s for port $_db_port to be released" >&2
@@ -361,7 +361,7 @@ if (( ! USE_STAGING )); then
 
     echo "Starting local orchestra..."
     if "$_local_orchestra_script" start >/dev/null 2>&1; then
-      if _local_url=$("$_local_orchestra_script" --check 2>/dev/null); then
+      if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
         echo "Using local orchestra: $_local_url"
         export UNIFY_BASE_URL="$_local_url"
         export UNIFY_KEY="unity-local-test-api-key"

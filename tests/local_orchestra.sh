@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# start_local_orchestra.sh - Start a local Orchestra instance for testing
+# local_orchestra.sh - Manage a local Orchestra instance for testing
 # =============================================================================
 #
 # This script starts a fully local Orchestra deployment using:
@@ -10,10 +10,10 @@
 # This eliminates network latency and staging server bottlenecks during testing.
 #
 # Usage:
-#   ./start_local_orchestra.sh           # Start and wait for ready
-#   ./start_local_orchestra.sh --check   # Check if already running
-#   ./start_local_orchestra.sh --stop    # Stop local orchestra
-#   ./start_local_orchestra.sh --status  # Show status
+#   ./local_orchestra.sh start    # Start and wait for ready
+#   ./local_orchestra.sh check    # Check if already running
+#   ./local_orchestra.sh stop     # Stop local orchestra
+#   ./local_orchestra.sh status   # Show status
 #
 # Environment:
 #   ORCHESTRA_REPO_PATH   Override path to orchestra repo (default: ../orchestra)
@@ -632,7 +632,7 @@ cmd_start() {
   echo "  export UNIFY_KEY='$test_api_key'"
   echo ""
   echo "Or source this script:"
-  echo "  eval \"\$(./start_local_orchestra.sh)\""
+  echo "  eval \"\$(./local_orchestra.sh)\""
   echo ""
 
   # Output the export commands for eval
@@ -707,7 +707,7 @@ cmd_check() {
 
 cmd_env() {
   # Output environment variables for local orchestra (if running)
-  # Useful for: eval "$(./start_local_orchestra.sh --env)"
+  # Useful for: eval "$(./local_orchestra.sh env)"
   local test_api_key
   test_api_key=$(get_test_api_key)
 
@@ -761,7 +761,7 @@ main() {
       echo "  ORCHESTRA_DB_PORT    PostgreSQL port (default: 5432)"
       echo ""
       echo "Quick usage:"
-      echo "  eval \"\$($0 --env)\"  # Set env vars if local orchestra running"
+      echo "  eval \"\$($0 env)\"  # Set env vars if local orchestra running"
       ;;
     *)
       log_error "Unknown command: $cmd"
