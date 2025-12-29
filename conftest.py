@@ -518,6 +518,11 @@ def pytest_unconfigure(config):
     if _TEE_LOG_PATH is not None:
         try:
             stats = unify.get_cache_stats()
+            # Determine llm_io_debug directory path (same subdir as pytest_logs)
+            log_subdir = _get_log_subdir()
+            log_root = _get_log_root(config.rootpath)
+            llm_io_debug_dir = log_root / "llm_io_debug" / log_subdir
+
             cache_stats_file = _TEE_LOG_PATH.with_suffix(".cache_stats.json")
             cache_stats_file.write_text(
                 json.dumps(
@@ -525,6 +530,7 @@ def pytest_unconfigure(config):
                         "hits": stats.hits,
                         "misses": stats.misses,
                         "hit_rate": stats.get_percentage_of_cache_hits(),
+                        "llm_io_debug_dir": str(llm_io_debug_dir),
                     },
                 ),
             )
