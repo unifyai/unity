@@ -348,14 +348,15 @@ if (( ! USE_STAGING )); then
 
     # Wait for DB port to be fully released (Docker Desktop can be slow)
     _db_port="${ORCHESTRA_DB_PORT:-5432}"
-    _max_wait=30
-    _waited=0
-    while lsof -i ":$_db_port" &>/dev/null && (( _waited < _max_wait )); do
-      sleep 1
-      (( ++_waited ))
-    done
-    if (( _waited > 0 )); then
-      echo "Waited ${_waited}s for port $_db_port to be released" >&2
+    if lsof -i ":$_db_port" &>/dev/null; then
+      echo "Waiting for port $_db_port to be released..."
+      _max_wait=30
+      _waited=0
+      while lsof -i ":$_db_port" &>/dev/null && (( _waited < _max_wait )); do
+        sleep 1
+        (( ++_waited ))
+      done
+      echo "Port $_db_port released."
     fi
     unset _db_port _max_wait _waited
 
