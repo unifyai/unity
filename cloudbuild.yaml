@@ -6,7 +6,7 @@ steps:
   args:
   - '-c'
   - |
-    docker build --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY \
+    docker build --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY --build-arg GITHUB_TOKEN=$$GITHUB_TOKEN \
       -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA} \
       -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest .
   secretEnv: ['ORCHESTRA_API_KEY', 'GITHUB_TOKEN']
