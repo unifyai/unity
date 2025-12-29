@@ -108,15 +108,18 @@ _configure_default_logging()
 
 
 def _install_llm_io_hooks() -> None:
-    """Install LLM I/O debug hooks if enabled via settings."""
+    """Install LLM I/O hooks for cache stats tracking and optional debug logging.
+
+    Hooks are always installed to enable cache statistics tracking.
+    File writing only occurs when LLM_IO_DEBUG is enabled and log directories exist.
+    """
     if getattr(_install_llm_io_hooks, "_done", False):
         return
 
     try:
-        if _SETTINGS.LLM_IO_DEBUG:
-            from unity.common.llm_io_hooks import install_llm_io_hooks
+        from unity.common.llm_io_hooks import install_llm_io_hooks
 
-            install_llm_io_hooks()
+        install_llm_io_hooks()
     except Exception:
         # Never let hook installation crash imports
         pass

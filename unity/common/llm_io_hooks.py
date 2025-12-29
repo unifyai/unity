@@ -2,15 +2,15 @@
 LLM I/O Debug Hooks
 ===================
 
-Monkeypatches the ``unify`` client to capture the *exact* request payload
-that is sent to the chat completions endpoint or read from cache.
+Monkeypatches the ``unillm`` client to:
+1. Track cache hit/miss statistics (always enabled via :pyfunc:`get_cache_stats`)
+2. Optionally write debug files (when ``LLM_IO_DEBUG`` is enabled)
 
 Install via :pyfunc:`install_llm_io_hooks` early at startup (called
-automatically from ``unity/__init__.py`` when ``LLM_IO_DEBUG`` is enabled).
+automatically from ``unity/__init__.py``).
 
-The captured payloads are written to ``llm_io_debug/<session>/`` as combined
-request+response files. Each LLM call produces a single file containing both
-the request and response payloads:
+When ``LLM_IO_DEBUG`` is enabled, request+response payloads are written to
+``llm_io_debug/<session>/`` as combined files:
 
 - During the call: ``{timestamp}_pending.txt`` (contains request only)
 - After completion: ``{timestamp}_hit.txt`` or ``{timestamp}_miss.txt``
@@ -36,6 +36,44 @@ from unity.settings import SETTINGS
 # Module-level state
 _HOOKS_INSTALLED = False
 _LLM_IO_DIR: str | None = None
+
+# Global cache statistics (since unillm doesn't provide a global counter)
+_CACHE_HITS = 0
+_CACHE_MISSES = 0
+
+
+def get_cache_stats() -> dict[str, int | float]:
+    """Get cache hit/miss statistics for LLM calls.
+
+    Returns a dict with:
+        - hits: Number of cache hits
+        - misses: Number of cache misses
+        - hit_rate: Percentage of hits (0.0 if no calls)
+    """
+    total = _CACHE_HITS + _CACHE_MISSES
+    hit_rate = (_CACHE_HITS / total * 100) if total > 0 else 0.0
+    return {
+        "hits": _CACHE_HITS,
+        "misses": _CACHE_MISSES,
+        "hit_rate": hit_rate,
+    }
+
+
+def reset_cache_stats() -> None:
+    """Reset the cache statistics counters to zero."""
+    global _CACHE_HITS, _CACHE_MISSES
+    _CACHE_HITS = 0
+    _CACHE_MISSES = 0
+
+
+def _record_cache_status(cache_status: str) -> None:
+    """Record a cache hit or miss in the global stats."""
+    global _CACHE_HITS, _CACHE_MISSES
+    if cache_status == "hit":
+        _CACHE_HITS += 1
+    elif cache_status == "miss":
+        _CACHE_MISSES += 1
+    # Ignore "unknown" or other statuses
 
 
 def _derive_socket_name() -> str:
@@ -106,12 +144,18 @@ def _get_repo_root() -> Path:
 def _ensure_io_dir() -> str | None:
     """Ensure the per-session LLM I/O debug directory exists.
 
+    Returns None if LLM_IO_DEBUG is not enabled (file writing is skipped).
+
     Directory structure:
         llm_io_debug/{datetime}_{socket_name}/{session_id}/
     """
     global _LLM_IO_DIR
     if _LLM_IO_DIR is not None:
         return _LLM_IO_DIR
+
+    # Only write files when LLM_IO_DEBUG is enabled
+    if not SETTINGS.LLM_IO_DEBUG:
+        return None
 
     try:
         from unity.constants import SESSION_ID
@@ -290,8 +334,9 @@ def _wrap_generate_non_stream(
             async with acapture_cache_events() as events:
                 result = await original_fn(self, endpoint, prompt, **kwargs)
 
-            # Extract cache status and finalize the log file
+            # Extract cache status, record stats, and finalize the log file
             cache_status = events[0]["cache_status"] if events else "unknown"
+            _record_cache_status(cache_status)
             try:
                 if hasattr(result, "model_dump"):
                     resp_body = result.model_dump()
@@ -336,8 +381,9 @@ def _wrap_generate_non_stream(
             with capture_cache_events() as events:
                 result = original_fn(self, endpoint, prompt, **kwargs)
 
-            # Extract cache status and finalize the log file
+            # Extract cache status, record stats, and finalize the log file
             cache_status = events[0]["cache_status"] if events else "unknown"
+            _record_cache_status(cache_status)
             try:
                 if hasattr(result, "model_dump"):
                     resp_body = result.model_dump()
