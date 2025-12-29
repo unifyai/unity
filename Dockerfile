@@ -64,11 +64,17 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
+# Configure git to use GITHUB_TOKEN for private repo authentication
+RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
 # Install PyTorch CPU-only first (smaller and faster for containers)
 RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Install Python dependencies using uv (system-wide, no virtual environment)
 RUN uv pip install --system --no-cache .
+
+# Remove git credentials from config after install (security best practice)
+RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
 
 # Copy all application files
 COPY . /app
