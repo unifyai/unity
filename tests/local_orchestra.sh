@@ -11,8 +11,9 @@
 #
 # Usage:
 #   ./local_orchestra.sh start    # Start and wait for ready
-#   ./local_orchestra.sh check    # Check if already running
 #   ./local_orchestra.sh stop     # Stop local orchestra
+#   ./local_orchestra.sh restart  # Stop then start (wipes database)
+#   ./local_orchestra.sh check    # Check if already running
 #   ./local_orchestra.sh status   # Show status
 #
 # Environment:
@@ -718,6 +719,12 @@ cmd_stop() {
   log_success "Local Orchestra stopped"
 }
 
+cmd_restart() {
+  cmd_stop
+  echo ""
+  cmd_start
+}
+
 cmd_status() {
   echo "Local Orchestra Status"
   echo "======================"
@@ -801,6 +808,9 @@ main() {
     stop|--stop)
       cmd_stop
       ;;
+    restart|--restart)
+      cmd_restart
+      ;;
     status|--status)
       cmd_status
       ;;
@@ -811,11 +821,12 @@ main() {
       cmd_env
       ;;
     -h|--help)
-      echo "Usage: $0 [start|stop|status|check|env]"
+      echo "Usage: $0 [start|stop|restart|status|check|env]"
       echo ""
       echo "Commands:"
       echo "  start    Start local orchestra (default)"
       echo "  stop     Stop local orchestra"
+      echo "  restart  Stop then start (wipes database)"
       echo "  status   Show status"
       echo "  check    Quick check if running (returns URL or exits 1)"
       echo "  env      Output environment variables for shell eval"
