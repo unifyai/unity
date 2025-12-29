@@ -239,7 +239,7 @@ jobs:
 
         # CI defaults for project management (can be overridden)
         # With local orchestra (default), these are ignored - each job has fresh DB
-        # Only relevant when using --staging flag to use deployed orchestra
+        # Only relevant when UNIFY_BASE_URL is set to a non-local URL (staging/production)
         DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode

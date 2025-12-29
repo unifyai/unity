@@ -166,10 +166,6 @@ else
 fi
 MAX_JOBS=$_NUM_CORES
 
-# Use staging/remote orchestra instead of local
-# With --staging: skip local orchestra, use UNIFY_BASE_URL from .env
-USE_STAGING=0
-
 # Environment variable overrides (accumulated via --env KEY=VALUE)
 declare -a ENV_OVERRIDES=()
 
@@ -239,10 +235,6 @@ while (( "$#" )); do
       OVERWRITE_SCENARIOS=1
       shift
       ;;
-    --staging)
-      USE_STAGING=1
-      shift
-      ;;
     --tags)
       if [[ -n "${2-}" ]]; then
         # Split on comma and add each tag to TAGS array
@@ -290,7 +282,6 @@ while (( "$#" )); do
       echo "  --repeat N           Run each test N times"
       echo "  --tags TAG           Tag runs for filtering (repeatable)"
       echo "  --overwrite-scenarios  Delete and recreate test scenarios"
-      echo "  --staging            Use staging orchestra (skip local)"
       echo "  -h, --help           Show this help"
       echo "  --                   Pass remaining args directly to pytest"
       echo ""
@@ -331,51 +322,65 @@ fi
 # ---------------------------------------------------------------------------
 # Local Orchestra Setup
 # ---------------------------------------------------------------------------
-# By default, start and use local orchestra to eliminate network latency.
-# Use --staging to skip this and use the deployed orchestra from .env.
-if (( ! USE_STAGING )); then
+# UNIFY_BASE_URL is the single source of truth:
+# - Unset or localhost (127.0.0.1/localhost): use local orchestra
+# - Any other URL: use it directly (staging, production, etc.)
+
+_is_local_url() {
+  local url="${1:-}"
+  [[ -z "$url" ]] && return 0  # Unset = local
+  [[ "$url" == *"127.0.0.1"* || "$url" == *"localhost"* ]]
+}
+
+if _is_local_url "${UNIFY_BASE_URL:-}"; then
   _local_orchestra_script="$SCRIPT_DIR/local_orchestra.sh"
   if [[ -x "$_local_orchestra_script" ]]; then
-    # Stop any existing orchestra to ensure fresh state and correct settings
-    "$_local_orchestra_script" stop >/dev/null 2>&1 || true
-
-    # Remove any existing PostgreSQL container so we get fresh one with correct max_connections
-    for _container in $(docker ps -a --filter "publish=5432" --format "{{.Names}}" 2>/dev/null); do
-      docker stop "$_container" >/dev/null 2>&1 || true
-      docker rm "$_container" >/dev/null 2>&1 || true
-    done
-    unset _container
-
-    # Wait for DB port to be fully released (Docker Desktop can be slow)
-    _db_port="${ORCHESTRA_DB_PORT:-5432}"
-    if lsof -i ":$_db_port" &>/dev/null; then
-      echo "Waiting for port $_db_port to be released..."
-      _max_wait=30
-      _waited=0
-      while lsof -i ":$_db_port" &>/dev/null && (( _waited < _max_wait )); do
-        sleep 1
-        (( ++_waited ))
-      done
-      echo "Port $_db_port released."
-    fi
-    unset _db_port _max_wait _waited
-
-    echo "Starting local orchestra..."
-    if "$_local_orchestra_script" start >/dev/null 2>&1; then
-      if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
-        echo "Using local orchestra: $_local_url"
-        export UNIFY_BASE_URL="$_local_url"
-        export UNIFY_KEY="unity-local-test-api-key"
-      else
-        echo "Warning: Local orchestra started but not responding, using staging" >&2
-      fi
+    # Check if local orchestra is already running
+    if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
+      echo "Local orchestra already running: $_local_url"
+      export UNIFY_BASE_URL="$_local_url"
     else
-      echo "Warning: Could not start local orchestra, using staging" >&2
+      # Not running - need to start it
+      # Stop any stale orchestra state first
+      "$_local_orchestra_script" stop >/dev/null 2>&1 || true
+
+      # Remove any existing PostgreSQL container so we get fresh one with correct max_connections
+      for _container in $(docker ps -a --filter "publish=5432" --format "{{.Names}}" 2>/dev/null); do
+        docker stop "$_container" >/dev/null 2>&1 || true
+        docker rm "$_container" >/dev/null 2>&1 || true
+      done
+      unset _container
+
+      # Wait for DB port to be fully released (Docker Desktop can be slow)
+      _db_port="${ORCHESTRA_DB_PORT:-5432}"
+      if lsof -i ":$_db_port" &>/dev/null; then
+        echo "Waiting for port $_db_port to be released..."
+        _max_wait=30
+        _waited=0
+        while lsof -i ":$_db_port" &>/dev/null && (( _waited < _max_wait )); do
+          sleep 1
+          (( ++_waited ))
+        done
+        echo "Port $_db_port released."
+      fi
+      unset _db_port _max_wait _waited
+
+      echo "Starting local orchestra..."
+      if "$_local_orchestra_script" start >/dev/null 2>&1; then
+        if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
+          echo "Using local orchestra: $_local_url"
+          export UNIFY_BASE_URL="$_local_url"
+        else
+          echo "Warning: Local orchestra started but not responding" >&2
+        fi
+      else
+        echo "Warning: Could not start local orchestra" >&2
+      fi
     fi
   fi
   unset _local_orchestra_script _local_url
 else
-  echo "Using staging orchestra (--staging flag)"
+  echo "Using remote orchestra: $UNIFY_BASE_URL"
 fi
 
 # Build pytest marker filter based on flags
