@@ -16,15 +16,11 @@
 #   ./local_orchestra.sh check    # Check if already running
 #   ./local_orchestra.sh status   # Show status
 #
-# Flags:
-#   --verbose-db            Enable comprehensive PostgreSQL query logging
-#                           Logs are written to logs/orchestra/<timestamp>/
-#
 # Environment:
 #   ORCHESTRA_REPO_PATH     Override path to orchestra repo (default: ../orchestra)
 #   ORCHESTRA_PORT          Override FastAPI port (default: 8000)
 #   ORCHESTRA_DB_PORT       Override PostgreSQL port (default: 5432)
-#   ORCHESTRA_VERBOSE_DB    Set to "true" to enable verbose DB logging (same as --verbose-db)
+#   ORCHESTRA_VERBOSE_DB    Set to "false" to disable verbose DB logging (default: true)
 #
 # On success, exports:
 #   UNIFY_BASE_URL=http://127.0.0.1:8000/v0
@@ -43,8 +39,9 @@ ORCHESTRA_DB_CONTAINER="unity-orchestra-db"
 ORCHESTRA_SERVER_PIDFILE="/tmp/unity-orchestra-server.pid"
 ORCHESTRA_SERVER_LOGFILE="/tmp/unity-orchestra-server.log"
 
-# Verbose DB logging (can be set via --verbose-db flag or environment)
-VERBOSE_DB="${ORCHESTRA_VERBOSE_DB:-false}"
+# Verbose DB logging - enabled by default for comprehensive query audit
+# Set ORCHESTRA_VERBOSE_DB=false to disable
+VERBOSE_DB="${ORCHESTRA_VERBOSE_DB:-true}"
 
 # Orchestra logs directory (under logs/ alongside pytest and llm)
 ORCHESTRA_LOGS_DIR="$UNITY_ROOT/logs/orchestra"
@@ -292,9 +289,9 @@ start_db_container() {
     "-c" "max_connections=$max_connections"
   )
 
-  # Add verbose logging flags when --verbose-db is enabled
+  # Add verbose logging flags (enabled by default)
   if [[ "$VERBOSE_DB" == "true" ]]; then
-    log_info "Enabling verbose PostgreSQL logging (--verbose-db)"
+    log_info "Enabling verbose PostgreSQL logging"
     setup_orchestra_logs_dir
 
     pg_flags+=(
@@ -926,10 +923,6 @@ main() {
   # Parse arguments - extract flags and command
   while (( "$#" )); do
     case "$1" in
-      --verbose-db)
-        VERBOSE_DB="true"
-        shift
-        ;;
       -h|--help)
         cmd="help"
         shift
@@ -994,21 +987,20 @@ main() {
       echo "  check    Quick check if running (returns URL or exits 1)"
       echo "  env      Output environment variables for shell eval"
       echo ""
-      echo "Flags:"
-      echo "  --verbose-db    Enable comprehensive PostgreSQL query logging"
-      echo "                  Logs all SQL with timestamps, durations, lock waits"
-      echo "                  Output: logs/orchestra/<timestamp>/postgresql.log"
-      echo ""
       echo "Environment:"
       echo "  ORCHESTRA_REPO_PATH      Path to orchestra repo (default: ../orchestra)"
       echo "  ORCHESTRA_PORT           FastAPI port (default: 8000)"
       echo "  ORCHESTRA_DB_PORT        PostgreSQL port (default: 5432)"
-      echo "  ORCHESTRA_VERBOSE_DB     Set to 'true' for verbose DB logging"
+      echo "  ORCHESTRA_VERBOSE_DB     Set to 'false' to disable query logging (default: true)"
+      echo ""
+      echo "Logging:"
+      echo "  PostgreSQL query logs: logs/orchestra/<timestamp>/postgresql.log"
+      echo "  Verbose logging is enabled by default for debugging."
       echo ""
       echo "Examples:"
-      echo "  $0 start --verbose-db  # Start with full SQL audit logging"
-      echo "  $0 restart --verbose-db  # Restart with logging enabled"
-      echo "  eval \"\$($0 env)\"      # Set env vars if local orchestra running"
+      echo "  $0 start                 # Start with query logging (default)"
+      echo "  $0 restart               # Restart orchestra"
+      echo "  eval \"\$($0 env)\"        # Set env vars if local orchestra running"
       ;;
     *)
       log_error "Unknown command: $cmd"
