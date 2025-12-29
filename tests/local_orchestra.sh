@@ -216,8 +216,9 @@ start_db_container() {
     docker rm "$ORCHESTRA_DB_CONTAINER" >/dev/null 2>&1 || true
   fi
 
-  # Check if port is already in use by non-Docker process
-  if lsof -i ":${ORCHESTRA_DB_PORT}" &>/dev/null; then
+  # Check if port is already in use by a listening process
+  # Use -sTCP:LISTEN to ignore stale FIN_WAIT/CLOSE_WAIT connections from stopped containers
+  if lsof -i ":${ORCHESTRA_DB_PORT}" -sTCP:LISTEN &>/dev/null; then
     # Port is in use - check if it's a PostgreSQL we can use
     log_warn "Port $ORCHESTRA_DB_PORT is already in use"
 
