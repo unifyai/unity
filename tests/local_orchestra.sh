@@ -16,10 +16,15 @@
 #   ./local_orchestra.sh check    # Check if already running
 #   ./local_orchestra.sh status   # Show status
 #
+# Flags:
+#   --verbose-db            Enable comprehensive PostgreSQL query logging
+#                           Logs are written to orchestra_logs/<timestamp>/
+#
 # Environment:
 #   ORCHESTRA_REPO_PATH     Override path to orchestra repo (default: ../orchestra)
 #   ORCHESTRA_PORT          Override FastAPI port (default: 8000)
 #   ORCHESTRA_DB_PORT       Override PostgreSQL port (default: 5432)
+#   ORCHESTRA_VERBOSE_DB    Set to "true" to enable verbose DB logging (same as --verbose-db)
 #
 # On success, exports:
 #   UNIFY_BASE_URL=http://127.0.0.1:8000/v0
@@ -38,6 +43,14 @@ ORCHESTRA_DB_CONTAINER="unity-orchestra-db"
 ORCHESTRA_SERVER_PIDFILE="/tmp/unity-orchestra-server.pid"
 ORCHESTRA_SERVER_LOGFILE="/tmp/unity-orchestra-server.log"
 
+# Verbose DB logging (can be set via --verbose-db flag or environment)
+VERBOSE_DB="${ORCHESTRA_VERBOSE_DB:-false}"
+
+# Orchestra logs directory (adjacent to pytest_logs/ and llm_io_debug/)
+ORCHESTRA_LOGS_DIR="$UNITY_ROOT/orchestra_logs"
+ORCHESTRA_DB_LOG_PIDFILE="/tmp/unity-orchestra-db-logger.pid"
+CURRENT_LOG_SESSION_DIR=""
+
 # Local base URL that will be exported
 LOCAL_ORCHESTRA_URL="http://127.0.0.1:${ORCHESTRA_PORT}/v0"
 
@@ -49,12 +62,95 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+
+# =============================================================================
+# Orchestra Logs Directory Management
+# =============================================================================
+
+setup_orchestra_logs_dir() {
+  # Create the orchestra_logs directory if it doesn't exist
+  mkdir -p "$ORCHESTRA_LOGS_DIR"
+
+  # Create a timestamped session directory (matching pytest_logs format)
+  local timestamp
+  timestamp="$(date +%Y-%m-%dT%H-%M-%S)"
+  CURRENT_LOG_SESSION_DIR="$ORCHESTRA_LOGS_DIR/$timestamp"
+  mkdir -p "$CURRENT_LOG_SESSION_DIR"
+
+  log_info "Orchestra logs directory: $CURRENT_LOG_SESSION_DIR"
+}
+
+start_db_log_streaming() {
+  # Stream PostgreSQL logs from Docker to a file
+  # This runs in the background and captures all DB output
+  if [[ "$VERBOSE_DB" != "true" ]]; then
+    return 0
+  fi
+
+  if [[ -z "$CURRENT_LOG_SESSION_DIR" ]]; then
+    setup_orchestra_logs_dir
+  fi
+
+  local log_file="$CURRENT_LOG_SESSION_DIR/postgresql.log"
+
+  # Kill any existing log streamer
+  stop_db_log_streaming
+
+  log_info "Starting PostgreSQL log streaming to: $log_file"
+
+  # Stream docker logs to file in background
+  # Use --follow to continuously stream, and --timestamps for Docker-level timestamps
+  (docker logs -f --timestamps "$ORCHESTRA_DB_CONTAINER" >> "$log_file" 2>&1) &
+  local pid=$!
+  disown $pid 2>/dev/null || true
+  echo "$pid" > "$ORCHESTRA_DB_LOG_PIDFILE"
+
+  log_success "PostgreSQL log streaming started (PID $pid)"
+}
+
+stop_db_log_streaming() {
+  if [[ -f "$ORCHESTRA_DB_LOG_PIDFILE" ]]; then
+    local pid
+    pid=$(cat "$ORCHESTRA_DB_LOG_PIDFILE")
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      log_info "Stopped PostgreSQL log streaming (PID $pid)"
+    fi
+    rm -f "$ORCHESTRA_DB_LOG_PIDFILE"
+  fi
+}
+
+print_verbose_db_instructions() {
+  if [[ "$VERBOSE_DB" != "true" ]]; then
+    return 0
+  fi
+
+  echo ""
+  echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║  VERBOSE DATABASE LOGGING ENABLED                                    ║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
+  echo -e "${CYAN}║  All SQL queries are being logged with full detail.                  ║${NC}"
+  echo -e "${CYAN}║                                                                      ║${NC}"
+  echo -e "${CYAN}║  Log location:                                                       ║${NC}"
+  echo -e "${CYAN}║    $CURRENT_LOG_SESSION_DIR/postgresql.log${NC}"
+  echo -e "${CYAN}║                                                                      ║${NC}"
+  echo -e "${CYAN}║  Live monitoring:                                                    ║${NC}"
+  echo -e "${CYAN}║    tail -f $CURRENT_LOG_SESSION_DIR/postgresql.log${NC}"
+  echo -e "${CYAN}║                                                                      ║${NC}"
+  echo -e "${CYAN}║  Or via Docker directly:                                             ║${NC}"
+  echo -e "${CYAN}║    docker logs -f $ORCHESTRA_DB_CONTAINER${NC}"
+  echo -e "${CYAN}║                                                                      ║${NC}"
+  echo -e "${CYAN}║  Statement timeout: 120s (queries exceeding this will be cancelled)  ║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+}
 
 # =============================================================================
 # Prerequisite Checks
@@ -191,7 +287,43 @@ start_db_container() {
   local max_connections=$((num_cores * 100))
   log_info "Setting PostgreSQL max_connections=$max_connections (${num_cores} cores × 100)"
 
-  # Start the container with increased max_connections
+  # Build PostgreSQL configuration flags
+  local pg_flags=(
+    "-c" "max_connections=$max_connections"
+  )
+
+  # Add verbose logging flags when --verbose-db is enabled
+  if [[ "$VERBOSE_DB" == "true" ]]; then
+    log_info "Enabling verbose PostgreSQL logging (--verbose-db)"
+    setup_orchestra_logs_dir
+
+    pg_flags+=(
+      # Log ALL statements with full SQL text
+      "-c" "log_statement=all"
+      # Log duration of every completed statement
+      "-c" "log_duration=on"
+      # Include timestamp, PID, user, database in each log line
+      "-c" "log_line_prefix=%t [%p] %u@%d "
+      # Log new connections
+      "-c" "log_connections=on"
+      # Log disconnections
+      "-c" "log_disconnections=on"
+      # Log when queries wait for locks (contention debugging)
+      "-c" "log_lock_waits=on"
+      # Log any temp file usage (sign of large sorts/joins)
+      "-c" "log_temp_files=0"
+      # Log checkpoint activity
+      "-c" "log_checkpoints=on"
+      # Log autovacuum activity
+      "-c" "log_autovacuum_min_duration=0"
+      # Safety net: cancel queries that run longer than 120 seconds
+      "-c" "statement_timeout=120s"
+      # Report deadlocks quickly
+      "-c" "deadlock_timeout=1s"
+    )
+  fi
+
+  # Start the container with configured flags
   docker run -d \
     --name "$ORCHESTRA_DB_CONTAINER" \
     -p "${ORCHESTRA_DB_PORT}:5432" \
@@ -199,7 +331,7 @@ start_db_container() {
     -e POSTGRES_USER=orchestra \
     -e POSTGRES_DB=orchestra \
     pgvector/pgvector:pg15 \
-    postgres -c max_connections="$max_connections" >/dev/null
+    postgres "${pg_flags[@]}" >/dev/null
 
   log_info "Waiting for PostgreSQL to be ready..."
 
@@ -209,6 +341,10 @@ start_db_container() {
   while (( attempt < max_attempts )); do
     if docker exec "$ORCHESTRA_DB_CONTAINER" pg_isready -U orchestra &>/dev/null; then
       log_success "PostgreSQL is ready"
+      # Start log streaming if verbose mode is enabled
+      if [[ "$VERBOSE_DB" == "true" ]]; then
+        start_db_log_streaming
+      fi
       return 0
     fi
     sleep 1
@@ -220,6 +356,9 @@ start_db_container() {
 }
 
 stop_db_container() {
+  # Stop log streaming first
+  stop_db_log_streaming
+
   # Only stop containers we created (unity-orchestra-db)
   # Don't touch existing containers like orchestra-db
   local our_container="unity-orchestra-db"
@@ -680,6 +819,9 @@ cmd_start() {
   echo "  eval \"\$(./local_orchestra.sh)\""
   echo ""
 
+  # Print verbose DB instructions if enabled
+  print_verbose_db_instructions
+
   # Output the export commands for eval
   echo "export UNIFY_BASE_URL='$LOCAL_ORCHESTRA_URL'"
   echo "export UNIFY_KEY='$test_api_key'"
@@ -778,29 +920,71 @@ cmd_env() {
 # =============================================================================
 
 main() {
-  local cmd="${1:-start}"
+  local cmd=""
+  local args=()
+
+  # Parse arguments - extract flags and command
+  while (( "$#" )); do
+    case "$1" in
+      --verbose-db)
+        VERBOSE_DB="true"
+        shift
+        ;;
+      -h|--help)
+        cmd="help"
+        shift
+        ;;
+      -*)
+        # Other flags - check if they're command aliases
+        case "$1" in
+          --stop) cmd="stop"; shift ;;
+          --restart) cmd="restart"; shift ;;
+          --status) cmd="status"; shift ;;
+          --check) cmd="check"; shift ;;
+          --env) cmd="env"; shift ;;
+          *)
+            log_error "Unknown flag: $1"
+            echo "Run '$0 --help' for usage"
+            exit 1
+            ;;
+        esac
+        ;;
+      *)
+        # Positional argument (command)
+        if [[ -z "$cmd" ]]; then
+          cmd="$1"
+        else
+          args+=("$1")
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  # Default command is start
+  cmd="${cmd:-start}"
 
   case "$cmd" in
     start)
       cmd_start
       ;;
-    stop|--stop)
+    stop)
       cmd_stop
       ;;
-    restart|--restart)
+    restart)
       cmd_restart
       ;;
-    status|--status)
+    status)
       cmd_status
       ;;
-    check|--check)
+    check)
       cmd_check
       ;;
-    env|--env)
+    env)
       cmd_env
       ;;
-    -h|--help)
-      echo "Usage: $0 [start|stop|restart|status|check|env]"
+    help)
+      echo "Usage: $0 [command] [flags]"
       echo ""
       echo "Commands:"
       echo "  start    Start local orchestra (default)"
@@ -810,13 +994,21 @@ main() {
       echo "  check    Quick check if running (returns URL or exits 1)"
       echo "  env      Output environment variables for shell eval"
       echo ""
+      echo "Flags:"
+      echo "  --verbose-db    Enable comprehensive PostgreSQL query logging"
+      echo "                  Logs all SQL with timestamps, durations, lock waits"
+      echo "                  Output: orchestra_logs/<timestamp>/postgresql.log"
+      echo ""
       echo "Environment:"
       echo "  ORCHESTRA_REPO_PATH      Path to orchestra repo (default: ../orchestra)"
       echo "  ORCHESTRA_PORT           FastAPI port (default: 8000)"
       echo "  ORCHESTRA_DB_PORT        PostgreSQL port (default: 5432)"
+      echo "  ORCHESTRA_VERBOSE_DB     Set to 'true' for verbose DB logging"
       echo ""
-      echo "Quick usage:"
-      echo "  eval \"\$($0 env)\"  # Set env vars if local orchestra running"
+      echo "Examples:"
+      echo "  $0 start --verbose-db  # Start with full SQL audit logging"
+      echo "  $0 restart --verbose-db  # Restart with logging enabled"
+      echo "  eval \"\$($0 env)\"      # Set env vars if local orchestra running"
       ;;
     *)
       log_error "Unknown command: $cmd"
