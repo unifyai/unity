@@ -3,6 +3,7 @@ FROM python:3.12-slim
 
 # Accept build argument for UNIFY_KEY
 ARG UNIFY_KEY
+ARG GITHUB_TOKEN
 
 # Set working directory
 WORKDIR /app
