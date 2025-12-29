@@ -8,7 +8,16 @@ that is sent to the chat completions endpoint or read from cache.
 Install via :pyfunc:`install_llm_io_hooks` early at startup (called
 automatically from ``unity/__init__.py`` when ``LLM_IO_DEBUG`` is enabled).
 
-The captured payloads are written to ``llm_io_debug/<session>/`` as text files.
+The captured payloads are written to ``llm_io_debug/<session>/`` as combined
+request+response files. Each LLM call produces a single file containing both
+the request and response payloads:
+
+- During the call: ``{timestamp}_pending.txt`` (contains request only)
+- After completion: ``{timestamp}_hit.txt`` or ``{timestamp}_miss.txt``
+  (contains both request and response, with cache status in filename)
+
+If an LLM call hangs or crashes, the ``_pending.txt`` file remains as evidence
+of the incomplete request.
 """
 
 from __future__ import annotations
@@ -124,37 +133,35 @@ def _ensure_io_dir() -> str | None:
     return _LLM_IO_DIR
 
 
-def _write_llm_io(
-    header: str,
-    body: Any,
+def _normalize_body(body: Any) -> str:
+    """Normalize a body payload to a string for writing."""
+    if isinstance(body, str):
+        return body
+    try:
+        return json.dumps(body, indent=4, default=str)
+    except Exception:
+        return str(body)
+
+
+def _write_request_pending(
+    request_body: Any,
     *,
     label: str | None = None,
-    kind: str = "io",
-    cache_status: str | None = None,
-) -> None:
-    """Write a single LLM I/O artifact to the debug folder.
+) -> Path | None:
+    """Write the request payload immediately with a _pending suffix.
 
-    Args:
-        header: Header line for the file content.
-        body: The payload to write (dict, str, or other serializable).
-        label: Optional label (e.g., endpoint name) to include in header.
-        kind: Type of I/O - "request" or "response". Included in filename
-              after timestamp to maintain alphabetical ordering.
-        cache_status: For responses, "hit" or "miss" indicating cache status.
+    Returns the file path so we can append the response and rename later.
+    If the LLM call hangs/crashes, the _pending file remains as evidence.
     """
     io_dir = _ensure_io_dir()
     if io_dir is None:
-        return
+        return None
 
     try:
         now = datetime.now(timezone.utc)
         hhmmss = now.strftime("%H%M%S")
         ns = time.time_ns() % 1_000_000_000
-        # Include kind and cache_status in filename for easy filtering
-        if cache_status:
-            base = f"{hhmmss}_{ns:09d}_{kind}_{cache_status}"
-        else:
-            base = f"{hhmmss}_{ns:09d}_{kind}"
+        base = f"{hhmmss}_{ns:09d}_pending"
         path = Path(io_dir) / f"{base}.txt"
 
         # Handle filename collision
@@ -163,24 +170,61 @@ def _write_llm_io(
             path = Path(io_dir) / f"{base}_{i}.txt"
             i += 1
 
-        # Normalize body to string
-        if not isinstance(body, str):
-            try:
-                body = json.dumps(body, indent=4, default=str)
-            except Exception:
-                body = str(body)
-
+        body_str = _normalize_body(request_body)
         label_prefix = f"[{label}] " if label else ""
+
         with path.open("w", encoding="utf-8") as f:
-            f.write(f"🔄 {label_prefix}{header}\n")
-            f.write(body.rstrip())
+            f.write(f"🔄 {label_prefix}LLM request ➡️\n")
+            f.write(body_str.rstrip())
             f.write("\n")
 
         # Log to console
         try:
             from unity.constants import LOGGER
 
-            LOGGER.info(f"📝 LLM {kind} written to {path}")
+            LOGGER.info(f"📝 LLM request (pending) written to {path}")
+        except Exception:
+            pass
+
+        return path
+    except Exception:
+        return None
+
+
+def _append_response_and_finalize(
+    pending_path: Path | None,
+    response_body: Any,
+    cache_status: str,
+    *,
+    label: str | None = None,
+) -> None:
+    """Append the response to the pending file and rename to reflect cache status.
+
+    The final filename will be: {timestamp}_hit.txt or {timestamp}_miss.txt
+    """
+    if pending_path is None or not pending_path.exists():
+        return
+
+    try:
+        body_str = _normalize_body(response_body)
+        label_prefix = f"[{label}] " if label else ""
+
+        # Append response to the file
+        with pending_path.open("a", encoding="utf-8") as f:
+            f.write(f"\n🔄 {label_prefix}LLM response ⬅️ [cache: {cache_status}]\n")
+            f.write(body_str.rstrip())
+            f.write("\n")
+
+        # Rename from _pending to _hit or _miss
+        new_name = pending_path.name.replace("_pending", f"_{cache_status}")
+        new_path = pending_path.parent / new_name
+        pending_path.rename(new_path)
+
+        # Log to console
+        try:
+            from unity.constants import LOGGER
+
+            LOGGER.info(f"📝 LLM I/O finalized: {new_path}")
         except Exception:
             pass
     except Exception:
@@ -234,14 +278,11 @@ def _wrap_generate_non_stream(
                 stream_options=None,
             )
 
-            # Log the request
+            # Write request immediately (before LLM call) so we don't lose it if call hangs
+            pending_path = None
             try:
-                _write_llm_io(
-                    "LLM request ➡️:",
-                    _serialize_kw(kw),
-                    label=endpoint,
-                    kind="request",
-                )
+                request_body = _serialize_kw(kw)
+                pending_path = _write_request_pending(request_body, label=endpoint)
             except Exception:
                 pass
 
@@ -249,21 +290,18 @@ def _wrap_generate_non_stream(
             async with acapture_cache_events() as events:
                 result = await original_fn(self, endpoint, prompt, **kwargs)
 
-            # Extract cache status
+            # Extract cache status and finalize the log file
             cache_status = events[0]["cache_status"] if events else "unknown"
-
-            # Log the response with cache status
             try:
                 if hasattr(result, "model_dump"):
                     resp_body = result.model_dump()
                 else:
                     resp_body = result
-                _write_llm_io(
-                    f"LLM response ⬅️ [cache: {cache_status}]:",
+                _append_response_and_finalize(
+                    pending_path,
                     resp_body,
+                    cache_status,
                     label=endpoint,
-                    kind="response",
-                    cache_status=cache_status,
                 )
             except Exception:
                 pass
@@ -286,14 +324,11 @@ def _wrap_generate_non_stream(
                 stream_options=None,
             )
 
-            # Log the request
+            # Write request immediately (before LLM call) so we don't lose it if call hangs
+            pending_path = None
             try:
-                _write_llm_io(
-                    "LLM request ➡️:",
-                    _serialize_kw(kw),
-                    label=endpoint,
-                    kind="request",
-                )
+                request_body = _serialize_kw(kw)
+                pending_path = _write_request_pending(request_body, label=endpoint)
             except Exception:
                 pass
 
@@ -301,21 +336,18 @@ def _wrap_generate_non_stream(
             with capture_cache_events() as events:
                 result = original_fn(self, endpoint, prompt, **kwargs)
 
-            # Extract cache status
+            # Extract cache status and finalize the log file
             cache_status = events[0]["cache_status"] if events else "unknown"
-
-            # Log the response with cache status
             try:
                 if hasattr(result, "model_dump"):
                     resp_body = result.model_dump()
                 else:
                     resp_body = result
-                _write_llm_io(
-                    f"LLM response ⬅️ [cache: {cache_status}]:",
+                _append_response_and_finalize(
+                    pending_path,
                     resp_body,
+                    cache_status,
                     label=endpoint,
-                    kind="response",
-                    cache_status=cache_status,
                 )
             except Exception:
                 pass
