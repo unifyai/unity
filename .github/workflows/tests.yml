@@ -435,7 +435,8 @@ jobs:
       needs.discover.outputs.random_projects != 'true'
     env:
       UNIFY_KEY: ${{ secrets.USER_API_KEY }}
-      UNIFY_BASE_URL: https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0
+      # No fallback - if delete_on_start is enabled, UNIFY_BASE_URL must be set
+      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
     steps:
     - uses: actions/checkout@v2
 
@@ -486,7 +487,9 @@ jobs:
       UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"    # Keep project after tests
       # Local orchestra path (cloned into workspace, not sibling directory)
       ORCHESTRA_REPO_PATH: ${{ github.workspace }}/orchestra
-      # API credentials (UNIFY_BASE_URL set by local orchestra startup)
+      # API credentials
+      # UNIFY_BASE_URL: if repo variable set, use remote; otherwise local orchestra sets it
+      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
@@ -882,7 +885,8 @@ jobs:
       (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
       UNIFY_KEY: ${{ secrets.USER_API_KEY }}
-      UNIFY_BASE_URL: https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0
+      # No fallback - if delete_on_exit is enabled, UNIFY_BASE_URL must be set
+      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
     steps:
     - uses: actions/checkout@v2
 
