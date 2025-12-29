@@ -52,7 +52,8 @@ class TestingSettings(ProductionSettings):
     # Local Orchestra Settings
     # ─────────────────────────────────────────────────────────────────────────
     LOCAL_ORCHESTRA_BRANCH: str = (
-        ""  # Git branch for local orchestra (default: auto-detect from unity branch)
+        # Git branch for local orchestra (default: auto-detect from unity branch)
+        "staging"  # IMPORTANT: Currently hard-coded to staging, but should DELETE once staging becomes the true unity dev branch!
     )
 
     # ─────────────────────────────────────────────────────────────────────────
