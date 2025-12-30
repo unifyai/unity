@@ -145,6 +145,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 "email_address": a.get("email"),
                 "phone_number": a.get("phone"),
                 "bio": a.get("about"),
+                "timezone": a.get("timezone"),
                 "rolling_summary": None,
             },
         )
@@ -160,15 +161,10 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 "email_address": DEFAULT_ASSISTANT_EMAIL,
                 "phone_number": DEFAULT_ASSISTANT_PHONE,
                 "bio": DEFAULT_ASSISTANT_BIO,
+                "timezone": "UTC",
                 "rolling_summary": None,
             },
         )
-
-    # Use fetched timezone if available, fallback to UTC
-    if selected is not None:
-        base_fields["timezone"] = selected.get("timezone") or "UTC"
-    else:
-        base_fields["timezone"] = "UTC"
 
     if assistant_log is not None:
         try:
