@@ -822,21 +822,10 @@ jobs:
           echo "</details>" >> $GITHUB_STEP_SUMMARY
         fi
 
-    - name: Cleanup on cancellation
-      if: cancelled()
-      run: |
-        echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
-        # Kill all unity tmux servers and purge orphaned test processes
-        tests/kill_server.sh --all || true
-        # Stop local orchestra
-        tests/orchestra.sh stop || true
-        echo "Cleanup complete."
-
-    - name: Stop local orchestra
-      if: always()
-      run: |
-        tests/orchestra.sh stop || true
-
+    # =========================================================================
+    # Artifact uploads - run BEFORE cleanup to ensure logs are always available
+    # Even if cleanup fails, we want the debugging artifacts uploaded
+    # =========================================================================
     - name: Upload cache artifact
       if: always()
       uses: actions/upload-artifact@v4
@@ -873,6 +862,28 @@ jobs:
         path: logs/orchestra/
         if-no-files-found: ignore
         retention-days: 7
+
+    # =========================================================================
+    # Cleanup steps - run AFTER artifact uploads
+    # These are housekeeping; failures here shouldn't affect job status
+    # =========================================================================
+    - name: Cleanup on cancellation
+      if: cancelled()
+      run: |
+        echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
+        # Kill all unity tmux servers and purge orphaned test processes
+        tests/kill_server.sh --all || true
+        # Stop local orchestra
+        tests/orchestra.sh stop || true
+        echo "Cleanup complete."
+
+    - name: Stop local orchestra
+      if: always()
+      continue-on-error: true  # Cleanup failures shouldn't affect job status
+      run: |
+        # Trap SIGTERM to exit gracefully (exit 143 can cause GHA to skip steps)
+        trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
+        tests/orchestra.sh stop || true
 
   # Cleanup job: runs ONCE after all pytest jobs complete or are cancelled
   # Handles project deletion at workflow level to avoid race conditions
