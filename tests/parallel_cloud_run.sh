@@ -8,6 +8,9 @@ set -euo pipefail
 # branch with a datetime suffix, pushes the current state, triggers CI, then
 # restores the local state.
 #
+# Use --remote-only to skip local change detection and run against whatever is
+# currently on the remote branch (ignores uncommitted and unpushed changes).
+#
 # Environment variables from .env are automatically passed to CI. Explicit --env
 # args override .env values (later values win).
 #
@@ -18,6 +21,7 @@ set -euo pipefail
 #   parallel_cloud_run.sh -s                   # All tests, serial mode (implicit ".")
 #   parallel_cloud_run.sh -s tests/            # Specific path, serial mode
 #   parallel_cloud_run.sh --env UNIFY_CACHE=false tests/  # Override .env
+#   parallel_cloud_run.sh --remote-only tests/ # Ignore local changes, use remote
 #
 # Each run creates a unique branch (ci-staging-{user}-{datetime}) for isolation.
 
@@ -138,9 +142,15 @@ fi
 declare -a EXTRA_ENV_ARGS=()
 declare -a PASSTHROUGH_ARGS=()
 declare -a TEST_PATHS=()
+REMOTE_ONLY=0
 
 while (( $# > 0 )); do
   case "$1" in
+    --remote-only)
+      # Skip local change detection, run against remote branch as-is
+      REMOTE_ONLY=1
+      shift
+      ;;
     --env)
       if [[ -n "${2:-}" ]]; then
         EXTRA_ENV_ARGS+=("--env" "$2")
@@ -213,9 +223,14 @@ has_unpushed_commits() {
   fi
 }
 
-# If clean and pushed, use simple path
-if ! has_uncommitted_changes && ! has_unpushed_commits; then
-  echo "Branch is clean and pushed. Triggering CI on: $CURRENT_BRANCH"
+# If clean and pushed (or --remote-only), use simple path
+if (( REMOTE_ONLY )) || { ! has_uncommitted_changes && ! has_unpushed_commits; }; then
+  if (( REMOTE_ONLY )); then
+    echo "Running against remote (--remote-only). Ignoring local changes."
+    echo "Triggering CI on: $CURRENT_BRANCH"
+  else
+    echo "Branch is clean and pushed. Triggering CI on: $CURRENT_BRANCH"
+  fi
   echo "Test path: $TEST_PATH"
   [[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Explicit overrides: $PARALLEL_RUN_ARGS"
   [[ -n "$ENV_FILE_CONTENT_B64" ]] && echo "Environment: .env file (contents hidden)"
