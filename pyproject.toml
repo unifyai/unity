@@ -75,6 +75,11 @@ dev = [
     "ipykernel>=7.1.0",
     "rich>=13.9.4",
     "pre-commit>=4.0.1",
+    # OpenTelemetry for test trace correlation with Orchestra
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-instrumentation-httpx>=0.41b0",
+    "opentelemetry-instrumentation-aiohttp-client>=0.41b0",
 ]
 
 [tool.setuptools.packages.find]
