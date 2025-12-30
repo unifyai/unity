@@ -467,7 +467,7 @@ is_random_projects_mode() {
 # ---------------------------------------------------------------------------
 delete_shared_project() {
   local phase="$1"  # "start" or "exit"
-  echo "Deleting shared project ($phase)..."
+  echo "Deleting project '${UNIFY_PROJECT:-UnityTests}'..."
   "$VENV_PY" - << 'PYEOF'
 import os
 import sys
@@ -640,7 +640,7 @@ else
   if is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_START"; then
     delete_shared_project "start"
   fi
-  echo "Preparing shared UnityTests project..."
+  echo "Preparing shared project '${UNIFY_PROJECT:-UnityTests}'..."
   if [[ -f "$SCRIPT_DIR/_prepare_shared_project.py" ]]; then
     "$VENV_PY" "$SCRIPT_DIR/_prepare_shared_project.py"
   else

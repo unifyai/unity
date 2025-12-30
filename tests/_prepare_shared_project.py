@@ -76,7 +76,7 @@ def prepare_shared_project() -> None:
         if "already exists" not in str(e).lower():
             print(f"Note: unity.init() returned: {e}", file=sys.stderr)
 
-    print(f"Shared project '{PROJECT}' is ready.")
+    print(f"Prepared shared project '{PROJECT}'")
 
 
 if __name__ == "__main__":
