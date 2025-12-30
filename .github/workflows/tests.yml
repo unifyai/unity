@@ -896,7 +896,7 @@ jobs:
         name: logs-${{ steps.normalize-path.outputs.test_path_normalized }}
         path: logs/
         if-no-files-found: ignore
-        retention-days: 7
+        retention-days: 90
 
     # =========================================================================
     # Cleanup steps - run AFTER artifact uploads
