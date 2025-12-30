@@ -434,7 +434,7 @@ jobs:
       needs.discover.outputs.delete_on_start == 'true' &&
       needs.discover.outputs.random_projects != 'true'
     env:
-      UNIFY_KEY: ${{ secrets.USER_API_KEY }}
+      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
       # No fallback - if delete_on_start is enabled, UNIFY_BASE_URL must be set
       UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
     steps:
@@ -492,9 +492,14 @@ jobs:
       UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
-      VERTEXAI_LOCATION: ${{ secrets.VERTEXAI_LOCATION }}
-      VERTEXAI_PROJECT: ${{ secrets.VERTEXAI_PROJECT }}
+      # GCP credentials (written to file in setup step, path set here)
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}
+      VERTEXAI_LOCATION: ${{ vars.GCP_LOCATION }}
+      VERTEXAI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      # GCP bucket names (passed to orchestra server)
+      GCP_BUCKET_LOGS: ${{ vars.GCP_BUCKET_LOGS }}
+      GCP_BUCKET_ASSISTANT_IMAGES: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
+      GCP_BUCKET_RECORDINGS: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
     - uses: actions/checkout@v2
@@ -507,8 +512,13 @@ jobs:
         repository: unifyai/orchestra
         ref: ${{ needs.discover.outputs.orchestra_branch }}
         path: orchestra
-        token: ${{ secrets.ORCHESTRA_TOKEN }}
+        token: ${{ secrets.ORCHESTRA_CLONE_TOKEN }}
         fetch-depth: 1
+
+    - name: Write GCP credentials file
+      run: |
+        echo '${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' > "${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}"
+        chmod 600 "${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}"
 
     - name: Get orchestra commit SHA
       id: orchestra-sha
@@ -619,7 +629,7 @@ jobs:
         # Allow uv to clone private GitHub repos (e.g., unillm)
         git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
       env:
-        GH_TOKEN: ${{ secrets.UNILLM_TOKEN }}
+        GH_TOKEN: ${{ secrets.UNILLM_CLONE_TOKEN }}
 
     - name: Sync dependencies with uv
       run: |
@@ -934,7 +944,7 @@ jobs:
       needs.discover.outputs.random_projects != 'true' &&
       (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
-      UNIFY_KEY: ${{ secrets.USER_API_KEY }}
+      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
       # No fallback - if delete_on_exit is enabled, UNIFY_BASE_URL must be set
       UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
     steps:

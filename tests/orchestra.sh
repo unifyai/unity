@@ -526,6 +526,25 @@ start_orchestra_server() {
   export ORCHESTRA_RELOAD=false
   export ORCHESTRA_WORKERS_COUNT=1
 
+  # GCP credentials for BucketService (required for image storage)
+  # These are set by CI workflow or sourced from local .env
+  if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    export ORCHESTRA_VERTEXAI_SERVICE_ACC_JSON="$GOOGLE_APPLICATION_CREDENTIALS"
+  fi
+  if [[ -n "${VERTEXAI_PROJECT:-}" ]]; then
+    export ORCHESTRA_VERTEXAI_PROJECT="$VERTEXAI_PROJECT"
+  fi
+  # GCP bucket names (from org variables in CI, or local .env)
+  if [[ -n "${GCP_BUCKET_LOGS:-}" ]]; then
+    export ORCHESTRA_GCP_BUCKET_NAME="$GCP_BUCKET_LOGS"
+  fi
+  if [[ -n "${GCP_BUCKET_ASSISTANT_IMAGES:-}" ]]; then
+    export ORCHESTRA_GCP_ASSISTANT_IMAGES_BUCKET_NAME="$GCP_BUCKET_ASSISTANT_IMAGES"
+  fi
+  if [[ -n "${GCP_BUCKET_RECORDINGS:-}" ]]; then
+    export ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME="$GCP_BUCKET_RECORDINGS"
+  fi
+
   # Enable file-based trace logging to the session log directory
   # This captures OpenTelemetry traces (HTTP, DB, OpenAI) to JSON files
   export ORCHESTRA_TRACE_LOG_DIR="$CURRENT_LOG_SESSION_DIR"
