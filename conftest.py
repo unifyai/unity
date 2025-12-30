@@ -414,6 +414,15 @@ class _TeeStream:
 
 
 def pytest_sessionstart(session):
+    # Initialize OpenTelemetry tracing early (before any test imports)
+    # This ensures httpx/aiohttp clients are instrumented before creation
+    try:
+        from unity.common.test_tracing import _initialize_tracer
+
+        _initialize_tracer()
+    except ImportError:
+        pass  # OpenTelemetry not installed
+
     if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
     config = session.config
@@ -575,3 +584,35 @@ def pytest_runtest_logreport(report):
     if out:
         _TEE_FILE_HANDLE.write("".join(out))
         _TEE_FILE_HANDLE.flush()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenTelemetry Test Tracing
+# ─────────────────────────────────────────────────────────────────────────────
+# Each test gets a unique trace_id that propagates to all HTTP calls,
+# enabling correlation between pytest logs and Orchestra API traces.
+
+
+@pytest.fixture(autouse=True)
+def _trace_test(request):
+    """Wrap each test in an OpenTelemetry span for trace correlation.
+
+    The trace_id is logged to the pytest output and propagated via traceparent
+    header to all HTTP calls (httpx and aiohttp), allowing Orchestra traces
+    to be correlated with specific test runs.
+
+    Enable/disable via UNITY_TEST_TRACING env var (default: true).
+    """
+    try:
+        from unity.common.test_tracing import trace_test
+
+        test_name = request.node.name
+        with trace_test(test_name) as (trace_id, span):
+            if trace_id:
+                # Log trace_id for correlation with Orchestra logs
+                # Format: TRACE_ID=<32-char-hex> for easy grep
+                print(f"\n[TRACE] TRACE_ID={trace_id} test={test_name}")
+            yield
+    except ImportError:
+        # OpenTelemetry not installed, skip tracing
+        yield
