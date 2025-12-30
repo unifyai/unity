@@ -840,7 +840,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: pytest-logs-${{ steps.normalize-path.outputs.test_path_normalized }}
+        name: logs-pytest-${{ steps.normalize-path.outputs.test_path_normalized }}
         path: logs/pytest/
         if-no-files-found: ignore
         retention-days: 7
@@ -849,7 +849,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: llm-io-debug-${{ steps.normalize-path.outputs.test_path_normalized }}
+        name: logs-llm-${{ steps.normalize-path.outputs.test_path_normalized }}
         path: logs/llm/
         if-no-files-found: ignore
         retention-days: 7
@@ -871,7 +871,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: orchestra-logs-${{ steps.normalize-path.outputs.test_path_normalized }}
+        name: logs-orchestra-${{ steps.normalize-path.outputs.test_path_normalized }}
         path: logs/orchestra/
         if-no-files-found: ignore
         retention-days: 7
@@ -956,7 +956,7 @@ jobs:
     - name: Download pytest logs from all jobs
       uses: actions/download-artifact@v4
       with:
-        pattern: pytest-logs-*
+        pattern: logs-pytest-*
         path: all-logs
         merge-multiple: true
 
