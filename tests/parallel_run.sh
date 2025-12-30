@@ -1274,26 +1274,39 @@ echo "========================================================================"
 pass_count=$( { grep '|pass|' "$RESULTS_FILE" || true; } 2>/dev/null | wc -l | tr -d ' ')
 fail_count=$( { grep '|fail|' "$RESULTS_FILE" || true; } 2>/dev/null | wc -l | tr -d ' ')
 
+# Build duration summary for both stdout and file output
+DURATION_SUMMARY_FILE="$REPO_ROOT/logs/pytest/$LOG_SUBDIR/duration_summary.txt"
+mkdir -p "$(dirname "$DURATION_SUMMARY_FILE")"
+
+# Helper to print to both stdout and file
+print_duration_line() {
+  echo "$1"
+  echo "$1" >> "$DURATION_SUMMARY_FILE"
+}
+
+# Clear/create the summary file
+> "$DURATION_SUMMARY_FILE"
+
 # Print passed tests sorted by duration (fastest first, slowest last)
 echo ""
-echo "✅ PASSED ($pass_count tests):"
+print_duration_line "✅ PASSED ($pass_count tests):"
 if (( pass_count > 0 )); then
   { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
-    printf "  %6ds  %s\n" "$dur" "$name"
+    print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
   done
 else
-  echo "  (none)"
+  print_duration_line "  (none)"
 fi
 
 # Print failed tests sorted by duration (fastest first, slowest last)
-echo ""
-echo "❌ FAILED ($fail_count tests):"
+print_duration_line ""
+print_duration_line "❌ FAILED ($fail_count tests):"
 if (( fail_count > 0 )); then
   { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
-    printf "  %6ds  %s\n" "$dur" "$name"
+    print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
   done
 else
-  echo "  (none)"
+  print_duration_line "  (none)"
 fi
 
 echo ""

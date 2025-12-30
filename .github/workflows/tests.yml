@@ -765,6 +765,19 @@ jobs:
         echo "$FAILED_SESSIONS" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
+        # Include duration summary if available
+        DURATION_FILE=$(find logs/pytest -name "duration_summary.txt" 2>/dev/null | head -1)
+        if [ -n "$DURATION_FILE" ] && [ -f "$DURATION_FILE" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📊 Test Durations (sorted fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat "$DURATION_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi
+
     - name: Generate success summary
       if: success()
       run: |
@@ -786,6 +799,19 @@ jobs:
         echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
+
+        # Include duration summary if available
+        DURATION_FILE=$(find logs/pytest -name "duration_summary.txt" 2>/dev/null | head -1)
+        if [ -n "$DURATION_FILE" ] && [ -f "$DURATION_FILE" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📊 Test Durations (sorted fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat "$DURATION_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi
 
     - name: Cleanup on cancellation
       if: cancelled()
