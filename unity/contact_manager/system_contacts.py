@@ -145,7 +145,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 "email_address": a.get("email"),
                 "phone_number": a.get("phone"),
                 "bio": a.get("about"),
-                "timezone": a.get("timezone"),
+                "timezone": a.get("timezone") or "UTC",
                 "rolling_summary": None,
             },
         )
