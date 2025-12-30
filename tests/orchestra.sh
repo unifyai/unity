@@ -20,7 +20,6 @@
 #   ORCHESTRA_REPO_PATH     Override path to orchestra repo (default: ../orchestra)
 #   ORCHESTRA_PORT          Override FastAPI port (default: 8000)
 #   ORCHESTRA_DB_PORT       Override PostgreSQL port (default: 5432)
-#   ORCHESTRA_VERBOSE_DB    Set to "false" to disable verbose DB logging (default: true)
 #
 # On success, exports:
 #   UNIFY_BASE_URL=http://127.0.0.1:8000/v0
@@ -39,13 +38,8 @@ ORCHESTRA_DB_CONTAINER="unity-orchestra-db"
 ORCHESTRA_SERVER_PIDFILE="/tmp/unity-orchestra-server.pid"
 ORCHESTRA_SERVER_LOGFILE="/tmp/unity-orchestra-server.log"
 
-# Verbose DB logging - enabled by default for comprehensive query audit
-# Set ORCHESTRA_VERBOSE_DB=false to disable
-VERBOSE_DB="${ORCHESTRA_VERBOSE_DB:-true}"
-
 # Orchestra logs directory (under logs/ alongside pytest and llm)
 ORCHESTRA_LOGS_DIR="$UNITY_ROOT/logs/orchestra"
-ORCHESTRA_DB_LOG_PIDFILE="/tmp/unity-orchestra-db-logger.pid"
 CURRENT_LOG_SESSION_DIR=""
 
 # Local base URL that will be exported
@@ -82,71 +76,6 @@ setup_orchestra_logs_dir() {
   mkdir -p "$CURRENT_LOG_SESSION_DIR"
 
   log_info "Orchestra logs directory: $CURRENT_LOG_SESSION_DIR"
-}
-
-start_db_log_streaming() {
-  # Stream PostgreSQL logs from Docker to a file
-  # This runs in the background and captures all DB output
-  if [[ "$VERBOSE_DB" != "true" ]]; then
-    return 0
-  fi
-
-  if [[ -z "$CURRENT_LOG_SESSION_DIR" ]]; then
-    setup_orchestra_logs_dir
-  fi
-
-  local log_file="$CURRENT_LOG_SESSION_DIR/postgresql.log"
-
-  # Kill any existing log streamer
-  stop_db_log_streaming
-
-  log_info "Starting PostgreSQL log streaming to: $log_file"
-
-  # Stream docker logs to file in background
-  # Use --follow to continuously stream, and --timestamps for Docker-level timestamps
-  (docker logs -f --timestamps "$ORCHESTRA_DB_CONTAINER" >> "$log_file" 2>&1) &
-  local pid=$!
-  disown $pid 2>/dev/null || true
-  echo "$pid" > "$ORCHESTRA_DB_LOG_PIDFILE"
-
-  log_success "PostgreSQL log streaming started (PID $pid)"
-}
-
-stop_db_log_streaming() {
-  if [[ -f "$ORCHESTRA_DB_LOG_PIDFILE" ]]; then
-    local pid
-    pid=$(cat "$ORCHESTRA_DB_LOG_PIDFILE")
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      log_info "Stopped PostgreSQL log streaming (PID $pid)"
-    fi
-    rm -f "$ORCHESTRA_DB_LOG_PIDFILE"
-  fi
-}
-
-print_verbose_db_instructions() {
-  if [[ "$VERBOSE_DB" != "true" ]]; then
-    return 0
-  fi
-
-  echo ""
-  echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║  VERBOSE DATABASE LOGGING ENABLED                                    ║${NC}"
-  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-  echo -e "${CYAN}║  All SQL queries are being logged with full detail.                  ║${NC}"
-  echo -e "${CYAN}║                                                                      ║${NC}"
-  echo -e "${CYAN}║  Log location:                                                       ║${NC}"
-  echo -e "${CYAN}║    $CURRENT_LOG_SESSION_DIR/postgresql.log${NC}"
-  echo -e "${CYAN}║                                                                      ║${NC}"
-  echo -e "${CYAN}║  Live monitoring:                                                    ║${NC}"
-  echo -e "${CYAN}║    tail -f $CURRENT_LOG_SESSION_DIR/postgresql.log${NC}"
-  echo -e "${CYAN}║                                                                      ║${NC}"
-  echo -e "${CYAN}║  Or via Docker directly:                                             ║${NC}"
-  echo -e "${CYAN}║    docker logs -f $ORCHESTRA_DB_CONTAINER${NC}"
-  echo -e "${CYAN}║                                                                      ║${NC}"
-  echo -e "${CYAN}║  Statement timeout: 120s (queries exceeding this will be cancelled)  ║${NC}"
-  echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
-  echo ""
 }
 
 # =============================================================================
@@ -235,19 +164,11 @@ start_db_container() {
   # First check if our named container is already running
   if is_db_container_running; then
     log_success "PostgreSQL container '$ORCHESTRA_DB_CONTAINER' already running"
-    # Ensure log streaming is started even for existing containers
-    if [[ "$VERBOSE_DB" == "true" ]]; then
-      start_db_log_streaming
-    fi
     return 0
   fi
 
   # Check if there's another compatible container we can use
   if is_compatible_db_running; then
-    # Ensure log streaming is started even for existing containers
-    if [[ "$VERBOSE_DB" == "true" ]]; then
-      start_db_log_streaming
-    fi
     return 0
   fi
 
@@ -267,30 +188,12 @@ start_db_container() {
     if docker run --rm --network host pgvector/pgvector:pg15 \
          pg_isready -h localhost -p "$ORCHESTRA_DB_PORT" -U orchestra &>/dev/null 2>&1; then
       log_success "PostgreSQL already available on port $ORCHESTRA_DB_PORT"
-      # Try to find the container and start log streaming
-      if [[ "$VERBOSE_DB" == "true" ]]; then
-        local container
-        container=$(docker ps --filter "publish=${ORCHESTRA_DB_PORT}" --format "{{.Names}}" 2>/dev/null | head -1)
-        if [[ -n "$container" ]]; then
-          ORCHESTRA_DB_CONTAINER="$container"
-          start_db_log_streaming
-        fi
-      fi
       return 0
     fi
 
     # Try using psql to check if orchestra database exists
     if PGPASSWORD=orchestra psql -h localhost -p "$ORCHESTRA_DB_PORT" -U orchestra -d orchestra -c "SELECT 1" &>/dev/null 2>&1; then
       log_success "PostgreSQL with orchestra database available on port $ORCHESTRA_DB_PORT"
-      # Try to find the container and start log streaming
-      if [[ "$VERBOSE_DB" == "true" ]]; then
-        local container
-        container=$(docker ps --filter "publish=${ORCHESTRA_DB_PORT}" --format "{{.Names}}" 2>/dev/null | head -1)
-        if [[ -n "$container" ]]; then
-          ORCHESTRA_DB_CONTAINER="$container"
-          start_db_log_streaming
-        fi
-      fi
       return 0
     fi
 
@@ -313,38 +216,11 @@ start_db_container() {
   # Build PostgreSQL configuration flags
   local pg_flags=(
     "-c" "max_connections=$max_connections"
+    # Safety net: cancel queries that run longer than 120 seconds
+    "-c" "statement_timeout=120s"
+    # Report deadlocks quickly
+    "-c" "deadlock_timeout=1s"
   )
-
-  # Add verbose logging flags (enabled by default)
-  if [[ "$VERBOSE_DB" == "true" ]]; then
-    log_info "Enabling verbose PostgreSQL logging"
-    setup_orchestra_logs_dir
-
-    pg_flags+=(
-      # Log ALL statements with full SQL text
-      "-c" "log_statement=all"
-      # Log duration of every completed statement
-      "-c" "log_duration=on"
-      # Include timestamp, PID, user, database in each log line
-      "-c" "log_line_prefix=%t [%p] %u@%d "
-      # Log new connections
-      "-c" "log_connections=on"
-      # Log disconnections
-      "-c" "log_disconnections=on"
-      # Log when queries wait for locks (contention debugging)
-      "-c" "log_lock_waits=on"
-      # Log any temp file usage (sign of large sorts/joins)
-      "-c" "log_temp_files=0"
-      # Log checkpoint activity
-      "-c" "log_checkpoints=on"
-      # Log autovacuum activity
-      "-c" "log_autovacuum_min_duration=0"
-      # Safety net: cancel queries that run longer than 120 seconds
-      "-c" "statement_timeout=120s"
-      # Report deadlocks quickly
-      "-c" "deadlock_timeout=1s"
-    )
-  fi
 
   # Start the container with configured flags
   docker run -d \
@@ -364,10 +240,6 @@ start_db_container() {
   while (( attempt < max_attempts )); do
     if docker exec "$ORCHESTRA_DB_CONTAINER" pg_isready -U orchestra &>/dev/null; then
       log_success "PostgreSQL is ready"
-      # Start log streaming if verbose mode is enabled
-      if [[ "$VERBOSE_DB" == "true" ]]; then
-        start_db_log_streaming
-      fi
       return 0
     fi
     sleep 1
@@ -379,9 +251,6 @@ start_db_container() {
 }
 
 stop_db_container() {
-  # Stop log streaming first
-  stop_db_log_streaming
-
   # Only stop containers we created (unity-orchestra-db)
   # Don't touch existing containers like orchestra-db
   local our_container="unity-orchestra-db"
@@ -852,9 +721,6 @@ cmd_start() {
   echo "  eval \"\$(./orchestra.sh)\""
   echo ""
 
-  # Print verbose DB instructions if enabled
-  print_verbose_db_instructions
-
   # Output the export commands for eval
   echo "export UNIFY_BASE_URL='$LOCAL_ORCHESTRA_URL'"
   echo "export UNIFY_KEY='$test_api_key'"
@@ -1027,14 +893,13 @@ main() {
       echo "  ORCHESTRA_REPO_PATH      Path to orchestra repo (default: ../orchestra)"
       echo "  ORCHESTRA_PORT           FastAPI port (default: 8000)"
       echo "  ORCHESTRA_DB_PORT        PostgreSQL port (default: 5432)"
-      echo "  ORCHESTRA_VERBOSE_DB     Set to 'false' to disable query logging (default: true)"
       echo ""
       echo "Logging:"
-      echo "  PostgreSQL query logs: logs/orchestra/<timestamp>/postgresql.log"
-      echo "  Verbose logging is enabled by default for debugging."
+      echo "  API traces: logs/orchestra/<timestamp>/requests/*.json"
+      echo "  See tests/docs/logging.md for trace correlation details."
       echo ""
       echo "Examples:"
-      echo "  $0 start                 # Start with query logging (default)"
+      echo "  $0 start                 # Start orchestra"
       echo "  $0 restart               # Restart orchestra"
       echo "  eval \"\$($0 env)\"        # Set env vars if local orchestra running"
       ;;

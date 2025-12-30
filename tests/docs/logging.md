@@ -274,7 +274,6 @@ Orchestra logs capture detailed API request traces using OpenTelemetry. Each Orc
 ```
 logs/orchestra/
 └── 2025-12-30T18-27-43/                      # Session (one per orchestra.sh start/restart)
-    ├── postgresql.log                         # PostgreSQL query log
     └── requests/                              # Per-request API traces
         ├── 2025-12-30T18-28-03.852_DELETE_project-name_81ms_5cc61e5f.json
         ├── 2025-12-30T18-28-03.934_GET_projects_20ms_8e6fb277.json
