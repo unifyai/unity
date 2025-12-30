@@ -68,6 +68,7 @@ _mark_reported() {
 
 # Report any sessions that have completed since last check
 # Prints pass/fail status inline during the drip-feed phase
+# Also records duration for end-of-run sorted output
 report_completed_sessions() {
   # Guard against empty array (set -u treats empty array expansion as unbound)
   (( ${#CREATED_SESSION_IDS[@]} == 0 )) && return 0
@@ -87,11 +88,31 @@ report_completed_sessions() {
         local base="${current_name#p ✅ }"
         echo "  - p ✅ $base"
         _mark_reported "$sid"
+        # Record duration for sorted output
+        if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
+          local start_time end_time duration
+          start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
+          if [[ -n "$start_time" ]]; then
+            end_time=$(date +%s)
+            duration=$((end_time - start_time))
+            echo "$duration|pass|$base" >> "$RESULTS_FILE"
+          fi
+        fi
         ;;
       "f ❌ "*)
         local base="${current_name#f ❌ }"
         echo "  - f ❌ $base"
         _mark_reported "$sid"
+        # Record duration for sorted output
+        if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
+          local start_time end_time duration
+          start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
+          if [[ -n "$start_time" ]]; then
+            end_time=$(date +%s)
+            duration=$((end_time - start_time))
+            echo "$duration|fail|$base" >> "$RESULTS_FILE"
+          fi
+        fi
         ;;
     esac
   done
@@ -1010,7 +1031,9 @@ fi
 
 # Combine targets based on mode; sort deterministically (and de-duplicate)
 tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+START_TIMES_FILE="$(mktemp)"
+RESULTS_FILE="$(mktemp)"
+trap 'rm -f "$tmp" "$START_TIMES_FILE" "$RESULTS_FILE"' EXIT
 if (( ! SERIAL )); then
   # Default mode (per-test): expand directories/files into node ids using batch collection
   # Combine all targets for a single pytest --collect-only call (much faster)
@@ -1139,6 +1162,9 @@ for target in "${files[@]}"; do
   # Capture session ID to track this specific run robustly
   sid=$(tmux_cmd new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
 
+  # Record start time for duration tracking
+  echo "$sid $(date +%s)" >> "$START_TIMES_FILE"
+
   # Rename to pending state with retry logic for race conditions
   pending_name="$(unique_session_name "r ⏳ $session")"
   session="$(rename_session_with_retry "$sid" "$pending_name")"
@@ -1238,16 +1264,47 @@ if ! is_random_projects_mode && is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_EXIT";
   delete_shared_project "exit"
 fi
 
-if (( ${#failed_sessions[@]} > 0 )); then
-  echo ""
-  echo "Failed tests:"
-  for name in "${failed_sessions[@]}"; do
-    echo "  - $name"
+# Print duration-sorted results
+echo ""
+echo "========================================================================"
+echo "RESULTS SORTED BY DURATION (fastest → slowest)"
+echo "========================================================================"
+
+# Count passed and failed (use { grep || true; } to handle no-match case with pipefail)
+pass_count=$( { grep '|pass|' "$RESULTS_FILE" || true; } 2>/dev/null | wc -l | tr -d ' ')
+fail_count=$( { grep '|fail|' "$RESULTS_FILE" || true; } 2>/dev/null | wc -l | tr -d ' ')
+
+# Print passed tests sorted by duration (fastest first, slowest last)
+echo ""
+echo "✅ PASSED ($pass_count tests):"
+if (( pass_count > 0 )); then
+  { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
+    printf "  %6ds  %s\n" "$dur" "$name"
   done
-  echo ""
-  echo "Logs: logs/pytest/$LOG_SUBDIR/"
+else
+  echo "  (none)"
+fi
+
+# Print failed tests sorted by duration (fastest first, slowest last)
+echo ""
+echo "❌ FAILED ($fail_count tests):"
+if (( fail_count > 0 )); then
+  { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
+    printf "  %6ds  %s\n" "$dur" "$name"
+  done
+else
+  echo "  (none)"
+fi
+
+echo ""
+echo "========================================================================"
+echo "Logs: logs/pytest/$LOG_SUBDIR/"
+echo "========================================================================"
+
+if (( ${#failed_sessions[@]} > 0 )); then
   exit 1
 else
+  echo ""
   echo "All tests passed!"
   exit 0
 fi
