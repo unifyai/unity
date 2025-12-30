@@ -492,8 +492,7 @@ jobs:
       UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      # GCP credentials (written to file in setup step, path set here)
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}
+      # GCP credentials (path set in "Write GCP credentials file" step via GITHUB_ENV)
       VERTEXAI_LOCATION: ${{ vars.GCP_LOCATION }}
       VERTEXAI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       # GCP bucket names (passed to orchestra server)
@@ -519,6 +518,7 @@ jobs:
       run: |
         echo '${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' > "${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}"
         chmod 600 "${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}"
+        echo "GOOGLE_APPLICATION_CREDENTIALS=${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}" >> $GITHUB_ENV
 
     - name: Get orchestra commit SHA
       id: orchestra-sha
