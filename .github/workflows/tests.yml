@@ -854,6 +854,19 @@ jobs:
         if-no-files-found: ignore
         retention-days: 7
 
+    - name: Sanitize Orchestra log filenames
+      if: always()
+      run: |
+        # Orchestra trace filenames include route paths which may contain colons
+        # (e.g., project_name:path). Colons are invalid in Windows NTFS, so
+        # GitHub Actions rejects them. Replace invalid characters with underscores.
+        if [ -d logs/orchestra ]; then
+          find logs/orchestra -type f -name '*:*' | while read -r file; do
+            newname=$(echo "$file" | tr ':' '_')
+            mv "$file" "$newname" 2>/dev/null || true
+          done
+        fi
+
     - name: Upload Orchestra logs
       if: always()
       uses: actions/upload-artifact@v4
