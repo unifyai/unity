@@ -836,43 +836,65 @@ jobs:
         include-hidden-files: true
         retention-days: 1
 
-    - name: Upload pytest logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: logs-pytest-${{ steps.normalize-path.outputs.test_path_normalized }}
-        path: logs/pytest/
-        if-no-files-found: ignore
-        retention-days: 7
-
-    - name: Upload LLM I/O debug logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: logs-llm-${{ steps.normalize-path.outputs.test_path_normalized }}
-        path: logs/llm/
-        if-no-files-found: ignore
-        retention-days: 7
-
-    - name: Sanitize Orchestra log filenames
+    - name: Prepare logs for upload
       if: always()
       run: |
-        # Orchestra trace filenames include route paths which may contain colons
-        # (e.g., project_name:path). Colons are invalid in Windows NTFS, so
-        # GitHub Actions rejects them. Replace invalid characters with underscores.
-        if [ -d logs/orchestra ]; then
-          find logs/orchestra -type f -name '*:*' | while read -r file; do
-            newname=$(echo "$file" | tr ':' '_')
-            mv "$file" "$newname" 2>/dev/null || true
-          done
+        # Prepare each log subfolder independently with isolated error handling.
+        # If one log type has issues, others should still be uploadable.
+        # The logs/ directory mirrors the artifact structure: pytest, llm, orchestra.
+
+        echo "=== Preparing logs for upload ==="
+
+        # Ensure logs directory exists (even if empty, artifact upload handles this)
+        mkdir -p logs
+
+        # --- pytest logs ---
+        if [ -d logs/pytest ]; then
+          file_count=$(find logs/pytest -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "✓ pytest logs: $file_count files"
+        else
+          echo "○ pytest logs: directory not found (skipping)"
         fi
 
-    - name: Upload Orchestra logs
+        # --- LLM logs ---
+        if [ -d logs/llm ]; then
+          file_count=$(find logs/llm -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "✓ llm logs: $file_count files"
+        else
+          echo "○ llm logs: directory not found (skipping)"
+        fi
+
+        # --- Orchestra logs (requires filename sanitization) ---
+        if [ -d logs/orchestra ]; then
+          # Orchestra trace filenames include route paths which may contain colons
+          # (e.g., project_name:path). Colons are invalid in Windows NTFS, so
+          # GitHub Actions rejects them. Replace invalid characters with underscores.
+          sanitized=0
+          while IFS= read -r -d '' file; do
+            newname=$(echo "$file" | tr ':' '_')
+            if mv "$file" "$newname" 2>/dev/null; then
+              ((sanitized++)) || true
+            fi
+          done < <(find logs/orchestra -type f -name '*:*' -print0 2>/dev/null || true)
+
+          file_count=$(find logs/orchestra -type f 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$sanitized" -gt 0 ]; then
+            echo "✓ orchestra logs: $file_count files ($sanitized filenames sanitized)"
+          else
+            echo "✓ orchestra logs: $file_count files"
+          fi
+        else
+          echo "○ orchestra logs: directory not found (skipping)"
+        fi
+
+        echo "=== Log preparation complete ==="
+
+    - name: Upload logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: logs-orchestra-${{ steps.normalize-path.outputs.test_path_normalized }}
-        path: logs/orchestra/
+        name: logs-${{ steps.normalize-path.outputs.test_path_normalized }}
+        path: logs/
         if-no-files-found: ignore
         retention-days: 7
 
@@ -953,10 +975,10 @@ jobs:
       needs.should-run-tests.outputs.run_tests == 'true' &&
       needs.pytest.result != 'cancelled'
     steps:
-    - name: Download pytest logs from all jobs
+    - name: Download logs from all jobs
       uses: actions/download-artifact@v4
       with:
-        pattern: logs-pytest-*
+        pattern: logs-*
         path: all-logs
         merge-multiple: true
 
