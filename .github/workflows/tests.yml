@@ -700,6 +700,15 @@ jobs:
         echo "=== Orchestra Server Logs ==="
         if [ -f /tmp/unity-orchestra-server.log ]; then
           cat /tmp/unity-orchestra-server.log
+          # Also copy to logs/orchestra/ so it gets uploaded with artifacts
+          if [ -d logs/orchestra ]; then
+            # Find the session directory (most recent timestamp)
+            session_dir=$(ls -td logs/orchestra/*/ 2>/dev/null | head -1)
+            if [ -n "$session_dir" ]; then
+              cp /tmp/unity-orchestra-server.log "$session_dir/server.log"
+              echo "(Copied to $session_dir/server.log for artifact upload)"
+            fi
+          fi
         else
           echo "No orchestra log file found at /tmp/unity-orchestra-server.log"
         fi
