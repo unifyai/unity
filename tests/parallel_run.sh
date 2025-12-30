@@ -22,7 +22,7 @@ source "$SCRIPT_DIR/_shell_common.sh"
 # Parallel tests open many network connections. Each connection uses a file
 # descriptor. macOS defaults to 256 per process, which is easily exceeded.
 # This setting is inherited by all child processes (tmux sessions, pytest).
-ulimit -n 4096 2>/dev/null || true
+ulimit -n 8192 2>/dev/null || true
 
 TMUX_SOCKET="$UNITY_TMUX_SOCKET"
 
