@@ -2,6 +2,9 @@
 .env.*
 *.env
 .sensitive_data
+application_default_credentials.json
+*_credentials.json
+*.key
 __pycache__/
 implementations.py
 .cache.ndjson
