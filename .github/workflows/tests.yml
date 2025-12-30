@@ -829,13 +829,13 @@ jobs:
         # Kill all unity tmux servers and purge orphaned test processes
         tests/kill_server.sh --all || true
         # Stop local orchestra
-        tests/local_orchestra.sh stop || true
+        tests/orchestra.sh stop || true
         echo "Cleanup complete."
 
     - name: Stop local orchestra
       if: always()
       run: |
-        tests/local_orchestra.sh stop || true
+        tests/orchestra.sh stop || true
 
     - name: Upload cache artifact
       if: always()

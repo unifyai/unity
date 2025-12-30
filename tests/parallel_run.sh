@@ -354,7 +354,7 @@ _is_local_url() {
 }
 
 if _is_local_url "${UNIFY_BASE_URL:-}"; then
-  _local_orchestra_script="$SCRIPT_DIR/local_orchestra.sh"
+  _local_orchestra_script="$SCRIPT_DIR/orchestra.sh"
   if [[ -x "$_local_orchestra_script" ]]; then
     # Check if local orchestra is already running
     if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
