@@ -267,13 +267,13 @@ parallel_run --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 
 ## Orchestra Logs (`logs/orchestra/`)
 
-Orchestra logs capture detailed API request traces using OpenTelemetry. Each Orchestra session (started via `local_orchestra.sh`) creates a timestamped directory.
+Orchestra logs capture detailed API request traces using OpenTelemetry. Each Orchestra session (started via `orchestra.sh`) creates a timestamped directory.
 
 ### Directory Structure
 
 ```
 logs/orchestra/
-└── 2025-12-30T18-27-43/                      # Session (one per local_orchestra start/restart)
+└── 2025-12-30T18-27-43/                      # Session (one per orchestra.sh start/restart)
     ├── postgresql.log                         # PostgreSQL query log
     └── requests/                              # Per-request API traces
         ├── 2025-12-30T18-28-03.852_DELETE_project-name_81ms_5cc61e5f.json

@@ -78,8 +78,8 @@ project_cleanup() {
     "$(_unity_resolve_script project_cleanup.sh)" "$@"
 }
 
-local_orchestra() {
-    "$(_unity_resolve_script local_orchestra.sh)" "$@"
+orchestra() {
+    "$(_unity_resolve_script orchestra.sh)" "$@"
 }
 
 # ---- Completion: attach ----
