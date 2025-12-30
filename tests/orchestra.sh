@@ -566,7 +566,18 @@ start_orchestra_server() {
   # Start server directly with the virtualenv python (not via poetry run)
   # This avoids potential subprocess management issues with poetry
   # Wrap in bash -c to ensure ulimit is applied to the Python process
-  bash -c "ulimit -n $fd_limit; exec env ORCHESTRA_WORKERS_COUNT=$num_cores $venv_python -m orchestra" > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
+  #
+  # Use setsid (if available) to start the server in its own session/process group.
+  # Without this, the server inherits the parent's PGID. In GitHub Actions,
+  # this can cause stop_orchestra_server() to accidentally kill the GHA runner
+  # when it does `kill -- -$pgid`, resulting in exit code 143 (SIGTERM).
+  # On macOS (no setsid), the defensive check in stop_orchestra_server() protects
+  # against self-termination by checking if the PGID matches our own.
+  if command -v setsid &>/dev/null; then
+    setsid bash -c "ulimit -n $fd_limit; exec env ORCHESTRA_WORKERS_COUNT=$num_cores $venv_python -m orchestra" > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
+  else
+    bash -c "ulimit -n $fd_limit; exec env ORCHESTRA_WORKERS_COUNT=$num_cores $venv_python -m orchestra" > "$ORCHESTRA_SERVER_LOGFILE" 2>&1 &
+  fi
   local pid=$!
   disown $pid 2>/dev/null || true
   echo "$pid" > "$ORCHESTRA_SERVER_PIDFILE"
@@ -594,9 +605,17 @@ stop_orchestra_server() {
       # The negative PID sends signal to all processes in the group
       local pgid
       pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
-      if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+
+      # Safety check: never kill our own process group (defensive measure)
+      # This prevents accidental self-termination if orchestra wasn't started
+      # with setsid or if process group isolation failed for some reason
+      local my_pgid
+      my_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+
+      if [[ -n "$pgid" && "$pgid" != "0" && "$pgid" != "$my_pgid" ]]; then
         kill -- -"$pgid" 2>/dev/null || true
       else
+        # Fall back to killing just the main process
         kill "$pid" 2>/dev/null || true
       fi
 
@@ -612,7 +631,7 @@ stop_orchestra_server() {
 
       # Force kill process group if still running
       if kill -0 "$pid" 2>/dev/null; then
-        if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+        if [[ -n "$pgid" && "$pgid" != "0" && "$pgid" != "$my_pgid" ]]; then
           kill -9 -- -"$pgid" 2>/dev/null || true
         else
           kill -9 "$pid" 2>/dev/null || true
