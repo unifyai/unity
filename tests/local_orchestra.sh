@@ -617,6 +617,11 @@ start_orchestra_server() {
 
   log_info "Starting Orchestra FastAPI server..."
 
+  # Ensure logs directory exists for trace logging
+  if [[ -z "$CURRENT_LOG_SESSION_DIR" ]]; then
+    setup_orchestra_logs_dir
+  fi
+
   if is_orchestra_server_running; then
     if wait_for_server; then
       log_success "Orchestra server already running"
@@ -651,6 +656,11 @@ start_orchestra_server() {
   export ORCHESTRA_DB_BASE=orchestra
   export ORCHESTRA_RELOAD=false
   export ORCHESTRA_WORKERS_COUNT=1
+
+  # Enable file-based trace logging to the session log directory
+  # This captures OpenTelemetry traces (HTTP, DB, OpenAI) to JSON files
+  export ORCHESTRA_TRACE_LOG_DIR="$CURRENT_LOG_SESSION_DIR"
+  log_info "Trace logging enabled at: $CURRENT_LOG_SESSION_DIR/traces/"
 
   # Start server in background with workers matching CPU cores to handle parallel test load
   # Default uvicorn has 1 worker which can't handle 25+ concurrent test sessions
