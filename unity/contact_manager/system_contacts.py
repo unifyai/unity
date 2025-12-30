@@ -103,15 +103,15 @@ def _resolve_user_details(self) -> Dict[str, Any]:
         "email": data.get("email"),
         "bio": data.get("bio"),
         "timezone": data.get("timezone"),
+        "phone_number": data.get("phone_number"),
     }
     user_info.update({k: v for k, v in mapped.items() if v is not None})
 
-    if SESSION_DETAILS.assistant_record is not None:
+    # Fallback to assistant_record.user_phone if API didn't return phone_number
+    if "phone_number" not in user_info and SESSION_DETAILS.assistant_record is not None:
         phone = SESSION_DETAILS.assistant_record.get("user_phone")
-        mapped_extra: Dict[str, Any] = {
-            "phone_number": phone,
-        }
-        user_info.update({k: v for k, v in mapped_extra.items() if v is not None})
+        if phone:
+            user_info["phone_number"] = phone
 
     if user_info:
         return user_info
@@ -175,12 +175,14 @@ def provision_assistant_contact(self, assistant_log) -> None:
             entries = assistant_log.entries
             fetched_bio = selected.get("about") if selected else None
             fetched_tz = selected.get("timezone") if selected else None
+            fetched_phone = selected.get("phone") if selected else None
 
             needs_timezone = not entries.get("timezone")
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
+            needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_is_system = entries.get("is_system") is not True
 
-            if needs_timezone or needs_bio or needs_is_system:
+            if needs_timezone or needs_bio or needs_phone or needs_is_system:
                 update_kwargs: Dict[str, Any] = {
                     "contact_id": 0,
                     "_log_id": assistant_log.id,
@@ -189,6 +191,8 @@ def provision_assistant_contact(self, assistant_log) -> None:
                     update_kwargs["timezone"] = fetched_tz or "UTC"
                 if needs_bio:
                     update_kwargs["bio"] = fetched_bio
+                if needs_phone:
+                    update_kwargs["phone_number"] = fetched_phone
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 self.update_contact(**update_kwargs)
@@ -265,12 +269,14 @@ def provision_user_contact(self, user_log) -> None:
             entries = user_log.entries
             fetched_bio = user_info.get("bio")
             fetched_tz = user_info.get("timezone")
+            fetched_phone = user_info.get("phone_number")
 
             needs_timezone = not entries.get("timezone")
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
+            needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_is_system = entries.get("is_system") is not True
 
-            if needs_timezone or needs_bio or needs_is_system:
+            if needs_timezone or needs_bio or needs_phone or needs_is_system:
                 update_kwargs: Dict[str, Any] = {
                     "contact_id": 1,
                     "_log_id": user_log.id,
@@ -279,6 +285,8 @@ def provision_user_contact(self, user_log) -> None:
                     update_kwargs["timezone"] = fetched_tz or "UTC"
                 if needs_bio:
                     update_kwargs["bio"] = fetched_bio
+                if needs_phone:
+                    update_kwargs["phone_number"] = fetched_phone
                 if needs_is_system:
                     update_kwargs["is_system"] = True
                 self.update_contact(**update_kwargs)
@@ -396,12 +404,16 @@ def provision_org_member_contacts(self) -> None:
                 entries = log.entries
                 fetched_bio = member.get("bio")
                 fetched_tz = member.get("timezone")
+                fetched_phone = member.get("phone_number")
 
                 needs_is_system = not entries.get("is_system")
                 needs_bio = fetched_bio and entries.get("bio") != fetched_bio
                 needs_timezone = not entries.get("timezone")
+                needs_phone = (
+                    fetched_phone and entries.get("phone_number") != fetched_phone
+                )
 
-                if needs_is_system or needs_bio or needs_timezone:
+                if needs_is_system or needs_bio or needs_timezone or needs_phone:
                     update_kwargs: Dict[str, Any] = {
                         "contact_id": int(entries["contact_id"]),
                         "_log_id": log.id,
@@ -412,6 +424,8 @@ def provision_org_member_contacts(self) -> None:
                         update_kwargs["bio"] = fetched_bio
                     if needs_timezone:
                         update_kwargs["timezone"] = fetched_tz or "UTC"
+                    if needs_phone:
+                        update_kwargs["phone_number"] = fetched_phone
                     self.update_contact(**update_kwargs)
             else:
                 # Create new contact for org member
@@ -419,6 +433,7 @@ def provision_org_member_contacts(self) -> None:
                     first_name=first_name,
                     surname=surname,
                     email_address=email,
+                    phone_number=member.get("phone_number"),
                     bio=member.get("bio"),
                     timezone=member.get("timezone") or "UTC",
                     is_system=True,
