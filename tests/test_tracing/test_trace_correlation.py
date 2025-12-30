@@ -5,7 +5,13 @@ Verifies that:
 1. Each test gets a unique trace_id
 2. The trace_id is logged to pytest output
 3. HTTP clients propagate traceparent header
+4. End-to-end: trace_id propagates from Unity test to Orchestra trace files
 """
+
+import json
+import os
+import time
+from pathlib import Path
 
 import pytest
 
@@ -114,3 +120,226 @@ class TestTraceparentHeader:
             assert parts[1] == trace_id
         else:
             pytest.skip("HTTPXClientInstrumentor not active")
+
+
+class TestEndToEndTraceCorrelation:
+    """End-to-end tests verifying trace_id propagates from Unity to Orchestra.
+
+    These tests make real HTTP calls to a running Orchestra instance and verify
+    that the trace_id from Unity's OpenTelemetry span appears in Orchestra's
+    trace files.
+
+    Requirements:
+    - Local Orchestra must be running (started via local_orchestra.sh)
+    - ORCHESTRA_TRACE_LOG_DIR must be set (done automatically by local_orchestra.sh)
+    """
+
+    def _get_orchestra_trace_log_dir(self) -> Path | None:
+        """Get the Orchestra trace log directory from environment.
+
+        Returns None if not configured (Orchestra tracing not enabled).
+        """
+        # Check environment variable set by local_orchestra.sh
+        trace_dir = os.environ.get("ORCHESTRA_TRACE_LOG_DIR")
+        if trace_dir:
+            return Path(trace_dir)
+
+        # Fall back to scanning logs/orchestra for most recent session
+        unity_root = Path(__file__).parent.parent.parent
+        orchestra_logs = unity_root / "logs" / "orchestra"
+        if orchestra_logs.exists():
+            # Find most recent session directory
+            sessions = sorted(orchestra_logs.iterdir(), reverse=True)
+            for session in sessions:
+                if session.is_dir() and not session.name.startswith("."):
+                    return session
+        return None
+
+    def _find_trace_file_with_trace_id(
+        self,
+        trace_log_dir: Path,
+        trace_id: str,
+        timeout: float = 5.0,
+    ) -> Path | None:
+        """Wait for and find a trace file containing the given trace_id.
+
+        Orchestra flushes completed traces after ~0.5s, so we poll with a timeout.
+        """
+        requests_dir = trace_log_dir / "requests"
+        if not requests_dir.exists():
+            return None
+
+        # trace_id short form (last 8 chars) is used in filename
+        trace_id_short = trace_id[-8:]
+        start = time.time()
+
+        while time.time() - start < timeout:
+            for f in requests_dir.glob("*.json"):
+                # Check filename contains trace_id short form
+                if trace_id_short in f.name.lower():
+                    return f
+                # Also check file content for full trace_id
+                try:
+                    with open(f) as fp:
+                        data = json.load(fp)
+                        if data.get("trace_id", "").lower() == trace_id.lower():
+                            return f
+                except (json.JSONDecodeError, OSError):
+                    continue
+            time.sleep(0.2)
+
+        return None
+
+    def _is_orchestra_running(self) -> bool:
+        """Check if local Orchestra is running and accessible."""
+        import httpx
+
+        base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
+        try:
+            # Orchestra's health endpoint is at /v0/health
+            # Note: health endpoint is excluded from tracing, but useful for checking if running
+            resp = httpx.get(f"{base_url}/health", timeout=2.0)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    def _get_traced_endpoint(self) -> str:
+        """Get an endpoint that is traced (not excluded from OpenTelemetry).
+
+        The health, openapi, swagger, redoc, and metrics endpoints are excluded.
+        We use /projects which will return 401/403 without auth but still be traced.
+        """
+        return "/projects"
+
+    def test_trace_id_propagates_to_orchestra(self):
+        """Verify trace_id from Unity test appears in Orchestra trace files.
+
+        This is the critical end-to-end test that proves the full correlation
+        chain works:
+        1. Unity test creates a trace span
+        2. HTTP call includes traceparent header with trace_id
+        3. Orchestra receives and uses the same trace_id
+        4. Orchestra writes trace file with that trace_id
+
+        Note: Uses /projects endpoint because /health is excluded from tracing.
+        """
+        import httpx
+
+        from unity.common.test_tracing import get_current_trace_id
+
+        # Skip if tracing not enabled
+        trace_id = get_current_trace_id()
+        if trace_id is None:
+            pytest.skip("OpenTelemetry tracing not enabled")
+
+        # Skip if Orchestra not running
+        if not self._is_orchestra_running():
+            pytest.skip("Local Orchestra not running")
+
+        # Skip if trace logging not configured
+        trace_log_dir = self._get_orchestra_trace_log_dir()
+        if trace_log_dir is None:
+            pytest.skip("ORCHESTRA_TRACE_LOG_DIR not set (trace logging disabled)")
+
+        # Make a real HTTP call to Orchestra
+        base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
+        endpoint = self._get_traced_endpoint()
+
+        # Make the request - HTTPXClientInstrumentor injects traceparent header
+        # The endpoint may return 401/403 without auth, but the trace is still recorded
+        with httpx.Client() as client:
+            try:
+                resp = client.get(f"{base_url}{endpoint}", timeout=10.0)
+                # Any response is fine - we just need the request to reach Orchestra
+            except httpx.HTTPError:
+                # Even errors are fine - the trace will still be recorded
+                pass
+
+        # Wait for Orchestra to flush the trace and find it
+        trace_file = self._find_trace_file_with_trace_id(
+            trace_log_dir,
+            trace_id,
+            timeout=5.0,
+        )
+
+        if trace_file is None:
+            # List available trace files for debugging
+            requests_dir = trace_log_dir / "requests"
+            available = (
+                list(requests_dir.glob("*.json")) if requests_dir.exists() else []
+            )
+            pytest.fail(
+                f"No trace file found with trace_id={trace_id} (short: {trace_id[-8:]})\n"
+                f"Trace log dir: {trace_log_dir}\n"
+                f"Available files ({len(available)}): {[f.name for f in available[:10]]}",
+            )
+
+        # Verify the trace file contains the correct trace_id
+        with open(trace_file) as f:
+            data = json.load(f)
+
+        assert data.get("trace_id", "").lower() == trace_id.lower(), (
+            f"trace_id mismatch in {trace_file.name}: "
+            f"expected {trace_id}, got {data.get('trace_id')}"
+        )
+
+        # Verify there are spans in the trace
+        assert "spans" in data, f"No spans in trace file: {trace_file.name}"
+        assert len(data["spans"]) > 0, f"Empty spans in trace file: {trace_file.name}"
+
+        # Success! Log for debugging
+        print(f"\n✅ Trace correlation verified!")
+        print(f"   Unity trace_id: {trace_id}")
+        print(f"   Orchestra file: {trace_file.name}")
+        print(f"   Spans recorded: {len(data['spans'])}")
+
+    @pytest.mark.asyncio
+    async def test_async_trace_id_propagates_to_orchestra(self):
+        """Verify async HTTP calls also propagate trace_id to Orchestra."""
+        import httpx
+
+        from unity.common.test_tracing import get_current_trace_id
+
+        trace_id = get_current_trace_id()
+        if trace_id is None:
+            pytest.skip("OpenTelemetry tracing not enabled")
+
+        if not self._is_orchestra_running():
+            pytest.skip("Local Orchestra not running")
+
+        trace_log_dir = self._get_orchestra_trace_log_dir()
+        if trace_log_dir is None:
+            pytest.skip("ORCHESTRA_TRACE_LOG_DIR not set")
+
+        base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
+        endpoint = self._get_traced_endpoint()
+
+        # Make async request
+        async with httpx.AsyncClient() as client:
+            try:
+                await client.get(f"{base_url}{endpoint}", timeout=10.0)
+            except httpx.HTTPError:
+                pass
+
+        # Wait for and verify trace file
+        trace_file = self._find_trace_file_with_trace_id(
+            trace_log_dir,
+            trace_id,
+            timeout=5.0,
+        )
+
+        if trace_file is None:
+            requests_dir = trace_log_dir / "requests"
+            available = (
+                list(requests_dir.glob("*.json")) if requests_dir.exists() else []
+            )
+            pytest.fail(
+                f"No trace file found with trace_id={trace_id}\n"
+                f"Available: {[f.name for f in available[:10]]}",
+            )
+
+        with open(trace_file) as f:
+            data = json.load(f)
+
+        assert data.get("trace_id", "").lower() == trace_id.lower()
+        print(f"\n✅ Async trace correlation verified! trace_id={trace_id}")
