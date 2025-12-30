@@ -475,11 +475,10 @@ try:
     import unify
     project_name = os.environ.get("UNIFY_PROJECT", "UnityTests")
     try:
-        unify.delete_project(project_name)
+        unify.delete_project(project_name, missing_ok=False)
         print(f"Deleted project '{project_name}'")
-    except Exception as e:
-        # Project may not exist yet (on start) or already deleted
-        print(f"Note: Could not delete project '{project_name}': {e}")
+    except Exception:
+        print(f"Project '{project_name}' did not exist, skipping deletion")
 except ImportError:
     print("Warning: unify module not available, skipping project deletion")
     sys.exit(0)
