@@ -856,6 +856,15 @@ jobs:
         if-no-files-found: ignore
         retention-days: 7
 
+    - name: Upload Orchestra logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: orchestra-logs-${{ steps.normalize-path.outputs.test_path_normalized }}
+        path: logs/orchestra/
+        if-no-files-found: ignore
+        retention-days: 7
+
   # Cleanup job: runs ONCE after all pytest jobs complete or are cancelled
   # Handles project deletion at workflow level to avoid race conditions
   cleanup:
