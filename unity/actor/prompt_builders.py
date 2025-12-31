@@ -1310,8 +1310,21 @@ def _build_state_manager_rules_and_examples() -> str:
         # Mutation
         updated = await primitives.contacts.update("Add a new contact for John Doe with email john@example.com.")
 
-        # Durable execution (may return a handle)
-        task_handle = await primitives.tasks.execute("Draft an email to John Doe confirming our meeting next week.")
+        # Durable execution (first find task_id via ask(response_format=...), then execute(task_id=...))
+        from pydantic import BaseModel
+
+        class TaskLookup(BaseModel):
+            task_id: int
+
+        TaskLookup.model_rebuild()
+
+        task_lookup_handle = await primitives.tasks.ask(
+            "Find the task for drafting an email to John Doe confirming our meeting next week. Return the task_id.",
+            response_format=TaskLookup,
+        )
+        task_info = await task_lookup_handle.result()
+
+        task_handle = await primitives.tasks.execute(task_id=task_info.task_id)
         task_result = await task_handle.result()
         ```
         """,

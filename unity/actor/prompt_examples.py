@@ -315,10 +315,26 @@ def get_primitives_task_execute_example() -> str:
 
     return '''
 # Example: Task execution with steering
-async def execute_task_with_guidance(task_id: int) -> str:
-    """Execute a task with mid-flight guidance."""
-    # TaskScheduler.execute returns a steerable ActiveQueue handle
-    handle = await primitives.tasks.execute(task_id=task_id)
+async def execute_task_by_description_with_guidance(description: str) -> str:
+    """Find and execute a task by description, with mid-flight guidance."""
+    from pydantic import BaseModel
+
+    class TaskIdResult(BaseModel):
+        task_id: int
+        task_name: str
+
+    TaskIdResult.model_rebuild()
+
+    # Step 1: Find the task_id using structured output from `ask(...)`.
+    # (TaskScheduler.execute requires an integer task_id.)
+    lookup_handle = await primitives.tasks.ask(
+        f"Find the task that best matches: {description}. Return the task_id and name.",
+        response_format=TaskIdResult,
+    )
+    task_info = await lookup_handle.result()
+
+    # Step 2: Execute using the task_id (returns a steerable ActiveQueue handle).
+    handle = await primitives.tasks.execute(task_id=task_info.task_id)
 
     # Inject guidance early in execution
     await handle.interject("Provide a progress update after each major step.")
@@ -334,6 +350,41 @@ async def execute_task_with_guidance(task_id: int) -> str:
     # Wait for completion
     result = await handle.result()
     return result
+'''
+
+
+def get_primitives_task_lookup_and_execute_example() -> str:
+    """Example: Task lookup via ask(response_format=...) then execute(task_id=...).
+
+    Source: Correct pattern for TaskScheduler.execute which requires task_id: int
+    """
+
+    return '''
+# Example: Task lookup and execution pattern
+from pydantic import BaseModel
+
+class TaskIdResult(BaseModel):
+    task_id: int
+    task_name: str
+    task_description: str
+
+TaskIdResult.model_rebuild()
+
+async def find_and_execute_task(search_query: str) -> str:
+    """Locate a task by description and execute it."""
+    # Step 1: Use ask with response_format to get structured task info
+    lookup_handle = await primitives.tasks.ask(
+        f"Find the task matching: {search_query}",
+        response_format=TaskIdResult,
+    )
+    task = await lookup_handle.result()
+
+    # Step 2: Execute the task using its task_id
+    exec_handle = await primitives.tasks.execute(task_id=task.task_id)
+
+    # Wait for completion
+    result = await exec_handle.result()
+    return f"Executed task '{task.task_name}': {result}"
 '''
 
 
@@ -724,6 +775,7 @@ def get_primitives_examples() -> str:
         get_primitives_contact_ask_example().strip(),
         get_primitives_contact_update_example().strip(),
         get_primitives_cross_manager_example().strip(),
+        get_primitives_task_lookup_and_execute_example().strip(),
         get_primitives_task_execute_example().strip(),
         get_primitives_dynamic_methods_example().strip(),
     ]
