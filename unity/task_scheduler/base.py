@@ -279,11 +279,24 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
             Optional execution context and clarification channels propagated to the
             underlying actor/plan.
 
+        Execution delegation
+        --------------------
+        When a run-scoped execution environment is available, task execution may be
+        delegated to that environment to maintain context continuity. Otherwise,
+        execution proceeds through the scheduler's configured execution strategy.
+        In both cases, a live steerable handle is returned that supports the full
+        steering interface.
+
         Returns
         -------
         SteerableToolHandle
             Handle for the running task or queue head that supports pause, resume,
             interject, stop and result().
+
+        Implementation note
+        -------------------
+        Only one task may be active at a time. Attempting to start another task
+        while one is already running will raise ``RuntimeError``.
 
         Raises
         ------
