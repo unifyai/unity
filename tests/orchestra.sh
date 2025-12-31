@@ -336,6 +336,11 @@ INSERT INTO auth_user (id, email)
 VALUES ('$test_user_id', '$test_email')
 ON CONFLICT (id) DO NOTHING;
 
+-- Set assistant hiring approval to approved
+UPDATE auth_user 
+SET assistant_hiring_approval = 'approved' 
+WHERE id = '$test_user_id';
+
 -- Create API key
 INSERT INTO api_key (user_id, key)
 VALUES ('$test_user_id', '$test_api_key')
