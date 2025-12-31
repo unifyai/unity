@@ -208,6 +208,9 @@ def images_forwarding_block() -> str:
         "----------------------------------\n"
         "• When delegating to another tool that declares an `images` parameter, forward the relevant images.\n"
         "• Rewrite or augment image annotations so they align with the delegated question/action (not the original phrasing).\n"
+        "• If the user uses ordered deictic references (e.g., 'this', 'then this', 'finally this') or otherwise indicates a specific\n"
+        "  ordering over images, treat the provided image list order as authoritative. Do NOT reorder images based on your own guess of\n"
+        "  the user's intent or by re-sorting based on image content.\n"
         "• Prefer AnnotatedImageRefs; include a curated subset and preserve user‑referenced ordering when it matters.\n"
         "• If no images are relevant, omit them rather than attaching unrelated visuals."
     )

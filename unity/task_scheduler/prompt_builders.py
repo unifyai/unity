@@ -268,7 +268,17 @@ def build_update_prompt(
         "Tool selection",
         "--------------",
         f"• Prefer `{update_task_fname}` with the exact `task_id` when editing tasks.",
-        f'• When the user describes an EXISTING task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then call `{update_task_fname}` with the appropriate fields.',
+        f"• When the user describes EXISTING tasks semantically (by meaning over name/description), first call `{search_tasks_fname}` to identify candidate `task_id` values, then apply the mutation(s).",
+        f"• Use `{filter_tasks_fname}` for exact constraints over structured fields (ids, status, priority, timestamps) to narrow/validate the target set before mutating.",
+        f"• If you still cannot uniquely identify the intended task(s), call `{ask_fname}` to ask the user a focused disambiguation question before changing data.",
+        f"• For bulk requests (e.g., “cancel all tasks related to X”), find the FULL matching set first, then apply the change in as few tool calls as possible (e.g., one `{cancel_tasks_fname}` call with all matching ids).",
+        "",
+        "Ordering semantics (natural language → queue operations)",
+        "--------------------------------------------------------",
+        "• Treat phrasing like “A after B” / “A before B” as an **adjacency constraint** by default: A should be placed **immediately** after/before B in the runnable queue.",
+        "  - If the user explicitly allows intermediates (e.g., “sometime after”, “later”, “not necessarily immediately”), then you may allow other tasks between them.",
+        "• When applying adjacency constraints, prefer **minimal change**: keep the relative order of all other tasks stable unless moving them is required to satisfy the user's ordering constraints.",
+        "• If multiple constraints are given, satisfy all of them (and ask for clarification only when constraints conflict).",
     ]
 
     # Encourage batched creation when creating several tasks
