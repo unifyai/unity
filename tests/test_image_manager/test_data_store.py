@@ -188,35 +188,14 @@ def test_image_handle_raw_caches_gcs_download(monkeypatch):
         ],
     )
 
-    # Mock storage client to count downloads
-    class _Blob:
-        def __init__(self):
-            self._exists = True
-            self._downloads = 0
+    # Mock unify.download_object to count downloads
+    download_count = {"count": 0}
 
-        def exists(self):
-            return self._exists
+    def _fake_download_object(gcs_uri, *, api_key=None):
+        download_count["count"] += 1
+        return b"IMG_BYTES"
 
-        def download_as_bytes(self):
-            self._downloads += 1
-            return b"IMG_BYTES"
-
-    class _Bucket:
-        def __init__(self):
-            self._blob = _Blob()
-
-        def blob(self, path):
-            return self._blob
-
-    class _Storage:
-        def __init__(self):
-            self._bucket = _Bucket()
-
-        def bucket(self, name):
-            return self._bucket
-
-    fake_client = _Storage()
-    monkeypatch.setattr(im, "storage_client", fake_client)
+    monkeypatch.setattr(unify, "download_object", _fake_download_object)
 
     # First raw() must download and then cache base64 in DataStore
     h1 = im.get_images([img_id])[0]
@@ -235,8 +214,7 @@ def test_image_handle_raw_caches_gcs_download(monkeypatch):
     _ = h2.raw()
 
     # Verify only one download happened
-    # Access the nested blob object to check downloads count
-    assert fake_client.bucket("x").blob("y")._downloads == 1
+    assert download_count["count"] == 1
 
 
 @_handle_project
