@@ -245,6 +245,9 @@ class TaskScheduler(BaseTaskScheduler):
             **methods_to_tool_dict(
                 # Ask
                 self.ask,
+                # Read-only task discovery (useful for update flows too)
+                self._filter_tasks,
+                self._search_tasks,
                 # Creation / deletion / cancellation
                 self._create_tasks,
                 self._create_task,
@@ -3204,7 +3207,7 @@ class TaskScheduler(BaseTaskScheduler):
                         neighbour_qid = None
                     if neighbour_qid != qid:
                         raise ValueError(
-                            f"{err_prefix} cross-queue link rejected: {_nbr}={_tid} has queue_id={nbr_qid} "
+                            f"{err_prefix} cross-queue link rejected: {_nbr}={_tid} has queue_id={neighbour_qid} "
                             f"but current task would be in queue_id={qid}. Use set_queue() or move_tasks_to_queue() "
                             f"followed by reorder_queue() to materialize chains within a single queue.",
                         )
