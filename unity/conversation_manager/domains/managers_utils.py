@@ -329,6 +329,7 @@ def _init_managers(
                 "first_name": SESSION_DETAILS.assistant.name,
                 "age": SESSION_DETAILS.assistant.age,
                 "nationality": SESSION_DETAILS.assistant.nationality,
+                "timezone": SESSION_DETAILS.assistant.timezone or None,
                 "about": SESSION_DETAILS.assistant.about,
                 "phone": SESSION_DETAILS.assistant.number or None,
                 "email": SESSION_DETAILS.assistant.email or None,
