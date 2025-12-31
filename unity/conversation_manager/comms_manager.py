@@ -164,6 +164,7 @@ class CommsManager:
                     "assistant_name": event["assistant_name"],
                     "assistant_age": event["assistant_age"],
                     "assistant_nationality": event["assistant_nationality"],
+                    "assistant_timezone": event.get("assistant_timezone", ""),
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],
