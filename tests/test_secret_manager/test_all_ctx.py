@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import unify
@@ -144,10 +143,13 @@ def test_assistant_id_field_injected():
 
 @_handle_project
 def test_user_id_field_injected():
-    """Logs should have _user_id field when USER_ID env is set."""
+    """Logs should have _user_id field set to user's ID."""
     test_user_id = "test-user-456"
 
-    with patch.dict(os.environ, {"USER_ID": test_user_id}):
+    with patch(
+        "unity.common.log_utils._get_user_id",
+        return_value=test_user_id,
+    ):
         sm = SecretManager()
         result = sm._create_secret(
             name="user_id_test_secret",
