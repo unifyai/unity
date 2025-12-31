@@ -210,6 +210,10 @@ def build_update_prompt(
     custom_cols = get_custom_columns(Task, columns)
 
     # Resolve canonical tool names dynamically (required)
+    # NOTE: update() is write-capable, but it still needs strong read-only discovery tools
+    # for safe "find-then-mutate" workflows.
+    filter_tasks_fname = tool_name(tools, "filter_tasks")
+    search_tasks_fname = tool_name(tools, "search_tasks")
     ask_fname = tool_name(tools, "ask")
     create_task_fname = tool_name(tools, "create_task")
     create_tasks_fname = tool_name(tools, "create_tasks")
@@ -233,6 +237,8 @@ def build_update_prompt(
 
     require_tools(
         {
+            "filter_tasks": filter_tasks_fname,
+            "search_tasks": search_tasks_fname,
             "ask": ask_fname,
             "create_task": create_task_fname,
             "create_tasks": create_tasks_fname,
