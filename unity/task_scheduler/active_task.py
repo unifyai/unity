@@ -17,6 +17,7 @@ from typing import Optional, Dict, TYPE_CHECKING, List, Any
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.task_execution_context import current_task_execution_delegate
 from .types.status import Status
 from ..common.llm_client import new_llm_client
 import logging
@@ -146,15 +147,26 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         This is the preferred constructor: it ensures the underlying active
         handle is running before returning an instance.
         """
-        actor_steerable_handle = await actor.act(
-            task_description,
-            _parent_chat_context=_parent_chat_context,
-            _clarification_up_q=_clarification_up_q,
-            _clarification_down_q=_clarification_down_q,
-            # Always pass entrypoint to the actor so it can immediately run the function
-            entrypoint=entrypoint,
-            persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
-        )
+        delegate = current_task_execution_delegate.get()
+        if delegate is not None:
+            actor_steerable_handle = await delegate.start_task_run(
+                task_description=task_description,
+                entrypoint=entrypoint,
+                parent_chat_context=_parent_chat_context,
+                clarification_up_q=_clarification_up_q,
+                clarification_down_q=_clarification_down_q,
+                images=None,
+            )
+        else:
+            actor_steerable_handle = await actor.act(
+                task_description,
+                _parent_chat_context=_parent_chat_context,
+                _clarification_up_q=_clarification_up_q,
+                _clarification_down_q=_clarification_down_q,
+                # Always pass entrypoint to the actor so it can immediately run the function
+                entrypoint=entrypoint,
+                persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
+            )
         return cls(
             actor_steerable_handle,  # type: ignore[arg-type]
             task_id=task_id,
@@ -250,9 +262,22 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
 
         # If the interjection semantically requests stopping, enforce correct lifecycle handling.
         if intent in ("cancel", "defer"):
+            # Stop the underlying actor handle. Some handle implementations expose stop() as async;
+            # we must not drop the coroutine. Also, some stop() variants accept (reason=..., cancel=...).
+            stop_reason = reason or message
             try:
                 if hasattr(self._actor_handle, "stop"):
-                    self._actor_handle.stop(reason)  # type: ignore[call-arg]
+                    try:
+                        ret = self._actor_handle.stop(  # type: ignore[call-arg]
+                            reason=stop_reason,
+                            cancel=(intent == "cancel"),
+                        )
+                    except TypeError:
+                        # Legacy signature: stop(reason: str | None = None)
+                        ret = self._actor_handle.stop(stop_reason)  # type: ignore[call-arg]
+
+                    if asyncio.iscoroutine(ret):
+                        asyncio.create_task(ret)
             except Exception:
                 pass
 
@@ -321,7 +346,17 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         """
         # Be tolerant if the underlying actor has already finished; treat stop as a no-op.
         try:
-            ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
+            # Some actor handles implement stop() as async. We must not drop the coroutine.
+            # Prefer passing cancel/reason when supported, but fall back for compatibility.
+            try:
+                ret = self._actor_handle.stop(reason=reason, cancel=cancel)  # type: ignore[call-arg]
+            except TypeError:
+                # Legacy signature: stop(reason: str | None = None)
+                ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
+
+            if asyncio.iscoroutine(ret):
+                asyncio.create_task(ret)
+                ret = "Stopping."
         except Exception:
             ret = "Stopped."
         self._was_stopped = True
