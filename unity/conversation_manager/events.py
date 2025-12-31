@@ -63,12 +63,22 @@ class Event:
 
     @classmethod
     def from_dict(cls, data) -> "Event":
-        cls = cls._registry.get(data["event_name"])
-        if not cls:
+        import dataclasses
+
+        target_cls = cls._registry.get(data["event_name"])
+        if not target_cls:
             raise Exception(f"Class {data['event_name']} is not registered.")
         kwargs = data["payload"].copy()
         timestamp = kwargs.pop("timestamp")
-        return cls(**kwargs, timestamp=datetime.fromisoformat(timestamp))
+
+        # Filter to only fields the target dataclass accepts
+        valid_fields = {f.name for f in dataclasses.fields(target_cls)}
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_fields}
+
+        return target_cls(
+            **filtered_kwargs,
+            timestamp=datetime.fromisoformat(timestamp),
+        )
 
     @classmethod
     def from_json(cls, json_data):
