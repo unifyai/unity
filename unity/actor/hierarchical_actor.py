@@ -56,6 +56,10 @@ from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from unity.conversation_manager.handle import ConversationManagerHandle
 from unity.actor.steerable_tool_pane import SteerableToolPane
+from unity.common.task_execution_context import (
+    TaskExecutionDelegate,
+    current_task_execution_delegate,
+)
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(
@@ -99,6 +103,42 @@ class VerificationHandle:
 
     item: VerificationWorkItem
     task: asyncio.Task
+
+
+class _HierarchicalActorDelegate:
+    """Run-scoped delegate for routing task execution through the same Actor.
+
+    This is set in `HierarchicalActorHandle._initialize_and_run()` via a ContextVar
+    so that nested task execution (e.g., TaskScheduler.execute) can be routed back
+    into the *same* HierarchicalActor instance that is already running.
+    """
+
+    def __init__(self, actor: "HierarchicalActor", handle: "HierarchicalActorHandle"):
+        self.actor = actor
+        self.handle = handle
+
+    async def start_task_run(
+        self,
+        *,
+        task_description: str,
+        entrypoint: int | None,
+        parent_chat_context: list[dict] | None,
+        clarification_up_q: Optional[asyncio.Queue[str]],
+        clarification_down_q: Optional[asyncio.Queue[str]],
+        images: Any | None = None,
+        **kwargs: Any,
+    ) -> SteerableToolHandle:
+        """Route task execution through the same Actor instance."""
+        return await self.actor.act(
+            description=task_description,
+            entrypoint=entrypoint,
+            _parent_chat_context=parent_chat_context,
+            _clarification_up_q=clarification_up_q,
+            _clarification_down_q=clarification_down_q,
+            persist=False,
+            images=images,
+            **kwargs,
+        )
 
 
 class PlanRuntime:
@@ -1676,6 +1716,41 @@ class _ToolProviderProxy:
 
             tool_name = f"{self._namespace}.{name}"
 
+            # Inject clarification channels into manager calls when the plan supports
+            # clarifications. This enables nested manager tool-loops to request
+            # clarification without requiring plan code to thread queue objects.
+            #
+            # IMPORTANT: do NOT allow these queue objects to pollute cache keys or logs.
+            clarification_injected = False
+            if (not self._is_browser_env) and getattr(
+                self._plan,
+                "clarification_enabled",
+                False,
+            ):
+                try:
+                    if (
+                        "_clarification_up_q" not in kwargs
+                        and "_clarification_down_q" not in kwargs
+                    ):
+                        kwargs["_clarification_up_q"] = getattr(
+                            self._plan,
+                            "clarification_up_q",
+                            None,
+                        )
+                        kwargs["_clarification_down_q"] = getattr(
+                            self._plan,
+                            "clarification_down_q",
+                            None,
+                        )
+                        clarification_injected = True
+                except Exception:
+                    clarification_injected = False
+
+            kwargs_for_cache = dict(kwargs)
+            if clarification_injected:
+                kwargs_for_cache.pop("_clarification_up_q", None)
+                kwargs_for_cache.pop("_clarification_down_q", None)
+
             if DIAGNOSTIC_MODE:
                 run_id = current_run_id_var.get()
                 invoc_id = current_invocation_id_var.get()
@@ -1683,7 +1758,7 @@ class _ToolProviderProxy:
             else:
                 diag_prefix = ""
 
-            call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs)})"
+            call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs_for_cache)})"
             if diag_prefix:
                 if self._is_browser_env:
                     logger.info(
@@ -1696,7 +1771,7 @@ class _ToolProviderProxy:
                 self._plan,
                 tool_name,
                 args,
-                kwargs,
+                kwargs_for_cache,
             )
 
             if cache_key in self._plan.idempotency_cache:
@@ -2439,6 +2514,16 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         Manages the entire lifecycle of the plan from initialization to completion.
         """
         token = current_run_id_var.set(self.run_id)
+        delegate_token = None
+        try:
+            delegate: TaskExecutionDelegate = _HierarchicalActorDelegate(
+                actor=self.actor,
+                handle=self,
+            )
+            delegate_token = current_task_execution_delegate.set(delegate)
+        except Exception:
+            delegate_token = None
+
         self.runtime.execution_mode = mode
         try:
             # Ensure pane run_id stays correlated with the plan run_id (run_id may change across reruns).
@@ -2572,6 +2657,12 @@ async def main_plan():
         finally:
             try:
                 current_run_id_var.reset(token)
+            except Exception:
+                pass
+
+            try:
+                if delegate_token is not None:
+                    current_task_execution_delegate.reset(delegate_token)
             except Exception:
                 pass
 
