@@ -173,7 +173,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
             fetched_tz = selected.get("timezone") if selected else None
             fetched_phone = selected.get("phone") if selected else None
 
-            needs_timezone = not entries.get("timezone")
+            needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_is_system = entries.get("is_system") is not True
@@ -184,7 +184,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
                     "_log_id": assistant_log.id,
                 }
                 if needs_timezone:
-                    update_kwargs["timezone"] = fetched_tz or "UTC"
+                    update_kwargs["timezone"] = fetched_tz
                 if needs_bio:
                     update_kwargs["bio"] = fetched_bio
                 if needs_phone:
@@ -267,7 +267,7 @@ def provision_user_contact(self, user_log) -> None:
             fetched_tz = user_info.get("timezone")
             fetched_phone = user_info.get("phone_number")
 
-            needs_timezone = not entries.get("timezone")
+            needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
             needs_bio = fetched_bio and entries.get("bio") != fetched_bio
             needs_phone = fetched_phone and entries.get("phone_number") != fetched_phone
             needs_is_system = entries.get("is_system") is not True
@@ -278,7 +278,7 @@ def provision_user_contact(self, user_log) -> None:
                     "_log_id": user_log.id,
                 }
                 if needs_timezone:
-                    update_kwargs["timezone"] = fetched_tz or "UTC"
+                    update_kwargs["timezone"] = fetched_tz
                 if needs_bio:
                     update_kwargs["bio"] = fetched_bio
                 if needs_phone:
@@ -404,7 +404,7 @@ def provision_org_member_contacts(self) -> None:
 
                 needs_is_system = not entries.get("is_system")
                 needs_bio = fetched_bio and entries.get("bio") != fetched_bio
-                needs_timezone = not entries.get("timezone")
+                needs_timezone = fetched_tz and entries.get("timezone") != fetched_tz
                 needs_phone = (
                     fetched_phone and entries.get("phone_number") != fetched_phone
                 )
@@ -419,7 +419,7 @@ def provision_org_member_contacts(self) -> None:
                     if needs_bio:
                         update_kwargs["bio"] = fetched_bio
                     if needs_timezone:
-                        update_kwargs["timezone"] = fetched_tz or "UTC"
+                        update_kwargs["timezone"] = fetched_tz
                     if needs_phone:
                         update_kwargs["phone_number"] = fetched_phone
                     self.update_contact(**update_kwargs)

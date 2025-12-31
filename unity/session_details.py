@@ -68,6 +68,7 @@ class AssistantDetails:
     name: str = ""  # Populated from StartupEvent; empty = use defaults
     age: str = ""
     nationality: str = ""
+    timezone: str = ""  # IANA timezone identifier (e.g., "America/New_York")
     about: str = ""
     number: str = ""
     email: str = ""
@@ -171,6 +172,7 @@ class SessionDetails:
         assistant_name: str = "",
         assistant_age: str = "",
         assistant_nationality: str = "",
+        assistant_timezone: str = "",
         assistant_about: str = "",
         assistant_number: str = "",
         assistant_email: str = "",
@@ -191,6 +193,7 @@ class SessionDetails:
         self.assistant.name = assistant_name
         self.assistant.age = assistant_age
         self.assistant.nationality = assistant_nationality
+        self.assistant.timezone = assistant_timezone
         self.assistant.about = assistant_about
         self.assistant.number = assistant_number
         self.assistant.email = assistant_email
@@ -224,6 +227,7 @@ class SessionDetails:
         os.environ["ASSISTANT_NAME"] = self.assistant.name
         os.environ["ASSISTANT_AGE"] = self.assistant.age
         os.environ["ASSISTANT_NATIONALITY"] = self.assistant.nationality
+        os.environ["ASSISTANT_TIMEZONE"] = self.assistant.timezone
         os.environ["ASSISTANT_ABOUT"] = self.assistant.about
         os.environ["ASSISTANT_NUMBER"] = self.assistant.number
         os.environ["ASSISTANT_EMAIL"] = self.assistant.email
@@ -255,6 +259,8 @@ class SessionDetails:
             self.assistant.age = val
         if val := os.environ.get("ASSISTANT_NATIONALITY"):
             self.assistant.nationality = val
+        if val := os.environ.get("ASSISTANT_TIMEZONE"):
+            self.assistant.timezone = val
         if val := os.environ.get("ASSISTANT_ABOUT"):
             self.assistant.about = val
         if val := os.environ.get("ASSISTANT_NUMBER"):

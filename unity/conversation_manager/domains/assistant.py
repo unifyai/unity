@@ -10,6 +10,7 @@ class Assistant:
     assistant_name: str
     assistant_age: str
     assistant_region: str
+    assistant_timezone: str
     assistant_about: str
     assistant_number: str
     assistant_email: str

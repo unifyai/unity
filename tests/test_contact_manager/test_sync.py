@@ -89,6 +89,7 @@ def test_real_assistant(monkeypatch):
         "email": "alice.smith@example.com",
         "about": "Helpful assistant",
         "region": "North America",
+        "timezone": "America/New_York",
     }
 
     # Simulate a real session with an assistant record.
@@ -108,12 +109,11 @@ def test_real_assistant(monkeypatch):
     assert a.surname == "Smith"
     assert a.email_address == "alice.smith@example.com"
     assert a.phone_number == "+15551234567"
-    # System contact timezone should be hard-coded to UTC for now
-    assert a.timezone == "UTC"
+    # Timezone should be synced from the assistant record
+    assert a.timezone == "America/New_York"
 
     users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert users, "Default user should exist"
-    assert users[0].timezone == "UTC"
 
 
 @_handle_project
