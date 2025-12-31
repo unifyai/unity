@@ -587,7 +587,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Prepare effective tool_policy
         if tool_policy == "default":
-            effective_tool_policy = self._default_update_tool_policy
+            # When images are present, require an explicit task lookup first.
+            # This avoids blind schedule mutations based only on ambiguous visual references.
+            effective_tool_policy = (
+                self._update_tool_policy_with_images if images else self._default_update_tool_policy
+            )
         else:
             # pass through callable or None
             effective_tool_policy = tool_policy
@@ -3811,6 +3815,26 @@ class TaskScheduler(BaseTaskScheduler):
         if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
             allowed_first_turn: Dict[str, Any] = {}
             for name in ("search_tasks", "ask_image", "attach_image_raw"):
+                if name in current_tools:
+                    allowed_first_turn[name] = current_tools[name]
+            if allowed_first_turn:
+                return ("required", allowed_first_turn)
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _update_tool_policy_with_images(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """
+        On step 0 of update(), require a tasks lookup tool when images are present.
+
+        Rationale: the first step should establish *which* tasks the images refer to
+        before any scheduling or queue mutations are attempted.
+        """
+        if step_index < 1:
+            allowed_first_turn: Dict[str, Any] = {}
+            for name in ("search_tasks", "filter_tasks"):
                 if name in current_tools:
                     allowed_first_turn[name] = current_tools[name]
             if allowed_first_turn:
