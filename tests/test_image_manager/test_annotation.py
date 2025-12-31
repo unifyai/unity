@@ -48,8 +48,9 @@ def test_handle_local_annotation_is_not_persisted():
     assert getattr(h2, "annotation", None) is None
 
 
+@pytest.mark.asyncio
 @_handle_project
-def test_pending_handle_annotation_stays_local_and_not_persisted():
+async def test_pending_handle_annotation_stays_local_and_not_persisted():
     im = ImageManager()
 
     [h] = [
@@ -73,9 +74,7 @@ def test_pending_handle_annotation_stays_local_and_not_persisted():
     assert h.annotation == "pending-note"
 
     # Resolve pending → real id
-    mapping = _asyncio.get_event_loop().run_until_complete(
-        im.await_pending([h.image_id]),
-    )
+    mapping = await im.await_pending([h.image_id])
     assert h.image_id in mapping
     resolved_id = mapping[h.image_id]
 
