@@ -54,14 +54,18 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         content: str,
-        contact_id: int = 1,
+        contact_id: int,
     ) -> dict[str, Any]:
         """
-        Send a Unify message to the boss chat.
+        Send a Unify message to a contact via the Unify platform (in-app messaging).
+
+        Use this for contacts who communicate through the Unify app rather than
+        SMS/email/phone. Check the contact's available communication channels
+        in the active conversation to determine which medium to use.
 
         Args:
             content: Message content to send.
-            contact_id: Boss contact id (defaults to 1).
+            contact_id: Target contact_id from active conversations.
         """
         await cm_actions.send_unify_message(
             self._cm,

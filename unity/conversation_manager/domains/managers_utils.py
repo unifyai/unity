@@ -142,17 +142,24 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         content = event.content
 
     contact_id = None
-    if isinstance(
+    if isinstance(event, (PreHireMessage,)):
+        # PreHireMessage is always boss context
+        contact_id = 1
+    elif isinstance(
         event,
         (
             UnifyMessageSent,
             UnifyMessageReceived,
             InboundUnifyMeetUtterance,
             OutboundUnifyMeetUtterance,
-            PreHireMessage,
         ),
     ):
-        contact_id = 1
+        # Use contact from event, fall back to default if not in index
+        evt_contact_id = event.contact.get("contact_id")
+        if evt_contact_id in cm.contact_index.contacts:
+            contact_id = evt_contact_id
+        else:
+            contact_id = 1
     elif event.contact["contact_id"] in cm.contact_index.contacts:
         contact_id = event.contact["contact_id"]
     if role == "Assistant":
