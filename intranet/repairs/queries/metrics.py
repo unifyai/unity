@@ -40,7 +40,8 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 from intranet.core.bespoke_repairs_agent import register
 
-from ._types import GroupBy, MetricResult, TimePeriod, ToolsDict
+from ._types import GroupBy, MetricResult, PlotResult, TimePeriod, ToolsDict
+from .plot_utils import generate_plots, get_active_project
 
 # =============================================================================
 # LOGGING SETUP
@@ -296,207 +297,6 @@ TELEMATICS_GROUP_BY_FIELDS = {
 
 
 # =============================================================================
-# DIAGNOSTIC FUNCTIONS
-# =============================================================================
-
-
-def _diagnose_table(
-    tools: ToolsDict,
-    table: str,
-    metric_name: str = "diagnose",
-) -> None:
-    """
-    Run diagnostic checks on a table to understand why queries return empty.
-
-    This logs:
-    1. What tools are available
-    2. Whether the table exists (via list_columns)
-    3. What columns are available
-    4. Sample data from the table (via filter_files)
-    5. Test reduce calls with/without filters and backticks
-    """
-    logger.debug(f"[{metric_name}] ═══ DIAGNOSTIC START for {table.split('.')[-1]} ═══")
-    logger.debug(f"[{metric_name}] Full table path: {table}")
-
-    # Log available tools
-    tool_names = list(tools.keys())
-    logger.debug(f"[{metric_name}] Available tools ({len(tool_names)}): {tool_names}")
-
-    # Try to list columns - could be list_columns or _list_columns
-    list_columns_tool = tools.get("list_columns") or tools.get("_list_columns")
-    if list_columns_tool:
-        try:
-            start_time = time.perf_counter()
-            columns = list_columns_tool(table=table)
-            elapsed = time.perf_counter() - start_time
-            col_count = len(columns) if columns else 0
-            logger.debug(
-                f"[{metric_name}] list_columns took {_format_duration(elapsed)}, "
-                f"returned {col_count} columns",
-            )
-            if columns:
-                # Log first 15 columns
-                items = (
-                    columns.items()
-                    if isinstance(columns, dict)
-                    else [(c, "?") for c in columns]
-                )
-                for i, (col, col_type) in enumerate(items):
-                    if i >= 15:
-                        logger.debug(
-                            f"[{metric_name}]   ... and {col_count - 15} more columns",
-                        )
-                        break
-                    logger.debug(f"[{metric_name}]   - '{col}': {col_type}")
-        except Exception as e:
-            logger.error(
-                f"[{metric_name}] Failed to list columns: {type(e).__name__}: {e}",
-            )
-    else:
-        logger.warning(f"[{metric_name}] list_columns tool not available")
-
-    # Try to get sample data - could be filter_files or _filter_files
-    filter_files_tool = tools.get("filter_files") or tools.get("_filter_files")
-    if filter_files_tool:
-        try:
-            start_time = time.perf_counter()
-            sample = filter_files_tool(tables=table, limit=3)
-            elapsed = time.perf_counter() - start_time
-            sample_count = len(sample) if sample else 0
-            logger.debug(
-                f"[{metric_name}] filter_files took {_format_duration(elapsed)}, "
-                f"returned {sample_count} rows",
-            )
-            if sample:
-                for i, row in enumerate(sample[:3]):
-                    row_keys = list(row.keys()) if isinstance(row, dict) else []
-                    logger.debug(f"[{metric_name}]   Row {i} keys: {row_keys[:8]}...")
-                    # Log a few key columns if they exist
-                    for key in [
-                        "WorksOrderStatusDescription",
-                        "JobTicketReference",
-                        "OperativeWhoCompletedJob",
-                        "FirstTimeFix",
-                        "NoAccess",
-                    ]:
-                        if key in row:
-                            logger.debug(f"[{metric_name}]     '{key}' = {row[key]!r}")
-            else:
-                logger.warning(f"[{metric_name}] filter_files returned empty/None")
-        except Exception as e:
-            logger.error(
-                f"[{metric_name}] Failed to get sample data: {type(e).__name__}: {e}",
-            )
-    else:
-        logger.warning(f"[{metric_name}] filter_files tool not available")
-
-    # Try a simple count with no filter
-    reduce_tool = tools.get("reduce") or tools.get("_reduce")
-    if reduce_tool:
-        # Test 1: Count all rows (no filter)
-        try:
-            start_time = time.perf_counter()
-            count_all = reduce_tool(
-                table=table,
-                metric="count",
-                keys="JobTicketReference",
-                filter=None,
-                group_by=None,
-            )
-            elapsed = time.perf_counter() - start_time
-            logger.debug(
-                f"[{metric_name}] Test 1 - Total rows (no filter): {count_all} "
-                f"[{_format_duration(elapsed)}]",
-            )
-        except Exception as e:
-            logger.error(f"[{metric_name}] Test 1 failed: {type(e).__name__}: {e}")
-
-        # Test 2: Filter WITHOUT backticks in column names
-        try:
-            start_time = time.perf_counter()
-            count_filter_no_bt = reduce_tool(
-                table=table,
-                metric="count",
-                keys="JobTicketReference",
-                filter="WorksOrderStatusDescription in ['Complete', 'Closed']",
-                group_by=None,
-            )
-            elapsed = time.perf_counter() - start_time
-            logger.debug(
-                f"[{metric_name}] Test 2 - Filter WITHOUT backticks: {count_filter_no_bt} "
-                f"[{_format_duration(elapsed)}]",
-            )
-        except Exception as e:
-            logger.error(f"[{metric_name}] Test 2 failed: {type(e).__name__}: {e}")
-
-        # Test 3: Filter WITH backticks in column names (current approach)
-        try:
-            start_time = time.perf_counter()
-            count_filter_bt = reduce_tool(
-                table=table,
-                metric="count",
-                keys="JobTicketReference",
-                filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-                group_by=None,
-            )
-            elapsed = time.perf_counter() - start_time
-            logger.debug(
-                f"[{metric_name}] Test 3 - Filter WITH backticks: {count_filter_bt} "
-                f"[{_format_duration(elapsed)}]",
-            )
-        except Exception as e:
-            logger.error(f"[{metric_name}] Test 3 failed: {type(e).__name__}: {e}")
-
-        # Test 4: Group by (no filter)
-        try:
-            start_time = time.perf_counter()
-            grouped = reduce_tool(
-                table=table,
-                metric="count",
-                keys="JobTicketReference",
-                filter=None,
-                group_by="OperativeWhoCompletedJob",
-            )
-            elapsed = time.perf_counter() - start_time
-            grouped_count = len(grouped) if isinstance(grouped, dict) else "N/A"
-            logger.debug(
-                f"[{metric_name}] Test 4 - Group by (no filter): {grouped_count} groups "
-                f"[{_format_duration(elapsed)}]",
-            )
-            # Show sample groups
-            if isinstance(grouped, dict) and grouped:
-                for i, (k, v) in enumerate(list(grouped.items())[:3]):
-                    logger.debug(f"[{metric_name}]   Sample: '{k}' = {v}")
-        except Exception as e:
-            logger.error(f"[{metric_name}] Test 4 failed: {type(e).__name__}: {e}")
-
-        # Test 5: Group by + filter with backticks
-        try:
-            start_time = time.perf_counter()
-            grouped_filtered = reduce_tool(
-                table=table,
-                metric="count",
-                keys="JobTicketReference",
-                filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-                group_by="OperativeWhoCompletedJob",
-            )
-            elapsed = time.perf_counter() - start_time
-            grouped_count = (
-                len(grouped_filtered) if isinstance(grouped_filtered, dict) else "N/A"
-            )
-            logger.debug(
-                f"[{metric_name}] Test 5 - Group by + filter: {grouped_count} groups "
-                f"[{_format_duration(elapsed)}]",
-            )
-        except Exception as e:
-            logger.error(f"[{metric_name}] Test 5 failed: {type(e).__name__}: {e}")
-    else:
-        logger.error(f"[{metric_name}] reduce tool not available!")
-
-    logger.debug(f"[{metric_name}] ═══ DIAGNOSTIC END ═══")
-
-
-# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -560,8 +360,40 @@ def _build_metric_result(
     results: List[Dict[str, Any]],
     total: Optional[float] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    plots: Optional[List[PlotResult]] = None,
 ) -> MetricResult:
-    """Build standardized MetricResult."""
+    """
+    Build standardized MetricResult with optional plot visualizations.
+
+    This function creates a consistent output format for all metrics,
+    handling enum-to-string conversions and optional fields.
+
+    Parameters
+    ----------
+    metric_name : str
+        Name of the metric (e.g., "first_time_fix_rate")
+    group_by : GroupBy | str
+        Grouping dimension used (enum or string value)
+    time_period : TimePeriod | str
+        Time granularity used (enum or string value)
+    start_date : str | None
+        Start date of analysis period
+    end_date : str | None
+        End date of analysis period
+    results : list
+        List of result dicts with metric values
+    total : float | None
+        Aggregate total across all groups
+    metadata : dict | None
+        Additional metadata about the calculation
+    plots : list[PlotResult] | None
+        Generated plot visualizations (empty list if plots were not requested)
+
+    Returns
+    -------
+    MetricResult
+        Pydantic model with all metric data and optional plots
+    """
     # Handle both enum and string inputs (strings come from CLI JSON params)
     group_by_value = group_by.value if isinstance(group_by, GroupBy) else group_by
     time_period_value = (
@@ -577,6 +409,7 @@ def _build_metric_result(
         results=results,
         total=total,
         metadata=metadata,
+        plots=plots or [],
     )
 
 
@@ -596,6 +429,7 @@ async def jobs_completed_per_day(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get jobs completed per man per day.
@@ -612,11 +446,13 @@ async def jobs_completed_per_day(
         End date filter (YYYY-MM-DD)
     time_period : TimePeriod
         Time granularity for aggregation
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Aggregated results with grouping metadata
+        Aggregated results with grouping metadata and optional plots
     """
     metric_name = "jobs_completed_per_day"
 
@@ -657,6 +493,17 @@ async def jobs_completed_per_day(
             total = count_val
             logger.debug(f"[{metric_name}] Single total result: {total}")
 
+        # Generate plots if requested
+        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+        plots = generate_plots(
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            project_name=get_active_project(),
+            tables=REPAIRS_TABLE,
+            filter_expr=filter_expr,
+            include_plots=include_plots,
+        )
+
         return _build_metric_result(
             metric_name=metric_name,
             group_by=group_by,
@@ -665,6 +512,7 @@ async def jobs_completed_per_day(
             end_date=end_date,
             results=results,
             total=float(total),
+            plots=plots,
         )
 
     except Exception as e:
@@ -689,6 +537,7 @@ async def no_access_rate(
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
     return_absolute: bool = False,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get No Access rate as percentage or absolute number.
@@ -707,11 +556,13 @@ async def no_access_rate(
         Time granularity for aggregation
     return_absolute : bool
         If True, return absolute count; if False, return percentage
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Rate or count of no-access jobs
+        Rate or count of no-access jobs with optional plots
     """
     metric_name = "no_access_rate"
 
@@ -822,6 +673,17 @@ async def no_access_rate(
                 ]
                 total = pct
 
+        # Generate plots if requested
+        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+        plots = generate_plots(
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            project_name=get_active_project(),
+            tables=REPAIRS_TABLE,
+            filter_expr=no_access_filter,
+            include_plots=include_plots,
+        )
+
         return _build_metric_result(
             metric_name=metric_name,
             group_by=group_by,
@@ -831,6 +693,7 @@ async def no_access_rate(
             results=results,
             total=float(total),
             metadata={"return_absolute": return_absolute},
+            plots=plots,
         )
 
     except Exception as e:
@@ -855,6 +718,7 @@ async def first_time_fix_rate(
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
     return_absolute: bool = False,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get First Time Fix rate as percentage or absolute number.
@@ -873,11 +737,13 @@ async def first_time_fix_rate(
         Time granularity for aggregation
     return_absolute : bool
         If True, return absolute count; if False, return percentage
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Rate or count of first-time-fix jobs
+        Rate or count of first-time-fix jobs with optional plots
     """
     metric_name = "first_time_fix_rate"
     reduce_tool = tools.get("reduce")
@@ -974,6 +840,17 @@ async def first_time_fix_rate(
             ]
             total = pct
 
+    # Generate plots if requested
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        filter_expr=ftf_filter,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name="first_time_fix_rate",
         group_by=group_by,
@@ -983,6 +860,7 @@ async def first_time_fix_rate(
         results=results,
         total=float(total),
         metadata={"return_absolute": return_absolute},
+        plots=plots,
     )
 
 
@@ -1003,6 +881,7 @@ async def follow_on_required_rate(
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
     return_absolute: bool = False,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get Follow On Required rate as percentage or absolute number.
@@ -1021,11 +900,13 @@ async def follow_on_required_rate(
         Time granularity for aggregation
     return_absolute : bool
         If True, return absolute count; if False, return percentage
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Rate or count of jobs requiring follow-on
+        Rate or count of jobs requiring follow-on with optional plots
     """
     metric_name = "follow_on_required_rate"
     reduce_tool = tools.get("reduce")
@@ -1114,6 +995,17 @@ async def follow_on_required_rate(
             ]
             total = pct
 
+    # Generate plots if requested
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        filter_expr=fo_filter,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name="follow_on_required_rate",
         group_by=group_by,
@@ -1123,6 +1015,7 @@ async def follow_on_required_rate(
         results=results,
         total=float(total),
         metadata={"return_absolute": return_absolute},
+        plots=plots,
     )
 
 
@@ -1143,6 +1036,7 @@ async def follow_on_materials_rate(
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
     return_absolute: bool = False,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get Follow On Required specifically for Materials as percentage or absolute.
@@ -1161,11 +1055,13 @@ async def follow_on_materials_rate(
         Time granularity for aggregation
     return_absolute : bool
         If True, return absolute count; if False, return percentage
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Rate or count of jobs requiring follow-on due to materials
+        Rate or count of jobs requiring follow-on due to materials with optional plots
     """
     # Note: This searches FollowOnDescription/FollowOnNotes for material-related keywords
     # This is a heuristic approach since there's no dedicated "materials" flag
@@ -1263,6 +1159,17 @@ async def follow_on_materials_rate(
             ]
             total = pct
 
+    # Generate plots if requested
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        filter_expr=materials_filter,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name="follow_on_materials_rate",
         group_by=group_by,
@@ -1275,6 +1182,7 @@ async def follow_on_materials_rate(
             "return_absolute": return_absolute,
             "note": "Approximation based on FollowOnDescription presence",
         },
+        plots=plots,
     )
 
 
@@ -1295,6 +1203,7 @@ async def job_completed_on_time_rate(
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
     return_absolute: bool = False,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get Job Completed On Time rate as percentage or absolute number.
@@ -1313,11 +1222,13 @@ async def job_completed_on_time_rate(
         Time granularity for aggregation
     return_absolute : bool
         If True, return absolute count; if False, return percentage
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Rate or count of jobs completed on time
+        Rate or count of jobs completed on time with optional plots
     """
     # Compare WorksOrderReportedCompletedDate vs WorksOrderTargetDate
     metric_name = "job_completed_on_time_rate"
@@ -1411,6 +1322,17 @@ async def job_completed_on_time_rate(
             ]
             total = pct
 
+    # Generate plots if requested
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        filter_expr=on_time_filter,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name="job_completed_on_time_rate",
         group_by=group_by,
@@ -1420,6 +1342,7 @@ async def job_completed_on_time_rate(
         results=results,
         total=float(total),
         metadata={"return_absolute": return_absolute},
+        plots=plots,
     )
 
 
@@ -1439,6 +1362,7 @@ async def merchant_stops_per_day(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get number of merchant stops per day.
@@ -1455,11 +1379,13 @@ async def merchant_stops_per_day(
         End date filter (YYYY-MM-DD)
     time_period : TimePeriod
         Time granularity for aggregation
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Count of merchant stops grouped by dimension
+        Count of merchant stops grouped by dimension with optional plots
     """
     # Search telematics EndLocation for known merchant names
     metric_name = "merchant_stops_per_day"
@@ -1508,6 +1434,16 @@ async def merchant_stops_per_day(
             },
         ]
 
+    # Generate plots if requested - for each month's telematics table
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=ALL_TELEMATICS_TABLES,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name="merchant_stops_per_day",
         group_by=group_by,
@@ -1520,6 +1456,7 @@ async def merchant_stops_per_day(
             "merchants_searched": MERCHANT_NAMES,
             "note": "Approximate - based on EndLocation text matching",
         },
+        plots=plots,
     )
 
 
@@ -1539,6 +1476,7 @@ async def avg_duration_at_merchant(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get average duration at a merchant per day.
@@ -1555,19 +1493,33 @@ async def avg_duration_at_merchant(
         End date filter (YYYY-MM-DD)
     time_period : TimePeriod
         Time granularity for aggregation
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Average duration (in minutes) at merchant stops
+        Average duration (in minutes) at merchant stops with optional plots
     """
+    metric_name = "avg_duration_at_merchant"
+
     # Note: Duration at merchant would require:
     # 1. Identifying merchant stops via EndLocation
     # 2. Calculating dwell time from arrival/departure timestamps
     # This is complex due to telematics data structure
 
+    # Generate plots if requested - for each month's telematics table
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=ALL_TELEMATICS_TABLES,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
-        metric_name="avg_duration_at_merchant",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -1583,6 +1535,7 @@ async def avg_duration_at_merchant(
             "status": "requires_advanced_implementation",
             "reason": "Needs timestamp parsing and location matching logic",
         },
+        plots=plots,
     )
 
 
@@ -1602,6 +1555,7 @@ async def distance_travelled_per_day(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get distance travelled per day.
@@ -1618,11 +1572,13 @@ async def distance_travelled_per_day(
         End date filter (YYYY-MM-DD)
     time_period : TimePeriod
         Time granularity for aggregation
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Distance travelled (in miles/km) grouped by dimension
+        Distance travelled (in miles/km) grouped by dimension with optional plots
     """
     metric_name = "distance_travelled_per_day"
     reduce_tool = tools.get("reduce")
@@ -1668,6 +1624,17 @@ async def distance_travelled_per_day(
     else:
         results = [{"group": "total", "distance_miles": round(grand_total, 2)}]
 
+    # Generate plots if requested - for each month's telematics table
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=ALL_TELEMATICS_TABLES,
+        filter_expr=base_filter,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
@@ -1677,6 +1644,7 @@ async def distance_travelled_per_day(
         results=results,
         total=round(grand_total, 2),
         metadata={"unit": "miles"},
+        plots=plots,
     )
 
 
@@ -1696,6 +1664,7 @@ async def avg_time_travelling(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get average time spent travelling per day.
@@ -1714,11 +1683,13 @@ async def avg_time_travelling(
         End date filter (YYYY-MM-DD)
     time_period : TimePeriod
         Time granularity for aggregation
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Average travel time (in minutes) grouped by dimension
+        Average travel time (in minutes) grouped by dimension with optional plots
     """
     # Telematics has "Trip travel time" in HH:MM:SS format
     # Summing string times requires parsing; return event count as proxy
@@ -1758,6 +1729,16 @@ async def avg_time_travelling(
     else:
         results = [{"group": "total", "trip_count": grand_total}]
 
+    # Generate plots if requested - for each month's telematics table
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=ALL_TELEMATICS_TABLES,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
@@ -1770,6 +1751,7 @@ async def avg_time_travelling(
             "note": "Returns trip count - actual time averaging requires HH:MM:SS parsing",
             "unit": "trip_events",
         },
+        plots=plots,
     )
 
 
@@ -1789,6 +1771,7 @@ async def repairs_completed_per_day(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get total repairs completed per day.
@@ -1808,11 +1791,13 @@ async def repairs_completed_per_day(
         End date filter (YYYY-MM-DD)
     time_period : TimePeriod
         Time granularity for aggregation
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Total repair count grouped by dimension
+        Total repair count grouped by dimension with optional plots
     """
     metric_name = "repairs_completed_per_day"
     reduce_tool = tools.get("reduce")
@@ -1844,6 +1829,17 @@ async def repairs_completed_per_day(
         results = [{"group": "total", "count": count_val}]
         total = count_val
 
+    # Generate plots if requested
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        filter_expr=filter_expr,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
@@ -1852,6 +1848,7 @@ async def repairs_completed_per_day(
         end_date=end_date,
         results=results,
         total=float(total),
+        plots=plots,
     )
 
 
@@ -1871,6 +1868,7 @@ async def jobs_issued_per_day(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get jobs issued per day.
@@ -1889,11 +1887,13 @@ async def jobs_issued_per_day(
         End date filter (YYYY-MM-DD)
     time_period : TimePeriod
         Time granularity for aggregation
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Count of jobs issued grouped by dimension
+        Count of jobs issued grouped by dimension with optional plots
     """
     metric_name = "jobs_issued_per_day"
     reduce_tool = tools.get("reduce")
@@ -1932,6 +1932,17 @@ async def jobs_issued_per_day(
         results = [{"group": "total", "count": count_val}]
         total = count_val
 
+    # Generate plots if requested
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        filter_expr=filter_expr,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
@@ -1940,6 +1951,7 @@ async def jobs_issued_per_day(
         end_date=end_date,
         results=results,
         total=float(total),
+        plots=plots,
     )
 
 
@@ -1960,6 +1972,7 @@ async def jobs_requiring_materials_rate(
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
     return_absolute: bool = False,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get percentage of completed jobs that required materials.
@@ -1978,11 +1991,13 @@ async def jobs_requiring_materials_rate(
         Time granularity for aggregation
     return_absolute : bool
         If True, return absolute count; if False, return percentage
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Rate or count of jobs requiring materials
+        Rate or count of jobs requiring materials with optional plots
     """
     # Note: No dedicated "materials required" column exists
     # Proxy: jobs with FollowOnDescription mentioning materials/parts
@@ -2076,6 +2091,17 @@ async def jobs_requiring_materials_rate(
             ]
             total = pct
 
+    # Generate plots if requested
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        filter_expr=materials_filter,
+        include_plots=include_plots,
+    )
+
     return _build_metric_result(
         metric_name="jobs_requiring_materials_rate",
         group_by=group_by,
@@ -2088,6 +2114,7 @@ async def jobs_requiring_materials_rate(
             "return_absolute": return_absolute,
             "note": "Proxy: jobs with FollowOnDescription (no dedicated materials column)",
         },
+        plots=plots,
     )
 
 
@@ -2107,6 +2134,7 @@ async def avg_repairs_per_property(
     time_period: TimePeriod = TimePeriod.MONTH,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get average number of repairs per property.
@@ -2125,11 +2153,14 @@ async def avg_repairs_per_property(
         Start date filter (YYYY-MM-DD)
     end_date : str, optional
         End date filter (YYYY-MM-DD)
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
         Average repairs per property, with list of properties having multiple repairs
+        and optional plots
     """
     metric_name = "avg_repairs_per_property"
     reduce_tool = tools.get("reduce")
@@ -2174,6 +2205,17 @@ async def avg_repairs_per_property(
             },
         ]
 
+        # Generate plots if requested
+        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+        plots = generate_plots(
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            project_name=get_active_project(),
+            tables=REPAIRS_TABLE,
+            filter_expr=filter_expr,
+            include_plots=include_plots,
+        )
+
         return _build_metric_result(
             metric_name="avg_repairs_per_property",
             group_by=group_by,
@@ -2189,6 +2231,7 @@ async def avg_repairs_per_property(
                     reverse=True,
                 )[:10],
             },
+            plots=plots,
         )
     else:
         return _build_metric_result(
@@ -2199,6 +2242,7 @@ async def avg_repairs_per_property(
             end_date=end_date,
             results=[{"error": "Could not aggregate by property"}],
             total=0.0,
+            plots=[],
         )
 
 
@@ -2219,6 +2263,7 @@ async def complaints_rate(
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
     return_absolute: bool = False,
+    include_plots: bool = False,
 ) -> MetricResult:
     """
     Get complaints as percentage of total jobs completed.
@@ -2237,16 +2282,30 @@ async def complaints_rate(
         Time granularity for aggregation
     return_absolute : bool
         If True, return absolute count; if False, return percentage
+    include_plots : bool
+        If True, generate visualization URLs for the results
 
     Returns
     -------
     MetricResult
-        Rate or count of complaints
+        Rate or count of complaints with optional plots
     """
+    metric_name = "complaints_rate"
+
+    # Generate plots if requested (will be empty for this unavailable metric)
+    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    plots = generate_plots(
+        metric_name=metric_name,
+        group_by=group_by_enum,
+        project_name=get_active_project(),
+        tables=REPAIRS_TABLE,
+        include_plots=include_plots,
+    )
+
     # Note: No complaints column exists in the repairs data
     # This metric cannot be calculated from the current dataset
     return _build_metric_result(
-        metric_name="complaints_rate",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -2262,7 +2321,291 @@ async def complaints_rate(
             "status": "data_not_available",
             "required_column": "Complaints or similar",
         },
+        plots=plots,
     )
+
+
+# =============================================================================
+# 16. Appointment Adherence Rate
+# =============================================================================
+
+
+@register(
+    "appointment_adherence_rate",
+    "Percentage of appointments where operative arrived within scheduled window "
+    "(by operative/patch/region/time)",
+)
+@metric_timer("appointment_adherence_rate")
+async def appointment_adherence_rate(
+    tools: ToolsDict,
+    group_by: GroupBy = GroupBy.OPERATIVE,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    time_period: TimePeriod = TimePeriod.DAY,
+    return_absolute: bool = False,
+    include_plots: bool = False,
+) -> MetricResult:
+    """
+    Get appointment adherence rate as percentage or absolute number.
+
+    This metric measures punctuality and scheduling reliability by calculating
+    the percentage of repair appointments where the operative arrived within
+    the scheduled appointment window.
+
+    Business Context (from PDF Analysis):
+        - Target: 95%+ on-time arrival
+        - High adherence indicates reliable scheduling and respects tenants' time
+        - Low adherence causes tenant frustration and can lead to no-access incidents
+        - "Even if the job is ultimately completed on time, being late to an agreed
+          appointment can frustrate tenants"
+
+    Calculation Logic:
+        - Compares ArrivedOnSite timestamp against ScheduledAppointmentStart/End window
+        - A visit is "on-time" if arrival occurred between start and end of window
+        - Visits where no arrival time is recorded are excluded from calculation
+
+    Parameters
+    ----------
+    tools : ToolsDict
+        Tools from FileManager containing reduce, filter_files, list_columns
+    group_by : GroupBy
+        Dimension to group results by (operative, patch, region, total)
+    start_date : str, optional
+        Start date filter (YYYY-MM-DD format)
+    end_date : str, optional
+        End date filter (YYYY-MM-DD format)
+    time_period : TimePeriod
+        Time granularity for aggregation (day, week, month, quarter, year)
+    return_absolute : bool
+        If True, return absolute counts of on-time/late arrivals
+        If False, return percentage adherence rate
+
+    Returns
+    -------
+    MetricResult
+        Appointment adherence rate or counts per group, with:
+        - percentage: Adherence rate (if return_absolute=False)
+        - on_time_count: Number of on-time arrivals
+        - late_count: Number of late arrivals
+        - total_scheduled: Total scheduled appointments
+
+    Example Usage
+    -------------
+    >>> result = await appointment_adherence_rate(
+    ...     group_by=GroupBy.OPERATIVE,
+    ...     return_absolute=False,
+    ... )
+    >>> # Result: {"results": [{"group": "John Smith", "percentage": 92.5, ...}], ...}
+    """
+    metric_name = "appointment_adherence_rate"
+
+    try:
+        reduce_tool = tools.get("reduce")
+        filter_files_tool = tools.get("filter_files")
+
+        if not reduce_tool:
+            logger.error(f"[{metric_name}] 'reduce' tool not found")
+            raise ValueError("Required 'reduce' tool not available")
+
+        group_by_field = _resolve_group_by(group_by)
+        logger.debug(
+            f"[{metric_name}] return_absolute={return_absolute}, group_by={group_by_field}",
+        )
+
+        # Note: This metric requires ScheduledAppointmentStart, ScheduledAppointmentEnd,
+        # and ArrivedOnSite columns. If these don't exist in the repairs data,
+        # we need to check and return appropriate message.
+
+        # First, check if the required columns exist
+        list_columns_tool = tools.get("list_columns")
+        if list_columns_tool:
+            try:
+                columns = list_columns_tool(table=REPAIRS_TABLE)
+                required_cols = [
+                    "ScheduledAppointmentStart",
+                    "ScheduledAppointmentEnd",
+                    "ArrivedOnSite",
+                ]
+                missing_cols = [
+                    col for col in required_cols if col not in (columns or {})
+                ]
+
+                if missing_cols:
+                    logger.warning(
+                        f"[{metric_name}] Missing required columns: {missing_cols}. "
+                        "Appointment adherence cannot be calculated.",
+                    )
+                    return _build_metric_result(
+                        metric_name=metric_name,
+                        group_by=group_by,
+                        time_period=time_period,
+                        start_date=start_date,
+                        end_date=end_date,
+                        results=[
+                            {
+                                "error": "Required columns not available",
+                                "missing_columns": missing_cols,
+                                "note": (
+                                    "Appointment adherence requires "
+                                    "ScheduledAppointmentStart, ScheduledAppointmentEnd, "
+                                    "and ArrivedOnSite columns"
+                                ),
+                            },
+                        ],
+                        total=0.0,
+                        metadata={"status": "data_not_available"},
+                    )
+            except Exception as e:
+                logger.warning(f"[{metric_name}] Could not check columns: {e}")
+
+        # Build filter for scheduled appointments with arrival times
+        # Appointments must have both scheduled window and arrival recorded
+        scheduled_filter = (
+            "`ScheduledAppointmentStart` != '' and "
+            "`ScheduledAppointmentStart` is not None and "
+            "`ArrivedOnSite` != '' and "
+            "`ArrivedOnSite` is not None"
+        )
+        base_filter = _build_date_filter(scheduled_filter, start_date, end_date)
+
+        # Count total scheduled appointments
+        raw_total = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="total scheduled",
+            table=REPAIRS_TABLE,
+            metric="count",
+            keys="JobTicketReference",
+            filter=base_filter,
+            group_by=group_by_field,
+        )
+
+        # Count on-time arrivals
+        # An arrival is on-time if ArrivedOnSite <= ScheduledAppointmentEnd
+        # (i.e., arrived before or at the end of the window)
+        on_time_filter = (
+            f"({base_filter}) and " "`ArrivedOnSite` <= `ScheduledAppointmentEnd`"
+        )
+        raw_on_time = _timed_tool(
+            metric_name,
+            "reduce",
+            reduce_tool,
+            label="on-time arrivals",
+            table=REPAIRS_TABLE,
+            metric="count",
+            keys="JobTicketReference",
+            filter=on_time_filter,
+            group_by=group_by_field,
+        )
+
+        # Normalize results
+        if isinstance(raw_total, dict):
+            total_result = _normalize_grouped_result(raw_total, _extract_count)
+        else:
+            total_result = _extract_count(raw_total)
+
+        if isinstance(raw_on_time, dict):
+            on_time_result = _normalize_grouped_result(raw_on_time, _extract_count)
+        else:
+            on_time_result = _extract_count(raw_on_time)
+
+        # Build results based on return_absolute flag
+        if isinstance(total_result, dict) and isinstance(on_time_result, dict):
+            results = []
+            total_on_time = 0
+            total_scheduled = 0
+
+            for group_key in total_result:
+                scheduled_count = total_result.get(group_key, 0)
+                on_time_count = on_time_result.get(group_key, 0)
+                late_count = scheduled_count - on_time_count
+
+                total_on_time += on_time_count
+                total_scheduled += scheduled_count
+
+                if return_absolute:
+                    results.append(
+                        {
+                            "group": group_key,
+                            "on_time_count": on_time_count,
+                            "late_count": late_count,
+                            "total_scheduled": scheduled_count,
+                        },
+                    )
+                else:
+                    pct = _compute_percentage(on_time_count, scheduled_count)
+                    results.append(
+                        {
+                            "group": group_key,
+                            "percentage": pct,
+                            "on_time_count": on_time_count,
+                            "late_count": late_count,
+                            "total_scheduled": scheduled_count,
+                        },
+                    )
+
+            # Calculate overall total
+            if return_absolute:
+                total = float(total_on_time)
+            else:
+                total = _compute_percentage(total_on_time, total_scheduled)
+
+        else:
+            # Non-grouped result
+            scheduled_count = total_result if isinstance(total_result, int) else 0
+            on_time_count = on_time_result if isinstance(on_time_result, int) else 0
+            late_count = scheduled_count - on_time_count
+
+            if return_absolute:
+                results = [
+                    {
+                        "group": "total",
+                        "on_time_count": on_time_count,
+                        "late_count": late_count,
+                        "total_scheduled": scheduled_count,
+                    },
+                ]
+                total = float(on_time_count)
+            else:
+                pct = _compute_percentage(on_time_count, scheduled_count)
+                results = [
+                    {
+                        "group": "total",
+                        "percentage": pct,
+                        "on_time_count": on_time_count,
+                        "late_count": late_count,
+                        "total_scheduled": scheduled_count,
+                    },
+                ]
+                total = pct
+
+        # Generate plots if requested
+        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+        plots = generate_plots(
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            project_name=get_active_project(),
+            tables=REPAIRS_TABLE,
+            filter_expr=base_filter,
+            include_plots=include_plots,
+        )
+
+        return _build_metric_result(
+            metric_name=metric_name,
+            group_by=group_by,
+            time_period=time_period,
+            start_date=start_date,
+            end_date=end_date,
+            results=results,
+            total=float(total),
+            metadata={"return_absolute": return_absolute},
+            plots=plots,
+        )
+
+    except Exception as e:
+        logger.exception(f"[{metric_name}] Unexpected error during calculation")
+        raise RuntimeError(f"Failed to calculate {metric_name}: {e}") from e
 
 
 # =============================================================================
@@ -2285,4 +2628,5 @@ ALL_METRICS = [
     "jobs_requiring_materials_rate",
     "avg_repairs_per_property",
     "complaints_rate",
+    "appointment_adherence_rate",
 ]
