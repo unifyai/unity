@@ -249,6 +249,14 @@ This project uses `uv` for dependency management:
 - Configuration: `pyproject.toml`
 - Lock file: `uv.lock` (do not edit manually)
 
+**Syncing git dependencies:** The lock file pins git dependencies (e.g., `unifyai`, `unillm`) to specific commits. To pull the latest from upstream branches:
+
+```bash
+./scripts/sync.sh
+```
+
+This upgrades git dependencies to their latest commits before syncing. Use this instead of plain `uv sync` when you need the latest upstream changes.
+
 ---
 
 ## Testing
