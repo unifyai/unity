@@ -707,6 +707,9 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
         tools = methods_to_tool_dict(
             # Ask entry point is exposed on update side
             TaskScheduler.ask,
+            # Read-only task discovery (update flows rely on these too)
+            TaskScheduler._filter_tasks,
+            TaskScheduler._search_tasks,
             # Creation / deletion / cancellation
             TaskScheduler._create_tasks,
             TaskScheduler._create_task,

@@ -163,6 +163,25 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                 response_format=self._response_format,
             )
 
+            # If a response_format is requested, ensure we return exactly one JSON document.
+            # The stateful simulator sometimes emits multiple JSON objects separated by newlines
+            # (e.g. NDJSON-style). Prefer the last successfully-validated JSON line.
+            if self._response_format is not None and isinstance(answer, str):
+                try:
+                    # Fast path: already valid
+                    _m = self._response_format.model_validate_json(answer)  # type: ignore[attr-defined]
+                    answer = _m.model_dump_json()
+                except Exception:
+                    _best: str | None = None
+                    for _line in [ln.strip() for ln in answer.splitlines() if ln.strip()]:
+                        try:
+                            _m = self._response_format.model_validate_json(_line)  # type: ignore[attr-defined]
+                            _best = _m.model_dump_json()
+                        except Exception:
+                            continue
+                    if _best is not None:
+                        answer = _best
+
             self._answer = answer
             # very small, synthetic trace of "reasoning"
             self._messages = [
