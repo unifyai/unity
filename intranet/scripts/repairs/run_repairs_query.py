@@ -156,6 +156,22 @@ def print_summary(result: Dict[str, Any], elapsed: float) -> None:
         print(f"   • Groups: {num_results}")
         print(f"   • Grouped by: {group_by}")
 
+        # Show plot information if present
+        plots = result.get("plots", [])
+        if plots:
+            print(f"   • Plots generated: {len(plots)}")
+            for plot in plots:
+                # Handle both dict and Pydantic model
+                if hasattr(plot, "model_dump"):
+                    plot = plot.model_dump()
+                title = plot.get("title", "Untitled")
+                url = plot.get("url")
+                error = plot.get("error")
+                if url:
+                    print(f"      ✓ {title}: {url}")
+                elif error:
+                    print(f"      ✗ {title}: FAILED - {error}")
+
         # Show any warnings from metadata
         metadata = result.get("metadata") or {}
         if metadata.get("status") == "data_not_available":
@@ -185,6 +201,7 @@ Examples:
   %(prog)s --query no_access_rate --params '{"return_absolute": true}'
   %(prog)s --query distance_travelled_per_day --verbose
   %(prog)s --query jobs_completed_per_day --project Intranet
+  %(prog)s --query first_time_fix_rate --include-plots
 
 See README.md for comprehensive usage documentation.
         """,
@@ -261,6 +278,18 @@ See README.md for comprehensive usage documentation.
         action="store_true",
         help="Disable file logging, only print to terminal",
     )
+    parser.add_argument(
+        "--include-plots",
+        action="store_true",
+        default=False,
+        help="Generate visualization URLs for query results",
+    )
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        default=False,
+        help="Explicitly disable plot generation (default behavior)",
+    )
     args = parser.parse_args()
 
     # Setup logging
@@ -322,6 +351,12 @@ See README.md for comprehensive usage documentation.
         print("💡 JSON must use double quotes. Example:")
         print('   --params \'{"start_date": "2025-07-01", "group_by": "patch"}\'')
         return 1
+
+    # Determine include_plots setting
+    include_plots = args.include_plots and not args.no_plots
+    if include_plots:
+        params["include_plots"] = True
+        logger.info("Plot generation enabled")
 
     # Initialize query logger
     query_logger: Optional[QueryLogger] = None

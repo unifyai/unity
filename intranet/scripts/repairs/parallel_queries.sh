@@ -122,6 +122,7 @@ VERBOSE=0
 DEBUG=0
 NO_LOG=0
 LOG_DIR=""
+INCLUDE_PLOTS=0
 
 declare -a QUERY_IDS=()
 
@@ -203,6 +204,10 @@ while (( "$#" )); do
         exit 2
       fi
       ;;
+    --include-plots)
+      INCLUDE_PLOTS=1
+      shift
+      ;;
     -h|--help)
       cat << EOF
 Usage: parallel_queries.sh [options]
@@ -226,6 +231,7 @@ Script Options:
   --debug               Enable debug logging in queries
   --no-log              Disable file logging in queries
   --log-dir PATH        Custom log directory for queries
+  --include-plots       Generate visualization URLs for query results
 
 General:
   -h, --help            Show this help
@@ -251,6 +257,9 @@ Examples:
 
   # Wait with timeout
   ./parallel_queries.sh --all -w 300
+
+  # Run with plot generation
+  ./parallel_queries.sh --all --include-plots -w
 EOF
       exit 0
       ;;
@@ -421,6 +430,9 @@ build_run_cmd() {
   fi
   if [[ -n "$LOG_DIR" ]]; then
     py_cmd="$py_cmd --log-dir '$LOG_DIR'"
+  fi
+  if (( INCLUDE_PLOTS )); then
+    py_cmd="$py_cmd --include-plots"
   fi
 
   # Build the inner script with status detection
