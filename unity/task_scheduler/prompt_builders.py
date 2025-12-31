@@ -96,6 +96,7 @@ def build_ask_prompt(
             "─ Tool selection (read carefully) ─",
             f"• For ANY semantic question over free‑form text (e.g., name/description), ALWAYS use `{search_tasks_fname}`. Never try to approximate meaning with brittle substring filters.",
             f"• Use `{filter_tasks_fname}` only for exact/boolean logic over structured fields (ids, status, priority, timestamps) or for narrow, constrained text checks.",
+            f"• For questions about how to communicate with a specific person/role (tone, formality, how to address them, what wording to use), ALWAYS call `{contact_ask_fname}` to retrieve that contact’s communication preferences/response policy. Do not guess.",
             "",
             "─ Semantic search across tasks (ranked by cosine distance) ─",
             f"• Find tasks about onboarding in Q3: `{search_tasks_fname}(references={{'name': 'onboarding', 'description': 'Q3'}} , k=5)`",
@@ -138,6 +139,12 @@ def build_ask_prompt(
                     )
                 )
             ),
+            "",
+            "─ Communication style (contact-driven) ─",
+            f"• Question: “When we email our <role/person>, should we be formal or casual?”",
+            f"  1 Use `{search_tasks_fname}` to locate the relevant task(s) that mention the role/person.",
+            f"  2 Use `{contact_ask_fname}` to identify the matching contact record(s) and read their response_policy/preferences.",
+            "  3 Answer using the contact’s preferences; if no matching contact exists, state that explicitly and provide a sensible default.",
         ],
     )
 

@@ -590,7 +590,9 @@ class TaskScheduler(BaseTaskScheduler):
             # When images are present, require an explicit task lookup first.
             # This avoids blind schedule mutations based only on ambiguous visual references.
             effective_tool_policy = (
-                self._update_tool_policy_with_images if images else self._default_update_tool_policy
+                self._update_tool_policy_with_images
+                if images
+                else self._default_update_tool_policy
             )
         else:
             # pass through callable or None
