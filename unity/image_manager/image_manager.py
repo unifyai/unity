@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import base64
-import os
 import json
 import functools
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncio
 import concurrent.futures
 import threading
@@ -14,9 +13,6 @@ from urllib.parse import urlparse
 from ..common.llm_client import new_llm_client
 from ..common.log_utils import log as unity_log, create_logs as unity_create_logs
 import unify
-from google.cloud import storage
-from google.oauth2 import service_account
-from google.cloud.exceptions import NotFound
 
 
 from ..common.model_to_fields import model_to_fields
@@ -244,8 +240,8 @@ class ImageHandle:
         """
         Return the decoded image bytes.
 
-        If the data is a GCS URL, it downloads the content. Otherwise, it assumes
-        the data is a base64 string and decodes it.
+        If the data is a GCS URL, it downloads the content via unify.download_object().
+        Otherwise, it assumes the data is a base64 string and decodes it.
         """
         # Prefer locally cached base64 data from the DataStore to avoid re-downloading
         try:
@@ -253,37 +249,21 @@ class ImageHandle:
             data_str = cached.get("data") if cached is not None else self._image.data
         except Exception:
             data_str = self._image.data
-        is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
-            "https://storage.googleapis.com/",
-        )
 
-        if is_gcs_url:
+        # Convert HTTPS GCS URLs to gs:// format for unify.download_object
+        gcs_uri = None
+        if data_str.startswith("gs://"):
+            gcs_uri = data_str
+        elif data_str.startswith("https://storage.googleapis.com/"):
+            parsed_url = urlparse(data_str)
+            path_parts = parsed_url.path.lstrip("/").split("/", 1)
+            if len(path_parts) == 2:
+                bucket_name, object_path = path_parts
+                gcs_uri = f"gs://{bucket_name}/{object_path}"
+
+        if gcs_uri:
             try:
-                parsed_url = urlparse(data_str)
-                bucket_name = ""
-                object_path = ""
-
-                if parsed_url.scheme == "gs":
-                    bucket_name = parsed_url.netloc
-                    object_path = parsed_url.path.lstrip("/")
-                elif parsed_url.hostname == "storage.googleapis.com":
-                    path_parts = parsed_url.path.lstrip("/").split("/", 1)
-                    if len(path_parts) == 2:
-                        bucket_name, object_path = path_parts
-                    else:
-                        raise ValueError("Invalid GCS HTTPS URL format.")
-
-                if not bucket_name or not object_path:
-                    raise ValueError("Could not parse bucket or path from GCS URL.")
-
-                storage_client = self._manager.storage_client
-                bucket = storage_client.bucket(bucket_name)
-                blob = bucket.blob(object_path)
-
-                if not blob.exists():
-                    raise FileNotFoundError(f"Image not found at GCS URL: {data_str}")
-
-                content = blob.download_as_bytes()
+                content = unify.download_object(gcs_uri)
                 # Cache the downloaded bytes as base64 in the DataStore to prevent future downloads
                 try:
                     import base64 as _b64
@@ -376,44 +356,22 @@ class ImageHandle:
             data_str = self._image.data
         content_block: dict
 
-        # Check if the data string is a GCS URL
-        is_gcs_url = isinstance(data_str, str) and (
-            data_str.startswith("gs://")
-            or data_str.startswith("https://storage.googleapis.com/")
-        )
-
-        if is_gcs_url:
-            try:
+        # Check if the data string is a GCS URL and convert to gs:// format
+        gcs_uri = None
+        if isinstance(data_str, str):
+            if data_str.startswith("gs://"):
+                gcs_uri = data_str
+            elif data_str.startswith("https://storage.googleapis.com/"):
                 parsed_url = urlparse(data_str)
-                bucket_name = ""
-                object_path = ""
+                path_parts = parsed_url.path.lstrip("/").split("/", 1)
+                if len(path_parts) == 2:
+                    bucket_name, object_path = path_parts
+                    gcs_uri = f"gs://{bucket_name}/{object_path}"
 
-                if parsed_url.scheme == "gs":
-                    bucket_name = parsed_url.netloc
-                    object_path = parsed_url.path.lstrip("/")
-                elif parsed_url.hostname == "storage.googleapis.com":
-                    path_parts = parsed_url.path.lstrip("/").split("/", 1)
-                    if len(path_parts) == 2:
-                        bucket_name, object_path = path_parts
-                    else:
-                        raise ValueError("Invalid GCS HTTPS URL format.")
-
-                if not bucket_name or not object_path:
-                    raise ValueError("Could not parse bucket or path from GCS URL.")
-
-                storage_client = self._manager.storage_client
-                bucket = storage_client.bucket(bucket_name)
-                blob = bucket.blob(object_path)
-
-                if not blob.exists():
-                    raise NotFound(f"File not found at GCS URL: {data_str}")
-
-                # Generate a URL valid for 1 hour
-                signed_url = blob.generate_signed_url(
-                    version="v4",
-                    expiration=timedelta(hours=1),
-                    method="GET",
-                )
+        if gcs_uri:
+            try:
+                # Generate a signed URL valid for 1 hour via unify
+                signed_url = unify.get_signed_url(gcs_uri, expiration_minutes=60)
 
                 content_block = {
                     "type": "image_url",
@@ -623,24 +581,6 @@ class ImageManager(BaseImageManager):
 
         # Local DataStore mirror for Images (write-through on reads/writes)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("image_id",))
-
-        # Initialize the storage client
-        try:
-            # Assumes the credentials file is at the root of the project
-            credentials_path = os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "..",
-                "application_default_credentials.json",
-            )
-            credentials = service_account.Credentials.from_service_account_file(
-                credentials_path,
-            )
-            self.storage_client = storage.Client(credentials=credentials)
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to initialize Google Cloud Storage client: {e}",
-            ) from e
 
         # Cache built-in fields for fast whitelisting
         self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
