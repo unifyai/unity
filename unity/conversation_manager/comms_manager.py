@@ -249,9 +249,18 @@ class CommsManager:
                         print(f"Failed scheduling attachment download: {e}")
 
                 elif thread == "unify_message":
-                    # No phone/email; boss contact id is always "1"
-                    topic = event["contact_id"]
-                    contact = next(c for c in contacts if c["contact_id"] == topic)
+                    # Use contact_id from event if provided, otherwise default to boss (1)
+                    target_contact_id = event.get("contact_id", 1)
+                    contact = next(
+                        (c for c in contacts if c["contact_id"] == target_contact_id),
+                        None,
+                    )
+                    if contact is None:
+                        print(
+                            f"Warning: contact_id {target_contact_id} not found, "
+                            f"falling back to boss contact (1)",
+                        )
+                        contact = next(c for c in contacts if c["contact_id"] == 1)
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](

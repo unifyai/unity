@@ -403,9 +403,10 @@ async def send_unify_message(
     **kwargs,
 ):
     content = kwargs.get("content")
-    contact_id = kwargs.get("contact_id")
+    contact_id = kwargs.get("contact_id", 1)
     response = await comms_utils.send_unify_message(
-        content=content, contact_id=contact_id
+        content=content,
+        contact_id=contact_id,
     )
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id)

@@ -58,9 +58,16 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
             return await response.json()
 
 
-async def send_unify_message(content: str, contact_id: int = 1) -> str:
+async def send_unify_message(content: str, contact_id: int = 1) -> dict:
     """
-    Send a message to the boss chat.
+    Send a unify message to a contact.
+
+    Args:
+        content: The message content to send.
+        contact_id: The target contact's ID. Defaults to 1 (boss).
+
+    Returns:
+        dict with "success" key indicating delivery status.
     """
     assistant_id = SESSION_DETAILS.assistant.id
     staging_suffix = (
@@ -72,7 +79,7 @@ async def send_unify_message(content: str, contact_id: int = 1) -> str:
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
-    print(f"Sending unify message: {content}")
+    print(f"Sending unify message to contact_id={contact_id}: {content}")
     message_data = {
         "thread": "unify_message_outbound",
         "event": {"content": content, "role": "assistant", "contact_id": contact_id},
