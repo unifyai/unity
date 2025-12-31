@@ -331,22 +331,6 @@ class ImageHandle:
             ),
         )
 
-        # Optional: inject broader parent chat context as a single system header
-        if parent_chat_context_cont:
-            sys_msg = {
-                "role": "system",
-                "_ctx_header": True,
-                "content": (
-                    "Broader context (read-only):\n"
-                    f"{json.dumps(parent_chat_context_cont, indent=2)}\n\n"
-                    "Resolve the *next* user request in light of this."
-                ),
-            }
-            try:
-                client.append_messages([sys_msg])
-            except Exception:
-                pass
-
         # Provide the image as a user content block (vision input).
         # Prefer cached base64 from the DataStore when available to avoid signing/downloading again
         try:
@@ -418,12 +402,30 @@ class ImageHandle:
                 "image_url": {"url": f"data:{mime};base64,{data_str}"},
             }
 
-        messages = [
+        # Build the messages list
+        messages = []
+
+        # Optional: inject broader parent chat context as a system header
+        if parent_chat_context_cont:
+            messages.append(
+                {
+                    "role": "system",
+                    "_ctx_header": True,
+                    "content": (
+                        "Broader context (read-only):\n"
+                        f"{json.dumps(parent_chat_context_cont, indent=2)}\n\n"
+                        "Resolve the *next* user request in light of this."
+                    ),
+                },
+            )
+
+        # Add the user message with image
+        messages.append(
             {
                 "role": "user",
                 "content": [content_block, {"type": "text", "text": question}],
             },
-        ]
+        )
 
         # Single shot – no nested tool loop
         answer = await client.generate(messages=messages)
