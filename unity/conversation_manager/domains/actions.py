@@ -105,12 +105,14 @@ class MakeCall(BaseModel):
 
 
 class SendUnifyMessage(BaseModel):
-    """Send a message to the boss chat on the unify platform (no-phone medium)"""
+    """Send a Unify message to a contact via the Unify platform (in-app messaging)."""
 
     action_name: Literal["send_unify_message"]
     content: str
-    # could remove this if the contact_id is always 1
-    contact_id: Literal[1] = 1
+    contact_id: int = Field(
+        ...,
+        description="Target contact_id as shown in active conversations.",
+    )
 
 
 def _generate_dynamic_task_actions(active_tasks: dict) -> list[type[BaseModel]]:
@@ -403,7 +405,9 @@ async def send_unify_message(
     **kwargs,
 ):
     content = kwargs.get("content")
-    contact_id = kwargs.get("contact_id", 1)
+    contact_id = kwargs.get("contact_id")
+    if contact_id is None:
+        raise ValueError("contact_id is required for send_unify_message")
     response = await comms_utils.send_unify_message(
         content=content,
         contact_id=contact_id,
