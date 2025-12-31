@@ -8725,7 +8725,7 @@ dependencies = [
 [[package]]
 name = "unillm"
 version = "0.1.0"
-source = { git = "https://github.com/unifyai/unillm.git?branch=main#ceb5a838a07dfda2a8e3f54e7b172f62186468ff" }
+source = { git = "https://github.com/unifyai/unillm.git?branch=main#3a9afae2cf8290672e22b7d78e6cb8d37f283867" }
 dependencies = [
     { name = "litellm" },
     { name = "pydantic" },
