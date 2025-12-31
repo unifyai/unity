@@ -250,7 +250,8 @@ class CommsManager:
 
                 elif thread == "unify_message":
                     # No phone/email; boss contact id is always "1"
-                    contact = next(c for c in contacts if c["contact_id"] == 1)
+                    topic = event["contact_id"]
+                    contact = next(c for c in contacts if c["contact_id"] == topic)
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](

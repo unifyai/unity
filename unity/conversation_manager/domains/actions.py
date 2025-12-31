@@ -404,7 +404,9 @@ async def send_unify_message(
 ):
     content = kwargs.get("content")
     contact_id = kwargs.get("contact_id")
-    response = await comms_utils.send_unify_message(content=content)
+    response = await comms_utils.send_unify_message(
+        content=content, contact_id=contact_id
+    )
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         event = UnifyMessageSent(contact=contact, content=content)
