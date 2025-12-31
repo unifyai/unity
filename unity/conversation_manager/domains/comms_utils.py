@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 import json
 import asyncio
 import aiohttp
+import os
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
@@ -57,7 +58,7 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
             return await response.json()
 
 
-async def send_unify_message(content: str) -> str:
+async def send_unify_message(content: str, contact_id: int = 1) -> str:
     """
     Send a message to the boss chat.
     """
@@ -74,7 +75,7 @@ async def send_unify_message(content: str) -> str:
     print(f"Sending unify message: {content}")
     message_data = {
         "thread": "unify_message_outbound",
-        "event": {"content": content, "role": "assistant"},
+        "event": {"content": content, "role": "assistant", "contact_id": contact_id},
     }
     try:
         # Publish with attributes
