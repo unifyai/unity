@@ -224,6 +224,18 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
           forward the relevant images and rewrite/augment their annotations so they align with the delegated
           request. Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
 
+        Natural-language ordering semantics
+        ----------------------------------
+        When the user expresses relative ordering constraints such as “A after B” or “A before B”,
+        interpret this as a constraint on the runnable queue ordering between those tasks.
+
+        Unless the user explicitly indicates that intermediate tasks are acceptable (e.g., “sometime
+        after”, “later”, “not necessarily immediately”), treat “after/before” as an **adjacency**
+        constraint: A should be placed immediately after/before B in the runnable queue.
+
+        When enforcing such constraints, prefer minimal change: keep the relative order of other tasks
+        stable unless moving them is required to satisfy the user’s expressed constraints.
+
         Please always be explicit about the *ordering* of tasks.
         If the order *doesn't* matter please say so explicitly.
         If the order *does* matter, and the tasks are given in the correct number order,
