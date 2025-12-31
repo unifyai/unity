@@ -238,6 +238,9 @@ class TaskScheduler(BaseTaskScheduler):
                 include_class_name=True,  # Retain originating class so name is ContactManager.ask
             ),
         }
+        # Persist a stable copy for simulated mirroring / prompt-build stability.
+        # (Used by unity.common.simulated.mirror_task_scheduler_tools via AST reflection.)
+        self._ask_tools = dict(ask_tools)
         self.add_tools("ask", ask_tools)
 
         # Write-capable helpers – every mutating operation as well as the read-only ones.
@@ -272,6 +275,8 @@ class TaskScheduler(BaseTaskScheduler):
                 include_class_name=True,  # Retain originating class so name is ContactManager.ask
             ),
         }
+        # Persist a stable copy for simulated mirroring / prompt-build stability.
+        self._update_tools = dict(update_tools)
         self.add_tools("update", update_tools)
 
         # active task
@@ -734,7 +739,8 @@ class TaskScheduler(BaseTaskScheduler):
             unlink_from_prev=unlink_from_prev,
         )
 
-        # Build the active plan via the actor and wrap it so the task table stays in sync
+        # Start task execution (delegated to the current execution environment when available)
+        # and wrap the resulting handle for Tasks-table synchronization.
 
         handle = await ActiveTask.create(
             self._actor,
