@@ -58,10 +58,12 @@ python intranet/scripts/repairs/run_repairs_query.py --query jobs_completed_per_
 | `--pretty` | flag | `True` | Pretty print JSON output |
 | `-v, --verbose` | flag | - | Enable verbose logging (INFO level) |
 | `--debug` | flag | - | Enable debug logging (DEBUG level) |
+| `--include-plots` | flag | - | Generate visualization URLs for query results |
+| `--no-plots` | flag | - | Explicitly disable plot generation (default behavior) |
 
 ---
 
-## Available Metrics (15 Total)
+## Available Metrics (16 Total)
 
 ### Repairs Data Metrics
 
@@ -78,15 +80,16 @@ python intranet/scripts/repairs/run_repairs_query.py --query jobs_completed_per_
 | 9 | `jobs_requiring_materials_rate` | % of jobs that require materials |
 | 10 | `avg_repairs_per_property` | Average repairs per property |
 | 11 | `complaints_rate` | Complaints as % of total jobs (data not available) |
+| 12 | `appointment_adherence_rate` | Percentage of appointments attended within scheduled window |
 
 ### Telematics Data Metrics
 
 | # | Query ID | Description |
 |---|----------|-------------|
-| 12 | `distance_travelled_per_day` | Distance travelled per day |
-| 13 | `avg_time_travelling` | Average time travelling per day |
-| 14 | `merchant_stops_per_day` | Number of merchant stops per day |
-| 15 | `avg_duration_at_merchant` | Average duration at merchant |
+| 13 | `distance_travelled_per_day` | Distance travelled per day |
+| 14 | `avg_time_travelling` | Average time travelling per day |
+| 15 | `merchant_stops_per_day` | Number of merchant stops per day |
+| 16 | `avg_duration_at_merchant` | Average duration at merchant |
 
 ---
 
@@ -245,6 +248,46 @@ python intranet/scripts/repairs/run_repairs_query.py \
 python intranet/scripts/repairs/run_repairs_query.py \
     --query jobs_completed_per_day \
     --log-dir /tmp/repairs_logs
+```
+
+### Plot Visualization
+
+Generate visualization URLs with your query results using the `--include-plots` flag:
+
+```bash
+# Generate plots for first time fix rate by operative
+python intranet/scripts/repairs/run_repairs_query.py \
+    --query first_time_fix_rate \
+    --params '{"group_by": "operative"}' \
+    --include-plots
+
+# Generate plots for jobs completed grouped by patch
+python intranet/scripts/repairs/run_repairs_query.py \
+    --query jobs_completed_per_day \
+    --params '{"group_by": "patch"}' \
+    --include-plots
+
+# Generate trend plots (total over time)
+python intranet/scripts/repairs/run_repairs_query.py \
+    --query repairs_completed_per_day \
+    --params '{"group_by": "total"}' \
+    --include-plots
+```
+
+Plot visualizations are automatically configured based on the metric and grouping dimension. The summary output will show:
+- Plot title and URL for successful generations
+- Error messages for any failed plot generations
+
+Example output with plots:
+```
+📊 Summary:
+   • Metric: first_time_fix_rate
+   • Total: 85.5
+   • Groups: 150
+   • Grouped by: operative
+   • Plots generated: 1
+      ✓ First-Time Fix Rate by Operative: https://console.unify.ai/plot/view/abc123
+   • Duration: 3.45s
 ```
 
 ### Debugging
@@ -462,6 +505,7 @@ Sessions are named with status prefixes:
 | `--debug` | Enable debug logging in queries |
 | `--no-log` | Disable file logging in queries |
 | `--log-dir PATH` | Custom log directory |
+| `--include-plots` | Generate visualization URLs for all query results |
 
 ### Parallel Runner Examples
 
@@ -503,6 +547,9 @@ Sessions are named with status prefixes:
 
 # Full combination: all queries, all params, limited concurrency, wait for completion
 ./intranet/scripts/repairs/parallel_queries.sh --all --expand-params -j 8 -w
+
+# Run all queries with plot generation
+./intranet/scripts/repairs/parallel_queries.sh --all --include-plots -w
 ```
 
 ### Watching Queries
@@ -619,6 +666,8 @@ tmux -L repairs_dev_pts_0 kill-server
 
 ## Related Files
 
-- `intranet/repairs/queries/metrics.py` - Metric function implementations
-- `intranet/repairs/queries/_types.py` - Type definitions (GroupBy, TimePeriod, MetricResult)
+- `intranet/repairs/queries/metrics.py` - Metric function implementations (16 metrics)
+- `intranet/repairs/queries/_types.py` - Pydantic models and enums (GroupBy, TimePeriod, MetricResult, PlotConfig, PlotResult)
+- `intranet/repairs/queries/_plots.py` - Plot configurations per metric × group_by combination
+- `intranet/repairs/queries/plot_utils.py` - Plot API client for generating visualizations
 - `intranet/core/bespoke_repairs_agent.py` - Agent and query registry

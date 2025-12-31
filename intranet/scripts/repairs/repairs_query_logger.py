@@ -142,7 +142,15 @@ class QueryLogEntry:
         lines.append("-" * 40)
         if self.result is not None:
             try:
-                result_json = json.dumps(self.result, indent=2, default=str)
+                # Handle Pydantic models by converting to dict first
+                result_data = self.result
+                if hasattr(result_data, "model_dump"):
+                    # Pydantic v2
+                    result_data = result_data.model_dump()
+                elif hasattr(result_data, "dict"):
+                    # Pydantic v1
+                    result_data = result_data.dict()
+                result_json = json.dumps(result_data, indent=2, default=str)
                 lines.append(result_json)
             except Exception:
                 lines.append(str(self.result))
@@ -150,17 +158,23 @@ class QueryLogEntry:
             lines.append("  (no result)")
         lines.append("")
 
-        # Summary section
-        if self.success and isinstance(self.result, dict):
+        # Summary section - convert Pydantic model to dict if needed
+        result_dict = self.result
+        if hasattr(result_dict, "model_dump"):
+            result_dict = result_dict.model_dump()
+        elif hasattr(result_dict, "dict"):
+            result_dict = result_dict.dict()
+
+        if self.success and isinstance(result_dict, dict):
             lines.append("-" * 40)
             lines.append("SUMMARY")
             lines.append("-" * 40)
-            lines.append(f"  Metric:     {self.result.get('metric_name', 'N/A')}")
-            lines.append(f"  Total:      {self.result.get('total', 'N/A')}")
-            lines.append(f"  Groups:     {len(self.result.get('results', []))}")
-            lines.append(f"  Group By:   {self.result.get('group_by', 'N/A')}")
+            lines.append(f"  Metric:     {result_dict.get('metric_name', 'N/A')}")
+            lines.append(f"  Total:      {result_dict.get('total', 'N/A')}")
+            lines.append(f"  Groups:     {len(result_dict.get('results', []))}")
+            lines.append(f"  Group By:   {result_dict.get('group_by', 'N/A')}")
 
-            metadata = self.result.get("metadata") or {}
+            metadata = result_dict.get("metadata") or {}
             if metadata.get("note"):
                 lines.append(f"  Note:       {metadata['note']}")
             if metadata.get("status"):
