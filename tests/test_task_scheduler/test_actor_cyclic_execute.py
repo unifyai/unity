@@ -500,7 +500,8 @@ async def test_cancel_via_active_task_interject_is_deterministic_in_delegate_mod
 
     # Cancellation via interject should clear active pointer and mark cancelled.
     await asyncio.wait_for(
-        active_handle.interject("please cancel this task"), timeout=10,
+        active_handle.interject("please cancel this task"),
+        timeout=10,
     )
     _ = await asyncio.wait_for(queue.result(), timeout=20)  # should complete after stop
 
@@ -738,7 +739,9 @@ async def test_delegate_contextvar_reset_no_leakage(monkeypatch):
     assert current_task_execution_delegate.get() is None
 
     h = HierarchicalActorHandle(
-        actor=actor, goal="delegate reset leak test", persist=False,
+        actor=actor,
+        goal="delegate reset leak test",
+        persist=False,
     )
     if h._execution_task:
         h._execution_task.cancel()

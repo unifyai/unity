@@ -79,7 +79,9 @@ class _Delegate:
             await self._trigger_nested.wait()
             try:
                 await self._scheduler.execute(task_id=self._nested_task_id)
-            except BaseException as e:  # noqa: BLE001 - test harness captures error type/message
+            except (
+                BaseException
+            ) as e:  # noqa: BLE001 - test harness captures error type/message
                 try:
                     self._nested_exc.put_nowait(e)
                 except Exception:

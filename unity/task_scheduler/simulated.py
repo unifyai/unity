@@ -173,7 +173,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                     answer = _m.model_dump_json()
                 except Exception:
                     _best: str | None = None
-                    for _line in [ln.strip() for ln in answer.splitlines() if ln.strip()]:
+                    for _line in [
+                        ln.strip() for ln in answer.splitlines() if ln.strip()
+                    ]:
                         try:
                             _m = self._response_format.model_validate_json(_line)  # type: ignore[attr-defined]
                             _best = _m.model_dump_json()
