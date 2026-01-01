@@ -276,38 +276,53 @@ def _upload_trace_to_context(
         if not spans:
             return  # Empty trace file
 
-        # Create the Trace context with explicit field types
-        trace_ctx = f"{test_ctx}/Trace"
+        # Detach from trace context to avoid recursive span creation.
+        # Without this, each unify.log() call generates ~26 Orchestra spans,
+        # turning a 600-span upload into 15,000+ additional spans.
         try:
-            unify.create_context(trace_ctx)
-        except Exception:
-            pass  # Context may already exist
+            from opentelemetry import context
 
-        # Create fields with explicit types (idempotent)
+            upload_token = context.attach(context.Context())
+        except ImportError:
+            upload_token = None
+
         try:
-            unify.create_fields(context=trace_ctx, fields=_TRACE_FIELDS)
-        except Exception:
-            pass  # Fields may already exist
-
-        # Upload each span as a row
-        for span in spans:
+            # Create the Trace context with explicit field types
+            trace_ctx = f"{test_ctx}/Trace"
             try:
-                unify.log(
-                    context=trace_ctx,
-                    trace_id=span.get("trace_id"),
-                    span_id=span.get("span_id"),
-                    parent_span_id=span.get("parent_span_id"),
-                    name=span.get("name"),
-                    service=span.get("service"),
-                    start_time=span.get("start_time"),
-                    end_time=span.get("end_time"),
-                    duration_ms=span.get("duration_ms"),
-                    status=span.get("status"),
-                    attributes=span.get("attributes", {}),
-                    new=True,
-                )
+                unify.create_context(trace_ctx)
             except Exception:
-                pass  # Best-effort logging
+                pass  # Context may already exist
+
+            # Create fields with explicit types (idempotent)
+            try:
+                unify.create_fields(context=trace_ctx, fields=_TRACE_FIELDS)
+            except Exception:
+                pass  # Fields may already exist
+
+            # Upload each span as a row
+            for span in spans:
+                try:
+                    unify.log(
+                        context=trace_ctx,
+                        trace_id=span.get("trace_id"),
+                        span_id=span.get("span_id"),
+                        parent_span_id=span.get("parent_span_id"),
+                        name=span.get("name"),
+                        service=span.get("service"),
+                        start_time=span.get("start_time"),
+                        end_time=span.get("end_time"),
+                        duration_ms=span.get("duration_ms"),
+                        status=span.get("status"),
+                        attributes=span.get("attributes", {}),
+                        new=True,
+                    )
+                except Exception:
+                    pass  # Best-effort logging
+        finally:
+            # Restore original trace context
+            if upload_token is not None:
+                context.detach(upload_token)
 
     except Exception:
         # Trace upload is best-effort; don't fail tests if it errors
