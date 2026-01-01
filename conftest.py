@@ -423,6 +423,22 @@ def pytest_sessionstart(session):
     except ImportError:
         pass  # OpenTelemetry not installed
 
+    # Configure Unify HTTP trace logging directory
+    # This enables correlation between pytest logs, unify SDK HTTP logs, and Orchestra traces
+    root_path = _get_log_root(Path(session.config.rootpath))
+    subdir = _get_log_subdir()
+    unify_http_log_dir = root_path / "logs" / "unify" / subdir
+    unify_http_log_dir.mkdir(parents=True, exist_ok=True)
+    # Must call configure_log_dir() to reset the cached state since
+    # unify was already imported before we could set the env var
+    try:
+        from unify.utils.http import configure_log_dir
+
+        configure_log_dir(str(unify_http_log_dir))
+    except ImportError:
+        # Unify not installed or old version without configure_log_dir
+        os.environ["UNIFY_HTTP_LOG_DIR"] = str(unify_http_log_dir)
+
     if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
     config = session.config
@@ -511,7 +527,8 @@ def pytest_unconfigure(config):
         tr.write_line(
             f"📁 This run's logs: {root_path / 'logs' / 'pytest' / subdir}/",
         )
-        tr.write_line(f"📂 All log directories:  {root_path / 'logs' / 'pytest'}/*/")
+        tr.write_line(f"📂 Unify HTTP logs:  {root_path / 'logs' / 'unify' / subdir}/")
+        tr.write_line(f"📂 All log directories:  {root_path / 'logs'}/*/")
         tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.
     if _TEE_FILE_HANDLE is not None:
