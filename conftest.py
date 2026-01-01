@@ -423,20 +423,29 @@ def pytest_sessionstart(session):
     except ImportError:
         pass  # OpenTelemetry not installed
 
-    # Configure Unify HTTP trace logging directory
-    # This enables correlation between pytest logs, unify SDK HTTP logs, and Orchestra traces
+    # Configure all file-based logging directories for trace correlation
+    # This enables correlation between pytest logs, Unity logs, Unify HTTP logs, and Orchestra traces
     root_path = _get_log_root(Path(session.config.rootpath))
     subdir = _get_log_subdir()
+
+    # Unity LOGGER file output (async tool loop, managers, etc.)
+    unity_log_dir = root_path / "logs" / "unity" / subdir
+    unity_log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        from unity.constants import configure_log_dir as configure_unity_log_dir
+
+        configure_unity_log_dir(str(unity_log_dir))
+    except ImportError:
+        os.environ["UNITY_LOG_DIR"] = str(unity_log_dir)
+
+    # Unify SDK HTTP trace logging
     unify_http_log_dir = root_path / "logs" / "unify" / subdir
     unify_http_log_dir.mkdir(parents=True, exist_ok=True)
-    # Must call configure_log_dir() to reset the cached state since
-    # unify was already imported before we could set the env var
     try:
-        from unify.utils.http import configure_log_dir
+        from unify.utils.http import configure_log_dir as configure_unify_log_dir
 
-        configure_log_dir(str(unify_http_log_dir))
+        configure_unify_log_dir(str(unify_http_log_dir))
     except ImportError:
-        # Unify not installed or old version without configure_log_dir
         os.environ["UNIFY_HTTP_LOG_DIR"] = str(unify_http_log_dir)
 
     if not SETTINGS.PYTEST_LOG_TO_FILE:
@@ -527,6 +536,7 @@ def pytest_unconfigure(config):
         tr.write_line(
             f"📁 This run's logs: {root_path / 'logs' / 'pytest' / subdir}/",
         )
+        tr.write_line(f"📂 Unity logs:       {root_path / 'logs' / 'unity' / subdir}/")
         tr.write_line(f"📂 Unify HTTP logs:  {root_path / 'logs' / 'unify' / subdir}/")
         tr.write_line(f"📂 All log directories:  {root_path / 'logs'}/*/")
         tr.write_line("=" * 72)

@@ -87,6 +87,10 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     LLM_IO_LOG: bool = True
     PYTEST_LOG_TO_FILE: bool = True
+    # Directory for Unity LOGGER file output (async tool loop, managers, etc.)
+    # When set, logs are written to {UNITY_LOG_DIR}/unity.log
+    # Default: None (console only)
+    UNITY_LOG_DIR: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)
