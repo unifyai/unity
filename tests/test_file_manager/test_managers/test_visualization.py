@@ -108,7 +108,7 @@ def _llm_assert_visualization_correct(
 
 def _check_visualize_tool_called(steps: list) -> bool:
     """Check if the _visualize tool was called in the reasoning steps."""
-    tool_calls, tool_results = find_tool_calls_and_results(steps, "_visualize")
+    tool_calls, tool_results = find_tool_calls_and_results(steps, "visualize")
     return len(tool_calls) > 0
 
 
