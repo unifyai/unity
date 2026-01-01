@@ -183,8 +183,13 @@ def _setup_otel() -> None:
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
         # Check if a TracerProvider already exists
+        # Note: ProxyTracerProvider is a lazy wrapper that delegates to NoOpTracerProvider
+        # by default until a real provider is set. We should replace it with our own.
         existing = trace.get_tracer_provider()
-        if existing and not isinstance(existing, trace.NoOpTracerProvider):
+        if existing and not isinstance(
+            existing,
+            (trace.NoOpTracerProvider, trace.ProxyTracerProvider),
+        ):
             # Someone else already configured OTel - use theirs
             _TRACER = trace.get_tracer("unity")
             LOGGER.debug("Using existing OTel TracerProvider")

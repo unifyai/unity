@@ -6,7 +6,7 @@ This document covers the logging infrastructure for tests: local log files, remo
 
 ## Log Directory Overview
 
-All logs are organized under `logs/` with five main subdirectories:
+All logs are organized under `logs/` with six main subdirectories:
 
 | Directory | Purpose | Structure | Control |
 |-----------|---------|-----------|---------|
@@ -15,8 +15,9 @@ All logs are organized under `logs/` with five main subdirectories:
 | `logs/llm/` | Raw LLM request/response traces | `.txt` files per request | `UNILLM_LOG` + `UNILLM_LOG_DIR` |
 | `logs/unify/` | Unify SDK HTTP traces | JSON files per request | `UNIFY_LOG` + `UNIFY_LOG_DIR` |
 | `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans | `ORCHESTRA_LOG_DIR` |
+| `logs/all/` | **Cross-repo OTEL traces** | `{trace_id}.jsonl` per test | `*_OTEL` + `*_OTEL_LOG_DIR` |
 
-**Cross-correlation:** When `UNITY_TEST_TRACING=true` (default), each test logs a `TRACE_ID` that links pytest output → Unity logs → Unify HTTP logs → Orchestra traces. See [Correlating Logs Across Systems](#correlating-logs-across-systems).
+**Cross-correlation:** When running tests via `parallel_run.sh`, OTEL tracing is enabled by default across all four repos (unity, unify, unillm, orchestra). All spans are written to `logs/all/`, enabling full-stack trace analysis. See [Cross-Repo OTEL Traces](#cross-repo-otel-traces-logsall).
 
 ---
 
@@ -401,6 +402,76 @@ For long-running requests, trace files are written incrementally:
 3. Renamed on completion with actual duration
 
 This allows debugging long-running requests before they complete.
+
+---
+
+## Cross-Repo OTEL Traces (`logs/all/`)
+
+The `logs/all/` directory contains **unified OpenTelemetry traces** spanning all four repositories (unity, unify, unillm, orchestra). Each test creates a single `{trace_id}.jsonl` file containing spans from the entire call stack.
+
+### How It Works
+
+When tests run via `parallel_run.sh`, OTEL tracing is automatically enabled for all repos:
+
+1. **Unity** creates the root span and TracerProvider
+2. **Unillm** creates child spans for LLM calls (using Unity's provider)
+3. **Unify** creates child spans for HTTP requests (using Unity's provider)
+4. **Orchestra** receives the `traceparent` header and creates server-side spans
+
+All repos write to the same directory, and since files are keyed by `trace_id`, each test's spans are aggregated into a single file.
+
+### Directory Structure
+
+```
+logs/all/
+└── 2026-01-01T14-30-22_unity_dev_ttys042/
+    ├── 099b207f89222185695d25977be454fc.jsonl   # Full trace for test_ask
+    ├── a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6.jsonl   # Full trace for test_update
+    └── ...
+```
+
+### Trace File Format (JSONL)
+
+Each `.jsonl` file contains one JSON object per line, representing a span:
+
+```json
+{"service": "unity", "trace_id": "099b207f...", "span_id": "a1b2c3d4", "parent_span_id": null, "name": "ContactManager.ask", "start_time": "2026-01-01T14:30:22.123Z", "end_time": "2026-01-01T14:30:25.456Z", "duration_ms": 3333, "attributes": {...}}
+{"service": "unillm", "trace_id": "099b207f...", "span_id": "e5f6g7h8", "parent_span_id": "a1b2c3d4", "name": "LLM gpt-5.2@openai", "start_time": "...", ...}
+{"service": "unify", "trace_id": "099b207f...", "span_id": "i9j0k1l2", "parent_span_id": "e5f6g7h8", "name": "POST /v0/chat/completions", "start_time": "...", ...}
+{"service": "orchestra", "trace_id": "099b207f...", "span_id": "m3n4o5p6", "parent_span_id": "i9j0k1l2", "name": "POST /v0/chat/completions", "start_time": "...", ...}
+```
+
+### Reading Trace Files
+
+```bash
+# View all spans for a trace (pretty-printed)
+cat logs/all/2026-01-01T14-30-22_unity_dev_ttys042/099b207f89222185695d25977be454fc.jsonl | jq -s .
+
+# Filter by service
+cat logs/all/*/*.jsonl | jq -s '[.[] | select(.service == "orchestra")]'
+
+# Find slow spans (>1s)
+cat logs/all/*/*.jsonl | jq -s '[.[] | select(.duration_ms > 1000)]'
+```
+
+### Environment Variables
+
+OTEL is enabled automatically by `parallel_run.sh`. To customize:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UNITY_OTEL` | `true` (via parallel_run.sh) | Enable Unity OTEL tracing |
+| `UNIFY_OTEL` | `true` (via parallel_run.sh) | Enable Unify SDK OTEL tracing |
+| `UNILLM_OTEL` | `true` (via parallel_run.sh) | Enable Unillm OTEL tracing |
+| `UNITY_OTEL_LOG_DIR` | `logs/all/$LOG_SUBDIR` | Unity span output directory |
+| `UNIFY_OTEL_LOG_DIR` | `logs/all/$LOG_SUBDIR` | Unify span output directory |
+| `UNILLM_OTEL_LOG_DIR` | `logs/all/$LOG_SUBDIR` | Unillm span output directory |
+| `ORCHESTRA_OTEL_LOG_DIR` | (inherited from `UNITY_OTEL_LOG_DIR`) | Orchestra span output directory |
+
+To disable OTEL tracing:
+```bash
+parallel_run.sh --env UNITY_OTEL=false --env UNIFY_OTEL=false --env UNILLM_OTEL=false tests/
+```
 
 ---
 

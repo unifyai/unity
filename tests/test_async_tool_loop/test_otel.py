@@ -105,6 +105,44 @@ class TestGetTracer:
         # Should use existing provider
         assert trace.get_tracer_provider() is existing_provider
 
+    def test_replaces_proxy_tracer_provider(self, monkeypatch, tmp_path):
+        """_setup_otel replaces ProxyTracerProvider with real provider.
+
+        When OTel is auto-instrumented or imported before explicit setup,
+        a ProxyTracerProvider may be in place. Unity should replace it with
+        a real TracerProvider to enable span export.
+        """
+        from unity import logger
+        from opentelemetry.sdk.trace import TracerProvider
+
+        # Reset OTel global state to get fresh ProxyTracerProvider
+        trace._TRACER_PROVIDER_SET_ONCE._done = False
+        trace._TRACER_PROVIDER = None
+
+        # Configure Unity OTEL with a log directory
+        monkeypatch.setattr(logger, "_OTEL_ENABLED", True)
+        monkeypatch.setattr(logger, "_OTEL_INITIALIZED", False)
+        monkeypatch.setattr(logger, "_OTEL_LOG_DIR", str(tmp_path))
+        monkeypatch.setattr(logger, "_TRACER", None)
+
+        # First call to get_tracer_provider returns ProxyTracerProvider
+        initial_provider = trace.get_tracer_provider()
+        assert isinstance(initial_provider, trace.ProxyTracerProvider)
+
+        # Call setup
+        logger._setup_otel()
+
+        # After setup, should have a real TracerProvider
+        final_provider = trace.get_tracer_provider()
+        assert isinstance(final_provider, TracerProvider)
+        assert not isinstance(final_provider, trace.ProxyTracerProvider)
+
+        # Verify spans are created with the real provider
+        with logger.unity_span("test_operation") as span:
+            assert span is not None
+            # Real spans have non-zero trace_id
+            assert span.context.trace_id != 0
+
 
 class TestUnitySpan:
     """Tests for unity_span context manager."""
