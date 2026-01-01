@@ -184,8 +184,6 @@ def create_global_configmap(api_client, namespace="default"):
             },
             "data": {
                 "PROJECT_ID": "responsive-city-458413-a2",
-                "VERTEXAI_PROJECT": "saas-368716",
-                "VERTEXAI_LOCATION": "global",
             },
         }
 

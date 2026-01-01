@@ -70,9 +70,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
-    GOOGLE_APPLICATION_CREDENTIALS: str = ""
-    VERTEXAI_LOCATION: str = ""
-    VERTEXAI_PROJECT: str = ""
     UNITY_VALIDATE_LLM_PROVIDERS: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -190,9 +187,6 @@ class ProductionSettings(BaseSettings):
         required = {
             "OPENAI_API_KEY": self.OPENAI_API_KEY,
             "ANTHROPIC_API_KEY": self.ANTHROPIC_API_KEY,
-            "GOOGLE_APPLICATION_CREDENTIALS": self.GOOGLE_APPLICATION_CREDENTIALS,
-            "VERTEXAI_LOCATION": self.VERTEXAI_LOCATION,
-            "VERTEXAI_PROJECT": self.VERTEXAI_PROJECT,
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
