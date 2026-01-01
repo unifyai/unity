@@ -62,6 +62,7 @@ def build_cross_tool_orchestration(tools: Dict[str, Callable]) -> str:
             "• Semantic meaning/topics → `search_files`",
             "• Exact matches (ids, statuses) → `filter_files`",
             "• Cross-table correlation → `filter_join`, `search_join`",
+            "• Visual charts/plots → `visualize`",
         ],
     )
 
