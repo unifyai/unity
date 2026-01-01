@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-
-from unity.transcript_manager.transcript_manager import TranscriptManager
-from tests.assertion_helpers import first_diff_block
+import os
 import sys
 import subprocess
 import textwrap
+
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
+from tests.assertion_helpers import first_diff_block
+from tests.helpers import _handle_project
 
 
 def _unwrap_callable(tool):
@@ -13,6 +16,7 @@ def _unwrap_callable(tool):
     return getattr(tool, "fn", tool)
 
 
+@_handle_project
 def test_ask_tools_docstrings():
     tm = TranscriptManager()
     tools = tm.get_tools("ask")
@@ -28,15 +32,26 @@ def test_ask_tools_docstrings():
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
 
 
-def _build_tools_schema_in_subprocess(method: str) -> str:
+def _build_tools_schema_in_subprocess(method: str, test_context: str) -> str:
     """
     Build tools→schema JSON in a fresh Python process to catch cross-session drift.
+
+    The test_context is passed via environment variable to ensure the subprocess
+    uses an isolated context rather than the shared default context.
     """
     assert method == "ask"
     code = textwrap.dedent(
         f"""
 		import os, sys, json
 		sys.path.insert(0, os.getcwd())
+		import unify
+		# Activate the test project before setting context
+		project_name = os.environ.get("UNITY_TEST_PROJECT_NAME", "UnityTests")
+		unify.activate(project_name, overwrite=False)
+		# Set test-specific context before creating TranscriptManager to avoid races
+		test_ctx = os.environ.get("_TEST_CONTEXT")
+		if test_ctx:
+			unify.set_context(test_ctx, relative=False)
 		from unity.common.llm_helpers import method_to_schema
 		def _unwrap_callable(tool):
 			return getattr(tool, "fn", tool)
@@ -52,19 +67,25 @@ def _build_tools_schema_in_subprocess(method: str) -> str:
 		sys.stdout.write(json.dumps(mapping, sort_keys=True, indent=2))
 		""",
     )
+    env = os.environ.copy()
+    env["_TEST_CONTEXT"] = test_context
     proc = subprocess.run(
         [sys.executable, "-c", code],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         check=True,
+        env=env,
     )
     return proc.stdout
 
 
+@_handle_project
 def test_ask_schemas_stability():
-    p1 = _build_tools_schema_in_subprocess("ask")
-    p2 = _build_tools_schema_in_subprocess("ask")
+    # Build a test-specific context path matching _handle_project pattern
+    test_ctx = f"tests/test_transcript_manager/test_tool_docstrings/test_ask_schemas_stability/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+    p1 = _build_tools_schema_in_subprocess("ask", test_ctx)
+    p2 = _build_tools_schema_in_subprocess("ask", test_ctx)
     if p1 != p2:
         snippet = first_diff_block(
             p1,
