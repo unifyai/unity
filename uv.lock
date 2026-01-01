@@ -8706,7 +8706,7 @@ wheels = [
 [[package]]
 name = "unifyai"
 version = "0.9.10"
-source = { git = "https://github.com/unifyai/unify.git?branch=main#802386b1efd3365647eb9a04fad1daca691bb708" }
+source = { git = "https://github.com/unifyai/unify.git?branch=main#606a34b8c197a8689157eb737eee443df2610185" }
 dependencies = [
     { name = "aiohttp" },
     { name = "google-genai" },
@@ -8725,7 +8725,7 @@ dependencies = [
 [[package]]
 name = "unillm"
 version = "0.1.0"
-source = { git = "https://github.com/unifyai/unillm.git?branch=main#3a9afae2cf8290672e22b7d78e6cb8d37f283867" }
+source = { git = "https://github.com/unifyai/unillm.git?branch=main#acf4d4949e42255eeadb3b1f00cb74be116d1a18" }
 dependencies = [
     { name = "litellm" },
     { name = "pydantic" },
