@@ -60,7 +60,11 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from ._types import GroupBy, PlotConfig, PlotType
+from ._types import GroupBy, PlotConfig
+
+# Note: PlotConfig is re-exported from unity.file_manager.managers.utils.viz_utils
+# via _types.py for type consistency with FileManager._visualize.
+# PlotConfig uses plot_type (str) instead of type (enum), and aggregate instead of metric.
 
 
 # =============================================================================
@@ -84,44 +88,44 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "jobs_completed_per_day": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="Jobs Completed per Operative",
                 # Rationale: Bar chart showing count of completed jobs per operative
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Jobs Completed per Patch",
                 # Rationale: Bar chart showing jobs completed in each patch area
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Jobs Completed per Region",
                 # Rationale: Compare North vs South region productivity
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.LINE,
+                plot_type="line",
                 x_axis="WorksOrderReportedCompletedDate",
                 y_axis="JobTicketReference",
                 group_by="WorksOrderReportedCompletedDate",
-                metric="count",
+                aggregate="count",
                 title="Daily Jobs Completed",
                 # Rationale: Line chart for time-series trend analysis
             ),
@@ -134,41 +138,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "repairs_completed_per_day": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="Repairs Completed per Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Repairs Completed per Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Repairs Completed per Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.LINE,
+                plot_type="line",
                 x_axis="WorksOrderReportedCompletedDate",
                 y_axis="JobTicketReference",
                 group_by="WorksOrderReportedCompletedDate",
-                metric="count",
+                aggregate="count",
                 title="Daily Repairs Completed",
             ),
         ],
@@ -180,41 +184,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "jobs_issued_per_day": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeName",
                 y_axis="JobTicketReference",
                 group_by="OperativeName",
-                metric="count",
+                aggregate="count",
                 title="Jobs Issued per Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Jobs Issued per Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Jobs Issued per Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.LINE,
+                plot_type="line",
                 x_axis="WorksOrderIssuedDate",
                 y_axis="JobTicketReference",
                 group_by="WorksOrderIssuedDate",
-                metric="count",
+                aggregate="count",
                 title="Daily Jobs Issued",
             ),
         ],
@@ -228,11 +232,11 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "first_time_fix_rate": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="First-Time Fix Count by Operative",
                 # Rationale: Shows volume of FTF jobs per operative
                 # (filter for FirstTimeFix='Yes' applied by metric function)
@@ -240,31 +244,31 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="First-Time Fix Count by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="First-Time Fix Count by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="FirstTimeFix",
                 y_axis="JobTicketReference",
                 group_by="FirstTimeFix",
-                metric="count",
+                aggregate="count",
                 title="First-Time Fix Breakdown (Yes/No)",
                 # Rationale: Bar chart showing FTF=Yes vs FTF=No counts
             ),
@@ -277,41 +281,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "follow_on_required_rate": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="Follow-On Jobs by Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Follow-On Jobs by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Follow-On Jobs by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="FollowOn",
                 y_axis="JobTicketReference",
                 group_by="FollowOn",
-                metric="count",
+                aggregate="count",
                 title="Follow-On Required Breakdown (Yes/No)",
             ),
         ],
@@ -323,41 +327,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "follow_on_materials_rate": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="Materials Follow-On by Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Materials Follow-On by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Materials Follow-On by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="FollowOnDescription",
                 y_axis="JobTicketReference",
                 group_by="FollowOnDescription",
-                metric="count",
+                aggregate="count",
                 title="Follow-On Reasons Breakdown",
                 # Rationale: Shows distribution of follow-on reasons
             ),
@@ -370,41 +374,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "no_access_rate": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="No-Access Jobs by Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="No-Access Jobs by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="No-Access Jobs by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="NoAccess",
                 y_axis="JobTicketReference",
                 group_by="NoAccess",
-                metric="count",
+                aggregate="count",
                 title="No-Access Reasons Breakdown",
             ),
         ],
@@ -416,41 +420,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "job_completed_on_time_rate": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="On-Time Completions by Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="On-Time Completions by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="On-Time Completions by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="WorksOrderPriorityDescription",
                 y_axis="JobTicketReference",
                 group_by="WorksOrderPriorityDescription",
-                metric="count",
+                aggregate="count",
                 title="Jobs by Priority Category",
                 # Rationale: Shows distribution across priority levels
             ),
@@ -464,22 +468,22 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "merchant_stops_per_day": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="Driver",
                 y_axis="Trip",
                 group_by="Driver",
-                metric="count",
+                aggregate="count",
                 title="Trips per Driver",
                 # Rationale: Count of trips (stops) per driver
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="EndLocation",
                 y_axis="Trip",
                 group_by="EndLocation",
-                metric="count",
+                aggregate="count",
                 title="Trips by End Location",
                 # Rationale: Shows which locations are visited most
             ),
@@ -492,21 +496,21 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "avg_duration_at_merchant": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="Driver",
                 y_axis="Trip travel time",
                 group_by="Driver",
-                metric="mean",
+                aggregate="mean",
                 title="Average Trip Duration per Driver",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="EndLocation",
                 y_axis="Trip travel time",
                 group_by="EndLocation",
-                metric="mean",
+                aggregate="mean",
                 title="Average Duration by Location",
             ),
         ],
@@ -518,17 +522,17 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "distance_travelled_per_day": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="Driver",
                 y_axis="Total distance",
                 group_by="Driver",
-                metric="sum",
+                aggregate="sum",
                 title="Total Distance per Driver",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.HISTOGRAM,
+                plot_type="histogram",
                 x_axis="Total distance",
                 bin_count=20,
                 title="Distribution of Trip Distances",
@@ -543,17 +547,17 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "avg_time_travelling": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="Driver",
                 y_axis="Trip travel time",
                 group_by="Driver",
-                metric="sum",
+                aggregate="sum",
                 title="Total Travel Time per Driver",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.HISTOGRAM,
+                plot_type="histogram",
                 x_axis="Trip travel time",
                 bin_count=20,
                 title="Distribution of Travel Times",
@@ -567,41 +571,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "jobs_requiring_materials_rate": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="Jobs with Materials by Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Jobs with Materials by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Jobs with Materials by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="FollowOnDescription",
                 y_axis="JobTicketReference",
                 group_by="FollowOnDescription",
-                metric="count",
+                aggregate="count",
                 title="Materials-Related Follow-Ons",
             ),
         ],
@@ -613,41 +617,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "avg_repairs_per_property": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="Repairs by Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Repairs by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Repairs by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="PropertyType",
                 y_axis="JobTicketReference",
                 group_by="PropertyType",
-                metric="count",
+                aggregate="count",
                 title="Repairs by Property Type",
             ),
         ],
@@ -659,11 +663,11 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "complaints_rate": {
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Jobs by Region (Complaints Data Unavailable)",
             ),
         ],
@@ -675,41 +679,41 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     "appointment_adherence_rate": {
         GroupBy.OPERATIVE: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="OperativeWhoCompletedJob",
                 y_axis="JobTicketReference",
                 group_by="OperativeWhoCompletedJob",
-                metric="count",
+                aggregate="count",
                 title="Scheduled Jobs by Operative",
             ),
         ],
         GroupBy.PATCH: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsPatch",
                 y_axis="JobTicketReference",
                 group_by="RepairsPatch",
-                metric="count",
+                aggregate="count",
                 title="Scheduled Jobs by Patch",
             ),
         ],
         GroupBy.REGION: [
             PlotConfig(
-                type=PlotType.BAR,
+                plot_type="bar",
                 x_axis="RepairsRegion",
                 y_axis="JobTicketReference",
                 group_by="RepairsRegion",
-                metric="count",
+                aggregate="count",
                 title="Scheduled Jobs by Region",
             ),
         ],
         GroupBy.TOTAL: [
             PlotConfig(
-                type=PlotType.LINE,
+                plot_type="line",
                 x_axis="WorksOrderReportedCompletedDate",
                 y_axis="JobTicketReference",
                 group_by="WorksOrderReportedCompletedDate",
-                metric="count",
+                aggregate="count",
                 title="Scheduled Job Completions Over Time",
             ),
         ],

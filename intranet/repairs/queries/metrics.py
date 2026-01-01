@@ -41,7 +41,7 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar
 from intranet.core.bespoke_repairs_agent import register
 
 from ._types import GroupBy, MetricResult, PlotResult, TimePeriod, ToolsDict
-from .plot_utils import generate_plots, get_active_project
+from .plot_utils import generate_plots
 
 # =============================================================================
 # LOGGING SETUP
@@ -495,14 +495,18 @@ async def jobs_completed_per_day(
 
         # Generate plots if requested
         group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-        plots = generate_plots(
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            project_name=get_active_project(),
-            tables=REPAIRS_TABLE,
-            filter_expr=filter_expr,
-            include_plots=include_plots,
-        )
+        # Generate plots if requested
+        visualize_tool = tools.get("visualize")
+        plots: List[PlotResult] = []
+        if visualize_tool and include_plots:
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=REPAIRS_TABLE,
+                filter_expr=filter_expr,
+                include_plots=include_plots,
+            )
 
         return _build_metric_result(
             metric_name=metric_name,
@@ -675,14 +679,17 @@ async def no_access_rate(
 
         # Generate plots if requested
         group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-        plots = generate_plots(
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            project_name=get_active_project(),
-            tables=REPAIRS_TABLE,
-            filter_expr=no_access_filter,
-            include_plots=include_plots,
-        )
+        visualize_tool = tools.get("visualize")
+        plots: List[PlotResult] = []
+        if visualize_tool and include_plots:
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=REPAIRS_TABLE,
+                filter_expr=no_access_filter,
+                include_plots=include_plots,
+            )
 
         return _build_metric_result(
             metric_name=metric_name,
@@ -842,14 +849,17 @@ async def first_time_fix_rate(
 
     # Generate plots if requested
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        filter_expr=ftf_filter,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            filter_expr=ftf_filter,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name="first_time_fix_rate",
@@ -997,14 +1007,17 @@ async def follow_on_required_rate(
 
     # Generate plots if requested
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        filter_expr=fo_filter,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            filter_expr=fo_filter,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name="follow_on_required_rate",
@@ -1161,14 +1174,17 @@ async def follow_on_materials_rate(
 
     # Generate plots if requested
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        filter_expr=materials_filter,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            filter_expr=materials_filter,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name="follow_on_materials_rate",
@@ -1324,14 +1340,17 @@ async def job_completed_on_time_rate(
 
     # Generate plots if requested
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        filter_expr=on_time_filter,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            filter_expr=on_time_filter,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name="job_completed_on_time_rate",
@@ -1436,13 +1455,16 @@ async def merchant_stops_per_day(
 
     # Generate plots if requested - for each month's telematics table
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=ALL_TELEMATICS_TABLES,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=ALL_TELEMATICS_TABLES,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name="merchant_stops_per_day",
@@ -1510,13 +1532,16 @@ async def avg_duration_at_merchant(
 
     # Generate plots if requested - for each month's telematics table
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=ALL_TELEMATICS_TABLES,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=ALL_TELEMATICS_TABLES,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name=metric_name,
@@ -1626,14 +1651,17 @@ async def distance_travelled_per_day(
 
     # Generate plots if requested - for each month's telematics table
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=ALL_TELEMATICS_TABLES,
-        filter_expr=base_filter,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=ALL_TELEMATICS_TABLES,
+            filter_expr=base_filter,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name=metric_name,
@@ -1731,13 +1759,16 @@ async def avg_time_travelling(
 
     # Generate plots if requested - for each month's telematics table
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=ALL_TELEMATICS_TABLES,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=ALL_TELEMATICS_TABLES,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name=metric_name,
@@ -1831,14 +1862,17 @@ async def repairs_completed_per_day(
 
     # Generate plots if requested
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        filter_expr=filter_expr,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            filter_expr=filter_expr,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name=metric_name,
@@ -1934,14 +1968,17 @@ async def jobs_issued_per_day(
 
     # Generate plots if requested
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        filter_expr=filter_expr,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            filter_expr=filter_expr,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name=metric_name,
@@ -2093,14 +2130,17 @@ async def jobs_requiring_materials_rate(
 
     # Generate plots if requested
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        filter_expr=materials_filter,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            filter_expr=materials_filter,
+            include_plots=include_plots,
+        )
 
     return _build_metric_result(
         metric_name="jobs_requiring_materials_rate",
@@ -2207,14 +2247,17 @@ async def avg_repairs_per_property(
 
         # Generate plots if requested
         group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-        plots = generate_plots(
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            project_name=get_active_project(),
-            tables=REPAIRS_TABLE,
-            filter_expr=filter_expr,
-            include_plots=include_plots,
-        )
+        visualize_tool = tools.get("visualize")
+        plots: List[PlotResult] = []
+        if visualize_tool and include_plots:
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=REPAIRS_TABLE,
+                filter_expr=filter_expr,
+                include_plots=include_plots,
+            )
 
         return _build_metric_result(
             metric_name="avg_repairs_per_property",
@@ -2294,13 +2337,16 @@ async def complaints_rate(
 
     # Generate plots if requested (will be empty for this unavailable metric)
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    plots = generate_plots(
-        metric_name=metric_name,
-        group_by=group_by_enum,
-        project_name=get_active_project(),
-        tables=REPAIRS_TABLE,
-        include_plots=include_plots,
-    )
+    visualize_tool = tools.get("visualize")
+    plots: List[PlotResult] = []
+    if visualize_tool and include_plots:
+        plots = generate_plots(
+            visualize_tool=visualize_tool,
+            metric_name=metric_name,
+            group_by=group_by_enum,
+            tables=REPAIRS_TABLE,
+            include_plots=include_plots,
+        )
 
     # Note: No complaints column exists in the repairs data
     # This metric cannot be calculated from the current dataset
@@ -2582,14 +2628,17 @@ async def appointment_adherence_rate(
 
         # Generate plots if requested
         group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-        plots = generate_plots(
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            project_name=get_active_project(),
-            tables=REPAIRS_TABLE,
-            filter_expr=base_filter,
-            include_plots=include_plots,
-        )
+        visualize_tool = tools.get("visualize")
+        plots: List[PlotResult] = []
+        if visualize_tool and include_plots:
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=REPAIRS_TABLE,
+                filter_expr=base_filter,
+                include_plots=include_plots,
+            )
 
         return _build_metric_result(
             metric_name=metric_name,
