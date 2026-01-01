@@ -19,9 +19,6 @@ class TestLLMProviderValidation:
             UNITY_VALIDATE_LLM_PROVIDERS=True,
             OPENAI_API_KEY="",
             ANTHROPIC_API_KEY="",
-            GOOGLE_APPLICATION_CREDENTIALS="",
-            VERTEXAI_LOCATION="",
-            VERTEXAI_PROJECT="",
         )
         with pytest.raises(RuntimeError) as exc_info:
             settings.validate_llm_providers()
@@ -30,9 +27,6 @@ class TestLLMProviderValidation:
         assert "Missing required LLM provider credentials" in error_msg
         assert "OPENAI_API_KEY" in error_msg
         assert "ANTHROPIC_API_KEY" in error_msg
-        assert "GOOGLE_APPLICATION_CREDENTIALS" in error_msg
-        assert "VERTEXAI_LOCATION" in error_msg
-        assert "VERTEXAI_PROJECT" in error_msg
 
     def test_validation_fails_when_some_credentials_missing(self):
         """Validation raises RuntimeError listing only missing credentials."""
@@ -40,20 +34,14 @@ class TestLLMProviderValidation:
             UNITY_VALIDATE_LLM_PROVIDERS=True,
             OPENAI_API_KEY="sk-test",
             ANTHROPIC_API_KEY="",
-            GOOGLE_APPLICATION_CREDENTIALS="creds.json",
-            VERTEXAI_LOCATION="",
-            VERTEXAI_PROJECT="my-project",
         )
         with pytest.raises(RuntimeError) as exc_info:
             settings.validate_llm_providers()
 
         error_msg = str(exc_info.value)
         assert "ANTHROPIC_API_KEY" in error_msg
-        assert "VERTEXAI_LOCATION" in error_msg
-        # These should NOT be in the error since they're provided
+        # This should NOT be in the error since it's provided
         assert "OPENAI_API_KEY" not in error_msg
-        assert "GOOGLE_APPLICATION_CREDENTIALS" not in error_msg
-        assert "VERTEXAI_PROJECT" not in error_msg
 
     def test_validation_passes_when_all_credentials_provided(self):
         """Validation succeeds when all credentials are set."""
@@ -61,9 +49,6 @@ class TestLLMProviderValidation:
             UNITY_VALIDATE_LLM_PROVIDERS=True,
             OPENAI_API_KEY="sk-test-openai",
             ANTHROPIC_API_KEY="sk-ant-test",
-            GOOGLE_APPLICATION_CREDENTIALS="creds.json",
-            VERTEXAI_LOCATION="us-central1",
-            VERTEXAI_PROJECT="my-project",
         )
         # Should not raise
         settings.validate_llm_providers()
@@ -74,9 +59,6 @@ class TestLLMProviderValidation:
             UNITY_VALIDATE_LLM_PROVIDERS=False,
             OPENAI_API_KEY="",
             ANTHROPIC_API_KEY="",
-            GOOGLE_APPLICATION_CREDENTIALS="",
-            VERTEXAI_LOCATION="",
-            VERTEXAI_PROJECT="",
         )
         # Should not raise even with empty credentials
         settings.validate_llm_providers()

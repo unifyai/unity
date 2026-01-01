@@ -492,13 +492,14 @@ jobs:
       UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      # GCP credentials (path set in "Write GCP credentials file" step via GITHUB_ENV)
-      VERTEXAI_LOCATION: ${{ vars.GCP_LOCATION }}
-      VERTEXAI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      # Orchestra GCP configuration (set by google-github-actions/auth step)
+      # ORCHESTRA_VERTEXAI_SERVICE_ACC_JSON is set via GOOGLE_APPLICATION_CREDENTIALS by auth action
+      ORCHESTRA_VERTEXAI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      ORCHESTRA_VERTEXAI_LOCATION: ${{ vars.GCP_LOCATION }}
       # GCP bucket names (passed to orchestra server)
-      GCP_BUCKET_LOGS: ${{ vars.GCP_BUCKET_LOGS }}
-      GCP_BUCKET_ASSISTANT_IMAGES: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
-      GCP_BUCKET_RECORDINGS: ${{ vars.GCP_BUCKET_RECORDINGS }}
+      ORCHESTRA_GCP_BUCKET_NAME: ${{ vars.GCP_BUCKET_LOGS }}
+      ORCHESTRA_GCP_ASSISTANT_IMAGES_BUCKET_NAME: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
+      ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
     - uses: actions/checkout@v2
@@ -514,11 +515,10 @@ jobs:
         token: ${{ secrets.ORCHESTRA_CLONE_TOKEN }}
         fetch-depth: 1
 
-    - name: Write GCP credentials file
-      run: |
-        echo '${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' > "${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}"
-        chmod 600 "${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}"
-        echo "GOOGLE_APPLICATION_CREDENTIALS=${{ runner.temp }}/${{ vars.GCP_CREDENTIALS_FILENAME }}" >> $GITHUB_ENV
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
 
     - name: Get orchestra commit SHA
       id: orchestra-sha
