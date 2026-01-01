@@ -511,6 +511,38 @@ build_env_exports() {
   # Export the log subdir for datetime-prefixed log directory naming
   exports="$exports UNITY_LOG_SUBDIR=$LOG_SUBDIR"
 
+  # ---------------------------------------------------------------------------
+  # OpenTelemetry Configuration for Cross-Repo Full-Stack Traces
+  # ---------------------------------------------------------------------------
+  # Enable OTEL tracing across all four repos (unity, unify, unillm, orchestra)
+  # so spans from a single test are aggregated into one {trace_id}.jsonl file.
+  # Orchestra's OTEL_LOG_DIR is already wired in orchestra.sh to use UNITY_OTEL_LOG_DIR.
+  local otel_log_dir="$REPO_ROOT/logs/all/$LOG_SUBDIR"
+
+  # Enable OTEL master switches (unless explicitly disabled via --env)
+  if ! is_var_in_env_overrides "UNITY_OTEL"; then
+    exports="$exports UNITY_OTEL=true"
+  fi
+  if ! is_var_in_env_overrides "UNIFY_OTEL"; then
+    exports="$exports UNIFY_OTEL=true"
+  fi
+  if ! is_var_in_env_overrides "UNILLM_OTEL"; then
+    exports="$exports UNILLM_OTEL=true"
+  fi
+
+  # Point all repos to the unified OTEL log directory (unless explicitly set via --env)
+  # All repos write {trace_id}.jsonl files; shared directory = unified traces
+  if ! is_var_in_env_overrides "UNITY_OTEL_LOG_DIR"; then
+    exports="$exports UNITY_OTEL_LOG_DIR=$otel_log_dir"
+  fi
+  if ! is_var_in_env_overrides "UNIFY_OTEL_LOG_DIR"; then
+    exports="$exports UNIFY_OTEL_LOG_DIR=$otel_log_dir"
+  fi
+  if ! is_var_in_env_overrides "UNILLM_OTEL_LOG_DIR"; then
+    exports="$exports UNILLM_OTEL_LOG_DIR=$otel_log_dir"
+  fi
+  # Note: ORCHESTRA_OTEL_LOG_DIR is set in orchestra.sh based on UNITY_OTEL_LOG_DIR
+
   # Add all --env flag overrides
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     exports="$exports $kv"
@@ -1124,7 +1156,8 @@ declare -a session_ids=()
 echo
 echo "========================================================================"
 echo "📁 Test logs for THIS run: logs/pytest/$LOG_SUBDIR/"
-echo "📂 All log directories:    logs/pytest/*/"
+echo "🔗 OTEL traces (cross-repo): logs/all/$LOG_SUBDIR/"
+echo "📂 All log directories:      logs/*/"
 echo "========================================================================"
 echo
 
