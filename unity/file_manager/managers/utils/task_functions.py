@@ -177,7 +177,8 @@ def execute_create_file_record(
         document_summary=document_summary,
     )
 
-    _ops_create_file_record(file_manager, entry=entry)
+    created_file_record = _ops_create_file_record(file_manager, entry=entry)
+    logger.debug(f"[TaskFn] Created file record: {created_file_record}")
 
     # Lookup the created file_id
     file_id = get_file_id_from_path(
@@ -192,7 +193,11 @@ def execute_create_file_record(
 
     logger.debug(f"[TaskFn] File record created: file_id={file_id}")
 
-    return {"file_id": file_id, "file_path": file_path}
+    return {
+        "file_id": file_id,
+        "file_path": file_path,
+        "created_file_record": created_file_record,
+    }
 
 
 # =============================================================================
