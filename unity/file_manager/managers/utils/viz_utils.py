@@ -135,9 +135,6 @@ def get_auth_headers() -> Dict[str, str]:
     dict
         Dictionary with Authorization header.
     """
-    # ToDo: Remove this once we have a consolidated method for setting SESSION_DETAILS
-    SESSION_DETAILS.populate_from_env()
-
     unify_key = SESSION_DETAILS.unify_key
     if not unify_key:
         logger.warning(
