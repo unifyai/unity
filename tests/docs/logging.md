@@ -6,15 +6,17 @@ This document covers the logging infrastructure for tests: local log files, remo
 
 ## Log Directory Overview
 
-All logs are organized under `logs/` with three main subdirectories:
+All logs are organized under `logs/` with five main subdirectories:
 
-| Directory | Purpose | Structure |
-|-----------|---------|-----------|
-| `logs/pytest/` | Test output (stdout/stderr) | One `.txt` per test |
-| `logs/llm/` | Raw LLM request/response traces | JSON files per session |
-| `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans |
+| Directory | Purpose | Structure | Production-Ready |
+|-----------|---------|-----------|------------------|
+| `logs/pytest/` | Test output (stdout/stderr) | One `.txt` per test | No (test-only) |
+| `logs/unity/` | Unity LOGGER output (async tool loop, managers) | `unity.log` per session | Yes (`UNITY_LOG_DIR`) |
+| `logs/llm/` | Raw LLM request/response traces | JSON files per session | Partial (via hooks) |
+| `logs/unify/` | Unify SDK HTTP traces | JSON files per request | Yes (`UNIFY_HTTP_LOG_DIR`) |
+| `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans | Yes (`ORCHESTRA_TRACE_LOG_DIR`) |
 
-**Cross-correlation:** When `UNITY_TEST_TRACING=true` (default), each test logs a `TRACE_ID` that links pytest output → Orchestra API calls. See [Correlating Logs Across Systems](#correlating-logs-across-systems).
+**Cross-correlation:** When `UNITY_TEST_TRACING=true` (default), each test logs a `TRACE_ID` that links pytest output → Unity logs → Unify HTTP logs → Orchestra traces. See [Correlating Logs Across Systems](#correlating-logs-across-systems).
 
 ---
 
@@ -83,6 +85,49 @@ ls logs/pytest/*/*.txt       # List all log files across all runs
 
 ---
 
+## Unity Logs (`logs/unity/`)
+
+Unity LOGGER output captures async tool loop events, manager operations, tool scheduling, and other runtime logging. This is production-ready logging controlled by the `UNITY_LOG_DIR` environment variable.
+
+```
+logs/unity/
+├── 2025-12-05T09-15-22_unity_dev_ttys042/
+│   └── unity.log        # All LOGGER output for this session
+└── ...
+```
+
+**Sample content:**
+```
+2026-01-01 14:26:46,175    INFO 🧑‍💻 [ContactManager.ask(ca3e)] User Message: What is Alice Smith's...
+2026-01-01 14:26:46,535    INFO 🔄 [ContactManager.ask(ca3e)] LLM thinking…
+2026-01-01 14:26:50,664    INFO 🛠️  ToolCall Scheduled [ContactManager.ask(ca3e)] search_contacts
+```
+
+**Production usage:** Set `UNITY_LOG_DIR=/path/to/logs` to enable file logging in production. If not set, logs go to console only.
+
+---
+
+## Unify HTTP Logs (`logs/unify/`)
+
+Unify SDK HTTP traces capture all requests to the Orchestra API with OpenTelemetry trace correlation. This is production-ready logging controlled by the `UNIFY_HTTP_LOG_DIR` environment variable.
+
+```
+logs/unify/
+├── 2025-12-05T09-15-22_unity_dev_ttys042/
+│   ├── 14-26-27.611_POST_project-UnityTests-contexts_210ms_200_no-trace.json
+│   ├── 14-26-46.175_GET_logs_331ms_200_f124f0d3.json   # trace_id suffix!
+│   └── ...
+└── ...
+```
+
+**Filename format:** `{timestamp}_{METHOD}_{route}_{duration}ms_{status}_{trace_id}.json`
+
+The `trace_id` suffix (last 8 chars) enables correlation with pytest `[TRACE] TRACE_ID=...` output and Orchestra traces.
+
+**Production usage:** Set `UNIFY_HTTP_LOG_DIR=/path/to/logs` to enable file logging in production.
+
+---
+
 ## LLM Logs (`logs/llm/`)
 
 LLM request/response traces follow the same datetime-prefixed structure as pytest logs. These contain the raw I/O for each LLM call made during tests.
@@ -94,6 +139,8 @@ logs/llm/
 │       └── *.txt
 └── ...
 ```
+
+**Note:** LLM logging is currently handled by Unity's `llm_io_hooks.py` monkeypatch. A future update will move this to the `unillm` repo with a proper `UNILLM_LOG_DIR` environment variable.
 
 ---
 
@@ -349,14 +396,27 @@ This allows debugging long-running requests before they complete.
 
 ## Correlating Logs Across Systems
 
-OpenTelemetry trace IDs link pytest runs to Orchestra API calls, enabling end-to-end debugging.
+OpenTelemetry trace IDs link all log types together, enabling end-to-end debugging across the full stack.
 
 ### How It Works
 
 1. **Pytest creates a trace span** for each test (via `conftest.py`'s `_trace_test` fixture)
-2. **HTTP calls include the trace ID** in the `traceparent` header (via OpenTelemetry instrumentation)
-3. **Orchestra uses the same trace ID** and writes it to trace files
-4. **Trace IDs appear in both logs**, enabling correlation
+2. **Unity LOGGER output** goes to `logs/unity/` with timestamps for correlation
+3. **Unify SDK HTTP calls** include the trace ID in filenames (last 8 chars)
+4. **Orchestra uses the same trace ID** and writes it to server-side trace files
+5. **Trace IDs appear in all logs**, enabling correlation
+
+### Log Correlation Chain
+
+```
+logs/pytest/         →  [TRACE] TRACE_ID=...7be454fc test=test_ask
+    ↓ (same session)
+logs/unity/          →  🧑‍💻 [ContactManager.ask(ca3e)] User Message: ...
+    ↓ (same trace_id)
+logs/unify/          →  14-26-46.175_GET_logs_331ms_200_7be454fc.json
+    ↓ (same trace_id)
+logs/orchestra/      →  2025-12-30T18-46-55.980_GET_projects_43ms_7be454fc.json
+```
 
 ### Finding Correlated Traces
 
@@ -372,32 +432,47 @@ Or grep the log file:
 grep "TRACE_ID=" logs/pytest/2025-12-30T18-30-00_unity_dev_ttys042/test_contact_manager-test_ask.txt
 ```
 
-**Step 2: Find matching Orchestra trace files**
+**Step 2: Find matching Unify HTTP traces**
 
 The last 8 characters of the trace_id appear in the filename:
 ```bash
 # trace_id=099b207f89222185695d25977be454fc → search for *7be454fc*
+ls logs/unify/2025-12-30T18-30-00_unity_dev_ttys042/*7be454fc*
+```
+
+**Step 3: Find matching Orchestra trace files**
+
+```bash
 ls logs/orchestra/2025-12-30T18-27-43/requests/*7be454fc*
 ```
 
-**Step 3: Read the trace file**
+**Step 4: Read the trace files**
 
 ```bash
-cat logs/orchestra/2025-12-30T18-27-43/requests/2025-12-30T18-46-55.980_GET_projects_43ms_7be454fc.json
+# Unify SDK request/response
+cat logs/unify/2025-12-30T18-30-00_unity_dev_ttys042/*7be454fc*.json | jq .
+
+# Orchestra server-side trace
+cat logs/orchestra/2025-12-30T18-27-43/requests/*7be454fc*.json | jq .
 ```
 
 ### Example Workflow
 
 ```bash
-# 1. Test fails - check pytest log
-cat logs/pytest/2025-12-30T18-30-00_unity_dev/test_contact_manager-test_ask.txt
+# 1. Test fails - check pytest log for trace_id
+grep TRACE_ID logs/pytest/2025-12-30T18-30-00_unity_dev/test_contact_manager-test_ask.txt
 # Found: [TRACE] TRACE_ID=099b207f89222185695d25977be454fc test=test_ask
 
-# 2. Find all API calls from this test
-ls logs/orchestra/*/requests/*7be454fc*
-# Found: logs/orchestra/2025-12-30T18-27-43/requests/2025-12-30T18-46-55.980_GET_projects_43ms_7be454fc.json
+# 2. Check Unity LOGGER output for the session
+cat logs/unity/2025-12-30T18-30-00_unity_dev/unity.log | grep "ContactManager"
 
-# 3. Inspect the API trace
+# 3. Find Unify SDK HTTP calls with matching trace
+ls logs/unify/2025-12-30T18-30-00_unity_dev/*7be454fc*
+
+# 4. Find Orchestra server traces
+ls logs/orchestra/*/requests/*7be454fc*
+
+# 5. Inspect the full request chain
 cat logs/orchestra/2025-12-30T18-27-43/requests/*7be454fc*.json | jq .
 # See full request params, DB queries, response status, timing, etc.
 ```
