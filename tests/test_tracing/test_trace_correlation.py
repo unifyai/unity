@@ -131,16 +131,16 @@ class TestEndToEndTraceCorrelation:
 
     Requirements:
     - Local Orchestra must be running (started via orchestra.sh)
-    - ORCHESTRA_TRACE_LOG_DIR must be set (done automatically by orchestra.sh)
+    - ORCHESTRA_LOG_DIR must be set (done automatically by orchestra.sh)
     """
 
-    def _get_orchestra_trace_log_dir(self) -> Path | None:
-        """Get the Orchestra trace log directory from environment.
+    def _get_orchestra_log_dir(self) -> Path | None:
+        """Get the Orchestra log directory from environment.
 
-        Returns None if not configured (Orchestra tracing not enabled).
+        Returns None if not configured (Orchestra logging not enabled).
         """
         # Check environment variable set by orchestra.sh
-        trace_dir = os.environ.get("ORCHESTRA_TRACE_LOG_DIR")
+        trace_dir = os.environ.get("ORCHESTRA_LOG_DIR")
         if trace_dir:
             return Path(trace_dir)
 
@@ -236,10 +236,10 @@ class TestEndToEndTraceCorrelation:
         if not self._is_orchestra_running():
             pytest.skip("Local Orchestra not running")
 
-        # Skip if trace logging not configured
-        trace_log_dir = self._get_orchestra_trace_log_dir()
+        # Skip if logging not configured
+        trace_log_dir = self._get_orchestra_log_dir()
         if trace_log_dir is None:
-            pytest.skip("ORCHESTRA_TRACE_LOG_DIR not set (trace logging disabled)")
+            pytest.skip("ORCHESTRA_LOG_DIR not set (logging disabled)")
 
         # Make a real HTTP call to Orchestra
         base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
@@ -307,9 +307,9 @@ class TestEndToEndTraceCorrelation:
         if not self._is_orchestra_running():
             pytest.skip("Local Orchestra not running")
 
-        trace_log_dir = self._get_orchestra_trace_log_dir()
+        trace_log_dir = self._get_orchestra_log_dir()
         if trace_log_dir is None:
-            pytest.skip("ORCHESTRA_TRACE_LOG_DIR not set")
+            pytest.skip("ORCHESTRA_LOG_DIR not set")
 
         base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
         endpoint = self._get_traced_endpoint()

@@ -13,8 +13,8 @@ All logs are organized under `logs/` with five main subdirectories:
 | `logs/pytest/` | Test output (stdout/stderr) | One `.txt` per test | No (test-only) |
 | `logs/unity/` | Unity LOGGER output (async tool loop, managers) | `unity.log` per session | Yes (`UNITY_LOG_DIR`) |
 | `logs/llm/` | Raw LLM request/response traces | JSON files per session | Partial (via hooks) |
-| `logs/unify/` | Unify SDK HTTP traces | JSON files per request | Yes (`UNIFY_HTTP_LOG_DIR`) |
-| `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans | Yes (`ORCHESTRA_TRACE_LOG_DIR`) |
+| `logs/unify/` | Unify SDK HTTP traces | JSON files per request | Yes (`UNIFY_LOG_DIR`) |
+| `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans | Yes (`ORCHESTRA_LOG_DIR`) |
 
 **Cross-correlation:** When `UNITY_TEST_TRACING=true` (default), each test logs a `TRACE_ID` that links pytest output → Unity logs → Unify HTTP logs → Orchestra traces. See [Correlating Logs Across Systems](#correlating-logs-across-systems).
 
@@ -107,9 +107,9 @@ logs/unity/
 
 ---
 
-## Unify HTTP Logs (`logs/unify/`)
+## Unify Logs (`logs/unify/`)
 
-Unify SDK HTTP traces capture all requests to the Orchestra API with OpenTelemetry trace correlation. This is production-ready logging controlled by the `UNIFY_HTTP_LOG_DIR` environment variable.
+Unify SDK HTTP traces capture all requests to the Orchestra API with OpenTelemetry trace correlation. This is production-ready logging controlled by the `UNIFY_LOG_DIR` environment variable.
 
 ```
 logs/unify/
@@ -124,7 +124,7 @@ logs/unify/
 
 The `trace_id` suffix (last 8 chars) enables correlation with pytest `[TRACE] TRACE_ID=...` output and Orchestra traces.
 
-**Production usage:** Set `UNIFY_HTTP_LOG_DIR=/path/to/logs` to enable file logging in production.
+**Production usage:** Set `UNIFY_LOG_DIR=/path/to/logs` to enable file logging in production.
 
 ---
 

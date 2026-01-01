@@ -544,10 +544,10 @@ start_orchestra_server() {
   [[ -n "${OPENAI_API_KEY:-}" ]] && export OPENAI_API_KEY
   [[ -n "${ANTHROPIC_API_KEY:-}" ]] && export ANTHROPIC_API_KEY
 
-  # Enable file-based trace logging to the session log directory
+  # Enable file-based logging to the session log directory
   # This captures OpenTelemetry traces (HTTP, DB, OpenAI) to JSON files
-  export ORCHESTRA_TRACE_LOG_DIR="$CURRENT_LOG_SESSION_DIR"
-  log_info "Trace logging enabled at: $CURRENT_LOG_SESSION_DIR/traces/"
+  export ORCHESTRA_LOG_DIR="$CURRENT_LOG_SESSION_DIR"
+  log_info "Logging enabled at: $CURRENT_LOG_SESSION_DIR/"
 
   # Start server in background with workers matching CPU cores to handle parallel test load
   # Default uvicorn has 1 worker which can't handle 25+ concurrent test sessions
