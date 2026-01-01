@@ -8,9 +8,9 @@ at runtime and provides clear contracts for data shapes.
 Types Defined:
     - GroupBy: Dimension for breaking down metrics
     - TimePeriod: Time granularity for aggregations
-    - PlotType: Supported visualization chart types
-    - PlotConfig: Configuration for a single plot
-    - PlotResult: Result of a plot generation attempt
+    - PlotType: Supported visualization chart types (re-exported from viz_utils)
+    - PlotConfig: Configuration for a single plot (re-exported from viz_utils)
+    - PlotResult: Result of a plot generation attempt (re-exported from viz_utils)
     - MetricResult: Standard result shape for all metrics
     - ToolsDict: Type alias for file manager tools dictionary
 """
@@ -18,9 +18,19 @@ Types Defined:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
+
+# Re-export plot types from viz_utils (canonical source)
+from unity.file_manager.managers.utils.viz_utils import (
+    PlotConfig,
+    PlotResult,
+    PlotType,
+)
+
+# Type alias for the visualize tool function signature
+VisualizeTool = Callable[..., Union[PlotResult, List[PlotResult]]]
 
 
 # =============================================================================
@@ -73,128 +83,9 @@ class TimePeriod(str, Enum):
     YEAR = "year"
 
 
-class PlotType(str, Enum):
-    """
-    Supported plot types from the Plot API.
-
-    These map directly to the 'type' field in the Plot API's plot_config.
-
-    Values:
-        SCATTER: Scatter plot for correlations between two numeric variables
-        BAR: Bar chart for comparing values across categories
-        HISTOGRAM: Histogram for distribution of a single variable
-        LINE: Line chart for trends over time/sequences
-    """
-
-    SCATTER = "scatter"
-    BAR = "bar"
-    HISTOGRAM = "histogram"
-    LINE = "line"
-
-
 # =============================================================================
 # PYDANTIC MODELS
 # =============================================================================
-
-
-class PlotConfig(BaseModel):
-    """
-    Configuration for a single plot visualization.
-
-    This model defines the parameters needed to generate a plot via the
-    Plot API. It maps to the 'plot_config' object in the API request body.
-
-    Attributes:
-        type: The chart type to generate (bar, line, histogram, scatter)
-        x_axis: Column name for the x-axis
-        y_axis: Column name for the y-axis (optional for histograms)
-        group_by: Optional column for grouping/coloring data points
-        aggregate: Aggregation function (sum, mean, count, min, max)
-        scale_x: Scale type for x-axis (linear or log)
-        scale_y: Scale type for y-axis (linear or log)
-        metric: Metric for aggregation (alias for aggregate in some contexts)
-        bin_count: Number of bins for histogram plots
-        show_regression: Whether to show regression line (scatter plots)
-        title: Human-readable title for the plot
-
-    Example:
-        >>> config = PlotConfig(
-        ...     type=PlotType.BAR,
-        ...     x_axis="Full Name",
-        ...     y_axis="count",
-        ...     aggregate="sum",
-        ...     title="Jobs Completed per Operative"
-        ... )
-    """
-
-    type: PlotType
-    x_axis: str
-    y_axis: Optional[str] = None
-    group_by: Optional[str] = None
-    aggregate: Optional[str] = None
-    scale_x: Optional[str] = None
-    scale_y: Optional[str] = None
-    metric: Optional[str] = None
-    bin_count: Optional[int] = None
-    show_regression: Optional[bool] = None
-    title: Optional[str] = None
-
-    class Config:
-        """Pydantic configuration for PlotConfig."""
-
-        use_enum_values = True  # Serialize enums as their string values
-
-
-class PlotResult(BaseModel):
-    """
-    Result of a plot generation attempt.
-
-    Contains either a successful plot URL or error information if generation
-    failed. The plot_config and project_config fields preserve the exact
-    parameters used for the API call, enabling debugging and retry logic.
-
-    Attributes:
-        url: The generated plot URL (None if generation failed)
-        token: Access token for the plot (from API response)
-        expires_in_hours: Hours until the plot URL expires
-        plot_config: The plot configuration that was used
-        project_config: The project/context configuration that was used
-        title: Human-readable title for the plot
-        error: Error message if generation failed
-        traceback: Full traceback if generation failed
-
-    Example:
-        >>> # Successful result
-        >>> result = PlotResult(
-        ...     url="https://console.unify.ai/plot/view/abc123",
-        ...     token="abc123",
-        ...     expires_in_hours=24,
-        ...     plot_config={"type": "bar", "x_axis": "operative"},
-        ...     project_config={"project_name": "RepairsAgent5M"},
-        ...     title="Jobs by Operative"
-        ... )
-        >>> # Failed result
-        >>> result = PlotResult(
-        ...     plot_config={"type": "bar"},
-        ...     project_config={"project_name": "RepairsAgent5M"},
-        ...     error="Connection timeout",
-        ...     traceback="..."
-        ... )
-    """
-
-    url: Optional[str] = None
-    token: Optional[str] = None
-    expires_in_hours: Optional[int] = None
-    plot_config: Dict[str, Any] = Field(default_factory=dict)
-    project_config: Dict[str, Any] = Field(default_factory=dict)
-    title: Optional[str] = None
-    error: Optional[str] = None
-    traceback: Optional[str] = None
-
-    @property
-    def succeeded(self) -> bool:
-        """Return True if plot generation succeeded (has URL, no error)."""
-        return self.url is not None and self.error is None
 
 
 class MetricResult(BaseModel):
@@ -251,5 +142,25 @@ class MetricResult(BaseModel):
 # =============================================================================
 
 # Type alias for the tools dictionary passed to metric functions
-# Contains file manager tools like _reduce, _filter_files, _list_columns
+# Contains file manager tools like _reduce, _filter_files, _list_columns, _visualize
 ToolsDict = Dict[str, Any]
+
+
+# =============================================================================
+# PUBLIC EXPORTS
+# =============================================================================
+
+__all__ = [
+    # Enums
+    "GroupBy",
+    "TimePeriod",
+    # Plot types (re-exported from viz_utils)
+    "PlotType",
+    "PlotConfig",
+    "PlotResult",
+    # Models
+    "MetricResult",
+    # Type aliases
+    "ToolsDict",
+    "VisualizeTool",
+]
