@@ -357,6 +357,59 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
+    def _visualize(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        plot_type: str,
+        x_axis: str,
+        y_axis: Optional[str] = None,
+        group_by: Optional[str] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+        aggregate: Optional[str] = None,
+        scale_x: Optional[str] = None,
+        scale_y: Optional[str] = None,
+        bin_count: Optional[int] = None,
+        show_regression: Optional[bool] = None,
+    ) -> Any:
+        """
+        Generate plot visualizations from table data via the Plot API.
+
+        Parameters
+        ----------
+        tables : str | list[str]
+            Table reference(s) to visualize. When a list is provided, the same
+            plot configuration is applied to each table.
+        plot_type : str
+            Chart type: "bar", "line", "scatter", "histogram".
+        x_axis : str
+            Column name for the x-axis.
+        y_axis : str | None
+            Column name for the y-axis.
+        group_by : str | None
+            Column to group/color data points by.
+        filter : str | None
+            Row-level filter expression.
+        title : str | None
+            Plot title.
+        aggregate : str | None
+            Aggregation function: "sum", "mean", "count", "min", "max".
+        scale_x, scale_y : str | None
+            Axis scale: "linear" or "log".
+        bin_count : int | None
+            Number of bins for histogram plots.
+        show_regression : bool | None
+            Show regression line (scatter plots only).
+
+        Returns
+        -------
+        PlotResult | list[PlotResult]
+            Single table returns PlotResult, multiple tables returns list.
+            Each result has: url, token, expires_in_hours, title, error, succeeded.
+        """
+
+    @abstractmethod
     def _rename_file(
         self,
         *,
