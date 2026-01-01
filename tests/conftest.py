@@ -293,6 +293,15 @@ def get_test_log_format(config):
 
 def pytest_sessionstart(session):
     # ------------------------------------------------------------------
+    #  Initialize Unity's OpenTelemetry TracerProvider FIRST
+    #  This ensures Unity owns the provider (service: "unity") before
+    #  any library (unify, unillm) makes traced calls.
+    # ------------------------------------------------------------------
+    from unity.logger import get_tracer
+
+    get_tracer()  # Creates TracerProvider with service="unity" if OTEL enabled
+
+    # ------------------------------------------------------------------
     #  Optionally delete the project before starting (clean slate)
     #  Skip in shared project mode (UNIFY_SKIP_SESSION_SETUP) because
     #  parallel_run.sh handles deletion at the script level to avoid
