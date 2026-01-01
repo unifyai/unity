@@ -463,10 +463,10 @@ OTEL is enabled automatically by `parallel_run.sh`. To customize:
 | `UNITY_OTEL` | `true` (via parallel_run.sh) | Enable Unity OTEL tracing |
 | `UNIFY_OTEL` | `true` (via parallel_run.sh) | Enable Unify SDK OTEL tracing |
 | `UNILLM_OTEL` | `true` (via parallel_run.sh) | Enable Unillm OTEL tracing |
-| `UNITY_OTEL_LOG_DIR` | `logs/all/$LOG_SUBDIR` | Unity span output directory |
-| `UNIFY_OTEL_LOG_DIR` | `logs/all/$LOG_SUBDIR` | Unify span output directory |
-| `UNILLM_OTEL_LOG_DIR` | `logs/all/$LOG_SUBDIR` | Unillm span output directory |
-| `ORCHESTRA_OTEL_LOG_DIR` | (inherited from `UNITY_OTEL_LOG_DIR`) | Orchestra span output directory |
+| `UNITY_OTEL_LOG_DIR` | `logs/all/` | Unity span output directory |
+| `UNIFY_OTEL_LOG_DIR` | `logs/all/` | Unify span output directory |
+| `UNILLM_OTEL_LOG_DIR` | `logs/all/` | Unillm span output directory |
+| `ORCHESTRA_OTEL_LOG_DIR` | `logs/all/` | Orchestra span output directory |
 
 To disable OTEL tracing:
 ```bash
