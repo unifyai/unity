@@ -98,11 +98,18 @@ class ProductionSettings(BaseSettings):
     # - UNITY_OTEL=false (default): OTel tracing disabled
     # - UNITY_OTEL=true: OTel tracing enabled, creates TracerProvider if needed
     # - UNITY_OTEL_ENDPOINT: OTLP endpoint for trace export (optional)
+    # - UNITY_OTEL_LOG_DIR: Directory for file-based span export (optional)
     #
     # When enabled, manager operations and async tool loops create spans that
     # propagate trace context to downstream libraries (unillm, unify).
+    #
+    # File-based span export:
+    # When UNITY_OTEL_LOG_DIR is set, spans are written to JSONL files keyed
+    # by trace_id. This enables full-stack trace correlation with Orchestra
+    # (which runs in a separate process but receives the traceparent header).
     UNITY_OTEL: bool = False
     UNITY_OTEL_ENDPOINT: str = ""
+    UNITY_OTEL_LOG_DIR: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)

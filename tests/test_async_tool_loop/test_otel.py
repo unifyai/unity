@@ -483,3 +483,280 @@ class TestCrossPackageIntegration:
 
         assert http_s.attributes.get("http.method") == "POST"
         assert http_s.attributes.get("http.status_code") == 200
+
+
+# ---------------------------------------------------------------------------
+#  FileSpanExporter Tests
+# ---------------------------------------------------------------------------
+
+
+class TestFileSpanExporter:
+    """Tests for file-based span export (UNITY_OTEL_LOG_DIR)."""
+
+    def test_file_exporter_writes_spans(self, reset_otel, monkeypatch, tmp_path):
+        """FileSpanExporter writes spans to JSONL files."""
+        import json
+
+        from unity.logger import FileSpanExporter
+
+        exporter = reset_otel["exporter"]
+        file_exporter = FileSpanExporter(tmp_path, service_name="unity")
+
+        # Add file exporter to the provider
+        provider = reset_otel["provider"]
+        provider.add_span_processor(SimpleSpanProcessor(file_exporter))
+
+        tracer = trace.get_tracer("test")
+
+        with tracer.start_as_current_span("test-operation") as span:
+            span.set_attribute("test.key", "test-value")
+
+        # Check that a file was created
+        files = list(tmp_path.glob("*.jsonl"))
+        assert len(files) == 1
+
+        # Read and verify the span data - find our span
+        with open(files[0], "r") as f:
+            lines = f.readlines()
+
+        # Find the test-operation span (may have parent from test context)
+        span_data = None
+        for line in lines:
+            data = json.loads(line)
+            if data["name"] == "test-operation":
+                span_data = data
+                break
+
+        assert span_data is not None
+        assert span_data["name"] == "test-operation"
+        assert span_data["service"] == "unity"
+        assert span_data["attributes"]["test.key"] == "test-value"
+        assert span_data["trace_id"] is not None
+        assert span_data["span_id"] is not None
+        # Note: may have parent_span_id from test context, that's OK
+
+    def test_file_exporter_nested_spans_same_file(
+        self,
+        reset_otel,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Nested spans go to the same trace file."""
+        import json
+
+        from unity.logger import FileSpanExporter
+
+        file_exporter = FileSpanExporter(tmp_path, service_name="unity")
+        provider = reset_otel["provider"]
+        provider.add_span_processor(SimpleSpanProcessor(file_exporter))
+
+        tracer = trace.get_tracer("test")
+
+        with tracer.start_as_current_span("parent") as parent:
+            with tracer.start_as_current_span("child") as child:
+                pass
+
+        # Should be one file (same trace)
+        files = list(tmp_path.glob("*.jsonl"))
+        assert len(files) == 1
+
+        # Should have two spans
+        with open(files[0], "r") as f:
+            lines = f.readlines()
+
+        assert len(lines) == 2
+
+        spans = [json.loads(line) for line in lines]
+        parent_span = next(s for s in spans if s["name"] == "parent")
+        child_span = next(s for s in spans if s["name"] == "child")
+
+        # Same trace ID
+        assert parent_span["trace_id"] == child_span["trace_id"]
+
+        # Child has parent span ID
+        assert child_span["parent_span_id"] == parent_span["span_id"]
+
+    def test_file_exporter_multiple_traces_separate_files(
+        self,
+        reset_otel,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Different traces go to different files."""
+        from opentelemetry import context
+
+        from unity.logger import FileSpanExporter
+
+        file_exporter = FileSpanExporter(tmp_path, service_name="unity")
+        provider = reset_otel["provider"]
+        provider.add_span_processor(SimpleSpanProcessor(file_exporter))
+
+        tracer = trace.get_tracer("test")
+
+        # Create two separate traces by detaching from any parent context
+        # Each starts a new root span (new trace)
+        token1 = context.attach(context.Context())
+        with tracer.start_as_current_span("trace1"):
+            trace_id_1 = trace.get_current_span().get_span_context().trace_id
+        context.detach(token1)
+
+        token2 = context.attach(context.Context())
+        with tracer.start_as_current_span("trace2"):
+            trace_id_2 = trace.get_current_span().get_span_context().trace_id
+        context.detach(token2)
+
+        # Verify they have different trace IDs
+        assert trace_id_1 != trace_id_2
+
+        # Should be two files (different traces)
+        files = list(tmp_path.glob("*.jsonl"))
+        assert len(files) == 2
+
+    def test_file_exporter_records_timing(self, reset_otel, tmp_path):
+        """FileSpanExporter records timing information."""
+        import json
+        import time
+
+        from unity.logger import FileSpanExporter
+
+        file_exporter = FileSpanExporter(tmp_path, service_name="unity")
+        provider = reset_otel["provider"]
+        provider.add_span_processor(SimpleSpanProcessor(file_exporter))
+
+        tracer = trace.get_tracer("test")
+
+        with tracer.start_as_current_span("timed-op"):
+            time.sleep(0.01)  # 10ms
+
+        files = list(tmp_path.glob("*.jsonl"))
+        with open(files[0], "r") as f:
+            span_data = json.loads(f.readline())
+
+        assert span_data["start_time"] is not None
+        assert span_data["end_time"] is not None
+        assert span_data["duration_ms"] is not None
+        assert span_data["duration_ms"] >= 10  # At least 10ms
+
+    def test_file_exporter_records_error_status(self, reset_otel, tmp_path):
+        """FileSpanExporter records error status on exceptions."""
+        import json
+
+        from opentelemetry.trace import Status, StatusCode
+
+        from unity.logger import FileSpanExporter
+
+        file_exporter = FileSpanExporter(tmp_path, service_name="unity")
+        provider = reset_otel["provider"]
+        provider.add_span_processor(SimpleSpanProcessor(file_exporter))
+
+        tracer = trace.get_tracer("test")
+
+        try:
+            with tracer.start_as_current_span("error-op") as span:
+                span.set_status(Status(StatusCode.ERROR, "something failed"))
+                raise ValueError("test error")
+        except ValueError:
+            pass
+
+        files = list(tmp_path.glob("*.jsonl"))
+        with open(files[0], "r") as f:
+            span_data = json.loads(f.readline())
+
+        assert span_data["status"] == "ERROR"
+
+    def test_get_otel_log_dir_returns_none_when_unset(self, monkeypatch):
+        """get_otel_log_dir returns None when UNITY_OTEL_LOG_DIR is not set."""
+        from unity import logger
+
+        monkeypatch.setattr(logger, "_OTEL_LOG_DIR", "")
+        assert logger.get_otel_log_dir() is None
+
+    def test_get_otel_log_dir_returns_path_when_set(self, monkeypatch, tmp_path):
+        """get_otel_log_dir returns Path when UNITY_OTEL_LOG_DIR is set."""
+
+        from unity import logger
+
+        monkeypatch.setattr(logger, "_OTEL_LOG_DIR", str(tmp_path))
+        result = logger.get_otel_log_dir()
+        assert result == tmp_path
+
+
+class TestFileSpanExporterIntegration:
+    """Integration tests for FileSpanExporter with unity_span."""
+
+    def test_unity_span_writes_to_file(self, reset_otel, monkeypatch, tmp_path):
+        """unity_span writes spans to file when UNITY_OTEL_LOG_DIR is set."""
+        import json
+
+        from unity import logger
+        from unity.logger import FileSpanExporter
+
+        monkeypatch.setattr(logger, "_OTEL_ENABLED", True)
+        monkeypatch.setattr(logger, "_OTEL_INITIALIZED", False)
+        monkeypatch.setattr(logger, "_TRACER", None)
+
+        # Add file exporter to the provider from fixture
+        file_exporter = FileSpanExporter(tmp_path, service_name="unity")
+        provider = reset_otel["provider"]
+        provider.add_span_processor(SimpleSpanProcessor(file_exporter))
+
+        with logger.unity_span("ContactManager.ask", query="find john") as span:
+            pass
+
+        files = list(tmp_path.glob("*.jsonl"))
+        assert len(files) == 1
+
+        with open(files[0], "r") as f:
+            span_data = json.loads(f.readline())
+
+        assert span_data["name"] == "ContactManager.ask"
+        assert span_data["service"] == "unity"
+        assert span_data["attributes"]["unity.query"] == "find john"
+
+    def test_full_hierarchy_writes_to_same_file(
+        self,
+        reset_otel,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Full Unity->Unillm->Unify hierarchy writes to same trace file."""
+        import json
+
+        from unity import logger
+        from unity.logger import FileSpanExporter
+
+        monkeypatch.setattr(logger, "_OTEL_ENABLED", True)
+        monkeypatch.setattr(logger, "_OTEL_INITIALIZED", False)
+        monkeypatch.setattr(logger, "_TRACER", None)
+
+        file_exporter = FileSpanExporter(tmp_path, service_name="unity")
+        provider = reset_otel["provider"]
+        provider.add_span_processor(SimpleSpanProcessor(file_exporter))
+
+        unillm_tracer = trace.get_tracer("unillm")
+        unify_tracer = trace.get_tracer("unify")
+
+        with logger.unity_span("Conductor.request"):
+            with unillm_tracer.start_as_current_span("LLM gpt-4"):
+                with unify_tracer.start_as_current_span("POST contacts"):
+                    pass
+
+        # All spans should be in one file (same trace)
+        files = list(tmp_path.glob("*.jsonl"))
+        assert len(files) == 1
+
+        with open(files[0], "r") as f:
+            lines = f.readlines()
+
+        assert len(lines) == 3
+
+        spans = [json.loads(line) for line in lines]
+        span_names = {s["name"] for s in spans}
+
+        assert "Conductor.request" in span_names
+        assert "LLM gpt-4" in span_names
+        assert "POST contacts" in span_names
+
+        # All same trace ID
+        trace_ids = {s["trace_id"] for s in spans}
+        assert len(trace_ids) == 1
