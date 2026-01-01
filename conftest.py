@@ -424,7 +424,7 @@ def pytest_sessionstart(session):
         pass  # OpenTelemetry not installed
 
     # Configure all file-based logging directories for trace correlation
-    # This enables correlation between pytest logs, Unity logs, Unify HTTP logs, and Orchestra traces
+    # This enables correlation between pytest logs, Unity logs, Unify logs, and Orchestra traces
     root_path = _get_log_root(Path(session.config.rootpath))
     subdir = _get_log_subdir()
 
@@ -438,15 +438,15 @@ def pytest_sessionstart(session):
     except ImportError:
         os.environ["UNITY_LOG_DIR"] = str(unity_log_dir)
 
-    # Unify SDK HTTP trace logging
-    unify_http_log_dir = root_path / "logs" / "unify" / subdir
-    unify_http_log_dir.mkdir(parents=True, exist_ok=True)
+    # Unify SDK file logging
+    unify_log_dir = root_path / "logs" / "unify" / subdir
+    unify_log_dir.mkdir(parents=True, exist_ok=True)
     try:
         from unify.utils.http import configure_log_dir as configure_unify_log_dir
 
-        configure_unify_log_dir(str(unify_http_log_dir))
+        configure_unify_log_dir(str(unify_log_dir))
     except ImportError:
-        os.environ["UNIFY_HTTP_LOG_DIR"] = str(unify_http_log_dir)
+        os.environ["UNIFY_LOG_DIR"] = str(unify_log_dir)
 
     if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
