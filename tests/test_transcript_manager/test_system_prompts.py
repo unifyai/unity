@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 import subprocess
@@ -11,21 +12,34 @@ from tests.assertion_helpers import (
     assert_time_footer,
     first_diff_block,
 )
+from tests.helpers import _handle_project
 
 from unity.transcript_manager.prompt_builders import build_ask_prompt
 from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.session_details import DEFAULT_USER_CONTEXT, DEFAULT_ASSISTANT_CONTEXT
 
 
-def _build_prompt_in_subprocess() -> str:
+def _build_prompt_in_subprocess(test_context: str) -> str:
     """
     Build the TranscriptManager.ask system prompt in a fresh Python process and return it.
     This catches cross-session instabilities (e.g., object-id defaults) while keeping
     the time footer deterministic by installing the same static_now override used in tests.
+
+    The test_context is passed via environment variable to ensure the subprocess
+    uses an isolated context rather than the shared default context.
     """
     code = textwrap.dedent(
         """
         import os, sys
         sys.path.insert(0, os.getcwd())
+        import unify
+        # Activate the test project before setting context
+        project_name = os.environ.get("UNITY_TEST_PROJECT_NAME", "UnityTests")
+        unify.activate(project_name, overwrite=False)
+        # Set test-specific context before creating TranscriptManager to avoid races
+        test_ctx = os.environ.get("_TEST_CONTEXT")
+        if test_ctx:
+            unify.set_context(test_ctx, relative=False)
         # Install a deterministic timestamp inside this fresh process
         import unity.common.prompt_helpers as _ph
         from datetime import datetime, timezone
@@ -53,16 +67,20 @@ def _build_prompt_in_subprocess() -> str:
         sys.stdout.write(prompt)
         """,
     )
+    env = os.environ.copy()
+    env["_TEST_CONTEXT"] = test_context
     proc = subprocess.run(
         [sys.executable, "-c", code],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         check=True,
+        env=env,
     )
     return proc.stdout
 
 
+@_handle_project
 def test_ask_system_prompt_formatting():
     tm = TranscriptManager()
     tools = dict(tm.get_tools("ask"))
@@ -162,10 +180,13 @@ def test_ask_system_prompt_formatting():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+@_handle_project
 def test_ask_prompt_stability():
+    # Build a test-specific context path matching _handle_project pattern
+    test_ctx = f"tests/test_transcript_manager/test_system_prompts/test_ask_prompt_stability/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
     # Build prompts in two separate Python processes to catch cross-session drift
-    p1 = _build_prompt_in_subprocess()
-    p2 = _build_prompt_in_subprocess()
+    p1 = _build_prompt_in_subprocess(test_ctx)
+    p2 = _build_prompt_in_subprocess(test_ctx)
     if p1 != p2:
         snippet = first_diff_block(p1, p2, context=3, label_a="First", label_b="Second")
         raise AssertionError(
