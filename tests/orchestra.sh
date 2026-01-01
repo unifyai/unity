@@ -337,8 +337,8 @@ VALUES ('$test_user_id', '$test_email')
 ON CONFLICT (id) DO NOTHING;
 
 -- Set assistant hiring approval to approved
-UPDATE auth_user 
-SET assistant_hiring_approval = 'approved' 
+UPDATE auth_user
+SET assistant_hiring_approval = 'approved'
 WHERE id = '$test_user_id';
 
 -- Create API key
@@ -538,6 +538,11 @@ start_orchestra_server() {
   if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
     export ORCHESTRA_VERTEXAI_SERVICE_ACC_JSON="$GOOGLE_APPLICATION_CREDENTIALS"
   fi
+
+  # API keys for embedding and LLM operations (required for embed() calls in filter expressions)
+  # These are set as job-level env vars in CI but need explicit export to propagate through setsid.
+  [[ -n "${OPENAI_API_KEY:-}" ]] && export OPENAI_API_KEY
+  [[ -n "${ANTHROPIC_API_KEY:-}" ]] && export ANTHROPIC_API_KEY
 
   # Enable file-based trace logging to the session log directory
   # This captures OpenTelemetry traces (HTTP, DB, OpenAI) to JSON files
