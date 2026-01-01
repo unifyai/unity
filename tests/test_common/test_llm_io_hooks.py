@@ -1,7 +1,7 @@
 """
-Tests for LLM I/O debug hooks.
+Tests for LLM I/O hooks.
 
-These tests verify that when LLM_IO_DEBUG is enabled, the hooks correctly
+These tests verify that when LLM_IO_LOG is enabled, the hooks correctly
 capture LLM request and response payloads at the unify client level.
 """
 

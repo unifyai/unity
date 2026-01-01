@@ -22,7 +22,7 @@ LOGGER = logging.getLogger("unity")
 # Logging Setup for Verbose Asyncio Debug Mode
 # ─────────────────────────────────────────────────────────────────────────────
 
-if SETTINGS.ASYNCIO_VERBOSE_DEBUG:
+if SETTINGS.ASYNCIO_DEBUG_VERBOSE:
     import asyncio
     import sys
     import threading
