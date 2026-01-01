@@ -199,6 +199,152 @@ def _log_test_combined(
         pass
 
 
+# ---------- OTEL Trace Upload to Context ----------
+
+# Field schema for the Trace context
+_TRACE_FIELDS = {
+    "trace_id": {"type": "str", "mutable": False},
+    "span_id": {"type": "str", "mutable": False},
+    "parent_span_id": {"type": "str", "mutable": False},
+    "name": {"type": "str", "mutable": False},
+    "service": {"type": "str", "mutable": False},
+    "start_time": {"type": "datetime", "mutable": False},
+    "end_time": {"type": "datetime", "mutable": False},
+    "duration_ms": {"type": "float", "mutable": False},
+    "status": {"type": "str", "mutable": False},
+    "attributes": {"type": "dict", "mutable": False},
+}
+
+
+def _get_trace_file_path(trace_id: str) -> Path | None:
+    """Get the path to the trace file for a given trace_id."""
+    repo_root = _get_repo_root()
+    trace_file = repo_root / "logs" / "all" / f"{trace_id}.jsonl"
+    if trace_file.exists():
+        return trace_file
+    return None
+
+
+def _flush_otel_spans() -> None:
+    """Flush any pending OpenTelemetry spans to ensure trace file is complete."""
+    try:
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+        if hasattr(provider, "force_flush"):
+            provider.force_flush(timeout_millis=5000)
+    except Exception:
+        pass
+
+
+def _upload_trace_to_context(
+    test_ctx: str,
+    trace_id: str | None,
+    max_spans: int = 1000,
+) -> None:
+    """Upload trace data from JSONL file to {TestContext}/Trace context.
+
+    Args:
+        test_ctx: The test context path (e.g., tests/.../test_name/DefaultUser/Assistant)
+        trace_id: The 32-char hex trace_id for this test run
+        max_spans: Maximum number of spans to upload (default 1000 to avoid slow uploads)
+    """
+    if not trace_id:
+        return  # OTEL disabled or no trace_id captured
+
+    # Flush pending spans to ensure trace file is complete
+    _flush_otel_spans()
+
+    # Find the trace file
+    trace_file = _get_trace_file_path(trace_id)
+    if not trace_file:
+        return  # No trace file exists (OTEL disabled or no spans created)
+
+    try:
+        import json
+
+        # Read spans from the JSONL file (limited to max_spans)
+        spans = []
+        with open(trace_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    spans.append(json.loads(line))
+                    if len(spans) >= max_spans:
+                        break
+
+        if not spans:
+            return  # Empty trace file
+
+        # Create the Trace context with explicit field types
+        trace_ctx = f"{test_ctx}/Trace"
+        try:
+            unify.create_context(trace_ctx)
+        except Exception:
+            pass  # Context may already exist
+
+        # Create fields with explicit types (idempotent)
+        try:
+            unify.create_fields(context=trace_ctx, fields=_TRACE_FIELDS)
+        except Exception:
+            pass  # Fields may already exist
+
+        # Upload each span as a row
+        for span in spans:
+            try:
+                unify.log(
+                    context=trace_ctx,
+                    trace_id=span.get("trace_id"),
+                    span_id=span.get("span_id"),
+                    parent_span_id=span.get("parent_span_id"),
+                    name=span.get("name"),
+                    service=span.get("service"),
+                    start_time=span.get("start_time"),
+                    end_time=span.get("end_time"),
+                    duration_ms=span.get("duration_ms"),
+                    status=span.get("status"),
+                    attributes=span.get("attributes", {}),
+                    new=True,
+                )
+            except Exception:
+                pass  # Best-effort logging
+
+    except Exception:
+        # Trace upload is best-effort; don't fail tests if it errors
+        pass
+
+
+def _get_trace_id_from_span(span) -> str | None:
+    """Extract trace_id as 32-char hex string from an OTel span."""
+    if span is None:
+        return None
+    try:
+        ctx = span.get_span_context()
+        if ctx and ctx.is_valid:
+            return f"{ctx.trace_id:032x}"
+    except Exception:
+        pass
+    return None
+
+
+def _get_current_trace_id() -> str | None:
+    """Get the current trace_id from the active OTel span.
+
+    This retrieves the trace_id from the span created by the _trace_test fixture
+    in conftest.py, which wraps each test in an OTel span.
+    """
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        ctx = span.get_span_context()
+        if ctx and ctx.is_valid:
+            return f"{ctx.trace_id:032x}"
+    except Exception:
+        pass
+    return None
+
+
 class _TestContext:
     """Manages test context setup, teardown, and timing for _handle_project."""
 
@@ -217,6 +363,7 @@ class _TestContext:
         self.fpath: str = ""
         self.llm_io_before: set[Path] = set()
         self.start_time: float = 0.0
+        self.trace_id: str | None = None
 
     def setup(self) -> None:
         """Prepare test context before execution."""
@@ -252,6 +399,10 @@ class _TestContext:
             _unity_mod.init("UnityTests")
             EVENT_BUS.clear()
 
+    def set_trace_id(self, trace_id: str | None) -> None:
+        """Store the trace_id for this test run."""
+        self.trace_id = trace_id
+
     def teardown(self) -> None:
         """Clean up test context after execution."""
         duration = time.perf_counter() - self.start_time
@@ -259,6 +410,9 @@ class _TestContext:
         new_llm_io_files = llm_io_after - self.llm_io_before
         llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
         _log_test_combined(self.fpath, duration, llm_io_contents)
+
+        # Upload trace data to {TestContext}/Trace
+        _upload_trace_to_context(self.ctx, self.trace_id)
 
         if self.delete_ctx_on_exit:
             unify.delete_context(self.ctx)
@@ -291,6 +445,8 @@ def _handle_project(
                 delete_ctx_on_exit,
             )
             ctx.setup()
+            # Capture trace_id from the _trace_test fixture's span (in root conftest.py)
+            ctx.set_trace_id(_get_current_trace_id())
             try:
                 result = test_fn(*args, **kwargs)
                 if inspect.isawaitable(result):
@@ -313,6 +469,8 @@ def _handle_project(
                 delete_ctx_on_exit,
             )
             ctx.setup()
+            # Capture trace_id from the _trace_test fixture's span (in root conftest.py)
+            ctx.set_trace_id(_get_current_trace_id())
             try:
                 test_fn(*args, **kwargs)
             except Exception:
