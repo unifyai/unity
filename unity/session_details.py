@@ -115,14 +115,19 @@ class SessionDetails:
 
     Hierarchical structure with sub-containers for assistant, user, and voice.
     All fields have sensible defaults so callers never need `or "fallback"` patterns.
+
+    API keys (`unify_key`, `shared_unify_key`) are lazy properties that fall back
+    to environment variables if not explicitly set. This mirrors how the `unify`
+    package handles UNIFY_KEY and provides automatic access without requiring
+    explicit `populate_from_env()` calls.
     """
 
     assistant: AssistantDetails = field(default_factory=AssistantDetails)
     user: UserDetails = field(default_factory=UserDetails)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     voice_call: VoiceCallConfig = field(default_factory=VoiceCallConfig)
-    unify_key: str = ""
-    shared_unify_key: str = ""
+    _unify_key: str = field(default="", repr=False)
+    _shared_unify_key: str = field(default="", repr=False)
 
     # Raw assistant record from Unify API (for contexts that need the full dict)
     assistant_record: dict | None = field(default=None, repr=False)
@@ -164,6 +169,35 @@ class SessionDetails:
     def is_initialized(self) -> bool:
         """Returns True if populate() has been called."""
         return self._initialized
+
+    @property
+    def unify_key(self) -> str:
+        """API key for Unify services.
+
+        Falls back to UNIFY_KEY environment variable if not explicitly set.
+        This mirrors how the `unify` package handles API key resolution.
+        """
+        if self._unify_key:
+            return self._unify_key
+        return os.environ.get("UNIFY_KEY", "")
+
+    @unify_key.setter
+    def unify_key(self, value: str) -> None:
+        self._unify_key = value
+
+    @property
+    def shared_unify_key(self) -> str:
+        """Shared API key for cross-assistant operations.
+
+        Falls back to SHARED_UNIFY_KEY environment variable if not explicitly set.
+        """
+        if self._shared_unify_key:
+            return self._shared_unify_key
+        return os.environ.get("SHARED_UNIFY_KEY", "")
+
+    @shared_unify_key.setter
+    def shared_unify_key(self, value: str) -> None:
+        self._shared_unify_key = value
 
     def populate(
         self,
@@ -213,8 +247,8 @@ class SessionDetails:
         self.user = UserDetails()
         self.voice = VoiceConfig()
         self.voice_call = VoiceCallConfig()
-        self.unify_key = ""
-        self.shared_unify_key = ""
+        self._unify_key = ""
+        self._shared_unify_key = ""
         self.assistant_record = None
         self._initialized = False
 
