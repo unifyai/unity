@@ -130,17 +130,27 @@ The `trace_id` suffix (last 8 chars) enables correlation with pytest `[TRACE] TR
 
 ## LLM Logs (`logs/llm/`)
 
-LLM request/response traces follow the same datetime-prefixed structure as pytest logs. These contain the raw I/O for each LLM call made during tests.
+LLM request/response traces are handled directly by the `unillm` package. These contain the raw I/O for each LLM call made during tests.
 
 ```
 logs/llm/
 ├── 2025-12-05T09-15-22_unity_dev_ttys042/
-│   └── {session_id}/
-│       └── *.txt
+│   └── *.txt  (e.g., 142536_123456789_hit.txt, 142537_987654321_miss.txt)
 └── ...
 ```
 
-**Note:** LLM logging is currently handled by Unity's `llm_io_hooks.py` monkeypatch. A future update will move this to the `unillm` repo with a proper `UNILLM_LOG_DIR` environment variable.
+**Log file format:**
+- `{HHMMSS}_{nanoseconds}_pending.txt` - Written immediately when LLM call starts
+- `{HHMMSS}_{nanoseconds}_hit.txt` - Finalized after call completes (cache hit)
+- `{HHMMSS}_{nanoseconds}_miss.txt` - Finalized after call completes (cache miss)
+
+If an LLM call hangs or crashes, the `_pending.txt` file remains as evidence.
+
+**Environment variables:**
+- `UNILLM_IO_LOG=true` - Enable LLM I/O logging (default: false)
+- `UNILLM_LOG_DIR=/path/to/logs` - Directory for log files (required when enabled)
+
+**Production usage:** Set both environment variables to enable file logging. The directory will be created automatically if it doesn't exist.
 
 ---
 
