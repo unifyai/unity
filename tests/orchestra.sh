@@ -549,6 +549,12 @@ start_orchestra_server() {
   export ORCHESTRA_LOG_DIR="$CURRENT_LOG_SESSION_DIR"
   log_info "Logging enabled at: $CURRENT_LOG_SESSION_DIR/"
 
+  # Enable shared OTel span export for full-stack trace correlation
+  # When Unity's UNITY_OTEL_LOG_DIR is set, Orchestra spans will be written
+  # to the same directory, enabling cross-process trace aggregation by trace_id.
+  # The requests/ subdirectory contains Orchestra's per-request JSON files.
+  export ORCHESTRA_OTEL_LOG_DIR="${UNITY_OTEL_LOG_DIR:-}"
+
   # Start server in background with workers matching CPU cores to handle parallel test load
   # Default uvicorn has 1 worker which can't handle 25+ concurrent test sessions
   local num_cores
