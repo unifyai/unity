@@ -6,7 +6,6 @@ Package initialization for the Unity AI Assistant framework.
 
 Importing this package performs one-time setup:
   - Configures logging to filter to unity.* loggers only
-  - Installs LLM I/O hooks (if LLM_IO_LOG is enabled)
 
 The runtime must be explicitly initialized via init() before using managers:
 
@@ -15,6 +14,10 @@ The runtime must be explicitly initialized via init() before using managers:
 
 For code that may run before or after init(), use ensure_initialised() which
 is a no-op if already initialized.
+
+LLM I/O logging is now handled directly in the unillm package. Enable it via:
+  - UNILLM_IO_LOG=true (to enable logging)
+  - UNILLM_LOG_DIR=/path/to/logs (to set the output directory)
 """
 
 from typing import Optional
@@ -100,34 +103,6 @@ def _configure_default_logging() -> None:
 
 
 _configure_default_logging()
-
-
-# ---------------------------------------------------------------------------
-# LLM I/O hooks (monkeypatch unify client when enabled)
-# ---------------------------------------------------------------------------
-
-
-def _install_llm_io_hooks() -> None:
-    """Install LLM I/O hooks for cache stats tracking and optional logging.
-
-    Hooks are always installed to enable cache statistics tracking.
-    File writing only occurs when LLM_IO_LOG is enabled and log directories exist.
-    """
-    if getattr(_install_llm_io_hooks, "_done", False):
-        return
-
-    try:
-        from unity.common.llm_io_hooks import install_llm_io_hooks
-
-        install_llm_io_hooks()
-    except Exception:
-        # Never let hook installation crash imports
-        pass
-
-    _install_llm_io_hooks._done = True  # type: ignore[attr-defined]
-
-
-_install_llm_io_hooks()
 
 
 # ---------------------------------------------------------------------------

@@ -27,8 +27,8 @@ class TestMemorySettings(MemorySettings):
 class TestingSettings(ProductionSettings):
     """Test environment settings - inherits all production settings.
 
-    Production settings (UNIFY_MODEL, UNIFY_CACHE, LLM_IO_LOG, etc.) are
-    inherited from ProductionSettings. This class adds test-only settings.
+    Production settings (UNIFY_MODEL, UNIFY_CACHE, etc.) are inherited from
+    ProductionSettings. This class adds test-only settings.
     """
 
     # Override composed manager settings with test defaults
