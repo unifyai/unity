@@ -186,16 +186,20 @@ jobs:
           # Parse [parallel_run.sh ...] from commit/PR message
           # Separate flags (--env, --eval-only, etc.) from paths
           echo "Parsing [parallel_run.sh $PARALLEL_CMD]" >&2
+          LAST_FLAG=""
           for token in $PARALLEL_CMD; do
             if [[ "$token" == --* ]]; then
               # It's a flag - collect it and its value if needed
               FLAGS+=("$token")
-            elif [[ "${FLAGS[-1]:-}" == "--env" || "${FLAGS[-1]:-}" == "--tags" || "${FLAGS[-1]:-}" == "-j" || "${FLAGS[-1]:-}" == "--jobs" || "${FLAGS[-1]:-}" == "-t" || "${FLAGS[-1]:-}" == "--timeout" ]]; then
+              LAST_FLAG="$token"
+            elif [[ "$LAST_FLAG" == "--env" || "$LAST_FLAG" == "--tags" || "$LAST_FLAG" == "-j" || "$LAST_FLAG" == "--jobs" || "$LAST_FLAG" == "-t" || "$LAST_FLAG" == "--timeout" ]]; then
               # Previous token was a flag that takes a value
               FLAGS+=("$token")
+              LAST_FLAG=""
             else
               # It's a path
               PATHS+=("$token")
+              LAST_FLAG=""
             fi
           done
         elif [[ -n "$INPUT_PATH" && "$INPUT_PATH" != "." ]]; then
