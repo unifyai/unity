@@ -64,6 +64,11 @@ from .utils.storage import (
     ctx_for_file as _storage_ctx_for_file,
     ctx_for_file_table as _storage_ctx_for_file_table,
 )
+from .utils.viz_utils import (
+    PlotConfig as _VizPlotConfig,
+    PlotResult as _VizPlotResult,
+    generate_plots_batch as _viz_generate_plots_batch,
+)
 
 
 class FileManager(BaseFileManager):
@@ -178,6 +183,8 @@ class FileManager(BaseFileManager):
             self._filter_files,
             self._search_files,
             self._reduce,
+            # Visualization
+            self._visualize,
             # Inventory listing
             self.list,
             # Delegate to file-scoped Q&A when needed
@@ -203,6 +210,8 @@ class FileManager(BaseFileManager):
             self._filter_files,
             self._search_files,
             self._reduce,
+            # Visualization
+            self._visualize,
             include_class_name=False,
         )
         self.add_tools("ask_about_file", ask_about_file_tools)
@@ -1737,6 +1746,205 @@ class FileManager(BaseFileManager):
             filter=filter,
             group_by=group_by,
         )
+
+    @read_only
+    def _visualize(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        plot_type: str,
+        x_axis: str,
+        y_axis: Optional[str] = None,
+        group_by: Optional[str] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+        aggregate: Optional[str] = None,
+        scale_x: Optional[str] = None,
+        scale_y: Optional[str] = None,
+        bin_count: Optional[int] = None,
+        show_regression: Optional[bool] = None,
+    ) -> Union["_VizPlotResult", List["_VizPlotResult"]]:
+        """
+        Generate plot visualizations from table data via the Plot API.
+
+        This tool creates interactive charts from the specified table(s). Before
+        calling, use `list_columns` or `tables_overview` to discover available
+        columns and their types.
+
+        Parameters
+        ----------
+        tables : str | list[str]
+            Table reference(s) to visualize. Accepted forms:
+            - "<file_path>.Tables.<label>" for per-file tables
+            - "<file_path>" for per-file Content
+
+            When a LIST is provided, the same plot configuration is applied to
+            EACH table. Use this for tables with identical schemas that you want
+            to compare (e.g., monthly data tables like "July_2025", "August_2025").
+            Each table produces a separate plot with the table name in the title.
+
+            For tables with DIFFERENT schemas, make separate _visualize calls.
+
+        plot_type : str
+            Chart type. One of: "bar", "line", "scatter", "histogram".
+            - bar: Compare values across categories
+            - line: Show trends over time or sequences
+            - scatter: Show correlations between two numeric variables
+            - histogram: Show distribution of a single variable
+
+        x_axis : str
+            Column name for the x-axis. Must exist in the table schema.
+
+        y_axis : str | None
+            Column name for the y-axis. Required for bar, line, scatter.
+            Optional for histogram (uses count by default).
+
+        group_by : str | None
+            Column to group/color data points by. Creates multiple series.
+
+        filter : str | None
+            Row-level filter expression. Same syntax as `_reduce` and `_filter_files`.
+            Applied before plotting.
+
+        title : str | None
+            Plot title. Auto-generated if not provided.
+
+        aggregate : str | None
+            Aggregation function when grouping: "sum", "mean", "count", "min", "max".
+
+        scale_x, scale_y : str | None
+            Axis scale: "linear" (default) or "log".
+
+        bin_count : int | None
+            Number of bins for histogram plots.
+
+        show_regression : bool | None
+            Show regression line (scatter plots only).
+
+        Returns
+        -------
+        PlotResult | list[PlotResult]
+            Single table → PlotResult with attrs: url, token, expires_in_hours, title, error
+            Multiple tables → list of PlotResult, one per table
+
+            On success: result.url contains the plot URL, result.succeeded is True
+            On failure: result.error contains error message, result.succeeded is False
+
+        Usage Examples
+        --------------
+        # Bar chart of job counts by operative:
+        visualize(
+            tables='/path/to/data.xlsx.Tables.Jobs',
+            plot_type='bar',
+            x_axis='OperativeName',
+            y_axis='JobCount',
+            title='Jobs per Operative'
+        )
+
+        # Line chart showing trend over time:
+        visualize(
+            tables='/path/to/data.xlsx.Tables.Sales',
+            plot_type='line',
+            x_axis='Date',
+            y_axis='Revenue',
+            group_by='Region'
+        )
+
+        # Same plot across multiple monthly tables (identical schemas):
+        visualize(
+            tables=[
+                '/path/to/data.xlsx.Tables.July_2025',
+                '/path/to/data.xlsx.Tables.August_2025',
+                '/path/to/data.xlsx.Tables.September_2025',
+            ],
+            plot_type='bar',
+            x_axis='Driver',
+            y_axis='TotalDistance',
+            aggregate='sum'
+        )
+        # Returns: [PlotResult(url="...", title="... (July_2025)"), ...]
+
+        # Histogram of value distribution:
+        visualize(
+            tables='/path/to/data.xlsx.Tables.Orders',
+            plot_type='histogram',
+            x_axis='OrderValue',
+            bin_count=20
+        )
+
+        # Scatter with regression line:
+        visualize(
+            tables='/path/to/data.xlsx.Tables.Metrics',
+            plot_type='scatter',
+            x_axis='TimeOnSite',
+            y_axis='JobsCompleted',
+            show_regression=True
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Calling visualize without first checking column names
+          CORRECT: Use list_columns(table='...') first to discover schema
+
+        - WRONG: Passing tables with different schemas in same call
+          CORRECT: Use separate visualize calls for different schemas
+
+        - WRONG: Using non-existent column names
+          CORRECT: Column names must match exactly (case-sensitive)
+
+        - WRONG: histogram with y_axis (histogram uses x_axis distribution)
+          CORRECT: For histogram, only specify x_axis
+        """
+        # Normalize tables to list
+        table_list: List[str] = []
+        if isinstance(tables, str):
+            if tables:
+                table_list = [tables]
+        else:
+            table_list = [t for t in tables if t]
+
+        if not table_list:
+            return _VizPlotResult(error="No tables provided", title=title or "Untitled")
+
+        # Resolve each table to a fully-qualified context
+        contexts: List[str] = []
+        for tbl in table_list:
+            try:
+                ctx = self._resolve_table_ref(tbl)
+                contexts.append(ctx)
+            except Exception as e:
+                # If we can't resolve, return error immediately
+                return _VizPlotResult(
+                    error=f"Failed to resolve table '{tbl}': {e}",
+                    title=title or "Untitled",
+                    table=tbl,
+                )
+
+        # Build plot config
+        config = _VizPlotConfig(
+            plot_type=plot_type,
+            x_axis=x_axis,
+            y_axis=y_axis,
+            group_by=group_by,
+            aggregate=aggregate,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            bin_count=bin_count,
+            show_regression=show_regression,
+            title=title,
+        )
+
+        # Generate plots (project_name=None uses active project inside batch fn)
+        results = _viz_generate_plots_batch(
+            contexts=contexts,
+            config=config,
+            filter_expr=filter,
+        )
+
+        # Return PlotResult directly (single) or list of PlotResult (multiple)
+        if len(results) == 1:
+            return results[0]
+        return results
 
     @read_only
     def _list_columns(
