@@ -27,7 +27,7 @@ class TestMemorySettings(MemorySettings):
 class TestingSettings(ProductionSettings):
     """Test environment settings - inherits all production settings.
 
-    Production settings (UNIFY_MODEL, UNIFY_CACHE, LLM_IO_DEBUG, etc.) are
+    Production settings (UNIFY_MODEL, UNIFY_CACHE, LLM_IO_LOG, etc.) are
     inherited from ProductionSettings. This class adds test-only settings.
     """
 
@@ -42,7 +42,7 @@ class TestingSettings(ProductionSettings):
     UNIFY_TESTS_RAND_PROJ: bool = False
     UNIFY_TESTS_DELETE_PROJ_ON_START: bool = True
     UNIFY_TESTS_DELETE_PROJ_ON_EXIT: bool = False
-    UNIFY_CACHE_BENCHMARK: bool = False
+    UNIFY_CACHE_STATS: bool = False
     UNIFY_PRETEST_CONTEXT_CREATE: bool = False
     UNIFY_TEST_TAGS: str = ""  # Comma-separated list of tags for duration logging
     UNIFY_SKIP_SESSION_SETUP: bool = False  # Skip project/context creation (pre-done)

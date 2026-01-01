@@ -83,12 +83,16 @@ class ProductionSettings(BaseSettings):
     UNIFY_BASE_URL: str = "https://api.unify.ai/v0"
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Debugging / Observability
+    # Logging / Observability
     # ─────────────────────────────────────────────────────────────────────────
-    LLM_IO_DEBUG: bool = True
-    ASYNCIO_DEBUG: bool = False
-    ASYNCIO_VERBOSE_DEBUG: bool = False
+    LLM_IO_LOG: bool = True
     PYTEST_LOG_TO_FILE: bool = True
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Debug Modes (performance overhead, development-only)
+    # ─────────────────────────────────────────────────────────────────────────
+    ASYNCIO_DEBUG: bool = False
+    ASYNCIO_DEBUG_VERBOSE: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure
@@ -96,7 +100,7 @@ class ProductionSettings(BaseSettings):
     # Fixed datetime for LLM cache consistency in tests (ISO format string)
     # When set, _get_now() returns this fixed datetime instead of datetime.now()
     UNITY_FIXED_DATETIME: str = ""
-    # Log subdirectory for LLM I/O debug files (datetime-prefixed for ordering)
+    # Log subdirectory for LLM I/O log files (datetime-prefixed for ordering)
     UNITY_LOG_SUBDIR: str = ""
     # Terminal socket name for tmux isolation; also used as log subdir fallback
     # when UNITY_LOG_SUBDIR is not set
@@ -153,9 +157,9 @@ class ProductionSettings(BaseSettings):
         return _parse_bool_or_str(v)
 
     @field_validator(
-        "LLM_IO_DEBUG",
+        "LLM_IO_LOG",
         "ASYNCIO_DEBUG",
-        "ASYNCIO_VERBOSE_DEBUG",
+        "ASYNCIO_DEBUG_VERBOSE",
         "PYTEST_LOG_TO_FILE",
         "UNITY_SEMANTIC_CACHE",
         "UNITY_READONLY_ASK_GUARD",

@@ -4,12 +4,12 @@ LLM I/O Debug Hooks
 
 Monkeypatches the ``unillm`` client to:
 1. Track cache hit/miss statistics (always enabled via :pyfunc:`get_cache_stats`)
-2. Optionally write debug files (when ``LLM_IO_DEBUG`` is enabled)
+2. Optionally write log files (when ``LLM_IO_LOG`` is enabled)
 
 Install via :pyfunc:`install_llm_io_hooks` early at startup (called
 automatically from ``unity/__init__.py``).
 
-When ``LLM_IO_DEBUG`` is enabled, request+response payloads are written to
+When ``LLM_IO_LOG`` is enabled, request+response payloads are written to
 ``logs/llm/<session>/`` as combined files:
 
 - During the call: ``{timestamp}_pending.txt`` (contains request only)
@@ -144,7 +144,7 @@ def _get_repo_root() -> Path:
 def _ensure_io_dir() -> str | None:
     """Ensure the per-session LLM I/O debug directory exists.
 
-    Returns None if LLM_IO_DEBUG is not enabled (file writing is skipped).
+    Returns None if LLM_IO_LOG is not enabled (file writing is skipped).
 
     Directory structure:
         logs/llm/{datetime}_{socket_name}/{session_id}/
@@ -153,8 +153,8 @@ def _ensure_io_dir() -> str | None:
     if _LLM_IO_DIR is not None:
         return _LLM_IO_DIR
 
-    # Only write files when LLM_IO_DEBUG is enabled
-    if not SETTINGS.LLM_IO_DEBUG:
+    # Only write files when LLM_IO_LOG is enabled
+    if not SETTINGS.LLM_IO_LOG:
         return None
 
     try:
@@ -407,7 +407,7 @@ def install_llm_io_hooks() -> bool:
     """
     Install monkeypatches on the unify client to capture LLM I/O.
 
-    This should be called early at startup when LLM_IO_DEBUG is enabled.
+    This should be called early at startup when LLM_IO_LOG is enabled.
     Returns True if hooks were installed, False if already installed or failed.
     """
     global _HOOKS_INSTALLED

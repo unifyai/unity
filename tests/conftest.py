@@ -382,7 +382,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    if SETTINGS.UNIFY_CACHE_BENCHMARK:
+    if SETTINGS.UNIFY_CACHE_STATS:
         stats = unify.get_cache_stats()
         terminalreporter.section(
             f"Unify cache report | Hits ({stats.get_percentage_of_cache_hits():.2f}%): {stats.hits} | Misses ({stats.get_percentage_of_cache_misses():.2f}%): {stats.misses} | Reads: {stats.reads} | Writes: {stats.writes}",
@@ -489,11 +489,11 @@ def pytest_runtest_teardown(item):
 
 
 def pytest_html_results_summary(prefix, summary, postfix):
-    if SETTINGS.UNIFY_CACHE_BENCHMARK:
+    if SETTINGS.UNIFY_CACHE_STATS:
         stats = unify.get_cache_stats()
         prefix.extend(
             [
-                f"<h4>Unify Cache Benchmark Report:</h4>",
+                f"<h4>Unify Cache Stats Report:</h4>",
                 f"<p>Hits ({stats.get_percentage_of_cache_hits():.2f}%): {stats.hits} | Misses ({stats.get_percentage_of_cache_misses():.2f}%): {stats.misses}</p>",
                 f"<p>Reads: {stats.reads} | Writes: {stats.writes}</p>",
             ],
