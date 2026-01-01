@@ -516,8 +516,10 @@ build_env_exports() {
   # ---------------------------------------------------------------------------
   # Enable OTEL tracing across all four repos (unity, unify, unillm, orchestra)
   # so spans from a single test are aggregated into one {trace_id}.jsonl file.
-  # Orchestra's OTEL_LOG_DIR is already wired in orchestra.sh to use UNITY_OTEL_LOG_DIR.
-  local otel_log_dir="$REPO_ROOT/logs/all/$LOG_SUBDIR"
+  # All repos write to logs/all/ (shared directory) - per-test isolation is
+  # provided by unique trace_ids, not subdirectories. This allows Orchestra
+  # (a persistent server) to participate in cross-process traces.
+  local otel_log_dir="$REPO_ROOT/logs/all"
 
   # Enable OTEL master switches (unless explicitly disabled via --env)
   if ! is_var_in_env_overrides "UNITY_OTEL"; then
@@ -1156,7 +1158,7 @@ declare -a session_ids=()
 echo
 echo "========================================================================"
 echo "📁 Test logs for THIS run: logs/pytest/$LOG_SUBDIR/"
-echo "🔗 OTEL traces (cross-repo): logs/all/$LOG_SUBDIR/"
+echo "🔗 OTEL traces (cross-repo): logs/all/"
 echo "📂 All log directories:      logs/*/"
 echo "========================================================================"
 echo
