@@ -92,6 +92,19 @@ class ProductionSettings(BaseSettings):
     UNITY_LOG_DIR: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
+    # OpenTelemetry Tracing
+    # ─────────────────────────────────────────────────────────────────────────
+    # Master switch for OTel tracing.
+    # - UNITY_OTEL=false (default): OTel tracing disabled
+    # - UNITY_OTEL=true: OTel tracing enabled, creates TracerProvider if needed
+    # - UNITY_OTEL_ENDPOINT: OTLP endpoint for trace export (optional)
+    #
+    # When enabled, manager operations and async tool loops create spans that
+    # propagate trace context to downstream libraries (unillm, unify).
+    UNITY_OTEL: bool = False
+    UNITY_OTEL_ENDPOINT: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)
     # ─────────────────────────────────────────────────────────────────────────
     ASYNCIO_DEBUG: bool = False
@@ -170,6 +183,7 @@ class ProductionSettings(BaseSettings):
         "STAGING",
         "TEST",
         "UNITY_VALIDATE_LLM_PROVIDERS",
+        "UNITY_OTEL",
         mode="before",
     )
     @classmethod
