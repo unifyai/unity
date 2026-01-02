@@ -566,3 +566,97 @@ parallel_run --env UNITY_TEST_TRACING=false tests/
 ```
 
 This removes the `[TRACE] TRACE_ID=...` output and disables `traceparent` header injection.
+
+---
+
+## Trace Upload to Test Context
+
+At the end of each test, OTEL spans are automatically uploaded to a `Trace` child context under the test's context. This enables viewing distributed traces directly in the Orchestra UI alongside test data.
+
+### Where Traces Go
+
+```
+tests/test_contact_manager/test_ask/test_ask_time_check/DefaultUser/DefaultAssistant/
+├── Contacts          # ContactManager data
+├── Transcripts       # TranscriptManager data
+├── Trace             # ← OTEL spans uploaded here
+└── ...
+```
+
+### Trace Context Schema
+
+Each span is uploaded as a row with these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trace_id` | `str` | 32-char hex trace ID |
+| `span_id` | `str` | 16-char hex span ID |
+| `parent_span_id` | `str` | Parent span ID (or null for root) |
+| `name` | `str` | Span name (e.g., `ContactManager.ask`, `POST /v0/logs`) |
+| `service` | `str` | Service name: `unity`, `unify`, `unillm`, or `orchestra` |
+| `start_time` | `datetime` | Span start timestamp |
+| `end_time` | `datetime` | Span end timestamp |
+| `duration_ms` | `float` | Duration in milliseconds |
+| `status` | `str` | Span status (`UNSET`, `OK`, `ERROR`) |
+| `attributes` | `dict` | Span attributes (HTTP params, DB queries, etc.) |
+
+### Configuration
+
+Control trace upload behavior via settings in `tests/settings.py` or environment variables:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `UNITY_TRACE_UPLOAD` | `true` | Enable/disable trace upload entirely |
+| `UNITY_TRACE_SERVICES` | `all` | Services to include: `all` or comma-separated (e.g., `unity,orchestra`) |
+| `UNITY_TRACE_EXCLUDE_PATTERNS` | `""` | Comma-separated span name patterns to exclude |
+
+### Example Configurations
+
+```bash
+# Disable trace upload entirely
+UNITY_TRACE_UPLOAD=false pytest tests/
+
+# Unity spans only (~30 spans per test)
+UNITY_TRACE_SERVICES=unity pytest tests/
+
+# Unity + Orchestra HTTP spans, skip DB internals (~100 spans)
+UNITY_TRACE_SERVICES=unity,orchestra
+UNITY_TRACE_EXCLUDE_PATTERNS=connect,db.query pytest tests/
+
+# Everything except auth overhead (~200 spans)
+UNITY_TRACE_EXCLUDE_PATTERNS=db.query.select.users,db.query.select.api_key,db.query.select.team_member pytest tests/
+
+# Full detail (default, ~600 spans per test)
+UNITY_TRACE_SERVICES=all pytest tests/
+```
+
+### Understanding Span Counts
+
+A typical test generates spans from multiple sources:
+
+| Service | Typical Count | Contents |
+|---------|---------------|----------|
+| `unity` | ~30 | Manager methods, tool loops, internal operations |
+| `unify` | ~10 | SDK HTTP client calls |
+| `unillm` | ~5 | LLM request/response |
+| `orchestra` | ~550 | HTTP handlers, DB queries (very granular) |
+
+Orchestra's instrumentation is particularly detailed, capturing every SQL query and connection. Use `UNITY_TRACE_SERVICES=unity` for a clean view of test logic, or `UNITY_TRACE_EXCLUDE_PATTERNS=connect,db.query` to keep HTTP-level Orchestra spans while filtering DB noise.
+
+### Querying Trace Data
+
+```python
+import unify
+
+unify.activate("UnityTests")
+
+# Get trace spans for a specific test
+trace_ctx = "tests/test_contact_manager/test_ask/test_ask_time_check/DefaultUser/DefaultAssistant/Trace"
+logs = unify.get_logs(context=trace_ctx, limit=100)
+
+# Filter by service
+unity_spans = [log for log in logs if log.entries.get("service") == "unity"]
+
+# Find slow spans
+slow_spans = [log for log in logs if log.entries.get("duration_ms", 0) > 1000]
+```

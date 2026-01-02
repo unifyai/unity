@@ -61,6 +61,19 @@ class TestingSettings(ProductionSettings):
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_FILE_LOCK_TIMEOUT: float = 3600.0  # 1 hour - handles slow tests under load
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Trace Upload Settings (for uploading OTEL traces to test context)
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_TRACE_UPLOAD: bool = (
+        True  # Enable/disable trace upload to {TestContext}/Trace
+    )
+    UNITY_TRACE_SERVICES: str = (
+        "all"  # Services to include: "all" or comma-separated list
+    )
+    UNITY_TRACE_EXCLUDE_PATTERNS: str = (
+        ""  # Comma-separated span name patterns to exclude
+    )
+
     @computed_field
     @property
     def test_project_name(self) -> str:
