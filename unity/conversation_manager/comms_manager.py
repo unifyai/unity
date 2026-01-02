@@ -208,6 +208,18 @@ class CommsManager:
                         f"app:conductor:{system_event_type}",
                         evt.to_json(),
                     )
+                elif system_event_type == "sync_contacts":
+                    evt = SyncContacts(
+                        reason=(
+                            str(system_message)
+                            if system_message is not None
+                            else "Contact sync requested via system event."
+                        ),
+                    )
+                    self._publish_from_callback(
+                        f"app:comms:{system_event_type}",
+                        evt.to_json(),
+                    )
                 message.ack()
             elif thread in events_map:
                 # Publish contacts

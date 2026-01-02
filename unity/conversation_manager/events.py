@@ -556,6 +556,13 @@ class ConductorResumeActor(Event):
 
 
 @dataclass
+class SyncContacts(Event):
+    """Signal to re-sync system contacts from the API (assistant, user, org members)."""
+
+    reason: str = ""
+
+
+@dataclass
 class LLMUserMessage(Event):
     content: str
 

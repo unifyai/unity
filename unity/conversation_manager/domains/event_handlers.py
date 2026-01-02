@@ -492,6 +492,34 @@ async def _(
             )
 
 
+@EventHandler.register(SyncContacts)
+async def _(
+    event: SyncContacts,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    print(f"Received SyncContacts event: {event.reason}")
+
+    async def _sync_contacts_task():
+        def _sync():
+            try:
+                cm.contact_manager._sync_required_contacts()
+                print("[SyncContacts] Contacts synced successfully")
+            except Exception as e:
+                print(f"[SyncContacts] Error syncing contacts: {e}")
+
+        await asyncio.to_thread(_sync)
+
+        cm.notifications_bar.push_notif(
+            "System",
+            f"Contacts synced: {event.reason or 'manual sync'}",
+            event.timestamp,
+        )
+
+    asyncio.create_task(_sync_contacts_task())
+
+
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
     # ToDo: Get this working for email as well (replying to the same thread)
