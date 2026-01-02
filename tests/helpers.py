@@ -237,6 +237,33 @@ def _flush_otel_spans() -> None:
         pass
 
 
+def _should_include_span(span: dict) -> bool:
+    """Check if a span should be included based on SETTINGS filters.
+
+    Filters:
+        - UNITY_TRACE_SERVICES: "all" or comma-separated list of services
+        - UNITY_TRACE_EXCLUDE_PATTERNS: comma-separated span name patterns to exclude
+    """
+    # Service filter
+    services_setting = SETTINGS.UNITY_TRACE_SERVICES.strip().lower()
+    if services_setting != "all":
+        allowed_services = {s.strip() for s in services_setting.split(",") if s.strip()}
+        span_service = (span.get("service") or "").lower()
+        if span_service not in allowed_services:
+            return False
+
+    # Exclusion pattern filter
+    exclude_setting = SETTINGS.UNITY_TRACE_EXCLUDE_PATTERNS.strip()
+    if exclude_setting:
+        exclude_patterns = [p.strip() for p in exclude_setting.split(",") if p.strip()]
+        span_name = span.get("name") or ""
+        for pattern in exclude_patterns:
+            if pattern in span_name:
+                return False
+
+    return True
+
+
 def _upload_trace_to_context(
     test_ctx: str,
     trace_id: str | None,
@@ -244,11 +271,20 @@ def _upload_trace_to_context(
 ) -> None:
     """Upload trace data from JSONL file to {TestContext}/Trace context.
 
+    Controlled by SETTINGS:
+        - UNITY_TRACE_UPLOAD: Enable/disable upload entirely
+        - UNITY_TRACE_SERVICES: Filter by service (e.g., "unity" or "unity,orchestra")
+        - UNITY_TRACE_EXCLUDE_PATTERNS: Exclude spans matching patterns
+
     Args:
         test_ctx: The test context path (e.g., tests/.../test_name/DefaultUser/Assistant)
         trace_id: The 32-char hex trace_id for this test run
         max_spans: Maximum number of spans to upload (default 1000 to avoid slow uploads)
     """
+    # Check if upload is enabled
+    if not SETTINGS.UNITY_TRACE_UPLOAD:
+        return
+
     if not trace_id:
         return  # OTEL disabled or no trace_id captured
 
@@ -263,18 +299,20 @@ def _upload_trace_to_context(
     try:
         import json
 
-        # Read spans from the JSONL file (limited to max_spans)
+        # Read and filter spans from the JSONL file
         spans = []
         with open(trace_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
-                    spans.append(json.loads(line))
-                    if len(spans) >= max_spans:
-                        break
+                    span = json.loads(line)
+                    if _should_include_span(span):
+                        spans.append(span)
+                        if len(spans) >= max_spans:
+                            break
 
         if not spans:
-            return  # Empty trace file
+            return  # No spans after filtering
 
         # Detach from trace context to avoid recursive span creation.
         # Without this, each unify.log() call generates ~26 Orchestra spans,
