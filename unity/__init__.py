@@ -31,8 +31,6 @@ try:  # pragma: no cover - simple import guard
 except Exception:  # ImportError or others
 
     class _UnifyShim:
-        def set_client_direct_mode(self, *_args, **_kwargs) -> None:
-            pass
 
         def active_project(self) -> bool:
             return False
@@ -47,10 +45,6 @@ except Exception:  # ImportError or others
             return {}
 
     unify = _UnifyShim()  # type: ignore
-
-
-# Set direct mode to True to avoid the overhead of the Unify API.
-unify.set_client_direct_mode(True)
 
 
 # ---------------------------------------------------------------------------
