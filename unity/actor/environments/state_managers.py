@@ -36,12 +36,17 @@ class StateManagerEnvironment(BaseEnvironment):
         # - Unknown methods default to impure to avoid incorrectly caching side effects.
         pure_methods = {
             "ask",
+            "ask_about_file",  # FileManager read-only
             "get",
             "list",
             "search",
             "exists",
             "parse",
             "preview",
+            "reduce",  # FileManager read-only
+            "filter_files",  # FileManager read-only
+            "search_files",  # FileManager read-only
+            "visualize",  # FileManager read-only (generates plots, no mutation)
         }
 
         def _infer_primitives_attr_name(class_path: str) -> str | None:
@@ -69,6 +74,7 @@ class StateManagerEnvironment(BaseEnvironment):
                 "Transcript": "transcripts",
                 "Secret": "secrets",
                 "Web": "web",
+                "File": "files",
             }
             for k, v in special.items():
                 if class_name == k and hasattr(Primitives, v):
