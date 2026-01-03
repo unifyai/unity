@@ -64,7 +64,7 @@ async def test_basic_ask_and_organize(
     assert f1 not in after_state["files"]
 
     # Sanity: list filesystems helper returns class names
-    fs = gfm._list_filesystems()
+    fs = gfm.list_filesystems()
     assert isinstance(fs, list) and all(isinstance(x, str) for x in fs)
 
 
@@ -143,7 +143,7 @@ async def test_organize_rename_and_move(
 async def test_list_filesystems_and_policy(global_file_manager):
     gfm = global_file_manager
     # Check helper returns class names
-    filesystems = gfm._list_filesystems()
+    filesystems = gfm.list_filesystems()
     assert isinstance(filesystems, list) and all(
         isinstance(n, str) for n in filesystems
     )
@@ -190,7 +190,7 @@ async def test_organize_delete(
     local.ingest_files(filename)
 
     # Get the file_id
-    rows = local._filter_files(filter=f"file_path == '{filename}'")
+    rows = local.filter_files(filter=f"file_path == '{filename}'")
     assert rows
     file_id = rows[0].get("file_id")
 
@@ -260,7 +260,7 @@ async def test_ask_exposes_class_named_tools(file_manager, global_file_manager):
         assert any(k.endswith("_ask_about_file") for k in tools.keys())
 
     # Schema should include source_filesystem
-    fs = gfm._list_filesystems()
+    fs = gfm.list_filesystems()
     assert isinstance(fs, list) and fs
 
 

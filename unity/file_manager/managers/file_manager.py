@@ -174,17 +174,17 @@ class FileManager(BaseFileManager):
         # Ask/AskAboutFile tool surfaces (read-only). No ingest_files - this is read-only.
         ask_tools: Dict[str, Callable] = methods_to_tool_dict(
             # Schema discovery helpers
-            self._list_columns,
-            self._tables_overview,
-            self._schema_explain,
+            self.list_columns,
+            self.tables_overview,
+            self.schema_explain,
             # File info (combines filesystem + index + ingest identity)
-            self._file_info,
+            self.file_info,
             # Retrieval helpers
-            self._filter_files,
-            self._search_files,
-            self._reduce,
+            self.filter_files,
+            self.search_files,
+            self.reduce,
             # Visualization
-            self._visualize,
+            self.visualize,
             # Inventory listing
             self.list,
             # Delegate to file-scoped Q&A when needed
@@ -193,25 +193,25 @@ class FileManager(BaseFileManager):
         )
         # Multi-table tools (joins across per-file tables)
         ask_multi_table_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self._filter_join,
-            self._search_join,
-            self._filter_multi_join,
-            self._search_multi_join,
+            self.filter_join,
+            self.search_join,
+            self.filter_multi_join,
+            self.search_multi_join,
             include_class_name=False,
         )
         self.add_tools("ask", ask_tools)
         self.add_tools("ask.multi_table", ask_multi_table_tools)
         ask_about_file_tools: Dict[str, Callable] = methods_to_tool_dict(
             # Read-only helpers (no ingest_files - this is read-only)
-            self._file_info,
-            self._list_columns,
-            self._tables_overview,
-            self._schema_explain,
-            self._filter_files,
-            self._search_files,
-            self._reduce,
+            self.file_info,
+            self.list_columns,
+            self.tables_overview,
+            self.schema_explain,
+            self.filter_files,
+            self.search_files,
+            self.reduce,
             # Visualization
-            self._visualize,
+            self.visualize,
             include_class_name=False,
         )
         self.add_tools("ask_about_file", ask_about_file_tools)
@@ -220,9 +220,9 @@ class FileManager(BaseFileManager):
         # but should not receive direct read-only retrieval tools itself.
         organize_tools: Dict[str, Callable] = methods_to_tool_dict(
             self.ask,
-            self._rename_file,
-            self._move_file,
-            self._delete_file,
+            self.rename_file,
+            self.move_file,
+            self.delete_file,
             self.sync,
             include_class_name=False,
         )
@@ -252,7 +252,7 @@ class FileManager(BaseFileManager):
 
     # ------------------------- File info helper ----------------------------- #
     @read_only
-    def _file_info(self, *, identifier: Union[str, int]):
+    def file_info(self, *, identifier: Union[str, int]):
         """
         Return comprehensive information about a file's status and ingest identity.
 
@@ -347,12 +347,12 @@ class FileManager(BaseFileManager):
             Outcome with details about purge counts and the new ingest status.
         """
         # Resolve identity and layout via file_info
-        info = self._file_info(identifier=file_path)
+        info = self.file_info(identifier=file_path)
         ingest_mode = info.get("ingest_mode", "per_file")
         unified_label = info.get("unified_label")
         table_ingest = info.get("table_ingest", True)
 
-        overview = self._tables_overview(file=file_path)
+        overview = self.tables_overview(file=file_path)
         purged = {"content_rows": 0, "table_rows": 0}
 
         # Purge content rows
@@ -828,7 +828,7 @@ class FileManager(BaseFileManager):
         raise FileNotFoundError(f"Unable to resolve file bytes for '{file_path}'")
 
     # ---------- Adapter-backed mutators (capability-guarded) --------------- #
-    def _rename_file(
+    def rename_file(
         self,
         *,
         file_id_or_path: Union[str, int],
@@ -902,7 +902,7 @@ class FileManager(BaseFileManager):
             new_name=str(new_name),
         )
 
-    def _move_file(
+    def move_file(
         self,
         *,
         file_id_or_path: Union[str, int],
@@ -976,7 +976,7 @@ class FileManager(BaseFileManager):
             new_parent_path=str(new_parent_path),
         )
 
-    def _delete_file(
+    def delete_file(
         self,
         *,
         file_id_or_path: Union[str, int],
@@ -1496,7 +1496,7 @@ class FileManager(BaseFileManager):
         return _storage_get_columns(self)
 
     @read_only
-    def _tables_overview(
+    def tables_overview(
         self,
         *,
         include_column_info: bool = True,
@@ -1564,7 +1564,7 @@ class FileManager(BaseFileManager):
         )
 
     @read_only
-    def _schema_explain(self, *, table: str) -> str:
+    def schema_explain(self, *, table: str) -> str:
         """
         Return a natural-language explanation of a table's structure and purpose.
 
@@ -1624,7 +1624,7 @@ class FileManager(BaseFileManager):
             return 0
 
     @read_only
-    def _reduce(
+    def reduce(
         self,
         *,
         table: Optional[str] = None,
@@ -1748,7 +1748,7 @@ class FileManager(BaseFileManager):
         )
 
     @read_only
-    def _visualize(
+    def visualize(
         self,
         *,
         tables: Union[str, List[str]],
@@ -1803,7 +1803,7 @@ class FileManager(BaseFileManager):
             Column to group/color data points by. Creates multiple series.
 
         filter : str | None
-            Row-level filter expression. Same syntax as `_reduce` and `_filter_files`.
+            Row-level filter expression. Same syntax as `reduce` and `filter_files`.
             Applied before plotting.
 
         title : str | None
@@ -1947,7 +1947,7 @@ class FileManager(BaseFileManager):
         return results
 
     @read_only
-    def _list_columns(
+    def list_columns(
         self,
         *,
         include_types: bool = True,
@@ -2006,7 +2006,7 @@ class FileManager(BaseFileManager):
         return cols if include_types else list(cols)
 
     @read_only
-    def _filter_files(
+    def filter_files(
         self,
         *,
         filter: Optional[str] = None,
@@ -2110,7 +2110,7 @@ class FileManager(BaseFileManager):
         return rows
 
     @read_only
-    def _search_files(
+    def search_files(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
@@ -2212,7 +2212,7 @@ class FileManager(BaseFileManager):
 
     # ---------- Per-file join and multi-join tools (read-only) -------------- #
     @read_only
-    def _filter_join(
+    def filter_join(
         self,
         *,
         tables: Union[str, List[str]],
@@ -2334,7 +2334,7 @@ class FileManager(BaseFileManager):
         )
 
     @read_only
-    def _search_join(
+    def search_join(
         self,
         *,
         tables: Union[str, List[str]],
@@ -2438,7 +2438,7 @@ class FileManager(BaseFileManager):
         )
 
     @read_only
-    def _filter_multi_join(
+    def filter_multi_join(
         self,
         *,
         joins: List[Dict[str, Any]],
@@ -2544,7 +2544,7 @@ class FileManager(BaseFileManager):
         )
 
     @read_only
-    def _search_multi_join(
+    def search_multi_join(
         self,
         *,
         joins: List[Dict[str, Any]],

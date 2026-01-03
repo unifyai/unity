@@ -75,7 +75,7 @@ async def _build_scenario(
     Populate file stores across filesystems and demonstrate GlobalFileManager capabilities.
     """
     # Get list of available filesystems
-    filesystems = gfm._list_filesystems()
+    filesystems = gfm.list_filesystems()
 
     # Manually populate sample files for each filesystem
     sample_dir = (

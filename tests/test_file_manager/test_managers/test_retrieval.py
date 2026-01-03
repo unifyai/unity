@@ -26,7 +26,7 @@ def test_create_basic(file_manager, tmp_path: Path):
     item = res[name]
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
-    rows = fm._filter_files(filter=f"file_path == '{name}'")
+    rows = fm.filter_files(filter=f"file_path == '{name}'")
     assert rows and any(r.get("file_path", name) == name for r in rows)
 
 
@@ -76,14 +76,14 @@ def test_search_single_reference_basic(file_manager, tmp_path: Path):
 
     # Search for chocolate cookies related content
     query = "olympic medals"
-    results = fm._search_files(references={"summary": query}, k=3)
+    results = fm.search_files(references={"summary": query}, k=3)
 
     assert len(results) >= 1
     # Should find sports report first
     assert any(r.get("file_path", "").endswith("sports_report.txt") for r in results)
 
     # Verify columns were created
-    cols = fm._list_columns()
+    cols = fm.list_columns()
     assert "_summary_emb" in cols
 
 
@@ -111,13 +111,13 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
 
     # Search using both content and metadata
     refs = {"summary": "Shakespeare performances", "file_path": "analysis"}
-    results = fm._search_files(references=refs, k=2)
+    results = fm.search_files(references=refs, k=2)
 
     assert len(results) >= 1
     assert any(r.get("file_path", "").endswith("theatre_review.txt") for r in results)
 
     # Verify columns were created
-    cols = fm._list_columns()
+    cols = fm.list_columns()
     assert "_summary_emb" in cols
     assert "_file_path_emb" in cols
 
@@ -159,7 +159,7 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
 
     # Search for AI/ML content - should rank ml_research.txt highest
     query = "artificial intelligence machine learning research algorithms"
-    results = fm._search_files(references={"summary": query}, k=1)
+    results = fm.search_files(references={"summary": query}, k=1)
 
     assert len(results) == 1
     print(f"results: {[(f.get('file_id'), f.get('file_path')) for f in results]}")
@@ -207,7 +207,7 @@ def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
 
     # Search for AI content
     query = "artificial intelligence machine learning algorithms and AI applications"
-    results = fm._search_files(references={"summary": query}, k=3)
+    results = fm.search_files(references={"summary": query}, k=3)
 
     assert len(results) >= 3
 
@@ -252,7 +252,7 @@ def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
 
     # Search for exact terms that appear in exact_match.txt
     query = "machine learning artificial intelligence neural networks"
-    results = fm._search_files(references={"summary": query}, k=1)
+    results = fm.search_files(references={"summary": query}, k=1)
 
     assert len(results) == 1
     assert any(r.get("file_path", "").endswith("exact_match.txt") for r in results)
@@ -282,13 +282,13 @@ def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
         "summary": "neural networks deep learning algorithms",
         "file_path": "both",
     }
-    results = fm._search_files(references=refs, k=1)
+    results = fm.search_files(references=refs, k=1)
 
     assert len(results) == 1
     assert any(r.get("file_path", "").endswith("signal_in_both.txt") for r in results)
 
     # Verify columns were created
-    cols = fm._list_columns()
+    cols = fm.list_columns()
     assert "_summary_emb" in cols
     assert "_file_path_emb" in cols
 
@@ -327,7 +327,7 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
 
     # Search for medical AI - should rank medical_ai.txt first
     medical_query = "artificial intelligence medical diagnosis healthcare clinical"
-    medical_results = fm._search_files(
+    medical_results = fm.search_files(
         references={"summary": medical_query},
         k=1,
     )
@@ -339,7 +339,7 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
 
     # Search for automotive AI - should rank automotive_ai.txt first
     auto_query = "artificial intelligence automotive self-driving autonomous vehicles"
-    auto_results = fm._search_files(references={"summary": auto_query}, k=1)
+    auto_results = fm.search_files(references={"summary": auto_query}, k=1)
 
     assert len(auto_results) == 1
     assert any(
@@ -364,12 +364,12 @@ def test_filter_basic(file_manager, tmp_path: Path):
     fm.ingest_files(n_bad)
 
     # Filter by status
-    success_files = fm._filter_files(filter="status == 'success'")
+    success_files = fm.filter_files(filter="status == 'success'")
     assert len(success_files) >= 1
     assert all(f.get("status", "") == "success" for f in success_files)
 
     # Filter by filename extension
-    pdf_files = fm._filter_files(filter="file_path.endswith('.txt')")
+    pdf_files = fm.filter_files(filter="file_path.endswith('.txt')")
     assert len(pdf_files) >= 1
     assert all(f.get("file_path", "").endswith(".txt") for f in pdf_files)
 
@@ -391,7 +391,7 @@ def test_filter_metadata(file_manager, tmp_path: Path):
     fm.ingest_files(n_small)
 
     # Filter by file format
-    large_files = fm._filter_files(filter="file_format == 'txt'")
+    large_files = fm.filter_files(filter="file_format == 'txt'")
     assert len(large_files) == 1
     assert str(large_files[0].get("file_path", "")).endswith("large_file.txt")
 
@@ -408,7 +408,7 @@ def test_search_no_results_backfill(file_manager, tmp_path: Path):
     fm.ingest_files(n)
 
     # Search for something completely unrelated
-    results = fm._search_files(
+    results = fm.search_files(
         references={"summary": "quantum physics molecules"},
         k=5,
     )
@@ -430,13 +430,13 @@ def test_list_columns(file_manager, tmp_path: Path):
     fm.ingest_files(n)
 
     # Test with types
-    cols_with_types = fm._list_columns(include_types=True)
+    cols_with_types = fm.list_columns(include_types=True)
     assert isinstance(cols_with_types, dict)
     assert "file_path" in cols_with_types
     assert "status" in cols_with_types
     assert "summary" in cols_with_types
 
     # Test without types
-    cols_list = fm._list_columns(include_types=False)
+    cols_list = fm.list_columns(include_types=False)
     assert isinstance(cols_list, list)
     assert "file_path" in cols_list

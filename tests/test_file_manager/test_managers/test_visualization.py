@@ -1,5 +1,5 @@
 """
-Test FileManager._visualize tool functionality.
+Test FileManager.visualize tool functionality.
 
 This module tests the visualization capabilities of FileManager, including:
 - Direct invocation of _visualize with various plot types
@@ -322,12 +322,12 @@ class TestBuildProjectConfigDict:
 
 
 class TestSimulatedVisualize:
-    """Tests for SimulatedFileManager._visualize method."""
+    """Tests for SimulatedFileManager.visualize method."""
 
     def test_single_table_bar_chart(self, simulated_file_manager):
         """Generate a bar chart for a single table."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/path/to/data.xlsx.Tables.Sales",
             plot_type="bar",
             x_axis="Category",
@@ -343,7 +343,7 @@ class TestSimulatedVisualize:
     def test_single_table_line_chart(self, simulated_file_manager):
         """Generate a line chart for a single table."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/path/to/data.xlsx.Tables.Metrics",
             plot_type="line",
             x_axis="Date",
@@ -356,7 +356,7 @@ class TestSimulatedVisualize:
     def test_single_table_histogram(self, simulated_file_manager):
         """Generate a histogram for a single table."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/path/to/data.xlsx.Tables.Orders",
             plot_type="histogram",
             x_axis="OrderValue",
@@ -368,7 +368,7 @@ class TestSimulatedVisualize:
     def test_single_table_scatter(self, simulated_file_manager):
         """Generate a scatter plot for a single table."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/path/to/data.xlsx.Tables.Performance",
             plot_type="scatter",
             x_axis="TimeSpent",
@@ -381,7 +381,7 @@ class TestSimulatedVisualize:
     def test_multiple_tables_same_schema(self, simulated_file_manager):
         """Generate same plot for multiple tables with identical schemas."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables=[
                 "/path/to/data.xlsx.Tables.July_2025",
                 "/path/to/data.xlsx.Tables.August_2025",
@@ -407,7 +407,7 @@ class TestSimulatedVisualize:
     def test_empty_tables(self, simulated_file_manager):
         """Empty tables parameter returns error."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="",
             plot_type="bar",
             x_axis="X",
@@ -418,7 +418,7 @@ class TestSimulatedVisualize:
     def test_empty_tables_list(self, simulated_file_manager):
         """Empty tables list returns error."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables=[],
             plot_type="bar",
             x_axis="X",
@@ -429,7 +429,7 @@ class TestSimulatedVisualize:
     def test_with_filter(self, simulated_file_manager):
         """Generate plot with filter expression."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/path/to/data.xlsx.Tables.Jobs",
             plot_type="bar",
             x_axis="Status",
@@ -442,7 +442,7 @@ class TestSimulatedVisualize:
     def test_with_aggregate(self, simulated_file_manager):
         """Generate plot with aggregation function."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/path/to/data.xlsx.Tables.Sales",
             plot_type="bar",
             x_axis="Region",
@@ -455,7 +455,7 @@ class TestSimulatedVisualize:
     def test_with_scale(self, simulated_file_manager):
         """Generate plot with custom scales."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/path/to/data.xlsx.Tables.Data",
             plot_type="scatter",
             x_axis="X",
@@ -475,8 +475,8 @@ class TestSimulatedVisualize:
 def test_visualize_method_exists_on_simulated(simulated_file_manager):
     """Verify _visualize method exists on SimulatedFileManager."""
     fm = simulated_file_manager
-    assert hasattr(fm, "_visualize")
-    assert callable(fm._visualize)
+    assert hasattr(fm, "visualize")
+    assert callable(fm.visualize)
 
 
 def test_visualize_tool_exposed_in_ask():
@@ -486,7 +486,7 @@ def test_visualize_tool_exposed_in_ask():
     # Check if the tool is registered in the class's tool dict pattern
     # We just verify the method exists and is decorated correctly
     fm_class = LocalFileManager
-    assert hasattr(fm_class, "_visualize")
+    assert hasattr(fm_class, "visualize")
 
 
 def test_visualize_tool_exposed_in_ask_about_file():
@@ -494,7 +494,7 @@ def test_visualize_tool_exposed_in_ask_about_file():
     from unity.file_manager.managers.file_manager import FileManager
 
     # Verify _visualize method exists on FileManager
-    assert hasattr(FileManager, "_visualize")
+    assert hasattr(FileManager, "visualize")
 
 
 # =============================================================================
@@ -790,7 +790,7 @@ def test_real_visualize_single_table(file_manager, tmp_path):
     # This test would require setting up real table data.
     # For now, we just verify the method exists and has the right signature.
     fm = file_manager
-    assert hasattr(fm, "_visualize")
+    assert hasattr(fm, "visualize")
     # Check that the method is in the ask tools
     tools = fm.get_tools("ask")
     tool_names = list(tools.keys())
@@ -813,7 +813,7 @@ class TestVisualizationErrors:
         so this just verifies the call doesn't crash.
         """
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables="/nonexistent/path.xlsx.Tables.MissingTable",
             plot_type="bar",
             x_axis="X",
@@ -826,7 +826,7 @@ class TestVisualizationErrors:
     def test_mixed_empty_tables(self, simulated_file_manager):
         """List with empty strings should filter them out."""
         fm = simulated_file_manager
-        result = fm._visualize(
+        result = fm.visualize(
             tables=["", "/path/to/data.xlsx.Tables.Valid", ""],
             plot_type="bar",
             x_axis="X",

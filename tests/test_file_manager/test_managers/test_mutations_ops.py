@@ -22,17 +22,17 @@ def test_rename_updates_index_and_contexts(file_manager, tmp_path: Path):
     assert item.status == "success"
 
     # Perform rename via manager
-    fm._rename_file(file_id_or_path=src, new_name="rename_dst.txt")
+    fm.rename_file(file_id_or_path=src, new_name="rename_dst.txt")
     dst = str(p.with_name("rename_dst.txt"))
 
     # Old row should be gone; new row should exist
-    rows_old = fm._filter_files(filter=f"file_path == '{src}'")
-    rows_new = fm._filter_files(filter=f"file_path == '{dst}'")
+    rows_old = fm.filter_files(filter=f"file_path == '{src}'")
+    rows_new = fm.filter_files(filter=f"file_path == '{dst}'")
     assert len(rows_old) == 0
     assert any(r.get("file_path") == dst for r in rows_new)
 
     # Content context should resolve for the new path in tables_overview
-    ov = fm._tables_overview(file=dst)
+    ov = fm.tables_overview(file=dst)
     roots = [v for k, v in ov.items() if isinstance(v, dict) and "Content" in v]
     assert roots and "/Content" in str(roots[0]["Content"].get("context", ""))
 
@@ -50,11 +50,11 @@ def test_move_updates_index_and_contexts(file_manager, tmp_path: Path):
 
     new_dir = tmp_path / "sub"
     new_dir.mkdir(parents=True, exist_ok=True)
-    fm._move_file(file_id_or_path=src, new_parent_path=str(new_dir))
+    fm.move_file(file_id_or_path=src, new_parent_path=str(new_dir))
     dst = str(new_dir / "move_src.txt")
 
-    rows_old = fm._filter_files(filter=f"file_path == '{src}'")
-    rows_new = fm._filter_files(filter=f"file_path == '{dst}'")
+    rows_old = fm.filter_files(filter=f"file_path == '{src}'")
+    rows_new = fm.filter_files(filter=f"file_path == '{dst}'")
     assert len(rows_old) == 0
     assert any(r.get("file_path") == dst for r in rows_new)
 
@@ -69,13 +69,13 @@ def test_delete_removes_index_row(file_manager, tmp_path: Path):
     name = str(p)
     fm.ingest_files(name, config=FilePipelineConfig())
 
-    rows = fm._filter_files(filter=f"file_path == '{name}'")
+    rows = fm.filter_files(filter=f"file_path == '{name}'")
     assert rows and rows[0].get("file_id") is not None
     fid = int(rows[0].get("file_id"))
 
     # Test deletion using file_id_or_path with file_id
-    fm._delete_file(file_id_or_path=fid)
-    rows_after = fm._filter_files(filter=f"file_path == '{name}'")
+    fm.delete_file(file_id_or_path=fid)
+    rows_after = fm.filter_files(filter=f"file_path == '{name}'")
     assert len(rows_after) == 0
 
 
@@ -90,10 +90,10 @@ def test_delete_using_file_path(file_manager, tmp_path: Path):
     name = str(p)
     fm.ingest_files(name, config=FilePipelineConfig())
 
-    rows_before = fm._filter_files(filter=f"file_path == '{name}'")
+    rows_before = fm.filter_files(filter=f"file_path == '{name}'")
     assert len(rows_before) >= 1
 
     # Test deletion using file_id_or_path with file_path (fully qualified)
-    fm._delete_file(file_id_or_path=name)
-    rows_after = fm._filter_files(filter=f"file_path == '{name}'")
+    fm.delete_file(file_id_or_path=name)
+    rows_after = fm.filter_files(filter=f"file_path == '{name}'")
     assert len(rows_after) == 0

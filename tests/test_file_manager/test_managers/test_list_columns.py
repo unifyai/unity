@@ -4,7 +4,7 @@ from typing import Dict, Any
 
 
 def test_list_columns_index(file_manager) -> None:
-    cols = file_manager._list_columns()
+    cols = file_manager.list_columns()
     assert isinstance(cols, dict)
     assert len(cols) > 0
     assert "file_id" in cols
@@ -19,7 +19,7 @@ def test_list_columns_per_file_content(
     file_path = spec["path"].as_posix()
     file_manager.ingest_files(file_path)
 
-    overview = file_manager._tables_overview(file=file_path)
+    overview = file_manager.tables_overview(file=file_path)
     # Verify overview has content (for validation)
     roots = [k for k in overview.keys() if k != "FileRecords"]
     if not roots:
@@ -28,7 +28,7 @@ def test_list_columns_per_file_content(
 
     # Use file_path directly instead of legacy root from tables_overview
     # Request the schema for the per-file Content context via file_path
-    cols = file_manager._list_columns(table=file_path)
+    cols = file_manager.list_columns(table=file_path)
     assert isinstance(cols, dict)
     assert len(cols) > 0
 
@@ -51,7 +51,7 @@ def test_list_columns_per_file_table_when_present(
     file_path = spec["path"].as_posix()
     file_manager.ingest_files(file_path)
 
-    overview = file_manager._tables_overview(file=file_path)
+    overview = file_manager.tables_overview(file=file_path)
     roots = [k for k in overview.keys() if k != "FileRecords"]
     if not roots:
         return
@@ -68,6 +68,6 @@ def test_list_columns_per_file_table_when_present(
         return
 
     # Use file_path directly instead of legacy root from tables_overview
-    cols = file_manager._list_columns(table=f"{file_path}.Tables.{table_label}")
+    cols = file_manager.list_columns(table=f"{file_path}.Tables.{table_label}")
     assert isinstance(cols, dict)
     assert len(cols) > 0
