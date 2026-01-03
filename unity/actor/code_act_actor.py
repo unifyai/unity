@@ -11,21 +11,32 @@ from unity.actor.base import BaseActor
 from unity.actor.handle import ActorHandle
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
+from unity.common.llm_helpers import methods_to_tool_dict
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+from unity.manager_registry import ManagerRegistry
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
+    from unity.function_manager.function_manager import FunctionManager
 
 
 def build_code_act_system_prompt(
     environments: Dict[str, "BaseEnvironment"],
+    tools: Optional[Dict[str, Callable]] = None,
 ) -> str:
-    """Builds the rich system prompt for the CodeActActor with enhanced quality."""
+    """Builds the rich system prompt for the CodeActActor with enhanced quality.
+
+    Args:
+        environments: Active execution environments (computer_primitives, primitives, etc.)
+        tools: The tools dict - used to dynamically render additional tools (e.g. FunctionManager).
+    """
+    from unity.common.prompt_helpers import render_tools_block
 
     rules_and_examples = _build_code_act_rules_and_examples(environments=environments)
 
+    # Primary execution tool - always present and deserves its own dedicated section
     execute_tool = {
         "execute_python_code": {
             "signature": "async def execute_python_code(thought: str, code: str) -> Any",
@@ -48,7 +59,7 @@ def build_code_act_system_prompt(
         "domains are available via injected environment globals (e.g. state managers, and optionally browser/desktop)."
     )
 
-    return f"""
+    prompt = f"""
 ### Your Role: Code-First Automation Agent
 {role_line} {capabilities_line}
 
@@ -59,6 +70,30 @@ def build_code_act_system_prompt(
 
 {rules_and_examples}
 """
+
+    # Dynamically render additional tools (e.g. FunctionManager tools) if present
+    if tools:
+        # Filter out execute_python_code since it has its own dedicated section above
+        additional_tools = {
+            k: v for k, v in tools.items() if k != "execute_python_code"
+        }
+        if additional_tools:
+            prompt += (
+                f"\n### Additional Tools\n{render_tools_block(additional_tools)}\n"
+            )
+
+        # Add FunctionManager guidance if its tools are present
+        has_fm_tools = any(k.startswith("FunctionManager_") for k in tools)
+        if has_fm_tools:
+            prompt += """
+### Function Library
+
+You have access to a catalogue of pre-stored reusable functions via the FunctionManager tools.
+Use these to discover and retrieve existing implementations before writing code from scratch.
+When you find a relevant function, copy its implementation into your `execute_python_code` block.
+"""
+
+    return prompt
 
 
 class CodeExecutionSandbox:
@@ -228,6 +263,7 @@ class CodeActActor(BaseActor):
         agent_server_url: str = "http://localhost:3000",
         computer_primitives: Optional["ComputerPrimitives"] = None,
         environments: Optional[list["BaseEnvironment"]] = None,
+        function_manager: Optional["FunctionManager"] = None,
     ):
         """
         Initializes the CodeActActor.
@@ -237,6 +273,9 @@ class CodeActActor(BaseActor):
                            If provided, other browser-related params are ignored.
             environments: Optional list of execution environments. If None, defaults to
                 [ComputerEnvironment, StateManagerEnvironment].
+            function_manager: Manages a library of reusable functions. Exposes read-only tools
+                (list_functions, search_functions, search_functions_by_similarity) to the LLM.
+                The LLM can call these tools to discover and retrieve reusable function implementations.
         """
         from unity.actor.environments import (
             ComputerEnvironment,
@@ -286,6 +325,10 @@ class CodeActActor(BaseActor):
             self._main_event_loop = asyncio.get_running_loop()
         except RuntimeError:
             pass
+
+        self.function_manager = (
+            function_manager or ManagerRegistry.get_function_manager()
+        )
 
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ComputerPrimitives."""
@@ -355,7 +398,21 @@ class CodeActActor(BaseActor):
 
             return text_summary
 
-        return {"execute_python_code": execute_python_code}
+        tools: Dict[str, Callable[..., Awaitable[Any]]] = {
+            "execute_python_code": execute_python_code,
+        }
+
+        # Add FunctionManager read-only tools if available
+        if self.function_manager:
+            fm_tools = methods_to_tool_dict(
+                self.function_manager.list_functions,
+                self.function_manager.search_functions,
+                self.function_manager.search_functions_by_similarity,
+                include_class_name=True,
+            )
+            tools.update(fm_tools)
+
+        return tools
 
     async def act(
         self,
@@ -380,8 +437,10 @@ class CodeActActor(BaseActor):
             "This is an interactive session. Acknowledge that you are ready and "
             "wait for the user to provide instructions via interjection."
         )
+
         system_prompt = build_code_act_system_prompt(
             self.environments,
+            tools=self._tools,
         )
         handle = ActorHandle(
             task_description=description or initial_prompt,
