@@ -11,7 +11,7 @@ Architecture Note:
 
 Usage:
     These utilities are called by FileManager.visualize() and should not be
-    invoked directly by external code. Use the high-level _visualize tool instead.
+    invoked directly by external code. Use the high-level visualize tool instead.
 """
 
 from __future__ import annotations
