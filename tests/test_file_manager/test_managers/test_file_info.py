@@ -1,4 +1,4 @@
-"""Consolidated tests for FileManager._file_info tool.
+"""Consolidated tests for FileManager.file_info tool.
 
 This module tests all aspects of the _file_info tool including:
 - Basic existence and status checks
@@ -36,20 +36,20 @@ async def test_file_info_reports_source_uri_and_existence(tmp_path, file_manager
     abs_path = (root / rel).as_posix()
 
     # Before parse: filesystem exists, index doesn't
-    info1 = fm._file_info(identifier=rel)
+    info1 = fm.file_info(identifier=rel)
     assert info1.filesystem_exists is True
     assert info1.indexed_exists is False
     assert isinstance(info1.source_uri, (str, type(None)))
 
     # After parse: indexed exists
     fm.ingest_files(rel)
-    info2 = fm._file_info(identifier=rel)
+    info2 = fm.file_info(identifier=rel)
     assert info2.filesystem_exists is True
     assert info2.indexed_exists is True
     assert info2.parsed_status in ("success", "completed", None)
 
     # Absolute path also resolves to same source uri
-    info3 = fm._file_info(identifier=abs_path)
+    info3 = fm.file_info(identifier=abs_path)
     assert info3.filesystem_exists is True
     assert info3.indexed_exists is True
     if info2.source_uri and info3.source_uri:
@@ -65,17 +65,17 @@ async def test_file_info_by_file_id(tmp_path, file_manager):
     (root / "info_by_id.txt").write_text("lookup by id")
     fm.ingest_files("info_by_id.txt")
 
-    info_by_path = fm._file_info(identifier="info_by_id.txt")
+    info_by_path = fm.file_info(identifier="info_by_id.txt")
     assert info_by_path.indexed_exists is True
 
     # Get file_id from the index
-    rows = fm._filter_files(filter="file_path.endswith('info_by_id.txt')")
+    rows = fm.filter_files(filter="file_path.endswith('info_by_id.txt')")
     assert rows
     file_id = rows[0].get("file_id")
     assert file_id is not None
 
     # Lookup by file_id
-    info_by_id = fm._file_info(identifier=file_id)
+    info_by_id = fm.file_info(identifier=file_id)
     assert info_by_id.indexed_exists is True
     assert info_by_id.source_uri == info_by_path.source_uri
 
@@ -89,7 +89,7 @@ async def test_file_info_ingest_mode_fields(tmp_path, file_manager):
     (root / "ingest_mode_test.txt").write_text("check ingest fields")
     fm.ingest_files("ingest_mode_test.txt")
 
-    info = fm._file_info(identifier="ingest_mode_test.txt")
+    info = fm.file_info(identifier="ingest_mode_test.txt")
     assert info.indexed_exists is True
     # Check all identity fields are present as attributes
     assert hasattr(info, "ingest_mode")
@@ -134,13 +134,13 @@ async def test_resolve_to_uri_and_file_info(tmp_path: Path, file_manager):
     if isinstance(uri, str):
         assert uri.startswith(("local://", "codesandbox://", "interact://"))
 
-    info1 = fm._file_info(identifier=abs_path)
+    info1 = fm.file_info(identifier=abs_path)
     assert info1.filesystem_exists is True
     assert info1.indexed_exists in (False, True)
 
     # After parse, indexed_exists should be True
     fm.ingest_files(abs_path)
-    info2 = fm._file_info(identifier=abs_path)
+    info2 = fm.file_info(identifier=abs_path)
     assert info2.filesystem_exists is True
     assert info2.indexed_exists is True
     if info1.source_uri and info2.source_uri:
@@ -163,11 +163,11 @@ async def test_source_uri_filter_local(file_manager, tmp_path: Path):
     p.write_text("alpha")
     fm.ingest_files(str(p))
 
-    info = fm._file_info(identifier=str(p))
+    info = fm.file_info(identifier=str(p))
     uri = info.source_uri
     assert isinstance(uri, str) and uri.startswith("local://")
 
-    rows = fm._filter_files(filter=f"source_uri == '{uri}'")
+    rows = fm.filter_files(filter=f"source_uri == '{uri}'")
     assert len(rows) >= 1
     assert any(r.get("source_uri") == uri for r in rows)
 
@@ -183,14 +183,14 @@ async def test_source_uri_consistency_across_rename(file_manager, tmp_path: Path
     src.write_text("data")
     fm.ingest_files(str(src))
 
-    before = fm._file_info(identifier=str(src))
+    before = fm.file_info(identifier=str(src))
     uri = before.source_uri
     assert isinstance(uri, str)
 
     h = await fm.organize(f"Rename {src.as_posix()} to renamed_ident.txt")
     _ = await h.result()
 
-    rows = fm._filter_files(filter=f"source_uri == '{uri}'")
+    rows = fm.filter_files(filter=f"source_uri == '{uri}'")
     assert rows, "Row should still be indexed by source_uri after rename"
     assert any("renamed_ident.txt" in str(r.get("file_path", "")) for r in rows)
 
@@ -216,8 +216,8 @@ async def test_root_vs_rootless_source_uri_consistency(tmp_path: Path):
     fm_rooted.ingest_files("rootless_a.txt")
     fm_rootless.ingest_files(str(a))
 
-    info1 = fm_rooted._file_info(identifier="rootless_a.txt")
-    info2 = fm_rootless._file_info(identifier=str(a))
+    info1 = fm_rooted.file_info(identifier="rootless_a.txt")
+    info2 = fm_rootless.file_info(identifier=str(a))
     assert info1.filesystem_exists and info2.filesystem_exists
     assert info1.indexed_exists and info2.indexed_exists
 
@@ -242,12 +242,12 @@ async def test_rootless_local_manager_file_info(tmp_path, rootless_file_manager)
 
     fm = rootless_file_manager
 
-    info0 = fm._file_info(identifier=str(a))
+    info0 = fm.file_info(identifier=str(a))
     assert info0.filesystem_exists is True and info0.indexed_exists is False
 
     fm.ingest_files([str(a), str(b)])
-    info1 = fm._file_info(identifier=str(a))
-    info2 = fm._file_info(identifier=str(b))
+    info1 = fm.file_info(identifier=str(a))
+    info2 = fm.file_info(identifier=str(b))
     assert info1.filesystem_exists is True and info1.indexed_exists is True
     assert info2.filesystem_exists is True and info2.indexed_exists is True
 
@@ -384,8 +384,8 @@ async def test_gdrive_source_uri_stub():
     fm = FileManager(adapter=stub)
 
     # file_info should yield a gdrive:// URI using either id or path
-    info_by_id = fm._file_info(identifier="id_123")
-    info_by_path = fm._file_info(identifier="/stub_doc.txt")
+    info_by_id = fm.file_info(identifier="id_123")
+    info_by_path = fm.file_info(identifier="/stub_doc.txt")
     assert isinstance(info_by_id.source_uri, str) and info_by_id.source_uri.startswith(
         "gdrive://",
     )
@@ -394,7 +394,7 @@ async def test_gdrive_source_uri_stub():
     # Filtering by source_uri should be supported after parse
     fm.ingest_files("id_123")
     uri = info_by_id.source_uri
-    rows = fm._filter_files(filter=f"source_uri == '{uri}'")
+    rows = fm.filter_files(filter=f"source_uri == '{uri}'")
     assert rows
 
 
@@ -428,21 +428,21 @@ async def test_global_file_manager_identity(tmp_path: Path):
     gfm = GlobalFileManager([fm_rooted, fm_rootless])
 
     # file_info returns the same source_uri on both managers
-    info_rooted = fm_rooted._file_info(identifier="ident_main.txt")
-    info_rootless = fm_rootless._file_info(identifier=str(f1))
+    info_rooted = fm_rooted.file_info(identifier="ident_main.txt")
+    info_rootless = fm_rootless.file_info(identifier=str(f1))
     assert info_rooted.source_uri and info_rootless.source_uri
     assert info_rooted.source_uri == info_rootless.source_uri
     canon = info_rooted.source_uri
 
     # filter by source_uri works per manager
-    rows_rooted = fm_rooted._filter_files(filter=f"source_uri == '{canon}'")
-    rows_rootless = fm_rootless._filter_files(filter=f"source_uri == '{canon}'")
+    rows_rooted = fm_rooted.filter_files(filter=f"source_uri == '{canon}'")
+    rows_rootless = fm_rootless.filter_files(filter=f"source_uri == '{canon}'")
     assert rows_rooted and rows_rootless
 
     # Global ask doesn't break identity-based filtering
     h_ask = await gfm.ask("List available filesystems and overall inventory")
     _ = await h_ask.result()
-    rows_after_ask_rooted = fm_rooted._filter_files(filter=f"source_uri == '{canon}'")
+    rows_after_ask_rooted = fm_rooted.filter_files(filter=f"source_uri == '{canon}'")
     assert rows_after_ask_rooted
 
     # Global organize on a different file does not affect f1's source_uri lookup
@@ -450,7 +450,7 @@ async def test_global_file_manager_identity(tmp_path: Path):
         f"Rename /{f2.name} to renamed_other.txt and then move renamed_other.txt to /",
     )
     _ = await h_org.result()
-    rows_after_org_rootless = fm_rootless._filter_files(
+    rows_after_org_rootless = fm_rootless.filter_files(
         filter=f"source_uri == '{canon}'",
     )
     assert rows_after_org_rootless

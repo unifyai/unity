@@ -234,7 +234,7 @@ async def _dispatch_with_context(
 
     if cmd in ("stat", "info", "file_info"):
         try:
-            info = fm._file_info(identifier=rest)
+            info = fm.file_info(identifier=rest)
             # FileInfo is a Pydantic model; convert to dict for display
             print(json.dumps(info.model_dump(), indent=2))
         except Exception as exc:

@@ -889,20 +889,20 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     if kind == "ask":
         return methods_to_tool_dict(
             # Schema discovery
-            FileManager._list_columns,
-            FileManager._tables_overview,
-            FileManager._schema_explain,
-            FileManager._file_info,
+            FileManager.list_columns,
+            FileManager.tables_overview,
+            FileManager.schema_explain,
+            FileManager.file_info,
             # Retrieval helpers
-            FileManager._filter_files,
-            FileManager._search_files,
-            FileManager._reduce,
-            FileManager._visualize,
+            FileManager.filter_files,
+            FileManager.search_files,
+            FileManager.reduce,
+            FileManager.visualize,
             # Join/multi-join tools (exposed via ask.multi_table and merged at call-time)
-            FileManager._filter_join,
-            FileManager._search_join,
-            FileManager._filter_multi_join,
-            FileManager._search_multi_join,
+            FileManager.filter_join,
+            FileManager.search_join,
+            FileManager.filter_multi_join,
+            FileManager.search_multi_join,
             # Inventory listing
             FileManager.list,
             # Delegate to file-scoped Q&A when needed
@@ -912,20 +912,20 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     elif kind == "ask_about_file":
         return methods_to_tool_dict(
             # Schema discovery
-            FileManager._file_info,
-            FileManager._list_columns,
-            FileManager._tables_overview,
-            FileManager._schema_explain,
+            FileManager.file_info,
+            FileManager.list_columns,
+            FileManager.tables_overview,
+            FileManager.schema_explain,
             # Retrieval helpers
-            FileManager._filter_files,
-            FileManager._search_files,
-            FileManager._reduce,
-            FileManager._visualize,
+            FileManager.filter_files,
+            FileManager.search_files,
+            FileManager.reduce,
+            FileManager.visualize,
             # Join/multi-join tools for file-scoped analysis
-            FileManager._filter_join,
-            FileManager._search_join,
-            FileManager._filter_multi_join,
-            FileManager._search_multi_join,
+            FileManager.filter_join,
+            FileManager.search_join,
+            FileManager.filter_multi_join,
+            FileManager.search_multi_join,
             include_class_name=False,
         )
     elif kind == "organize":
@@ -933,9 +933,9 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             # Discovery via ask
             FileManager.ask,
             # Mutation tools
-            FileManager._rename_file,
-            FileManager._move_file,
-            FileManager._delete_file,
+            FileManager.rename_file,
+            FileManager.move_file,
+            FileManager.delete_file,
             # Sync tool (exposed under organize)
             FileManager.sync,
             include_class_name=False,
@@ -943,18 +943,18 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     else:
         # Default to ask tools
         return methods_to_tool_dict(
-            FileManager._list_columns,
-            FileManager._tables_overview,
-            FileManager._schema_explain,
-            FileManager._file_info,
-            FileManager._filter_files,
-            FileManager._search_files,
-            FileManager._reduce,
-            FileManager._visualize,
-            FileManager._filter_join,
-            FileManager._search_join,
-            FileManager._filter_multi_join,
-            FileManager._search_multi_join,
+            FileManager.list_columns,
+            FileManager.tables_overview,
+            FileManager.schema_explain,
+            FileManager.file_info,
+            FileManager.filter_files,
+            FileManager.search_files,
+            FileManager.reduce,
+            FileManager.visualize,
+            FileManager.filter_join,
+            FileManager.search_join,
+            FileManager.filter_multi_join,
+            FileManager.search_multi_join,
             FileManager.list,
             FileManager.ask_about_file,
             include_class_name=False,
@@ -989,23 +989,20 @@ def mirror_global_file_manager_tools(kind: str) -> Dict[str, Any]:
     if kind == "ask":
         # Require listing filesystems first; no low-level ops exposed here
         return methods_to_tool_dict(
-            GlobalFileManager._list_filesystems,
+            GlobalFileManager.list_filesystems,
             include_class_name=False,
         )
     elif kind == "organize":
         # Organize should have discovery via ask available
         return methods_to_tool_dict(
             GlobalFileManager.ask,
-            GlobalFileManager._list_filesystems,
+            GlobalFileManager.list_filesystems,
             include_class_name=False,
         )
     else:
-        # Default to ask tools
+        # Default to ask tools (GlobalFileManager only exposes list_filesystems directly)
         return methods_to_tool_dict(
-            GlobalFileManager._list_filesystems,
-            GlobalFileManager._list_columns,
-            GlobalFileManager._filter_files,
-            GlobalFileManager._search_files,
+            GlobalFileManager.list_filesystems,
             include_class_name=False,
         )
 

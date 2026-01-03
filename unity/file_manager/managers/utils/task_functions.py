@@ -141,7 +141,7 @@ def execute_create_file_record(
     logger.debug(f"[TaskFn] Creating file record for: {file_path}")
 
     # Get file identity info (returns FileInfo Pydantic model)
-    info = file_manager._file_info(identifier=file_path)
+    info = file_manager.file_info(identifier=file_path)
 
     # Determine ingest settings from config
     ingest_mode = config.ingest.mode

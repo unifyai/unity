@@ -302,19 +302,19 @@ class SimulatedFileManager(BaseFileManager):
         except (ImportError, AttributeError):
             # Fallback if mirror function doesn't exist yet
             ask_tools = {
-                "_list_columns": {"description": "List available table columns"},
-                "_tables_overview": {"description": "Get overview of available tables"},
-                "_schema_explain": {
+                "list_columns": {"description": "List available table columns"},
+                "tables_overview": {"description": "Get overview of available tables"},
+                "schema_explain": {
                     "description": "Get natural-language schema explanation",
                 },
-                "_file_info": {
+                "file_info": {
                     "description": "Get comprehensive file status and identity",
                 },
-                "_filter_files": {
+                "filter_files": {
                     "description": "Filter files using boolean expressions",
                 },
-                "_search_files": {"description": "Semantic search over file contents"},
-                "_reduce": {"description": "Compute aggregates over rows"},
+                "search_files": {"description": "Semantic search over file contents"},
+                "reduce": {"description": "Compute aggregates over rows"},
                 "list": {"description": "List all available files"},
                 "ask_about_file": {
                     "description": "Ask questions about a specific file",
@@ -325,23 +325,23 @@ class SimulatedFileManager(BaseFileManager):
             ask_about_file_tools = mirror_file_manager_tools("ask_about_file")
         except (ImportError, AttributeError):
             ask_about_file_tools = {
-                "_file_info": {
+                "file_info": {
                     "description": "Get comprehensive file status and identity",
                 },
-                "_list_columns": {"description": "List available table columns"},
-                "_tables_overview": {"description": "Get overview of available tables"},
-                "_schema_explain": {
+                "list_columns": {"description": "List available table columns"},
+                "tables_overview": {"description": "Get overview of available tables"},
+                "schema_explain": {
                     "description": "Get natural-language schema explanation",
                 },
-                "_filter_files": {
+                "filter_files": {
                     "description": "Filter files using boolean expressions",
                 },
-                "_search_files": {"description": "Semantic search over file contents"},
-                "_reduce": {"description": "Compute aggregates over rows"},
-                "_filter_join": {"description": "Filter-based join across tables"},
-                "_search_join": {"description": "Search-based join across tables"},
-                "_filter_multi_join": {"description": "Multi-table filter-based join"},
-                "_search_multi_join": {"description": "Multi-table search-based join"},
+                "search_files": {"description": "Semantic search over file contents"},
+                "reduce": {"description": "Compute aggregates over rows"},
+                "filter_join": {"description": "Filter-based join across tables"},
+                "search_join": {"description": "Search-based join across tables"},
+                "filter_multi_join": {"description": "Multi-table filter-based join"},
+                "search_multi_join": {"description": "Multi-table search-based join"},
             }
 
         try:
@@ -349,9 +349,9 @@ class SimulatedFileManager(BaseFileManager):
         except (ImportError, AttributeError):
             organize_tools = {
                 "ask": {"description": "Ask questions to discover files"},
-                "_rename_file": {"description": "Rename a file"},
-                "_move_file": {"description": "Move a file to a new location"},
-                "_delete_file": {"description": "Delete a file"},
+                "rename_file": {"description": "Rename a file"},
+                "move_file": {"description": "Move a file to a new location"},
+                "delete_file": {"description": "Delete a file"},
             }
 
         # Build prompt using the new prompt builders
@@ -709,9 +709,9 @@ class SimulatedFileManager(BaseFileManager):
         return exported
 
     # --------------------------------------------------------------------- #
-    # Unify-backed retrieval (private tools)                             #
+    # Unify-backed retrieval (public tools)                              #
     # --------------------------------------------------------------------- #
-    def _filter_files(
+    def filter_files(
         self,
         *,
         filter: Optional[str] = None,
@@ -746,7 +746,7 @@ class SimulatedFileManager(BaseFileManager):
         # Apply offset and limit
         return filtered_files[offset : offset + limit]
 
-    def _search_files(
+    def search_files(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
@@ -800,7 +800,7 @@ class SimulatedFileManager(BaseFileManager):
 
         return files
 
-    def _file_info(self, *, identifier: Union[str, int]) -> Any:
+    def file_info(self, *, identifier: Union[str, int]) -> Any:
         """
         Return comprehensive information about a file's status and ingest identity.
 
@@ -873,7 +873,7 @@ class SimulatedFileManager(BaseFileManager):
             file_format=file_format,
         )
 
-    def _tables_overview(
+    def tables_overview(
         self,
         *,
         include_column_info: bool = True,
@@ -891,7 +891,7 @@ class SimulatedFileManager(BaseFileManager):
         }
         if include_column_info:
             try:
-                index["columns"] = self._list_columns(include_types=True)
+                index["columns"] = self.list_columns(include_types=True)
             except Exception:
                 index["columns"] = {}
 
@@ -915,7 +915,7 @@ class SimulatedFileManager(BaseFileManager):
         }
         return out
 
-    def _schema_explain(self, *, table: str) -> str:
+    def schema_explain(self, *, table: str) -> str:
         """
         Return a natural-language explanation of a table's structure and purpose.
 
@@ -964,30 +964,7 @@ class SimulatedFileManager(BaseFileManager):
             f"Approximate row count: {len(recs)}. Example columns: {cols_str}."
         )
 
-    def _reduce(
-        self,
-        *,
-        table: Optional[str] = None,
-        metric: str,
-        keys: str | List[str],
-        filter: Optional[str | Dict[str, str]] = None,
-        group_by: Optional[str | List[str]] = None,
-    ) -> Any:
-        """
-        Compute reduction metrics over the simulated index or a resolved table.
-
-        This delegates to the public `reduce()` helper, which returns deterministic
-        placeholder values with the same return shapes as the real implementation.
-        """
-        return self.reduce(
-            table=table,
-            metric=metric,
-            keys=keys,
-            filter=filter,
-            group_by=group_by,
-        )
-
-    def _visualize(
+    def visualize(
         self,
         *,
         tables: Union[str, List[str]],
@@ -1059,7 +1036,7 @@ class SimulatedFileManager(BaseFileManager):
             return results[0]
         return results
 
-    def _rename_file(
+    def rename_file(
         self,
         *,
         file_id_or_path: Union[str, int],
@@ -1090,7 +1067,7 @@ class SimulatedFileManager(BaseFileManager):
         self._files[new_name] = file_data
         return {"path": new_name, "name": new_name}
 
-    def _move_file(
+    def move_file(
         self,
         *,
         file_id_or_path: Union[str, int],
@@ -1123,7 +1100,7 @@ class SimulatedFileManager(BaseFileManager):
         self._files[new_path] = file_data
         return {"path": new_path, "parent": new_parent_path}
 
-    def _list_columns(
+    def list_columns(
         self,
         *,
         include_types: bool = True,
@@ -1190,7 +1167,7 @@ class SimulatedFileManager(BaseFileManager):
         """Clear all simulated files."""
         self._files.clear()
 
-    def _delete_file(self, *, file_id_or_path: Union[str, int]) -> Dict[str, Any]:
+    def delete_file(self, *, file_id_or_path: Union[str, int]) -> Dict[str, Any]:
         """Simulate deleting a file record."""
         # Resolve file_id_or_path to filename
         if isinstance(file_id_or_path, int):
@@ -1339,7 +1316,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
             f"'organize' (global) system message:\n{org_sys}",
         )
 
-    def _list_filesystems(self) -> List[str]:
+    def list_filesystems(self) -> List[str]:
         names = [
             getattr(m.__class__, "__name__", "FileManager") for m in self._managers
         ]
@@ -1370,7 +1347,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         body = {
             "action": "global.ask",
             "request": text,
-            "filesystems": self._list_filesystems(),
+            "filesystems": self.list_filesystems(),
             "inventory": inventory,
         }
         instruction = build_simulated_method_prompt(
@@ -1405,7 +1382,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         plan = {
             "action": "global.organize",
             "request": text,
-            "filesystems": self._list_filesystems(),
+            "filesystems": self.list_filesystems(),
         }
         instruction = build_simulated_method_prompt(
             "global_organize",

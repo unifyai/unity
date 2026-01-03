@@ -37,9 +37,9 @@ class BaseFileManager(BaseStateManager):
 
     Implementations expose read-only join tools to combine these contexts for
     efficient retrieval:
-    - _filter_join / _search_join: join two contexts and then filter or perform
+    - filter_join / search_join: join two contexts and then filter or perform
       semantic search over the joined result.
-    - _filter_multi_join / _search_multi_join: chain multiple joins (the special
+    - filter_multi_join / search_multi_join: chain multiple joins (the special
       placeholder '$prev' may be used to refer to the previous step at call-time).
 
     Reference conventions for join tools are implementation-specific. The
@@ -168,10 +168,10 @@ class BaseFileManager(BaseStateManager):
         """
 
     # ------------------------------------------------------------------ #
-    # Unify-backed retrieval (private tools)                             #
+    # Unify-backed retrieval (public tools)                              #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def _file_info(self, *, identifier: Union[str, int]) -> Any:
+    def file_info(self, *, identifier: Union[str, int]) -> Any:
         """
         Return comprehensive information about a file's status and ingest identity.
 
@@ -192,7 +192,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _tables_overview(
+    def tables_overview(
         self,
         *,
         include_column_info: bool = True,
@@ -217,7 +217,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _schema_explain(self, *, table: str) -> str:
+    def schema_explain(self, *, table: str) -> str:
         """
         Return a natural-language explanation of a table's structure and purpose.
 
@@ -237,7 +237,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _list_columns(
+    def list_columns(
         self,
         *,
         include_types: bool = True,
@@ -264,7 +264,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _filter_files(
+    def filter_files(
         self,
         *,
         filter: Optional[str] = None,
@@ -301,7 +301,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _search_files(
+    def search_files(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
@@ -323,7 +323,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _reduce(
+    def reduce(
         self,
         *,
         table: Optional[str] = None,
@@ -357,7 +357,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _visualize(
+    def visualize(
         self,
         *,
         tables: Union[str, List[str]],
@@ -410,7 +410,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _rename_file(
+    def rename_file(
         self,
         *,
         file_id_or_path: Union[str, int],
@@ -435,7 +435,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _move_file(
+    def move_file(
         self,
         *,
         file_id_or_path: Union[str, int],
@@ -460,7 +460,7 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _delete_file(self, *, file_id_or_path: Union[str, int]) -> Dict[str, Any]:
+    def delete_file(self, *, file_id_or_path: Union[str, int]) -> Dict[str, Any]:
         """
         Delete a file record from the Unify table and, if supported by the adapter,
         from the underlying filesystem.

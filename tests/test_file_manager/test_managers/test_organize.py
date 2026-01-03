@@ -103,7 +103,7 @@ async def test_delete(file_manager, tmp_path: Path):
     # Parse the file to add it to Unify logs so we can query for file_id
     fm.ingest_files(display_name)
 
-    rows = fm._filter_files(filter=f"file_path == '{display_name}'")
+    rows = fm.filter_files(filter=f"file_path == '{display_name}'")
     file_id = rows[0].get("file_id")
 
     instruction = f"Delete the file with ID {file_id}."

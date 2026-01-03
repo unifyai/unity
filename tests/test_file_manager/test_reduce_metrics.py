@@ -65,16 +65,16 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
         )
 
     # Single key, no grouping
-    scalar = file_manager._reduce(metric="sum", keys="file_id")
+    scalar = file_manager.reduce(metric="sum", keys="file_id")
     assert isinstance(scalar, (int, float))
 
     # Multiple keys, no grouping
-    multi = file_manager._reduce(metric="max", keys=["file_id"])
+    multi = file_manager.reduce(metric="max", keys=["file_id"])
     assert isinstance(multi, dict)
     assert set(multi.keys()) == {"file_id"}
 
     # Single key, group_by string
-    grouped_str = file_manager._reduce(
+    grouped_str = file_manager.reduce(
         metric="sum",
         keys="file_id",
         group_by="status",
@@ -82,7 +82,7 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
     assert isinstance(grouped_str, dict)
 
     # Multiple keys, group_by string
-    grouped_str_multi = file_manager._reduce(
+    grouped_str_multi = file_manager.reduce(
         metric="min",
         keys=["file_id"],
         group_by="status",
@@ -90,7 +90,7 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
     assert isinstance(grouped_str_multi, dict)
 
     # Single key, group_by list
-    grouped_list = file_manager._reduce(
+    grouped_list = file_manager.reduce(
         metric="sum",
         keys="file_id",
         group_by=["status", "file_id"],
@@ -98,7 +98,7 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
     assert isinstance(grouped_list, dict)
 
     # Multiple keys, group_by list
-    grouped_list_multi = file_manager._reduce(
+    grouped_list_multi = file_manager.reduce(
         metric="mean",
         keys=["file_id"],
         group_by=["status", "file_id"],
@@ -106,7 +106,7 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
     assert isinstance(grouped_list_multi, dict)
 
     # Filter as string
-    filtered_scalar = file_manager._reduce(
+    filtered_scalar = file_manager.reduce(
         metric="sum",
         keys="file_id",
         filter="file_id >= 0",
@@ -114,7 +114,7 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
     assert isinstance(filtered_scalar, (int, float))
 
     # Filter as per-key dict
-    filtered_multi = file_manager._reduce(
+    filtered_multi = file_manager.reduce(
         metric="sum",
         keys=["file_id"],
         filter={"file_id": "file_id >= 0"},

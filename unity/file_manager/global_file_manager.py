@@ -53,7 +53,7 @@ class GlobalFileManager(BaseGlobalFileManager):
 
         # Ask tools: list filesystems + per-manager ask surfaces (class‑named)
         ask_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self._list_filesystems,
+            self.list_filesystems,
             include_class_name=False,
         )
         for mgr in self._managers:
@@ -107,7 +107,7 @@ class GlobalFileManager(BaseGlobalFileManager):
 
     # Helpers
 
-    def _list_filesystems(self) -> List[str]:
+    def list_filesystems(self) -> List[str]:
         """Return the list of manager class names in deterministic order."""
         names = [
             getattr(m.__class__, "__name__", "FileManager") for m in self._managers

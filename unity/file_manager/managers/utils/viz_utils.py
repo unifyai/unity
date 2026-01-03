@@ -10,7 +10,7 @@ Architecture Note:
     This is the integration path until the Plot API is migrated to Orchestra.
 
 Usage:
-    These utilities are called by FileManager._visualize() and should not be
+    These utilities are called by FileManager.visualize() and should not be
     invoked directly by external code. Use the high-level _visualize tool instead.
 """
 

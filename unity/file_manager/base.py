@@ -170,7 +170,7 @@ class BaseGlobalFileManager(BaseStateManager, metaclass=SingletonABCMeta):
 
     # -------------------------- Discovery helper --------------------------- #
     @abstractmethod
-    def _list_filesystems(self) -> List[str]:
+    def list_filesystems(self) -> List[str]:
         """
         Return a list of human‑readable identifiers for the configured
         filesystems. Implementations may return class names of the underlying

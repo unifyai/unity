@@ -38,7 +38,7 @@ def test_per_file_contexts_created(file_manager, tmp_path: Path):
 
     print(f"item.file_path: {item.file_path}")
 
-    overview = fm._tables_overview(file=name)
+    overview = fm.tables_overview(file=name)
     print(f"overview: {overview}")
     assert isinstance(overview, dict)
     # Global entry
@@ -70,7 +70,7 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
     assert res[n2].status == "success"
 
     # Unified context should exist under the unified label
-    ov = fm._tables_overview(file="Docs")
+    ov = fm.tables_overview(file="Docs")
     assert isinstance(ov, dict) and len(ov) >= 1
     # Unified label entry should exist with Content
     assert "Docs" in ov and "Content" in ov["Docs"]
@@ -134,7 +134,7 @@ def test_embedding_specs_smoke(file_manager, tmp_path: Path):
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
     # Column existence for index embeddings may be model-driven; ensure schema still accessible
-    cols = fm._list_columns()
+    cols = fm.list_columns()
     assert "file_path" in cols and "status" in cols
 
 
@@ -152,7 +152,7 @@ def test_table_ingest_toggle_off_skips_tables_contexts(file_manager, tmp_path: P
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
 
-    ov = fm._tables_overview(file=name)
+    ov = fm.tables_overview(file=name)
     assert isinstance(ov, dict)
     # When table_ingest=False, the root should not include a "Tables" map
     roots = [v for k, v in ov.items() if isinstance(v, dict) and "Content" in v]
