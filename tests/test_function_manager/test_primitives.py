@@ -71,7 +71,13 @@ def test_collect_primitives_returns_expected_methods():
 
     # Check that expected primitives are present
     # These are from the PRIMITIVE_SOURCES registry
-    expected_names = ["ContactManager.ask", "TaskScheduler.execute"]
+    expected_names = [
+        "ContactManager.ask",
+        "TaskScheduler.execute",
+        # FileManager primitives
+        "FileManager.ask",
+        "FileManager.reduce",
+    ]
     for name in expected_names:
         assert name in primitives, f"Expected primitive '{name}' not found"
 
@@ -149,6 +155,19 @@ def test_compute_primitives_hash_changes_on_modification():
     modified_hash = compute_primitives_hash(modified)
 
     assert original_hash != modified_hash
+
+
+def test_collect_primitives_includes_file_manager():
+    """FileManager primitives should be collected with correct methods."""
+    primitives = collect_primitives()
+
+    file_primitives = [n for n in primitives if n.startswith("FileManager.")]
+    assert len(file_primitives) >= 5, "Expected at least 5 FileManager primitives"
+
+    expected_methods = ["ask", "ask_about_file", "reduce", "filter_files", "visualize"]
+    for method in expected_methods:
+        name = f"FileManager.{method}"
+        assert name in primitives, f"Expected {name} in primitives"
 
 
 # ────────────────────────────────────────────────────────────────────────────

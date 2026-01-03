@@ -283,10 +283,12 @@ def test_execution_globals_primitives_is_lazy():
     globals_dict = create_execution_globals()
     primitives = globals_dict["primitives"]
 
-    # Should have manager properties
+    # Existing manager properties
     assert hasattr(primitives, "contacts")
     assert hasattr(primitives, "knowledge")
     assert hasattr(primitives, "tasks")
+    # New manager properties
+    assert hasattr(primitives, "files")
 
 
 # ────────────────────────────────────────────────────────────────────────────
