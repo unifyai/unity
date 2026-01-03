@@ -660,7 +660,7 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
           cache-ndjson-${{ runner.os }}-
 
@@ -1081,7 +1081,7 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
           cache-ndjson-${{ runner.os }}-
 
@@ -1100,4 +1100,4 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: .cache.ndjson
-        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}
+        key: cache-ndjson-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
