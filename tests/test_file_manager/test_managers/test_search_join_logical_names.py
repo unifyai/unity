@@ -24,7 +24,7 @@ def test_filter_join_with_logical_names(file_manager, tmp_path: Path):
 
     # Use file_path directly instead of legacy root from tables_overview
     # We will join Content contexts by a trivial select; this is a smoke test for file_path resolution
-    out = fm._filter_join(
+    out = fm.filter_join(
         tables=[fa, fb],
         join_expr=f"{fa}.row_id == {fb}.row_id",
         select={

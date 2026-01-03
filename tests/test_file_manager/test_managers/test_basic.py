@@ -164,7 +164,7 @@ async def test_filter_by_content_id_dict(file_manager, supported_file_examples: 
     fm.ingest_files(display_name)
     # Use file_path directly instead of legacy root from tables_overview
     # Filter for the document row using dict-based content_id
-    rows = fm._filter_files(
+    rows = fm.filter_files(
         filter="content_type == 'document' and content_id.get('document') == 0",
         tables=[display_name],
     )

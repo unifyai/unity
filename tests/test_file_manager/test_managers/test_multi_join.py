@@ -19,7 +19,7 @@ def test_filter_multi_join_chain(file_manager, tmp_path: Path):
 
     # Use file_path directly instead of legacy root from tables_overview
     # Chain a two-step multi-join using the same file_path (self-join) as a smoke test
-    out = fm._filter_multi_join(
+    out = fm.filter_multi_join(
         joins=[
             {
                 "tables": [name, name],
@@ -52,7 +52,7 @@ def test_search_multi_join_chain_backfill(file_manager, tmp_path: Path):
 
     # Use file_path directly instead of legacy root from tables_overview
     # No references → backfill path; ensure it does not error and returns a list
-    rows = fm._search_multi_join(
+    rows = fm.search_multi_join(
         joins=[
             {
                 "tables": [name, name],

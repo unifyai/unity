@@ -56,7 +56,7 @@ def build_compact_ingest_model(
         return getattr(r, "content_type", None)
 
     # Identity via file_info (returns FileInfo Pydantic model)
-    info = file_manager._file_info(identifier=file_path)
+    info = file_manager.file_info(identifier=file_path)
     source_uri = info.source_uri
     display_path = file_path  # Use file_path as display_path
 
