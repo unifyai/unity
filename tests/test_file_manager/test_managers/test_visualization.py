@@ -473,14 +473,14 @@ class TestSimulatedVisualize:
 
 
 def test_visualize_method_exists_on_simulated(simulated_file_manager):
-    """Verify _visualize method exists on SimulatedFileManager."""
+    """Verify visualize method exists on SimulatedFileManager."""
     fm = simulated_file_manager
     assert hasattr(fm, "visualize")
     assert callable(fm.visualize)
 
 
 def test_visualize_tool_exposed_in_ask():
-    """Verify _visualize is accessible through ask tool dict on real FileManager."""
+    """Verify visualize is accessible through ask tool dict on real FileManager."""
     from unity.file_manager.managers.local import LocalFileManager
 
     # Check if the tool is registered in the class's tool dict pattern
@@ -490,18 +490,18 @@ def test_visualize_tool_exposed_in_ask():
 
 
 def test_visualize_tool_exposed_in_ask_about_file():
-    """Verify _visualize is accessible through ask_about_file tool dict on real FileManager."""
+    """Verify visualize is accessible through ask_about_file tool dict on real FileManager."""
     from unity.file_manager.managers.file_manager import FileManager
 
-    # Verify _visualize method exists on FileManager
+    # Verify visualize method exists on FileManager
     assert hasattr(FileManager, "visualize")
 
 
 # =============================================================================
-# END-TO-END TESTS: LLM orchestration of _visualize via ask/ask_about_file
+# END-TO-END TESTS: LLM orchestration of visualize via ask/ask_about_file
 # =============================================================================
 #
-# These tests verify that the LLM naturally chooses to call _visualize when
+# These tests verify that the LLM naturally chooses to call visualize when
 # answering analytical questions where visualization adds value. Tests use
 # real FileManager with ingested data and LLM-as-judge validation.
 # =============================================================================
@@ -517,7 +517,7 @@ async def test_ask_analytical_question_with_visualization_hint(file_manager, tmp
     End-to-end: Analytical question with explicit visualization hint.
 
     When asked to analyze data AND provide a visual, the LLM should
-    orchestrate _visualize alongside its analytical response.
+    orchestrate visualize alongside its analytical response.
     """
     fm = file_manager
     fm.clear()
@@ -548,10 +548,10 @@ async def test_ask_analytical_question_with_visualization_hint(file_manager, tmp
 
     assert isinstance(answer, str) and answer.strip()
 
-    # Verify _visualize tool was actually called
+    # Verify visualize tool was actually called
     assert _check_visualize_tool_called(
         steps,
-    ), "_visualize tool was not called despite explicit visualization request"
+    ), "visualize tool was not called despite explicit visualization request"
 
     # Use LLM judge to validate response quality
     _llm_assert_visualization_correct(
@@ -572,7 +572,7 @@ async def test_ask_about_file_trend_analysis(file_manager, tmp_path):
     End-to-end: ask_about_file with trend analysis question.
 
     When asked about trends in time-series data with a visualization hint,
-    the LLM should use _visualize to illustrate the trend.
+    the LLM should use visualize to illustrate the trend.
     """
     fm = file_manager
     fm.clear()
@@ -605,10 +605,10 @@ async def test_ask_about_file_trend_analysis(file_manager, tmp_path):
 
     assert isinstance(answer, str) and answer.strip()
 
-    # Verify _visualize tool was actually called
+    # Verify visualize tool was actually called
     assert _check_visualize_tool_called(
         steps,
-    ), "_visualize tool was not called despite explicit visualization request"
+    ), "visualize tool was not called despite explicit visualization request"
 
     # Use LLM judge - visualization is explicitly requested
     _llm_assert_visualization_correct(
@@ -675,7 +675,7 @@ async def test_ask_distribution_analysis_with_explicit_hint(file_manager, tmp_pa
     End-to-end: Distribution analysis WITH explicit visualization request.
 
     When asked about distribution patterns with an explicit request for
-    a chart/histogram, the LLM should use _visualize to generate one.
+    a chart/histogram, the LLM should use visualize to generate one.
     """
     fm = file_manager
     fm.clear()
@@ -702,10 +702,10 @@ async def test_ask_distribution_analysis_with_explicit_hint(file_manager, tmp_pa
 
     assert isinstance(answer, str) and answer.strip()
 
-    # Verify _visualize tool was actually called
+    # Verify visualize tool was actually called
     assert _check_visualize_tool_called(
         steps,
-    ), "_visualize tool was not called despite explicit visualization request"
+    ), "visualize tool was not called despite explicit visualization request"
 
     # Use LLM judge - visualization IS explicitly required
     _llm_assert_visualization_correct(
@@ -726,7 +726,7 @@ async def test_ask_about_file_comparison_analysis(file_manager, tmp_path):
     End-to-end: Comparative analysis with visualization hint.
 
     Questions comparing categories with a visualization request should
-    trigger _visualize with appropriate chart type.
+    trigger visualize with appropriate chart type.
     """
     fm = file_manager
     fm.clear()
@@ -759,10 +759,10 @@ async def test_ask_about_file_comparison_analysis(file_manager, tmp_path):
 
     assert isinstance(answer, str) and answer.strip()
 
-    # Verify _visualize tool was actually called
+    # Verify visualize tool was actually called
     assert _check_visualize_tool_called(
         steps,
-    ), "_visualize tool was not called despite explicit visualization request"
+    ), "visualize tool was not called despite explicit visualization request"
 
     # Use LLM judge - visualization is explicitly requested
     _llm_assert_visualization_correct(
@@ -782,7 +782,7 @@ async def test_ask_about_file_comparison_analysis(file_manager, tmp_path):
 @_handle_project
 def test_real_visualize_single_table(file_manager, tmp_path):
     """
-    Test _visualize on real FileManager with ingested data.
+    Test visualize on real FileManager with ingested data.
 
     This test requires a real Unify connection and ingested table data.
     It verifies the tool can resolve contexts and call the Plot API.

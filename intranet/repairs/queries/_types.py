@@ -142,7 +142,7 @@ class MetricResult(BaseModel):
 # =============================================================================
 
 # Type alias for the tools dictionary passed to metric functions
-# Contains file manager tools like _reduce, _filter_files, _list_columns, _visualize
+# Contains file manager tools like reduce, filter_files, list_columns, visualize
 ToolsDict = Dict[str, Any]
 
 

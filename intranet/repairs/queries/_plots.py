@@ -63,7 +63,7 @@ from typing import Dict, List
 from ._types import GroupBy, PlotConfig
 
 # Note: PlotConfig is re-exported from unity.file_manager.managers.utils.viz_utils
-# via _types.py for type consistency with FileManager._visualize.
+# via _types.py for type consistency with FileManager.visualize.
 # PlotConfig uses plot_type (str) instead of type (enum), and aggregate instead of metric.
 
 

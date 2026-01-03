@@ -2,11 +2,11 @@
 Plot generation utilities for repairs metrics.
 
 This module provides a thin wrapper for generating plot visualizations via
-FileManager's _visualize tool. It handles the mapping from metric×group_by
+FileManager's visualize tool. It handles the mapping from metric×group_by
 combinations to plot configurations defined in _plots.py.
 
 Architecture Note:
-    This module delegates all plot generation to FileManager._visualize,
+    This module delegates all plot generation to FileManager.visualize,
     which handles context resolution, API communication, retry logic, and
     authentication. The plot configurations themselves are defined in _plots.py.
 
@@ -59,13 +59,13 @@ def generate_plots(
 
     This function looks up the plot configurations for the given metric
     and group_by combination, then generates each plot via the FileManager's
-    _visualize tool. If any plot generation fails, the error is captured
+    visualize tool. If any plot generation fails, the error is captured
     in the PlotResult rather than raising an exception.
 
     Parameters
     ----------
     visualize_tool : VisualizeTool
-        The FileManager._visualize tool (obtained via tools["visualize"]).
+        The FileManager.visualize tool (obtained via tools["visualize"]).
     metric_name : str
         Name of the metric (e.g., "first_time_fix_rate").
         Must match a key in METRIC_PLOT_CONFIGS.
@@ -185,7 +185,7 @@ def _generate_plots_for_config(
     Parameters
     ----------
     visualize_tool : VisualizeTool
-        The FileManager._visualize tool.
+        The FileManager.visualize tool.
     config : PlotConfig
         Plot configuration from _plots.py.
     tables : list[str]
@@ -238,7 +238,7 @@ def _generate_plots_for_config(
         return results
 
     except Exception as e:
-        # If visualize tool raises, wrap in PlotResult error
+        # If FileManager.visualize raises, wrap in PlotResult error
         logger.exception(f"[{metric_name}] Unexpected error calling visualize tool")
         error_result = PlotResult(
             title=config.title or f"{config.plot_type} chart",
