@@ -38,7 +38,9 @@ if TYPE_CHECKING:
     from unity.task_scheduler.task_scheduler import TaskScheduler
     from unity.secret_manager.secret_manager import SecretManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
+    from unity.web_searcher.web_searcher import WebSearcher
     from unity.controller.browser import Browser
+    from unity.file_manager.managers.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +332,18 @@ PRIMITIVE_SOURCES: List[Tuple[str, List[str]]] = [
         "unity.function_manager.primitives.ComputerPrimitives",
         ["navigate", "act", "observe", "query", "reason"],
     ),
+    # FileManager - file operations and data access
+    (
+        "unity.file_manager.managers.file_manager.FileManager",
+        [
+            "ask",
+            "ask_about_file",
+            "reduce",
+            "filter_files",
+            "search_files",
+            "visualize",
+        ],
+    ),
 ]
 
 
@@ -480,8 +494,8 @@ _CLASS_TO_GETTER: Dict[str, str] = {
     "SecretManager": "get_secret_manager",
     "GuidanceManager": "get_guidance_manager",
     "WebSearcher": "get_web_searcher",
-    "FunctionManager": "get_function_manager",
     "ImageManager": "get_image_manager",
+    "FileManager": "get_file_manager",
 }
 
 
@@ -572,6 +586,7 @@ class Primitives:
         self._guidance: Optional["GuidanceManager"] = None
         self._web: Optional["WebSearcher"] = None
         self._computer: Optional[ComputerPrimitives] = None
+        self._files: Optional["FileManager"] = None
 
     @property
     def contacts(self) -> "ContactManager":
@@ -648,3 +663,17 @@ class Primitives:
         if self._computer is None:
             self._computer = ComputerPrimitives()
         return self._computer
+
+    @property
+    def files(self) -> "FileManager":
+        """
+        File management primitives (ask, ask_about_file, reduce, filter_files, search_files, visualize).
+
+        Provides access to file parsing, data reduction, filtering, searching, and visualization
+        capabilities. Only imported and initialized when actually accessed.
+        """
+        if self._files is None:
+            from unity.manager_registry import ManagerRegistry
+
+            self._files = ManagerRegistry.get_file_manager()
+        return self._files
