@@ -8,7 +8,7 @@ import logging
 import sys
 from typing import Awaitable, Callable, Iterable, Optional
 
-import unify
+import unillm
 
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
@@ -29,30 +29,20 @@ event_broker = get_event_broker()
 # STS (Speech-to-Speech) Usage Tracking
 # ---------------------------------------------------------------------------
 #
-# IMPORTANT: This is a ROUGH HEURISTIC for billing STS calls.
-#
-# OpenAI's Realtime API has a fundamentally different pricing model than text
-# LLMs - it charges per audio minute rather than per token. However, Unify's
-# usage tracking system is built around token-based billing.
-#
-# As a temporary workaround, we estimate token usage from call duration and
-# log it against a text-based model (gpt-4@openai) that has similar-ish costs.
+# We estimate audio token usage from call duration and bill using LiteLLM's
+# pricing data for the gpt-4o-realtime-preview model.
 #
 # Key assumptions (all approximate):
 #   - Audio is processed at ~150 tokens/second (OpenAI's internal tokenization)
 #   - We assume 50% of call duration is active speech (conservative estimate)
 #   - We split usage 50/50 between input (user speech) and output (assistant)
-#   - We use gpt-4@openai pricing which OVERESTIMATES actual Realtime API costs
 #
-# This approach intentionally OVERCHARGES users slightly to ensure we always
-# cover our actual costs from OpenAI.
-#
-# TODO: Replace this heuristic with proper Realtime API usage tracking once
-# Unify supports audio-minute billing or OpenAI Realtime pricing endpoints.
+# This uses deduct_credits_for_usage from unillm which leverages LiteLLM's
+# comprehensive pricing table for accurate Realtime API billing.
 # ---------------------------------------------------------------------------
 
 # Configuration for STS usage estimation
-_STS_BILLING_ENDPOINT = "gpt-4@openai"  # Use expensive model to overestimate
+_STS_BILLING_MODEL = "gpt-4o-realtime-preview"
 _STS_TOKENS_PER_SECOND = 150  # Approximate audio tokenization rate
 _STS_SPEECH_RATIO = 0.5  # Assume 50% of call is active speech
 _STS_INPUT_OUTPUT_SPLIT = 0.5  # Assume roughly equal speaking time
@@ -64,15 +54,15 @@ def log_sts_usage(
     tags: Optional[list[str]] = None,
 ) -> None:
     """
-    Log estimated usage for an STS (Speech-to-Speech) call.
+    Log estimated usage for an STS (Speech-to-Speech) call and deduct credits.
 
-    This is a ROUGH HEURISTIC - see module-level comments for details.
-    The billing is intentionally set to OVERESTIMATE actual costs.
+    Estimates audio token usage from call duration and deducts credits using
+    LiteLLM's pricing data for the Realtime API.
 
     Args:
         call_duration_seconds: Total duration of the call in seconds.
-        contact: Optional contact dict for tagging/identification.
-        tags: Optional additional tags for the query log.
+        contact: Optional contact dict for tagging/identification (unused, kept for API compat).
+        tags: Optional additional tags (unused, kept for API compatibility).
     """
     if call_duration_seconds <= 0:
         logger.warning("Skipping STS usage logging: call duration <= 0")
@@ -81,70 +71,36 @@ def log_sts_usage(
     # Estimate active speech time
     speech_seconds = call_duration_seconds * _STS_SPEECH_RATIO
 
-    # Convert to estimated tokens
-    total_tokens = int(speech_seconds * _STS_TOKENS_PER_SECOND)
+    # Convert to estimated audio tokens
+    total_audio_tokens = int(speech_seconds * _STS_TOKENS_PER_SECOND)
 
     # Split between input (user) and output (assistant)
-    input_tokens = int(total_tokens * _STS_INPUT_OUTPUT_SPLIT)
-    output_tokens = total_tokens - input_tokens
+    input_audio_tokens = int(total_audio_tokens * _STS_INPUT_OUTPUT_SPLIT)
+    output_audio_tokens = total_audio_tokens - input_audio_tokens
 
-    # Build query body for logging
-    query_body = {
-        "model": _STS_BILLING_ENDPOINT,
-        "messages": [
-            {"role": "system", "content": "[STS call - usage estimate]"},
-            {"role": "user", "content": f"[Audio input: {speech_seconds:.1f}s]"},
-        ],
-    }
-
-    # Build response body with usage stats
+    # Build response body in Realtime API format for billing
     response_body = {
-        "model": _STS_BILLING_ENDPOINT,
-        "object": "chat.completion",
         "usage": {
-            "prompt_tokens": input_tokens,
-            "completion_tokens": output_tokens,
-            "total_tokens": total_tokens,
-        },
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": f"[Audio output: {speech_seconds:.1f}s]",
-                },
-                "finish_reason": "stop",
+            "input_tokens": input_audio_tokens,
+            "output_tokens": output_audio_tokens,
+            "input_token_details": {
+                "text_tokens": 0,
+                "audio_tokens": input_audio_tokens,
             },
-        ],
-        # Include metadata for debugging/auditing
-        "_sts_metadata": {
-            "call_duration_seconds": call_duration_seconds,
-            "estimated_speech_seconds": speech_seconds,
-            "billing_heuristic_version": "v1",
-            "note": "ROUGH ESTIMATE - see code comments for details",
+            "output_token_details": {
+                "text_tokens": 0,
+                "audio_tokens": output_audio_tokens,
+            },
         },
     }
-
-    # Build tags
-    all_tags = ["voice", "sts", "realtime", "usage-estimate"]
-    if tags:
-        all_tags.extend(tags)
-    if contact:
-        contact_id = contact.get("contact_id") or contact.get("id")
-        if contact_id:
-            all_tags.append(f"contact:{contact_id}")
 
     try:
-        unify.log_query(
-            endpoint=_STS_BILLING_ENDPOINT,
-            query_body=query_body,
-            response_body=response_body,
-            tags=all_tags,
-            consume_credits=True,
-        )
+        cost = unillm.deduct_credits_for_usage(_STS_BILLING_MODEL, response_body)
         logger.info(
             f"Logged STS usage: {call_duration_seconds:.1f}s call → "
-            f"{total_tokens} tokens ({input_tokens} in / {output_tokens} out)",
+            f"{total_audio_tokens} audio tokens "
+            f"({input_audio_tokens} in / {output_audio_tokens} out), "
+            f"cost: ${cost:.6f}",
         )
     except Exception as e:
         # Don't let billing failures crash the call cleanup
