@@ -38,7 +38,7 @@ import time
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
-from intranet.core.bespoke_repairs_agent import register
+from intranet.repairs_agent.static.registry import register
 
 from ._types import GroupBy, MetricResult, PlotResult, TimePeriod, ToolsDict
 from .plot_utils import generate_plots
