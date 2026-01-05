@@ -417,25 +417,53 @@ class SteerableToolPane:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # Cancel whichever didn't complete.
-                for t in pending:
-                    t.cancel()
-                for t in pending:
-                    try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
+                # Process the first completed event. IMPORTANT:
+                # Some handle implementations (eg: simulated ones) incorrectly return `{}` immediately rather than
+                # blocking until an event exists. Treat empty dicts as "no event" and then
+                # fall back to awaiting the *other* channel instead of cancelling it.
+                processed = False
+                t_first = next(iter(done))
 
-                # Process the completed event (exactly one should complete here).
-                t = next(iter(done))
-                if t is clar_task:
-                    clar = await t
+                if t_first is clar_task:
+                    clar = await t_first
                     if isinstance(clar, dict):
-                        await self._handle_clarification(handle_id, clar)
+                        if clar:
+                            await self._handle_clarification(handle_id, clar)
+                            processed = True
+                    if not processed:
+                        # Await notification as the blocking source of truth.
+                        notif = await notif_task
+                        if isinstance(notif, dict):
+                            if notif:
+                                await self._handle_notification(handle_id, notif)
+                                processed = True
                 else:
-                    notif = await t
+                    notif = await t_first
                     if isinstance(notif, dict):
-                        await self._handle_notification(handle_id, notif)
+                        if notif:
+                            await self._handle_notification(handle_id, notif)
+                            processed = True
+                    if not processed:
+                        # Await clarification as the blocking source of truth.
+                        clar = await clar_task
+                        if isinstance(clar, dict):
+                            if clar:
+                                await self._handle_clarification(handle_id, clar)
+                                processed = True
+
+                # If neither channel produced a real event, this handle likely doesn't support
+                # bottom-up streaming correctly (returns `{}` immediately). Exit watcher to
+                # avoid a tight-loop flood; control-plane steering still works via pane methods.
+                if not processed:
+                    return
+
+                # Cancel whichever task (if any) is still pending, now that we've consumed the needed one.
+                for t in (clar_task, notif_task):
+                    if t.done():
+                        continue
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await t
 
         except asyncio.CancelledError:
             logger.debug("Watcher cancelled for handle_id=%s", handle_id)
