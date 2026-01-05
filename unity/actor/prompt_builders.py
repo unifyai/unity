@@ -339,7 +339,12 @@ def _build_primitives_implementation_examples() -> str:
         get_primitives_contact_ask_example,
         get_primitives_contact_update_example,
         get_primitives_cross_manager_example,
+        get_primitives_files_ask_example,
+        get_primitives_files_organize_example,
+        get_primitives_guidance_ask_example,
+        get_primitives_guidance_update_example,
         get_primitives_task_execute_example,
+        get_primitives_web_ask_example,
     )
 
     return textwrap.dedent(
@@ -354,7 +359,17 @@ def _build_primitives_implementation_examples() -> str:
 
         {get_primitives_cross_manager_example().strip()}
 
+        {get_primitives_files_ask_example().strip()}
+
+        {get_primitives_files_organize_example().strip()}
+
+        {get_primitives_guidance_ask_example().strip()}
+
+        {get_primitives_guidance_update_example().strip()}
+
         {get_primitives_task_execute_example().strip()}
+
+        {get_primitives_web_ask_example().strip()}
         """,
     ).strip()
 
@@ -817,40 +832,46 @@ def _build_core_planning_rules() -> str:
 
         4.  **Decomposition:** Break complex tasks into smaller, focused functions. Each function should have a single, clear purpose.
 
-        5.  **Confidence-Based Stubbing** (THE MOST IMPORTANT RULE):
+        5.  **Library Function Reuse** (CRITICAL):
+            - **ALWAYS check the Existing Functions Library section below** before writing new code.
+            - If a library function matches your goal, call it directly instead of reimplementing its logic.
+            - If multiple library functions together achieve the goal, compose them in your plan.
+            - Only write new functions when no library function is semantically related to the task.
+
+        6.  **Confidence-Based Stubbing** (ALSO CRITICAL):
             - **Implement** steps you are confident about (simple, predictable actions).
             - **Stub** uncertain steps with a pure `raise NotImplementedError("...")`.
             - **CRITICAL - Purity of Stubs**: A stubbed function MUST contain ONLY a docstring and `raise NotImplementedError(...)`. No `await` calls, no other logic.
 
-        6.  **Async/Await**: ALL functions must be `async def`. ALWAYS use `await` when calling any async function (tools, state managers, helper functions).
+        7.  **Async/Await**: ALL functions must be `async def`. ALWAYS use `await` when calling any async function (tools, state managers, helper functions).
 
-        7.  **Structured Output with Pydantic**:
+        8.  **Structured Output with Pydantic**:
             - Import Pydantic inside the function.
             - Define models inside the function.
             - Use `Optional` for fields that might be missing.
             - **CRITICAL**: Call `model_rebuild()` on the outermost model before use.
             - Pass the model to `response_format` parameter.
 
-        8.  **Error Handling - NEVER SILENCE ERRORS**:
+        9.  **Error Handling - NEVER SILENCE ERRORS**:
             - Log exceptions and re-raise them. Never catch and ignore.
             - **EXCEPTION**: Never wrap stubbed functions in try/except (this breaks dynamic implementation).
 
-        9.  **Tool Provider Usage**:
+        10. **Tool Provider Usage**:
             - Use injected global objects directly (provided as globals in your environment).
             - Never import or instantiate tool providers yourself.
             - Never type hint the injected globals.
 
-        10. **Requesting Clarification:**
+        11. **Requesting Clarification:**
             - Call `request_clarification("...")` as a global function when you need user input.
             - Do NOT call it as a method on tool providers.
 
-        11. **Return the Final Value**: If the last step returns a value, your `main_plan` MUST capture and return it.
+        12. **Return the Final Value**: If the last step returns a value, your `main_plan` MUST capture and return it.
 
-        12. **Function Naming**: Name functions for the *action/process*, not the specific data. Use parameters for specific values.
+        13. **Function Naming**: Name functions for the *action/process*, not the specific data. Use parameters for specific values.
             - ✅ Good: `async def process_user(username: str)`
             - ❌ Bad: `async def process_user_smith()`
 
-        13. **Handle Ambiguous Goals**: If the user's goal is vague, empty, or "I'll guide you step-by-step", generate a simple plan with just `pass`:
+        14. **Handle Ambiguous Goals**: If the user's goal is vague, empty, or "I'll guide you step-by-step", generate a simple plan with just `pass`:
             ```python
             async def main_plan():
                 \"\"\"Awaiting user instructions.\"\"\"
@@ -1292,6 +1313,13 @@ def _build_state_manager_rules_and_examples() -> str:
           - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
           - `await primitives.<manager>.update(...)`, `await primitives.<manager>.execute(...)`, `await primitives.<manager>.refactor(...)` are **impure** (they mutate state or start work).
 
+        - **Routing (choose the right manager)**:
+          - **External / general knowledge** (public info not stored in our state): use `await primitives.web.ask(...)`.
+          - **Contacts / people records**: use `await primitives.contacts.ask(...)` (read) or `await primitives.contacts.update(...)` (mutate).
+          - **Tasks**: use `await primitives.tasks.ask(...)` (read), `await primitives.tasks.update(...)` (mutate), or `await primitives.tasks.execute(...)` (run).
+          - **Transcripts / message history**: use `await primitives.transcripts.ask(...)`.
+          - **Internal knowledge base** (policies/facts we store): use `await primitives.knowledge.ask(...)` or `await primitives.knowledge.update(...)`.
+
         - **Prefer return values as evidence**: treat return values from state managers as the primary ground truth; log/print them and propagate them up to `main_plan` where appropriate.
 
         - **Steerable handles**: some calls (notably execution) may return handles. Capture them and await their results.
@@ -1387,6 +1415,17 @@ def _build_initial_plan_rules_and_examples(
         has_browser = "computer_primitives" in environments
         has_primitives = "primitives" in environments
 
+    routing_instruction_str = ""
+    if has_primitives:
+        routing_instruction_str = textwrap.dedent(
+            """
+            **Routing & Tool Choice (IMPORTANT)**
+            - When the user's goal is primarily an information request (a question), prefer calling the appropriate state manager via `primitives.*` rather than generating the answer purely from scratch.
+            - **External / general knowledge** (public info not stored in our state): default to `await primitives.web.ask(...)` even for stable concepts.
+            - Do NOT use `computer_primitives.reason(...)` as a substitute for `primitives.web.ask(...)`. Use `reason` only to structure/summarize after you've gathered evidence (e.g., from web search).
+            """,
+        ).strip()
+
     # Compose examples based on active environments
     example_sections = []
 
@@ -1410,6 +1449,16 @@ def _build_initial_plan_rules_and_examples(
 
     examples_str = "\n\n".join(example_sections) if example_sections else ""
 
+    primitives_guidance_str = ""
+    if has_primitives:
+        primitives_guidance_str = textwrap.dedent(
+            f"""
+            ---
+            ### State Manager Guidance (`primitives`)
+            {_build_state_manager_rules_and_examples()}
+            """,
+        ).strip()
+
     # Compose final prompt
     return textwrap.dedent(
         f"""
@@ -1420,8 +1469,8 @@ def _build_initial_plan_rules_and_examples(
         ---
         ### Strategy & Tool Usage
         {strategy_instruction}
-        {shared_principles}
         {tool_usage_instruction}
+        {routing_instruction_str}
 
         ---
         ### Tools Reference
@@ -1434,6 +1483,8 @@ def _build_initial_plan_rules_and_examples(
         ### Handle APIs
         Some tools return a "handle" object for ongoing interaction.
         {handle_apis}
+
+        {primitives_guidance_str}
 
         ---
         ### Usage Examples
@@ -1494,8 +1545,7 @@ def _build_dynamic_implement_rules_and_examples(
             ### Core Instructions & Rules
             {simplified_rules}
             ---
-            ### Strategy & Tool Usage
-            {strategy_instruction}
+            ### Tool Usage
             {tool_usage_instruction}
 
             ---
@@ -1529,7 +1579,7 @@ def _build_dynamic_implement_rules_and_examples(
 
     # Strategy and tool usage
     sections.append(
-        f"### Strategy & Tool Usage\n{strategy_instruction}\n{tool_usage_instruction}",
+        f"### Tool Usage\n{tool_usage_instruction}",
     )
 
     # Tool reference and handle APIs
@@ -1591,14 +1641,52 @@ def build_initial_plan_prompt(
 
     library_instruction = textwrap.dedent(
         f"""
-        ### Existing Functions Library (Your Skills)
-        You have access to the following pre-existing, trusted functions. If a function from this library is suitable for the user's goal, you **MUST** call it.
+        ### YOUR AVAILABLE FUNCTIONS (Already Loaded & Callable)
 
-        **CRITICAL RULE:** When using a function from this library, **ONLY write the call to it** in your plan (e.g., `await your_skill_name()`). **DO NOT include its source code**. The framework will inject the code for you automatically.
+        The following functions are **ALREADY DEFINED and LOADED** in your execution environment.
+        They are DIRECTLY CALLABLE in your code. DO NOT redefine them. DO NOT reimplement their logic.
 
+        **HOW TO USE THESE FUNCTIONS:**
+
+        ✅ CORRECT - Direct call in your plan:
+        ```python
+        async def main_plan():
+            # Just call the existing function directly!
+            result = await ask_tasks("Which tasks are due today?", response_format=MyModel)
+            return result
+        ```
+
+        ❌ INCORRECT - Creating a wrapper that reimplements the same logic:
+        ```python
+        async def query_tasks_due_today():  # ❌ WRONG! ask_tasks() already exists!
+            # ❌ Don't call primitives.tasks.ask directly when ask_tasks() exists!
+            handle = await primitives.tasks.ask(...)
+            return await handle.result()
+
+        async def main_plan():
+            result = await query_tasks_due_today()  # ❌ Just call ask_tasks() instead!
+            return result
+        ```
+
+        **CRITICAL RULES - READ CAREFULLY:**
+        1. **CALL, DON'T REDEFINE**: These functions ALREADY EXIST in the runtime. Call them directly by name.
+        2. **CHECK THE LIBRARY FIRST**: Before writing ANY new function, scan the available functions below. If one matches your goal, USE IT.
+        3. **DIRECT PRIMITIVE CALLS ARE USUALLY WRONG**: If you find yourself writing `await primitives.tasks.ask(...)` or `await primitives.web.ask(...)`, check if a library function already wraps it (like `ask_tasks`, `ask_web`, etc). Use the library function instead.
+        4. **COMPOSE IF NEEDED**: If your goal requires multiple steps, orchestrate the existing functions in main_plan().
+        5. **ONLY CREATE NEW FUNCTIONS WHEN**: No existing function is semantically related to your goal, OR you need helper logic that doesn't exist in the library.
+
+        **When to use existing functions vs write new code:**
+        - ✅ **USE existing function**: The function's purpose matches your goal → Call it directly
+        - ✅ **USE existing function**: You can achieve the goal by calling 2-3 existing functions → Compose them
+        - ❌ **WRITE new code**: No existing function is semantically related to the goal
+        - ❌ **WRITE new code**: Existing functions would require complex workarounds
+
+        **Your Available Functions:**
         ```python
         {formatted_functions}
         ```
+
+        Remember: These are NOT examples to copy - they are CALLABLE FUNCTIONS you can use directly!
         """,
     )
 
@@ -1651,9 +1739,13 @@ def build_dynamic_implement_prompt(
     library_instruction = textwrap.dedent(
         f"""
         ### Existing Functions Library (Your Skills)
-        You have access to the following pre-existing, trusted functions. If a function from this library is suitable for the user's goal, you **MUST** call it.
+        **Check this library first** before writing new code. If a function accomplishes the goal (or most of it), call it directly.
 
-        **CRITICAL RULE:** When using a function from this library, **ONLY write the call to it** in your plan (e.g., `await your_skill_name()`). **DO NOT include its source code**. The framework will inject the code for you automatically.
+        **CRITICAL RULES:**
+        1. **Prefer Reuse**: If a library function handles the task, call it instead of reimplementing.
+        2. **Only Write the Call**: Write ONLY the call (e.g., `await your_skill_name()`). **DO NOT include its source code**. The framework injects it automatically.
+        3. **Compose When Needed**: Orchestrate multiple library functions if the goal requires multiple steps.
+        4. **Adapt with Parameters**: Try different parameter values before reimplementing from scratch.
 
         ```python
         {formatted_functions}
