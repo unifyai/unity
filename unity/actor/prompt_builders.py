@@ -655,7 +655,9 @@ def _build_tool_reference_by_namespace(
 
 
 def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
-    handle_docs = []
+    # Deduplicate by return type class to avoid showing the same handle API multiple times
+    seen_handle_types = {}  # Maps return_type class to list of tool names
+
     for name, func in tool_dict.items():
         try:
             hints = get_type_hints(func)
@@ -665,15 +667,23 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
                 and inspect.isclass(return_type)
                 and issubclass(return_type, SteerableToolHandle)
             ):
-                doc = f"**`{return_type.__name__}` (returned by `{name}`)**\n"
-                doc += "This handle represents an interactive session. Its available methods are:\n"
-                doc += class_api_overview(return_type)
-                handle_docs.append(doc)
+                if return_type not in seen_handle_types:
+                    seen_handle_types[return_type] = []
+                seen_handle_types[return_type].append(name)
         except Exception:
             continue
 
-    if not handle_docs:
+    if not seen_handle_types:
         return "There are no special handle APIs for the available tools."
+
+    handle_docs = []
+    for return_type, tool_names in seen_handle_types.items():
+
+        examples = ", ".join(f"`{name}`" for name in tool_names)
+        doc = f"**`{return_type.__name__}` (returned by {examples})**\n"
+        doc += "This handle represents an interactive session. Its available methods are:\n"
+        doc += class_api_overview(return_type)
+        handle_docs.append(doc)
 
     return "\n\n".join(handle_docs)
 
@@ -690,19 +700,28 @@ def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
         implementation = func_data.get("implementation", "")
         if implementation is None:
             implementation = ""
-        prefix = (
-            "async def"
-            if isinstance(implementation, str)
-            and "async def" in implementation.lstrip()[:10]
-            else "def"
-        )
-        summary = (
-            f"{prefix} {name}{signature}:\n"
-            f'    """\n'
-            f"    {textwrap.indent(docstring, '    ').strip()}\n"
-            f'    """\n'
-            f"    # ... (implementation is hidden)\n"
-        )
+
+        # Show implementation if it's not too large (< 1000 lines)
+        impl_lines = implementation.count("\n") + 1 if implementation else 0
+        if impl_lines > 1000:
+            # Too large - hide it
+            prefix = (
+                "async def"
+                if isinstance(implementation, str)
+                and "async def" in implementation.lstrip()[:10]
+                else "def"
+            )
+            summary = (
+                f"{prefix} {name}{signature}:\n"
+                f'    """\n'
+                f"    {textwrap.indent(docstring, '    ').strip()}\n"
+                f'    """\n'
+                f"    # ... (implementation is hidden)\n"
+            )
+        else:
+            # Show the full implementation
+            summary = implementation.strip()
+
         formatted_summaries.append(summary)
 
     if not formatted_summaries:
