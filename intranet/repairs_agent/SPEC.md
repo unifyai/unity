@@ -1321,8 +1321,8 @@ All metrics support grouping by:
 - [x] Create `sync.py` script ✓
 - [x] Implement sync logic with proper dependency tracking ✓
 - [x] Add proper script initialization (activate_project) to sync.py ✓
-- [ ] Test that functions appear in FunctionManager search
-- [ ] Verify implementations returned with full source code
+- [x] Test that functions appear in FunctionManager search ✓
+- [x] Verify implementations returned with full source code ✓
 
 ### Phase 4: Discovery-First Refactoring (Production)
 - [ ] Refactor all metrics to use discovery pattern (Option A)
