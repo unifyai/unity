@@ -115,3 +115,42 @@ You are analyzing repairs and telematics data.
 Use `primitives.files.tables_overview()` to discover available tables.
 Use `primitives.files.list_columns(table=...)` to understand column structure.
 """
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# System Prompt Extension for CodeActActor
+# ─────────────────────────────────────────────────────────────────────────────
+_REPAIRS_SYSTEM_PROMPT_TEMPLATE = """
+### Domain: Repairs & Telematics Analysis
+
+You are analyzing repairs operations data for a housing association.
+
+{business_context}
+
+### Workflow
+
+1. **Search** for existing metric functions via FunctionManager - study their source code
+2. **Discover** available tables via `primitives.files.tables_overview()`
+3. **Compose** a solution using discovered functions or primitives
+4. **Visualize** when charts/plots are requested
+"""
+
+
+def build_repairs_system_prompt(config_path: Optional[Path] = None) -> str:
+    """
+    Build the complete system prompt extension for repairs CodeActActor.
+
+    Combines the workflow template with business context from FilePipelineConfig.
+
+    Parameters
+    ----------
+    config_path : Path, optional
+        Path to FilePipelineConfig JSON. Defaults to repairs_file_pipeline_config_5m.json
+
+    Returns
+    -------
+    str
+        Complete system prompt extension ready for CodeActActor
+    """
+    business_context = build_repairs_business_context(config_path)
+    return _REPAIRS_SYSTEM_PROMPT_TEMPLATE.format(business_context=business_context)

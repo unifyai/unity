@@ -109,12 +109,12 @@ class FileManager(BaseFileManager):
         # Derive a stable alias and context
         try:
             raw_alias = (
-                getattr(self._adapter, "name", "files").strip()
+                getattr(self._adapter, "name", "Local").strip()
                 if self._adapter is not None
-                else "files"
+                else "Local"
             )
         except Exception:
-            raw_alias = "files"
+            raw_alias = "Local"
 
         self._fs_alias = self.safe(str(raw_alias))
 
