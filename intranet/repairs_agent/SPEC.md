@@ -1293,14 +1293,14 @@ All metrics support grouping by:
 ## 10. Implementation Phases
 
 ### Phase 1: Business Context Integration (Day 1 - Demo Priority)
-- [ ] Create `config/prompt_builder.py` to build business context from FilePipelineConfig
+- [x] Create `config/prompt_builder.py` to build business context from FilePipelineConfig ✓
 - [ ] Update `DynamicRepairsAgent` to inject business context into system prompt
 - [ ] Add discovery tools guidance to system prompt (`tables_overview`, `list_columns`, `schema_explain`)
 - [ ] Enrich 2-3 key metric docstrings with discovery patterns and exact tool arguments
 - [ ] Test end-to-end with CodeActActor
 
 ### Phase 2: Restructure and Refactor (Post-Demo)
-- [ ] Create `intranet/repairs_agent/` package structure
+- [x] Create `intranet/repairs_agent/` package structure ✓
 - [ ] Move types from `intranet/repairs/queries/_types.py`
 - [ ] Move constants from `intranet/repairs/queries/metrics.py`
 - [ ] Refactor metrics to use `files: FileManager` parameter

@@ -22,9 +22,8 @@ Usage:
     )
 """
 
-# Re-exports will be available after implementation
-# from .agent import DynamicRepairsAgent
+from .agent import DynamicRepairsAgent
 
 __all__ = [
-    # "DynamicRepairsAgent",
+    "DynamicRepairsAgent",
 ]
