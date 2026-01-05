@@ -59,6 +59,8 @@ jobs:
         EVENT_NAME: ${{ github.event_name }}
         COMMIT_MSG: ${{ github.event.head_commit.message }}
         PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
       run: |
         # Helper function to extract [parallel_run.sh ...] content
         extract_parallel_cmd() {
@@ -103,6 +105,14 @@ jobs:
 
         # For pull_request events, check PR title
         if [[ "$EVENT_NAME" == "pull_request" ]]; then
+          # Auto-run full suite for staging → main PRs (no tags required)
+          if [[ "$PR_BASE_REF" == "main" && "$PR_HEAD_REF" == "staging" ]]; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+            echo "Tests auto-triggered: staging → main PR"
+            exit 0
+          fi
+
           # Check for [parallel_run.sh ...] first
           PARALLEL_CMD=$(extract_parallel_cmd "$PR_TITLE")
           if [[ -n "$PARALLEL_CMD" ]]; then
