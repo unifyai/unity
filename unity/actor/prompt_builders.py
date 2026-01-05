@@ -82,7 +82,6 @@ def _build_dynamic_implement_static_prefix(
     Returns:
         Static prefix string for implementation prompts (≥2,048 tokens)
     """
-    strategy_instruction = _build_shared_strategy_principles()
     if environments:
         namespaces = ", ".join(f"`{ns}`" for ns in environments.keys())
         tool_usage_instruction = (
@@ -93,7 +92,6 @@ def _build_dynamic_implement_static_prefix(
         tool_usage_instruction = "Use the injected global objects (namespaces) to interact with the environment."
     rules_and_examples = _build_dynamic_implement_rules_and_examples(
         tools,
-        strategy_instruction,
         tool_usage_instruction,
         environments,
     )
@@ -406,7 +404,6 @@ def _build_interjection_static_prefix(
     """
     tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
-    strategy_principles = _build_shared_strategy_principles()
     env_context_str = _format_environment_contexts(environments)
 
     return textwrap.dedent(
@@ -418,8 +415,6 @@ def _build_interjection_static_prefix(
         1.  **No Phantom Invalidations**: Only list functions in `invalidate_functions` if they appear in the `Cache Status` list above.
         2.  **Surgical Invalidation**: Use `invalidate_functions` to clear the entire cache for a function, or `invalidate_steps` to clear only a portion of it. Be as minimal as possible to ensure an efficient replay.
         3.  **You may omit `cache`** if nothing needs invalidation.
-        ---
-        {strategy_principles}
         ---
         ### Your Task: Analyze, Decide, Patch, and Propose Cache Strategy
 
@@ -784,26 +779,6 @@ def _format_images_for_prompt(images: Optional[dict[str, Any]]) -> str:
             continue
 
     return "\n\n" + "\n".join(image_lines)
-
-
-def _build_shared_strategy_principles() -> str:
-    """
-    Builds the reusable block of strategic principles for automation prompts.
-    This ensures consistency across initial planning, dynamic implementation, and interjections.
-    """
-    return textwrap.dedent(
-        """
-        ### 🧠 Strategic Principles for Automation
-        To succeed, you must follow these core principles when writing or modifying code.
-
-        1.  **Trust Tool Autonomy**: When a tool is autonomous, give it a high-level goal describing the desired outcome. Avoid brittle, overly granular instructions.
-        2.  **Ground in Observable State**: Base decisions on observable state (tool return values, logs, screenshots, or other evidence), not assumptions.
-        3.  **Prefer Structured Extraction When Available**: If a tool supports structured outputs (e.g., via Pydantic schemas), use them for complex data extraction to reduce ambiguity.
-        4.  **Isolate Core Logic**: When refactoring, identify the central, repeatable process. Omit one-time setup steps (like "open a new tab") from the generalized helper function. The goal is to create a function that represents a meaningful, reusable skill.
-        5.  **Write General, Parameterized Functions**: Functions should be reusable tools, not single-use scripts. Pass specific values (like search terms, filenames, or credentials) as parameters. Function names should describe the *process*, not the data (e.g., `process_user(username: str)` is better than `process_user_smith()`).
-        6.  **Use Fallbacks**: If a website's feature is unreliable (e.g., a buggy serving size calculator), create a fallback. First, try the website feature. If it fails, use the `reason` tool or pure Python to perform the calculation or transformation yourself. This makes your plan robust.
-        """,
-    )
 
 
 def _build_core_planning_rules() -> str:
@@ -1381,9 +1356,6 @@ def _build_initial_plan_rules_and_examples(
     # Core rules (environment-agnostic)
     core_rules = _build_core_planning_rules()
 
-    # Shared strategy principles
-    shared_principles = _build_shared_strategy_principles()
-
     # Detect active environments
     if environments is None:
         # Legacy mode: infer from tool namespaces to avoid browser assumptions
@@ -1453,7 +1425,6 @@ def _build_initial_plan_rules_and_examples(
 
 def _build_dynamic_implement_rules_and_examples(
     tools: Dict[str, Callable],
-    strategy_instruction: str,
     tool_usage_instruction: str,
     environments: Mapping[str, "BaseEnvironment"] | None = None,
 ) -> str:
