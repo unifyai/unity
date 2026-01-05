@@ -635,6 +635,16 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.UNILLM_CLONE_TOKEN }}
 
+    - name: Override dependency branches for main
+      if: github.ref_name == 'main'
+      run: |
+        # On Unity main branch, use main branches for unify/unillm instead of staging
+        # (pyproject.toml defaults to staging for local development)
+        echo "Unity on main branch - switching unify/unillm to main branches"
+        sed -i 's/branch = "staging"/branch = "main"/g' pyproject.toml
+        # Re-lock to get the main branch commits
+        uv lock --upgrade-package unifyai --upgrade-package unillm
+
     - name: Sync dependencies with uv
       run: |
         # Install project and dev dependencies from pyproject.toml

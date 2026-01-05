@@ -86,6 +86,6 @@ dev = [
 include = ["unity", "unity.*"]
 
 [tool.uv.sources]
-unifyai = { git = "https://github.com/unifyai/unify.git", branch = "main"}
-unillm = { git = "https://github.com/unifyai/unillm.git", branch = "main"}
+unifyai = { git = "https://github.com/unifyai/unify.git", branch = "staging"}
+unillm = { git = "https://github.com/unifyai/unillm.git", branch = "staging"}
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }

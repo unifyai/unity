@@ -8706,7 +8706,7 @@ wheels = [
 [[package]]
 name = "unifyai"
 version = "0.9.10"
-source = { git = "https://github.com/unifyai/unify.git?branch=main#11db1d5adf066d1f2ecdf07f258efb0f4d0ce3ef" }
+source = { git = "https://github.com/unifyai/unify.git?branch=staging#a5c9d1d10740716a594af259b528d0031ad7034b" }
 dependencies = [
     { name = "aiohttp" },
     { name = "google-genai" },
@@ -8725,7 +8725,7 @@ dependencies = [
 [[package]]
 name = "unillm"
 version = "0.1.0"
-source = { git = "https://github.com/unifyai/unillm.git?branch=main#25f4c0973f05e4a34c2f7a2532e71b7f1c411c29" }
+source = { git = "https://github.com/unifyai/unillm.git?branch=staging#33971415ef55526e06cb83a2b29fac55d64eb960" }
 dependencies = [
     { name = "litellm" },
     { name = "pydantic" },
@@ -8843,8 +8843,8 @@ requires-dist = [
     { name = "textual-dev", specifier = ">=1.2.0" },
     { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "twilio", specifier = ">=8.0.0" },
-    { name = "unifyai", git = "https://github.com/unifyai/unify.git?branch=main" },
-    { name = "unillm", git = "https://github.com/unifyai/unillm.git?branch=main" },
+    { name = "unifyai", git = "https://github.com/unifyai/unify.git?branch=staging" },
+    { name = "unillm", git = "https://github.com/unifyai/unillm.git?branch=staging" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
     { name = "websockify", specifier = ">=0.13.0" },
 ]
