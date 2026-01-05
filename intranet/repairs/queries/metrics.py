@@ -434,16 +434,57 @@ async def jobs_completed_per_day(
     """
     Get jobs completed per man per day.
 
+    This metric measures operative productivity by counting the total number
+    of jobs each operative completed, grouped by the specified dimension.
+    Used for performance benchmarking and workload analysis.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+    To replicate or adapt this metric:
+
+        # Step 1: Discover tables
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+
+        # Step 2: Verify columns
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: JobTicketReference, WorksOrderStatusDescription, OperativeWhoCompletedJob
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="OperativeWhoCompletedJob")
+       → Returns: {"John Smith": {"count": 150}, "Jane Doe": {"count": 120}, ...}
+
+    2. Python: No additional calculation needed for counts
+
+    3. visualize(tables=REPAIRS_TABLE, plot_type="bar",
+                 x_axis="OperativeWhoCompletedJob", y_axis="JobTicketReference",
+                 aggregate="count") if include_plots=True
+
+    Filter Expressions Used:
+    ------------------------
+    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+    - With date range: ... and `WorksOrderReportedCompletedDate` >= '2025-07-01'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+    - GroupBy.TOTAL → None
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, filter_files, visualize, etc.)
     group_by : GroupBy
         Dimension to group results by (operative, trade, patch, region)
     start_date : str, optional
-        Start date filter (YYYY-MM-DD)
+        Start date filter (YYYY-MM-DD format)
     end_date : str, optional
-        End date filter (YYYY-MM-DD)
+        End date filter (YYYY-MM-DD format)
     time_period : TimePeriod
         Time granularity for aggregation
     include_plots : bool
@@ -453,6 +494,12 @@ async def jobs_completed_per_day(
     -------
     MetricResult
         Aggregated results with grouping metadata and optional plots
+
+    Example
+    -------
+    >>> result = await jobs_completed_per_day(tools, group_by=GroupBy.OPERATIVE)
+    >>> for r in result.results[:5]:
+    ...     print(f"{r['group']}: {r['count']} jobs")
     """
     metric_name = "jobs_completed_per_day"
 
@@ -546,16 +593,57 @@ async def no_access_rate(
     """
     Get No Access rate as percentage or absolute number.
 
+    No Access measures repair visits where the operative could not gain access
+    to the property (tenant not home, no answer, etc.). High no-access rates
+    indicate scheduling issues or tenant communication problems.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+    To replicate or adapt this metric:
+
+        # Step 1: Discover tables
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+
+        # Step 2: Verify columns
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: NoAccess, JobTicketReference
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`NoAccess` != 'None' and `NoAccess` != ''",
+              group_by="[column_name]")
+       → Returns: {"North": {"count": 20}, "South": {"count": 15}, ...}
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter=None, group_by="[column_name]")
+       → Returns total jobs per group for percentage calculation
+
+    3. Python: percentage = (no_access_count / total_count) * 100
+
+    Filter Expressions Used:
+    ------------------------
+    - No Access: `NoAccess` != 'None' and `NoAccess` != ''
+    - With date range: ... and `VisitDate` >= '2025-07-01'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+    - GroupBy.TOTAL → None
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, filter_files, visualize, etc.)
     group_by : GroupBy
-        Dimension to group results by
+        Dimension to group results by (operative, patch, region, total)
     start_date : str, optional
-        Start date filter (YYYY-MM-DD)
+        Start date filter (YYYY-MM-DD format)
     end_date : str, optional
-        End date filter (YYYY-MM-DD)
+        End date filter (YYYY-MM-DD format)
     time_period : TimePeriod
         Time granularity for aggregation
     return_absolute : bool
@@ -567,6 +655,11 @@ async def no_access_rate(
     -------
     MetricResult
         Rate or count of no-access jobs with optional plots
+
+    Example
+    -------
+    >>> result = await no_access_rate(tools, group_by=GroupBy.PATCH)
+    >>> print(f"Average No-Access Rate: {result.total}%")
     """
     metric_name = "no_access_rate"
 
@@ -730,18 +823,63 @@ async def first_time_fix_rate(
     """
     Get First Time Fix rate as percentage or absolute number.
 
+    First Time Fix (FTF) measures the percentage of repair jobs completed
+    successfully on the first visit without requiring a follow-up appointment.
+    This is a key efficiency metric for housing repairs operations.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+    To replicate or adapt this metric, first discover available tables:
+
+        # Step 1: Discover tables
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+
+        # Step 2: Verify columns exist
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: FirstTimeFix, JobTicketReference, WorksOrderStatusDescription
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`FirstTimeFix` == 'Yes'", group_by="[column_name]")
+       → Returns: {"North": {"count": 50}, "South": {"count": 75}, ...}
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="[column_name]")
+       → Returns: {"North": {"count": 100}, "South": {"count": 150}, ...}
+
+    3. Python: percentage = (ftf_count / total_count) * 100
+
+    4. visualize(tables=REPAIRS_TABLE, plot_type="bar", x_axis="[group_column]",
+                 y_axis="JobTicketReference") if include_plots=True
+
+    Filter Expressions Used:
+    ------------------------
+    - First Time Fix: `FirstTimeFix` == 'Yes'
+    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+    - With date range: ... and `VisitDate` >= '2025-07-01' and `VisitDate` <= '2025-09-30'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+    - GroupBy.TOTAL → None (aggregate all)
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, filter_files, visualize, etc.)
     group_by : GroupBy
-        Dimension to group results by
+        Dimension to group results by (operative, patch, region, total)
     start_date : str, optional
-        Start date filter (YYYY-MM-DD)
+        Start date filter (YYYY-MM-DD format)
     end_date : str, optional
-        End date filter (YYYY-MM-DD)
+        End date filter (YYYY-MM-DD format)
     time_period : TimePeriod
-        Time granularity for aggregation
+        Time granularity for aggregation (day, week, month)
     return_absolute : bool
         If True, return absolute count; if False, return percentage
     include_plots : bool
@@ -751,6 +889,11 @@ async def first_time_fix_rate(
     -------
     MetricResult
         Rate or count of first-time-fix jobs with optional plots
+
+    Example
+    -------
+    >>> result = await first_time_fix_rate(tools, group_by=GroupBy.REGION)
+    >>> print(f"North FTF Rate: {result.results[0]['rate']}%")
     """
     metric_name = "first_time_fix_rate"
     reduce_tool = tools.get("reduce")
