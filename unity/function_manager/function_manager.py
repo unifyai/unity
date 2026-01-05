@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
+from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import list_private_fields
 from ..common.search_utils import table_search_top_k
@@ -1495,14 +1496,41 @@ class FunctionManager(BaseFunctionManager):
     ) -> List[Dict[str, Any]]:
 
         normalized = normalize_filter_expr(filter)
-        logs = unify.get_logs(
-            context=self._compositional_ctx,
-            filter=normalized,
-            offset=offset,
-            limit=limit,
-            exclude_fields=list_private_fields(self._compositional_ctx),
-        )
-        return [lg.entries for lg in logs]
+        # The underlying Unify backend returns 404 when a context hasn't been created yet.
+        # In tests and fresh projects, contexts are created lazily, so we retry briefly and
+        # then treat missing context as "no functions" rather than crashing the Actor.
+        import time as _time
+
+        last_exc: Exception | None = None
+        for delay in (0.0, 0.05, 0.15):
+            if delay:
+                _time.sleep(delay)
+            try:
+                logs = unify.get_logs(
+                    context=self._compositional_ctx,
+                    filter=normalized,
+                    offset=offset,
+                    limit=limit,
+                    exclude_fields=list_private_fields(self._compositional_ctx),
+                )
+                return [lg.entries for lg in logs]
+            except _UnifyRequestError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    last_exc = e
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                break
+        # If we still see 404 after retries, treat as empty library.
+        if isinstance(last_exc, _UnifyRequestError):
+            status = getattr(getattr(last_exc, "response", None), "status_code", None)
+            if status == 404:
+                return []
+        if last_exc is not None:
+            raise last_exc
+        return []
 
     # ------------------------------------------------------------------ #
     #  Accessors and disk → context sync                                 #

@@ -498,13 +498,32 @@ def backfill_rows(
                 from_fields=from_fields,
             )
         else:
-            fallback_logs = unify.get_logs(
-                context=context,
-                filter=row_filter,
-                offset=offset,
-                limit=batch_size,
-                exclude_fields=list_private_fields(context),
-            )
+            try:
+                fallback_logs = unify.get_logs(
+                    context=context,
+                    filter=row_filter,
+                    offset=offset,
+                    limit=batch_size,
+                    exclude_fields=list_private_fields(context),
+                )
+            except Exception as e:
+                # If the context does not exist yet (common in tests where tables are
+                # created lazily), treat as "no rows to backfill" rather than failing
+                # the caller's semantic search.
+                try:
+                    from unify.utils.http import RequestError as _UnifyRequestError
+
+                    if isinstance(e, _UnifyRequestError):
+                        status = getattr(
+                            getattr(e, "response", None),
+                            "status_code",
+                            None,
+                        )
+                        if status == 404:
+                            break
+                except Exception:
+                    pass
+                raise
         if not fallback_logs:
             break
 
