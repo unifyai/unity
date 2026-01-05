@@ -8,7 +8,9 @@ and use them.
 Usage:
     python -m intranet.repairs_agent.dynamic.sync
     python -m intranet.repairs_agent.dynamic.sync --dry-run
-    python -m intranet.repairs_agent.dynamic.sync --overwrite
+    python -m intranet.repairs_agent.dynamic.sync --overwrite-functions
+    python -m intranet.repairs_agent.dynamic.sync --project RepairsAgent
+    python -m intranet.repairs_agent.dynamic.sync --project RepairsAgent --overwrite-project
 """
 
 from __future__ import annotations
@@ -22,10 +24,28 @@ import textwrap
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
-# Add project root to path for imports
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+# ---------------------------------------------------------------------------
+# Bootstrap: Add paths for imports
+# ---------------------------------------------------------------------------
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPAIRS_AGENT_DIR = SCRIPT_DIR.parent
+INTRANET_DIR = REPAIRS_AGENT_DIR.parent
+PROJECT_ROOT = INTRANET_DIR.parent
+SCRIPTS_DIR = INTRANET_DIR / "scripts"
 
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+from intranet.scripts.utils import activate_project, initialize_script_environment
+
+# ---------------------------------------------------------------------------
+# Initialize script environment (loads .env, sets up paths)
+# ---------------------------------------------------------------------------
+if not initialize_script_environment():
+    print("❌ Failed to initialize script environment")
+    sys.exit(1)
+
+# Import after environment is set up
 from unity.function_manager.function_manager import FunctionManager
 
 logger = logging.getLogger(__name__)
@@ -272,11 +292,14 @@ Examples:
     # Sync with verbose output
     python -m intranet.repairs_agent.dynamic.sync --verbose
 
-    # Overwrite existing functions
-    python -m intranet.repairs_agent.dynamic.sync --overwrite
+    # Overwrite existing functions in FunctionManager
+    python -m intranet.repairs_agent.dynamic.sync --overwrite-functions
+
+    # Use a different project context
+    python -m intranet.repairs_agent.dynamic.sync --project MyProject
 
     # Full verbose sync with overwrite
-    python -m intranet.repairs_agent.dynamic.sync --verbose --overwrite
+    python -m intranet.repairs_agent.dynamic.sync --verbose --overwrite-functions
         """,
     )
 
@@ -286,9 +309,20 @@ Examples:
         help="Print what would be synced without actually syncing",
     )
     parser.add_argument(
-        "--overwrite",
+        "--overwrite-functions",
         action="store_true",
         help="Overwrite existing functions in FunctionManager",
+    )
+    parser.add_argument(
+        "--project",
+        type=str,
+        default="RepairsAgent",
+        help="Project context to activate (default: RepairsAgent)",
+    )
+    parser.add_argument(
+        "--overwrite-project",
+        action="store_true",
+        help="Overwrite project contexts on activation (default: False)",
     )
     parser.add_argument(
         "--verbose",
@@ -316,10 +350,21 @@ Examples:
     print("Repairs Agent - Metric Function Sync")
     print("=" * 60)
 
+    # Activate project context before using FunctionManager
+    try:
+        logger.info(f"Activating project context: {args.project}")
+        activate_project(args.project, overwrite=args.overwrite_project)
+        logger.debug("Project context activated successfully")
+        print(f"✓ Project context: {args.project}")
+    except Exception as e:
+        logger.error(f"Failed to activate project '{args.project}': {e}")
+        print(f"❌ Failed to activate project context '{args.project}': {e}")
+        sys.exit(1)
+
     try:
         results = sync_metrics_to_function_manager(
             dry_run=args.dry_run,
-            overwrite=args.overwrite,
+            overwrite=args.overwrite_functions,
             verbose=args.verbose,
         )
 
