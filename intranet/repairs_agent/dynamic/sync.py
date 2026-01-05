@@ -65,10 +65,12 @@ def get_registered_metrics() -> Dict[str, Callable]:
     Dict[str, Callable]
         Mapping of query_id -> function object
     """
-    # Import the registry to get registered functions
-    from intranet.repairs_agent.static.registry import _REGISTRY
+    # Import the registry from the ORIGINAL location (metrics.py uses this)
+    # NOTE: Once metrics.py is migrated to the new package, update this import
+    from intranet.core.bespoke_repairs_agent import _REGISTRY
 
     # Trigger registration by importing the metrics module
+    # This ensures all @register decorators are run
     import intranet.repairs.queries  # noqa: F401
 
     return {spec.query_id: spec.fn for spec in _REGISTRY.values()}
@@ -120,6 +122,79 @@ def extract_function_with_docstring(func: Callable) -> Tuple[str, str]:
     return source, docstring
 
 
+# Known enum types and their string value mappings
+# These are used to replace default argument values like GroupBy.OPERATIVE -> "operative"
+ENUM_VALUE_MAPPINGS = {
+    "GroupBy.OPERATIVE": "operative",
+    "GroupBy.PATCH": "patch",
+    "GroupBy.REGION": "region",
+    "GroupBy.TRADE": "trade",
+    "GroupBy.TOTAL": "total",
+    "TimePeriod.DAY": "day",
+    "TimePeriod.WEEK": "week",
+    "TimePeriod.MONTH": "month",
+}
+
+
+class AnnotationStringifier(ast.NodeTransformer):
+    """
+    AST transformer that:
+    1. Converts type annotations to string literals (forward references)
+    2. Converts enum default values to their string equivalents
+
+    This allows functions with custom types (GroupBy, MetricResult, etc.)
+    to be exec'd in an environment that doesn't have those types defined.
+    """
+
+    def _convert_enum_default(self, node: ast.expr) -> ast.expr:
+        """Convert enum default value (e.g., GroupBy.OPERATIVE) to string."""
+        if isinstance(node, ast.Attribute):
+            # Check if it's an enum attribute like GroupBy.OPERATIVE
+            unparsed = ast.unparse(node)
+            if unparsed in ENUM_VALUE_MAPPINGS:
+                return ast.Constant(value=ENUM_VALUE_MAPPINGS[unparsed])
+        return node
+
+    def visit_arg(self, node: ast.arg) -> ast.arg:
+        """Convert argument annotations to strings."""
+        if node.annotation is not None:
+            node.annotation = ast.Constant(value=ast.unparse(node.annotation))
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        """Convert return annotation and default values."""
+        if node.returns is not None:
+            node.returns = ast.Constant(value=ast.unparse(node.returns))
+
+        # Convert default values for arguments
+        node.args.defaults = [self._convert_enum_default(d) for d in node.args.defaults]
+        node.args.kw_defaults = [
+            self._convert_enum_default(d) if d is not None else None
+            for d in node.args.kw_defaults
+        ]
+
+        self.generic_visit(node)
+        return node
+
+    def visit_AsyncFunctionDef(
+        self,
+        node: ast.AsyncFunctionDef,
+    ) -> ast.AsyncFunctionDef:
+        """Convert return annotation and default values."""
+        if node.returns is not None:
+            node.returns = ast.Constant(value=ast.unparse(node.returns))
+
+        # Convert default values for arguments
+        node.args.defaults = [self._convert_enum_default(d) for d in node.args.defaults]
+        node.args.kw_defaults = [
+            self._convert_enum_default(d) if d is not None else None
+            for d in node.args.kw_defaults
+        ]
+
+        self.generic_visit(node)
+        return node
+
+
 def prepare_standalone_function(
     func: Callable,
     func_name: str,
@@ -129,7 +204,7 @@ def prepare_standalone_function(
 
     The function needs to be modified to:
     1. Remove decorators (@register, @metric_timer)
-    2. Include necessary imports inline (simplified)
+    2. Convert type annotations to string literals (forward references)
     3. Keep the enriched docstring
 
     Parameters
@@ -142,25 +217,30 @@ def prepare_standalone_function(
     Returns
     -------
     str
-        Standalone function source code
+        Standalone function source code ready for FunctionManager
     """
     source = extract_function_source(func)
 
-    # Parse and remove decorators
+    # Parse the source
     tree = ast.parse(source)
+
     if tree.body and isinstance(tree.body[0], ast.AsyncFunctionDef | ast.FunctionDef):
         func_def = tree.body[0]
         # Remove decorators
         func_def.decorator_list = []
 
-    # Convert back to source
-    import ast
+    # Convert type annotations to strings so they don't need to be defined
+    # This allows exec() to work without GroupBy, MetricResult, etc.
+    transformer = AnnotationStringifier()
+    tree = transformer.visit(tree)
+    ast.fix_missing_locations(tree)
 
+    # Convert back to source
     try:
         # Python 3.9+
         clean_source = ast.unparse(tree)
     except AttributeError:
-        # Fallback: manually strip decorator lines
+        # Fallback: manually strip decorator lines (annotations won't be converted)
         lines = source.split("\n")
         clean_lines = []
         in_decorator = False
