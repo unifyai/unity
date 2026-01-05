@@ -317,13 +317,17 @@ async def test_execute_calls_scheduler_memoized(mock_verification):
         # Access real TaskScheduler and seed data
         ts = ManagerRegistry.get_task_scheduler()
         ts.actor = actor
-        ts._create_task(
-            name="Prepare the monthly analytics dashboard",
-            description="Prepare the monthly analytics dashboard",
-        )
 
-        # Create FunctionManager and seed memoized function
+        # Create FunctionManager and seed:
+        # - a fast deterministic task entrypoint (to keep TaskScheduler.execute from wandering)
+        # - the memoized function under test
         fm = FunctionManager()
+        entrypoint_impl = '''
+async def run_quick_task_entrypoint() -> str:
+    """Fast deterministic task entrypoint for tests."""
+    return "ok"
+'''
+
         implementation = '''
 async def execute_task_by_name(task_name: str) -> str:
     """Execute a task by name via the task scheduler.
@@ -331,7 +335,7 @@ async def execute_task_by_name(task_name: str) -> str:
     **Use when** the user wants to start/run/execute a specific task that exists in the task queue.
 
     **How it works**: calls:
-    - `await primitives.tasks.ask(..., response_format=...)` to resolve a runnable `task_id`
+    - resolve a runnable `task_id` from the TaskScheduler state
     - `await primitives.tasks.execute(task_id=...)` to start execution
 
     **Do NOT use when**:
@@ -345,51 +349,46 @@ async def execute_task_by_name(task_name: str) -> str:
     Returns:
         The result from the task execution as a string.
     """
-    from pydantic import BaseModel, Field
-    from typing import List, Optional
+    # Use the injected primitives object (convention) rather than importing ManagerRegistry.
+    ts = primitives.tasks
+    # Fast deterministic lookup: filter by exact name (case-insensitive) and exclude terminal/active.
+    candidates = ts._filter_tasks()
 
-    class Candidate(BaseModel):
-        task_id: int
-        name: Optional[str] = None
-        status: Optional[str] = None
-        description: Optional[str] = None
-
-    class TaskLookup(BaseModel):
-        candidates: List[Candidate] = Field(default_factory=list)
-
-    Candidate.model_rebuild()
-    TaskLookup.model_rebuild()
-
-    lookup_handle = await primitives.tasks.ask(
-        (
-            f"Find tasks with name exactly '{task_name}'. "
-            "Return runnable (non-terminal, non-active) matches only. "
-            "Return candidates as a structured list with fields: task_id, name, status, description."
-        ),
-        response_format=TaskLookup,
-    )
-    lookup = await lookup_handle.result()
-    candidates = getattr(lookup, "candidates", []) or []
-    if not candidates:
-        raise ValueError(f"No runnable task found with name: {task_name!r}")
-
-    def _norm(s: Optional[str]) -> str:
+    def _norm(s):
         return (s or "").strip().lower()
 
-    chosen = None
-    for c in candidates:
-        if _norm(getattr(c, "name", None)) == _norm(task_name):
-            chosen = c
-            break
-    if chosen is None:
-        chosen = candidates[0]
+    target = _norm(task_name)
+    runnable = []
+    for t in candidates:
+        if _norm(getattr(t, "name", None)) != target:
+            continue
+        status = _norm(getattr(t, "status", None))
+        if status in {"completed", "cancelled", "failed", "active"}:
+            continue
+        runnable.append(t)
 
+    if not runnable:
+        raise ValueError(f"No runnable task found with name: {task_name!r}")
+
+    chosen = runnable[0]
     exec_handle = await primitives.tasks.execute(task_id=int(chosen.task_id))
     result = await exec_handle.result()
     return result
 '''
-        fm.add_functions(implementations=implementation, overwrite=True)
+        fm.add_functions(
+            implementations=[entrypoint_impl, implementation],
+            verify={"run_quick_task_entrypoint": False, "execute_task_by_name": False},
+            overwrite=True,
+        )
         actor.function_manager = fm
+        entrypoint_id = fm.list_functions()["run_quick_task_entrypoint"]["function_id"]
+        assert isinstance(entrypoint_id, int)
+
+        ts._create_task(
+            name="Prepare the monthly analytics dashboard",
+            description="Prepare the monthly analytics dashboard",
+            entrypoint=entrypoint_id,
+        )
 
         # Call actor with execute request
         handle = await actor.act(
