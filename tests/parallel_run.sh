@@ -1247,13 +1247,19 @@ fi
 declare -a made_sessions=()
 declare -a session_ids=()
 
+# Helper function to print log directory info (used at start and end)
+print_log_directories() {
+  echo "========================================================================"
+  echo "📁 Test logs for THIS run: logs/pytest/$LOG_SUBDIR/"
+  echo "🔗 OTEL traces (cross-repo): logs/all/"
+  echo "📂 All log directories:      logs/*/"
+  echo "📖 Logging docs:             tests/docs/logging.md"
+  echo "========================================================================"
+}
+
 # Print log directory info first (before session creation starts)
 echo
-echo "========================================================================"
-echo "📁 Test logs for THIS run: logs/pytest/$LOG_SUBDIR/"
-echo "🔗 OTEL traces (cross-repo): logs/all/"
-echo "📂 All log directories:      logs/*/"
-echo "========================================================================"
+print_log_directories
 echo
 
 if (( MAX_JOBS > 0 )); then
@@ -1415,31 +1421,25 @@ print_duration_line() {
 > "$DURATION_SUMMARY_FILE"
 
 # Print passed tests sorted by duration (fastest first, slowest last)
-echo ""
-print_duration_line "✅ PASSED ($pass_count tests):"
 if (( pass_count > 0 )); then
+  echo ""
+  print_duration_line "✅ PASSED ($pass_count tests):"
   { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
     print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
   done
-else
-  print_duration_line "  (none)"
 fi
 
 # Print failed tests sorted by duration (fastest first, slowest last)
-print_duration_line ""
-print_duration_line "❌ FAILED ($fail_count tests):"
 if (( fail_count > 0 )); then
+  print_duration_line ""
+  print_duration_line "❌ FAILED ($fail_count tests):"
   { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
     print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
   done
-else
-  print_duration_line "  (none)"
 fi
 
 echo ""
-echo "========================================================================"
-echo "Logs: logs/pytest/$LOG_SUBDIR/"
-echo "========================================================================"
+print_log_directories
 
 if (( ${#failed_sessions[@]} > 0 )); then
   exit 1
