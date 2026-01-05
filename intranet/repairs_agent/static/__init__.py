@@ -17,11 +17,11 @@ Usage:
     result = await agent.ask("first_time_fix_rate", group_by="region")
 """
 
-# Re-exports will be available after migration
-# from .agent import BespokeRepairsAgent
-# from .registry import register
+from .agent import BespokeRepairsAgent
+from .registry import get_registered_count, register
 
 __all__ = [
-    # "BespokeRepairsAgent",
-    # "register",
+    "BespokeRepairsAgent",
+    "register",
+    "get_registered_count",
 ]

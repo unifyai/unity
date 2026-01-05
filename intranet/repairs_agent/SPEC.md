@@ -1294,8 +1294,8 @@ All metrics support grouping by:
 
 ### Phase 1: Business Context Integration (Day 1 - Demo Priority)
 - [x] Create `config/prompt_builder.py` to build business context from FilePipelineConfig ✓
-- [ ] Update `DynamicRepairsAgent` to inject business context into system prompt
-- [ ] Add discovery tools guidance to system prompt (`tables_overview`, `list_columns`, `schema_explain`)
+- [x] Update `DynamicRepairsAgent` to inject business context into system prompt ✓
+- [x] Add discovery tools guidance to system prompt (`tables_overview`, `list_columns`, `schema_explain`) ✓
 - [ ] Enrich 2-3 key metric docstrings with discovery patterns and exact tool arguments
 - [ ] Test end-to-end with CodeActActor
 
