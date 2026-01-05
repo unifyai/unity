@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import unify
+from unify.utils.http import RequestError as _UnifyRequestError
 
 
 # Private fields injected by log_utils wrappers
@@ -64,11 +65,35 @@ class TableStore:
         parts = self._ctx.split("/")
         if len(parts) < 3:
             return []
+
+        # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
+        # Scope aggregations to the test root to avoid cross-test contamination.
+        if parts[0] == "tests":
+            from unity.session_details import DEFAULT_USER_CONTEXT
+
+            try:
+                user_idx = parts.index(DEFAULT_USER_CONTEXT)
+            except ValueError:
+                return []
+
+            # Need at least User/Assistant/Suffix after the test root
+            if user_idx + 2 >= len(parts):
+                return []
+
+            test_root = "/".join(parts[:user_idx])
+            user_ctx = parts[user_idx]
+            suffix = "/".join(parts[user_idx + 2 :])
+            return [
+                f"{test_root}/{user_ctx}/All/{suffix}",
+                f"{test_root}/All/{suffix}",
+            ]
+
+        # Production path: User/Assistant/Suffix
         user_ctx = parts[0]
         suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
         return [
-            f"{user_ctx}/All/{suffix}",  # User-level aggregation
-            f"All/{suffix}",  # Global aggregation
+            f"{user_ctx}/All/{suffix}",
+            f"All/{suffix}",
         ]
 
     def _ensure_all_contexts(self, all_ctxs: List[str]) -> None:
@@ -157,5 +182,53 @@ class TableStore:
         once and retry with a tiny backoff. Normalises to a single string
         label per field, preferring 'data_type' then 'type'.
         """
-        data = unify.get_fields(project=self._project, context=self._ctx)
-        return {k: v["data_type"] for k, v in data.items()}
+        import time as _time
+
+        def _normalize_fields(raw: Any) -> Dict[str, str]:
+            if not isinstance(raw, dict):
+                return {}
+            out: Dict[str, str] = {}
+            for k, v in raw.items():
+                try:
+                    if isinstance(v, dict):
+                        out[str(k)] = (
+                            str(v.get("data_type") or v.get("type") or "")
+                        ).strip() or "unknown"
+                    else:
+                        out[str(k)] = str(v)
+                except Exception:
+                    # Extremely defensive – field schemas should never break callers.
+                    out[str(k)] = "unknown"
+            return out
+
+        # First attempt
+        try:
+            data = unify.get_fields(project=self._project, context=self._ctx)
+            return _normalize_fields(data)
+        except _UnifyRequestError as e:
+            # 404: context missing (race / test teardown / eventual consistency).
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status != 404:
+                raise
+
+        # Ensure then retry a few times (handles eventual consistency after creation).
+        self.ensure_context()
+        last_exc: Exception | None = None
+        for delay in (0.0, 0.05, 0.15):
+            if delay:
+                _time.sleep(delay)
+            try:
+                data = unify.get_fields(project=self._project, context=self._ctx)
+                return _normalize_fields(data)
+            except _UnifyRequestError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    last_exc = e
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                break
+        if last_exc is not None:
+            raise last_exc
+        return {}
