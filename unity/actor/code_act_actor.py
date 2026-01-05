@@ -318,6 +318,11 @@ class CodeActActor(BaseActor):
         )
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
+
+        # Set function_manager BEFORE _build_tools() since it references self.function_manager
+        self.function_manager = (
+            function_manager or ManagerRegistry.get_function_manager()
+        )
         self._tools = self._build_tools()
 
         self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -325,10 +330,6 @@ class CodeActActor(BaseActor):
             self._main_event_loop = asyncio.get_running_loop()
         except RuntimeError:
             pass
-
-        self.function_manager = (
-            function_manager or ManagerRegistry.get_function_manager()
-        )
 
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ComputerPrimitives."""
