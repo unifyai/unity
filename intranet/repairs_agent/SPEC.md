@@ -1296,7 +1296,14 @@ All metrics support grouping by:
 - [x] Create `config/prompt_builder.py` to build business context from FilePipelineConfig ✓
 - [x] Update `DynamicRepairsAgent` to inject business context into system prompt ✓
 - [x] Add discovery tools guidance to system prompt (`tables_overview`, `list_columns`, `schema_explain`) ✓
-- [ ] Enrich 2-3 key metric docstrings with discovery patterns and exact tool arguments
+- [x] Enrich ALL metric docstrings with discovery patterns and exact tool arguments ✓
+    - Repairs: `jobs_completed_per_day`, `no_access_rate`, `first_time_fix_rate`,
+      `follow_on_required_rate`, `follow_on_materials_rate`, `job_completed_on_time_rate`,
+      `jobs_requiring_materials_rate`, `avg_repairs_per_property`, `complaints_rate`,
+      `appointment_adherence_rate`
+    - Service: `repairs_completed_per_day`, `jobs_issued_per_day`
+    - Telematics: `merchant_stops_per_day`, `avg_duration_at_merchant`,
+      `distance_travelled_per_day`, `avg_time_travelling`
 - [ ] Test end-to-end with CodeActActor
 
 ### Phase 2: Restructure and Refactor (Post-Demo)
