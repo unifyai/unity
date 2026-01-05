@@ -141,6 +141,104 @@ async def tool_call_that_may_clarify() -> str:
 """
 
 
+def get_library_function_reuse_example() -> str:
+    """Example: recognizing when to call an existing library function directly.
+
+    Shows the pattern of checking library skills and calling them when they match the goal.
+    """
+
+    return """
+# Example: Reusing an existing library function
+async def main_plan():
+    '''User goal: Schedule a weekly team meeting every Monday at 9am.
+
+    ANALYSIS: The library has a skill 'schedule_recurring_task' that handles
+    recurring task creation with specific timing. This matches our need exactly.
+    '''
+
+    # ✅ CORRECT: Call the existing skill directly
+    result = await schedule_recurring_task(
+        name="Team Meeting",
+        description="Weekly team sync",
+        frequency="weekly",
+        weekday="MO",
+        time="09:00"
+    )
+    return result
+
+    # ❌ WRONG: Don't reimplement what already exists
+    # task_handle = await primitives.tasks.update("Create weekly task...")
+    # This would duplicate the skill's logic unnecessarily
+"""
+
+
+def get_library_function_composition_example() -> str:
+    """Example: composing multiple library functions for a complex goal.
+
+    Shows how to orchestrate existing skills when the goal requires multiple steps.
+    """
+
+    return """
+# Example: Composing library functions for a complex workflow
+async def main_plan():
+    '''User goal: Find all contacts in New York and send them a meeting invite.
+
+    ANALYSIS: The library has:
+    - 'filter_contacts_by_location' for geographic filtering
+    - 'send_bulk_notification' for batch messaging
+    These can be composed to achieve the goal.
+    '''
+
+    # Step 1: Use existing skill to filter contacts
+    ny_contacts = await filter_contacts_by_location(location="New York")
+
+    # Step 2: Use existing skill to send notifications
+    result = await send_bulk_notification(
+        contact_list=ny_contacts,
+        message="Team meeting tomorrow at 2pm",
+        medium="email"
+    )
+
+    return f"Sent invites to {result['count']} contacts in New York"
+"""
+
+
+def get_library_function_adaptation_example() -> str:
+    """Example: adapting an existing skill for a slightly different use case.
+
+    Shows when to call a skill with different parameters vs reimplementing.
+    """
+
+    return """
+# Example: Adapting a library function with parameters
+async def main_plan():
+    '''User goal: Get the phone number for the contact who works at Tesla.
+
+    ANALYSIS: The library has 'find_contact_by_attribute' which can find contacts
+    by any attribute. We can use it with employer="Tesla" to match our need.
+    '''
+
+    # ✅ CORRECT: Adapt the existing skill with appropriate parameters
+    from pydantic import BaseModel
+
+    class ContactResult(BaseModel):
+        name: str
+        phone: str | None
+        employer: str | None
+
+    ContactResult.model_rebuild()
+
+    # The existing skill accepts flexible attribute filtering
+    tesla_contact = await find_contact_by_attribute(
+        attribute="employer",
+        value="Tesla",
+        response_format=ContactResult
+    )
+
+    return f"{tesla_contact.name}'s phone: {tesla_contact.phone or 'Not available'}"
+"""
+
+
 # ---------------------------------------------------------------------------
 # 3. Browser Examples
 # ---------------------------------------------------------------------------
@@ -416,6 +514,78 @@ async def execute_task_and_append(task_a_id: int, task_b_id: int) -> str:
     # Wait for completion (both tasks will execute in order)
     result = await handle.result()
     return result
+'''
+
+
+def get_primitives_files_ask_example() -> str:
+    """Example: read-only file inventory query.
+
+    Shows how to use the File manager via `primitives.files.ask(...)`.
+    """
+
+    return '''
+# Example: Read-only files query (inventory)
+async def list_available_filesystems() -> str:
+    """List available filesystems/roots and summarize what is available."""
+    handle = await primitives.files.ask(
+        "List available filesystems/roots and provide a brief inventory overview."
+    )
+    return await handle.result()
+'''
+
+
+def get_primitives_files_organize_example() -> str:
+    """Example: file organization (rename/move/delete) via `primitives.files.organize(...)`."""
+
+    return '''
+# Example: File organization (rename/move)
+async def organize_project_files() -> str:
+    """Rename/move files using the File manager."""
+    # NOTE: File-manager paths are typically root-relative to the active filesystem adapter.
+    # Avoid leading "/" unless you truly intend an absolute host path.
+    instruction = "Rename docs/notes.txt to docs/notes-2024.txt and move reports/q1.pdf to archive/q1.pdf."
+    handle = await primitives.files.organize(instruction)
+    return await handle.result()
+'''
+
+
+def get_primitives_guidance_ask_example() -> str:
+    """Example: read-only guidance query."""
+
+    return '''
+# Example: Read-only guidance query
+async def get_incident_response_guidance() -> str:
+    """Ask for incident response guidance."""
+    handle = await primitives.guidance.ask("What guidance do you have for incident response?")
+    return await handle.result()
+'''
+
+
+def get_primitives_guidance_update_example() -> str:
+    """Example: guidance mutation via `primitives.guidance.update(...)`."""
+
+    return '''
+# Example: Guidance update (create/edit)
+async def create_runbook_entry() -> str:
+    """Create a new guidance entry (runbook)."""
+    instruction = (
+        "Create a new guidance entry titled 'Runbook: DB Failover'. "
+        "Include step-by-step failover procedure, validation checks, and rollback steps."
+    )
+    handle = await primitives.guidance.update(instruction)
+    return await handle.result()
+'''
+
+
+def get_primitives_web_ask_example() -> str:
+    """Example: web research query via `primitives.web.ask(...)`."""
+
+    return '''
+# Example: Web research query
+async def research_latest_news() -> str:
+    """Ask the WebSearcher for time-sensitive info."""
+    handle = await primitives.web.ask("What are the major world news headlines this week?")
+    return await handle.result()
 '''
 
 
@@ -748,6 +918,9 @@ def get_core_pattern_examples() -> str:
     """Get all core pattern examples (environment-agnostic)."""
 
     examples = [
+        get_library_function_reuse_example().strip(),
+        get_library_function_composition_example().strip(),
+        get_library_function_adaptation_example().strip(),
         get_confidence_based_stubbing_example().strip(),
         get_structured_output_example().strip(),
         get_error_handling_example().strip(),
@@ -778,6 +951,11 @@ def get_primitives_examples() -> str:
         get_primitives_task_lookup_and_execute_example().strip(),
         get_primitives_task_execute_example().strip(),
         get_primitives_dynamic_methods_example().strip(),
+        get_primitives_files_ask_example().strip(),
+        get_primitives_files_organize_example().strip(),
+        get_primitives_guidance_ask_example().strip(),
+        get_primitives_guidance_update_example().strip(),
+        get_primitives_web_ask_example().strip(),
     ]
     return "\n\n".join(examples)
 
