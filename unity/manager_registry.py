@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from .conductor.base import BaseConductor
     from .contact_manager.base import BaseContactManager
     from .conversation_manager.base import BaseConversationManagerHandle
-    from .file_manager.base import BaseGlobalFileManager
+    from .file_manager.managers.base import BaseFileManager
     from .function_manager.base import BaseFunctionManager
     from .guidance_manager.base import BaseGuidanceManager
     from .image_manager.base import BaseImageManager
@@ -393,8 +393,8 @@ class ManagerRegistry:
         simulation_guidance: str | None = None,
         _force_new: bool = False,
         **kwargs: Any,
-    ) -> "BaseGlobalFileManager":
-        """Get the GlobalFileManager singleton (respects IMPL settings)."""
+    ) -> "BaseFileManager":
+        """Get the FileManager singleton (respects IMPL settings)."""
         return cls.get(
             "files",
             description=description,
@@ -714,13 +714,13 @@ def _populate_registry() -> None:
     ManagerRegistry.register_class("web_search", "simulated", SimulatedWebSearcher)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # GlobalFileManager implementations
+    # FileManager implementations
     # ─────────────────────────────────────────────────────────────────────────
-    from .file_manager.global_file_manager import GlobalFileManager
-    from .file_manager.simulated import SimulatedGlobalFileManager
+    from .file_manager.managers.file_manager import FileManager
+    from .file_manager.simulated import SimulatedFileManager
 
-    ManagerRegistry.register_class("files", "real", GlobalFileManager)
-    ManagerRegistry.register_class("files", "simulated", SimulatedGlobalFileManager)
+    ManagerRegistry.register_class("files", "real", FileManager)
+    ManagerRegistry.register_class("files", "simulated", SimulatedFileManager)
 
     # ─────────────────────────────────────────────────────────────────────────
     # MemoryManager implementations
