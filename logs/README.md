@@ -12,7 +12,7 @@ All logs are organized under `logs/` with six main subdirectories:
 |-----------|---------|-----------|---------|
 | `logs/pytest/` | Test output (stdout/stderr) | One `.txt` per test | Test-only |
 | `logs/unity/` | Unity LOGGER output (async tool loop, managers) | `unity.log` per session | `UNITY_LOG` + `UNITY_LOG_DIR` |
-| `logs/llm/` | Raw LLM request/response traces | `.txt` files per request | `UNILLM_LOG` + `UNILLM_LOG_DIR` |
+| `logs/unillm/` | Raw LLM request/response traces | `.txt` files per request | `UNILLM_LOG` + `UNILLM_LOG_DIR` |
 | `logs/unify/` | Unify SDK HTTP traces | JSON files per request | `UNIFY_LOG` + `UNIFY_LOG_DIR` |
 | `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans | `ORCHESTRA_LOG_DIR` |
 | `logs/all/` | **Cross-repo OTEL traces** | `{trace_id}.jsonl` per test | `*_OTEL` + `*_OTEL_LOG_DIR` |
@@ -131,12 +131,12 @@ The `trace_id` suffix (last 8 chars) enables correlation with pytest `[TRACE] TR
 
 ---
 
-## LLM Logs (`logs/llm/`)
+## Unillm Logs (`logs/unillm/`)
 
 LLM request/response traces are handled directly by the `unillm` package. These contain the raw I/O for each LLM call made during tests.
 
 ```
-logs/llm/
+logs/unillm/
 ├── 2025-12-05T09-15-22_unity_dev_ttys042/
 │   └── *.txt  (e.g., 142536_123456789_hit.txt, 142537_987654321_miss.txt)
 └── ...
@@ -170,7 +170,7 @@ Every test logs a summary record to the shared `Combined` context within the `Un
 | `test_fpath` | `str` | Test path: `folder/file.py::test_name` |
 | `tags` | `list` | Session-level tags (via `--tags` or `UNIFY_TEST_TAGS`) |
 | `duration` | `float` | Wall-clock time in seconds |
-| `llm_io` | `list` | Full LLM request/response logs (from `logs/llm/` files) |
+| `llm_io` | `list` | Full LLM request/response logs (from `logs/unillm/` files) |
 | `settings` | `dict` | Complete settings snapshot (production + test-only) |
 
 **Use cases:**

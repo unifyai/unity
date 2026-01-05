@@ -391,7 +391,7 @@ def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
 
     Creates symlinks like:
         /main/repo/logs/pytest/worktree-oty -> /path/to/worktree/oty/logs/pytest
-        /main/repo/logs/llm/worktree-oty -> /path/to/worktree/oty/logs/llm
+        /main/repo/logs/unillm/worktree-oty -> /path/to/worktree/oty/logs/unillm
 
     This lets you browse all worktree logs from the main repo.
     """
@@ -404,7 +404,7 @@ def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
 
     worktree_name = _get_worktree_name(repo_root)
 
-    for log_subdir in ("pytest", "llm"):
+    for log_subdir in ("pytest", "unillm"):
         main_log_dir = main_repo / "logs" / log_subdir
         worktree_log_dir = repo_root / "logs" / log_subdir
         symlink_path = main_log_dir / f"worktree-{worktree_name}"
@@ -501,7 +501,7 @@ def pytest_sessionstart(session):
         os.environ["UNIFY_LOG_DIR"] = str(unify_log_dir)
 
     # Unillm LLM I/O file logging (raw request/response traces)
-    unillm_log_dir = root_path / "logs" / "llm" / subdir
+    unillm_log_dir = root_path / "logs" / "unillm" / subdir
     unillm_log_dir.mkdir(parents=True, exist_ok=True)
     try:
         from unillm import configure_log_dir as configure_unillm_log_dir
