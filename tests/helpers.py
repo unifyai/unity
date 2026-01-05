@@ -338,25 +338,26 @@ def _upload_trace_to_context(
             except Exception:
                 pass  # Fields may already exist
 
-            # Upload each span as a row
-            for span in spans:
-                try:
-                    unify.log(
-                        context=trace_ctx,
-                        trace_id=span.get("trace_id"),
-                        span_id=span.get("span_id"),
-                        parent_span_id=span.get("parent_span_id"),
-                        name=span.get("name"),
-                        service=span.get("service"),
-                        start_time=span.get("start_time"),
-                        end_time=span.get("end_time"),
-                        duration_ms=span.get("duration_ms"),
-                        status=span.get("status"),
-                        attributes=span.get("attributes", {}),
-                        new=True,
-                    )
-                except Exception:
-                    pass  # Best-effort logging
+            # Batch upload all spans in a single request
+            entries = [
+                {
+                    "trace_id": span.get("trace_id"),
+                    "span_id": span.get("span_id"),
+                    "parent_span_id": span.get("parent_span_id"),
+                    "name": span.get("name"),
+                    "service": span.get("service"),
+                    "start_time": span.get("start_time"),
+                    "end_time": span.get("end_time"),
+                    "duration_ms": span.get("duration_ms"),
+                    "status": span.get("status"),
+                    "attributes": span.get("attributes", {}),
+                }
+                for span in spans
+            ]
+            try:
+                unify.create_logs(context=trace_ctx, entries=entries)
+            except Exception:
+                pass  # Best-effort logging
         finally:
             # Restore original trace context
             if upload_token is not None:
