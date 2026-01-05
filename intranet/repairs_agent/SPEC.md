@@ -1301,6 +1301,7 @@ All metrics support grouping by:
 
 ### Phase 2: Restructure and Refactor (Post-Demo)
 - [x] Create `intranet/repairs_agent/` package structure ✓
+- [x] Migrate `static/agent.py` and `static/registry.py` (BespokeRepairsAgent) ✓
 - [ ] Move types from `intranet/repairs/queries/_types.py`
 - [ ] Move constants from `intranet/repairs/queries/metrics.py`
 - [ ] Refactor metrics to use `files: FileManager` parameter

@@ -6,26 +6,48 @@ and plot configurations. Both the static BespokeRepairsAgent and dynamic
 DynamicRepairsAgent use these definitions.
 
 Components:
-    - definitions: All 16+ metric function implementations
-    - helpers: Reusable compositional helper functions
+    - definitions: All 16+ metric function implementations (to be migrated)
+    - helpers: Reusable compositional helper functions (to be migrated)
     - types: GroupBy, TimePeriod, MetricResult, PlotResult
-    - constants: Table names, filters, column mappings
+    - constants: Table names, filters, column mappings (to be migrated)
     - plots: Plot configurations per metric and group_by
 
 Usage:
     from intranet.repairs_agent.metrics import GroupBy, TimePeriod, MetricResult
-    from intranet.repairs_agent.metrics.definitions import first_time_fix_rate
+    from intranet.repairs_agent.metrics.plots import get_plot_configs
 """
 
 # Re-export commonly used types
-# Note: These will be available after migration from intranet/repairs/queries/
-# from .types import GroupBy, TimePeriod, MetricResult, PlotResult
-# from .constants import REPAIRS_TABLE, TELEMATICS_TABLES
+from .types import (
+    GroupBy,
+    MetricResult,
+    PlotConfig,
+    PlotResult,
+    PlotType,
+    TimePeriod,
+    ToolsDict,
+    VisualizeTool,
+)
+
+# Re-export plot functions
+from .plots import (
+    get_all_metrics_with_plots,
+    get_plot_configs,
+    get_supported_group_bys,
+)
 
 __all__ = [
-    # Types (will be re-exported after migration)
-    # "GroupBy",
-    # "TimePeriod",
-    # "MetricResult",
-    # "PlotResult",
+    # Types
+    "GroupBy",
+    "TimePeriod",
+    "MetricResult",
+    "PlotResult",
+    "PlotConfig",
+    "PlotType",
+    "ToolsDict",
+    "VisualizeTool",
+    # Plot functions
+    "get_plot_configs",
+    "get_all_metrics_with_plots",
+    "get_supported_group_bys",
 ]
