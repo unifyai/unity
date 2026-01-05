@@ -640,10 +640,13 @@ jobs:
 
     - name: Configure git for private repos
       run: |
-        # Allow uv to clone private GitHub repos (unify, unillm)
-        git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+        # Configure git to use tokens for private GitHub repos
+        # Each private repo gets its own token-authenticated URL rewrite
+        git config --global url."https://x-access-token:${UNIFY_TOKEN}@github.com/unifyai/unify".insteadOf "https://github.com/unifyai/unify"
+        git config --global url."https://x-access-token:${UNILLM_TOKEN}@github.com/unifyai/unillm".insteadOf "https://github.com/unifyai/unillm"
       env:
-        GH_TOKEN: ${{ secrets.UNIFY_CLONE_TOKEN }}
+        UNIFY_TOKEN: ${{ secrets.UNIFY_CLONE_TOKEN }}
+        UNILLM_TOKEN: ${{ secrets.UNILLM_CLONE_TOKEN }}
 
     - name: Configure unify/unillm for CI
       run: |
