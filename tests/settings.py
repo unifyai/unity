@@ -65,7 +65,7 @@ class TestingSettings(ProductionSettings):
     # Trace Upload Settings (for uploading OTEL traces to test context)
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_TRACE_UPLOAD: bool = (
-        True  # Enable/disable trace upload to {TestContext}/Trace
+        False  # Enable/disable trace upload to {TestContext}/Trace
     )
     UNITY_TRACE_SERVICES: str = (
         "all"  # Services to include: "all" or comma-separated list
