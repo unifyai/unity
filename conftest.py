@@ -500,6 +500,16 @@ def pytest_sessionstart(session):
     except ImportError:
         os.environ["UNIFY_LOG_DIR"] = str(unify_log_dir)
 
+    # Unillm LLM I/O file logging (raw request/response traces)
+    unillm_log_dir = root_path / "logs" / "llm" / subdir
+    unillm_log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        from unillm import configure_log_dir as configure_unillm_log_dir
+
+        configure_unillm_log_dir(str(unillm_log_dir))
+    except ImportError:
+        os.environ["UNILLM_LOG_DIR"] = str(unillm_log_dir)
+
     if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
     config = session.config
@@ -590,6 +600,7 @@ def pytest_unconfigure(config):
         )
         tr.write_line(f"📂 Unity logs:       {root_path / 'logs' / 'unity' / subdir}/")
         tr.write_line(f"📂 Unify HTTP logs:  {root_path / 'logs' / 'unify' / subdir}/")
+        tr.write_line(f"📂 LLM I/O logs:     {root_path / 'logs' / 'llm' / subdir}/")
         tr.write_line(f"📂 All log directories:  {root_path / 'logs'}/*/")
         tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.
