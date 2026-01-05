@@ -346,6 +346,9 @@ fi
 # UNIFY_BASE_URL is the single source of truth:
 # - Unset or localhost (127.0.0.1/localhost): use local orchestra
 # - Any other URL: use it directly (staging, production, etc.)
+#
+# Local orchestra is started via the orchestra repo's scripts/local.sh.
+# Set ORCHESTRA_REPO_PATH to override the default location (../orchestra).
 
 _is_local_url() {
   local url="${1:-}"
@@ -353,27 +356,111 @@ _is_local_url() {
   [[ "$url" == *"127.0.0.1"* || "$url" == *"localhost"* ]]
 }
 
+# Resolve orchestra repo path (default: sibling directory)
+_orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$REPO_ROOT/../orchestra}"
+_local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
+
+# Unity-specific seeding: models and endpoints needed for tests
+_seed_unity_models_and_endpoints() {
+  local db_port="${ORCHESTRA_DB_PORT:-5432}"
+  local db_container
+  db_container=$(docker ps --filter "publish=${db_port}" --format "{{.Names}}" 2>/dev/null | head -1)
+
+  if [[ -z "$db_container" ]]; then
+    echo "Warning: No PostgreSQL container found, skipping model seeding" >&2
+    return 1
+  fi
+
+  # Check if models already seeded
+  local model_exists
+  model_exists=$(docker exec "$db_container" psql -U orchestra -d orchestra -tAc \
+    "SELECT 1 FROM model WHERE mdl_code = 'gpt-5.2'" 2>/dev/null || echo "")
+
+  if [[ "$model_exists" == "1" ]]; then
+    return 0
+  fi
+
+  echo "Seeding models and endpoints for Unity tests..."
+  docker exec "$db_container" psql -U orchestra -d orchestra -c "
+-- Task and modality (required for models)
+INSERT INTO modality (name) VALUES ('text_generation')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO task (name, modality) VALUES ('chat', 'text_generation')
+ON CONFLICT (name) DO NOTHING;
+
+-- Providers (id, name, image_url, display_name)
+INSERT INTO provider (id, name, image_url, display_name) VALUES
+  (1, 'openai', '', 'OpenAI'),
+  (12, 'anthropic', '', 'Anthropic'),
+  (36, 'vertex-ai', '', 'Google Vertex AI'),
+  (37, 'deepseek', '', 'DeepSeek')
+ON CONFLICT (id) DO NOTHING;
+
+-- Models used by Unity tests (id, mdl_code, uploaded_at, task, active)
+INSERT INTO model (id, mdl_code, uploaded_at, task, active) VALUES
+  (100, 'gpt-5.2', NOW(), 'chat', true),
+  (101, 'gpt-4o', NOW(), 'chat', true),
+  (102, 'gpt-4o-mini', NOW(), 'chat', true),
+  (103, 'gpt-3.5-turbo', NOW(), 'chat', true),
+  (104, 'claude-3-5-sonnet', NOW(), 'chat', true),
+  (105, 'claude-3-haiku', NOW(), 'chat', true),
+  (106, 'claude-4.5-sonnet', NOW(), 'chat', true),
+  (107, 'gemini-1.5-flash', NOW(), 'chat', true),
+  (108, 'gemini-1.5-pro', NOW(), 'chat', true),
+  (109, 'deepseek-v3', NOW(), 'chat', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Endpoints (id, mdl_id, provider_id, created_at, active)
+INSERT INTO endpoint (id, mdl_id, provider_id, created_at, active) VALUES
+  (100, 100, 1, NOW(), true),   -- gpt-5.2@openai
+  (101, 101, 1, NOW(), true),   -- gpt-4o@openai
+  (102, 102, 1, NOW(), true),   -- gpt-4o-mini@openai
+  (103, 103, 1, NOW(), true),   -- gpt-3.5-turbo@openai
+  (104, 104, 12, NOW(), true),  -- claude-3-5-sonnet@anthropic
+  (105, 105, 12, NOW(), true),  -- claude-3-haiku@anthropic
+  (106, 106, 12, NOW(), true),  -- claude-4.5-sonnet@anthropic
+  (107, 107, 36, NOW(), true),  -- gemini-1.5-flash@vertex-ai
+  (108, 108, 36, NOW(), true),  -- gemini-1.5-pro@vertex-ai
+  (109, 109, 37, NOW(), true)   -- deepseek-v3@deepseek
+ON CONFLICT (id) DO NOTHING;
+" >/dev/null 2>&1
+}
+
 if _is_local_url "${UNIFY_BASE_URL:-}"; then
-  _local_orchestra_script="$SCRIPT_DIR/orchestra.sh"
   if [[ -x "$_local_orchestra_script" ]]; then
+    # Set up Unity-specific orchestra configuration
+    export ORCHESTRA_PREFIX="${ORCHESTRA_PREFIX:-unity}"
+    export ORCHESTRA_SEED_USER=1
+    export ORCHESTRA_TEST_USER_ID="${ORCHESTRA_TEST_USER_ID:-unity-test-user-001}"
+    export ORCHESTRA_TEST_EMAIL="${ORCHESTRA_TEST_EMAIL:-unity-test@debug.local}"
+
+    # Set up log directories (created lazily by local.sh)
+    _orchestra_logs_dir="$REPO_ROOT/logs/orchestra"
+    _timestamp="$(date +%Y-%m-%dT%H-%M-%S)"
+    export ORCHESTRA_LOG_DIR="$_orchestra_logs_dir/$_timestamp"
+    export ORCHESTRA_OTEL_LOG_DIR="$REPO_ROOT/logs/all"
+
     # Check if local orchestra is already running
     if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
       echo "Local orchestra already running: $_local_url"
       export UNIFY_BASE_URL="$_local_url"
+      # Seed models even if orchestra was already running (idempotent)
+      _seed_unity_models_and_endpoints
     else
       # Not running - need to start it
       # Stop any stale orchestra state first
       "$_local_orchestra_script" stop >/dev/null 2>&1 || true
 
       # Remove any existing PostgreSQL container so we get fresh one with correct max_connections
-      for _container in $(docker ps -a --filter "publish=5432" --format "{{.Names}}" 2>/dev/null); do
+      _db_port="${ORCHESTRA_DB_PORT:-5432}"
+      for _container in $(docker ps -a --filter "publish=${_db_port}" --format "{{.Names}}" 2>/dev/null); do
         docker stop "$_container" >/dev/null 2>&1 || true
         docker rm "$_container" >/dev/null 2>&1 || true
       done
       unset _container
 
       # Wait for DB port to be fully released (Docker Desktop can be slow)
-      _db_port="${ORCHESTRA_DB_PORT:-5432}"
       if lsof -i ":$_db_port" &>/dev/null; then
         echo "Waiting for port $_db_port to be released..."
         _max_wait=30
@@ -391,6 +478,8 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
         if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
           echo "Using local orchestra: $_local_url"
           export UNIFY_BASE_URL="$_local_url"
+          # Seed Unity-specific models and endpoints
+          _seed_unity_models_and_endpoints
         else
           echo "Warning: Local orchestra started but not responding" >&2
         fi
@@ -398,11 +487,15 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
         echo "Warning: Could not start local orchestra" >&2
       fi
     fi
+  else
+    echo "Warning: Orchestra script not found at $_local_orchestra_script" >&2
+    echo "  Set ORCHESTRA_REPO_PATH or clone orchestra repo to ../orchestra" >&2
   fi
-  unset _local_orchestra_script _local_url
+  unset _local_url _orchestra_logs_dir _timestamp
 else
   echo "Using remote orchestra: $UNIFY_BASE_URL"
 fi
+unset _orchestra_repo_path _local_orchestra_script
 
 # Build pytest marker filter based on flags
 MARKER_FILTER=""
@@ -543,7 +636,7 @@ build_env_exports() {
   if ! is_var_in_env_overrides "UNILLM_OTEL_LOG_DIR"; then
     exports="$exports UNILLM_OTEL_LOG_DIR=$otel_log_dir"
   fi
-  # Note: ORCHESTRA_OTEL_LOG_DIR is set in orchestra.sh based on UNITY_OTEL_LOG_DIR
+  # Note: ORCHESTRA_OTEL_LOG_DIR is set during local orchestra setup above
 
   # Add all --env flag overrides
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do

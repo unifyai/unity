@@ -130,8 +130,8 @@ class TestEndToEndTraceCorrelation:
     trace files.
 
     Requirements:
-    - Local Orchestra must be running (started via orchestra.sh)
-    - ORCHESTRA_LOG_DIR must be set (done automatically by orchestra.sh)
+    - Local Orchestra must be running (started via parallel_run.sh or the orchestra shell function)
+    - ORCHESTRA_LOG_DIR must be set (done automatically by parallel_run.sh)
     """
 
     def _get_orchestra_log_dir(self) -> Path | None:
@@ -139,7 +139,7 @@ class TestEndToEndTraceCorrelation:
 
         Returns None if not configured (Orchestra logging not enabled).
         """
-        # Check environment variable set by orchestra.sh
+        # Check environment variable set by parallel_run.sh
         trace_dir = os.environ.get("ORCHESTRA_LOG_DIR")
         if trace_dir:
             return Path(trace_dir)

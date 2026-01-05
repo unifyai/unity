@@ -711,25 +711,26 @@ jobs:
     - name: Dump orchestra logs on failure
       if: failure()
       run: |
+        # Orchestra with ORCHESTRA_PREFIX=unity writes to /tmp/unity-local-server.*
         echo "=== Orchestra Server Logs ==="
-        if [ -f /tmp/unity-orchestra-server.log ]; then
-          cat /tmp/unity-orchestra-server.log
+        if [ -f /tmp/unity-local-server.log ]; then
+          cat /tmp/unity-local-server.log
           # Also copy to logs/orchestra/ so it gets uploaded with artifacts
           if [ -d logs/orchestra ]; then
             # Find the session directory (most recent timestamp)
             session_dir=$(ls -td logs/orchestra/*/ 2>/dev/null | head -1)
             if [ -n "$session_dir" ]; then
-              cp /tmp/unity-orchestra-server.log "$session_dir/server.log"
+              cp /tmp/unity-local-server.log "$session_dir/server.log"
               echo "(Copied to $session_dir/server.log for artifact upload)"
             fi
           fi
         else
-          echo "No orchestra log file found at /tmp/unity-orchestra-server.log"
+          echo "No orchestra log file found at /tmp/unity-local-server.log"
         fi
         echo ""
         echo "=== Orchestra Server Process Status ==="
-        if [ -f /tmp/unity-orchestra-server.pid ]; then
-          PID=$(cat /tmp/unity-orchestra-server.pid)
+        if [ -f /tmp/unity-local-server.pid ]; then
+          PID=$(cat /tmp/unity-local-server.pid)
           echo "Expected PID: $PID"
           if ps -p "$PID" > /dev/null 2>&1; then
             echo "Process is still running"
@@ -922,8 +923,8 @@ jobs:
         echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
         # Kill all unity tmux servers and purge orphaned test processes
         tests/kill_server.sh --all || true
-        # Stop local orchestra
-        tests/orchestra.sh stop || true
+        # Stop local orchestra (using orchestra repo's script)
+        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
         echo "Cleanup complete."
 
     - name: Stop local orchestra
@@ -932,7 +933,7 @@ jobs:
       run: |
         # Trap SIGTERM to exit gracefully (exit 143 can cause GHA to skip steps)
         trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
-        tests/orchestra.sh stop || true
+        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
 
   # Cleanup job: runs ONCE after all pytest jobs complete or are cancelled
   # Handles project deletion at workflow level to avoid race conditions
