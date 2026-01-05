@@ -2169,6 +2169,7 @@ class _PrimitivesProxy:
             "secrets",
             "guidance",
             "web",
+            "files",
         }:
             env = None
             if hasattr(self._plan, "environments") and isinstance(
@@ -2826,7 +2827,7 @@ async def main_plan():
             self._child_tasks.remove(main_task)
 
         try:
-            result = main_task.result()
+            result = await main_task
             self._final_result_str = str(result)
 
             if self.persist:
@@ -6677,7 +6678,8 @@ class HierarchicalActor(BaseActor):
                         relevant_functions = (
                             self.function_manager.search_functions_by_similarity(
                                 query=goal,
-                                n=5,
+                                n=20,
+                                include_primitives=False,
                             )
                         )
                         existing_functions = {f["name"]: f for f in relevant_functions}
@@ -6795,6 +6797,7 @@ class HierarchicalActor(BaseActor):
                         self.function_manager.search_functions_by_similarity(
                             query=query,
                             n=3,
+                            include_primitives=False,
                         )
                     )
                     existing_functions = {f["name"]: f for f in relevant_functions}
