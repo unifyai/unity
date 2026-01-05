@@ -741,7 +741,6 @@ class EventBus:
         self._get_logger().log_create(
             project=unify.active_project(),
             context=self._global_ctx,
-            params={},
             entries={
                 "row_id": event.row_id,
                 "event_id": event.event_id,
@@ -757,7 +756,6 @@ class EventBus:
         self._get_logger().log_create(
             project=unify.active_project(),
             context=self._specific_ctxs[event.type],
-            params={},
             entries={
                 "row_id": event.row_id,
                 "event_id": event.event_id,
@@ -1075,7 +1073,6 @@ class EventBus:
         self._get_logger().log_create(
             project=unify.active_project(),
             context=self._callbacks_ctx,
-            params={},
             entries={
                 "subscription_id": sub.subscription_id,
                 "event_type": sub.event_type,
