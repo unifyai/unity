@@ -7,6 +7,15 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
+try:  # pragma: no cover - defensive logging hygiene
+    import logging
+
+    logging.getLogger("faker").setLevel(logging.WARNING)
+    logging.getLogger("faker.factory").setLevel(logging.WARNING)
+    logging.getLogger("faker.providers").setLevel(logging.WARNING)
+except Exception:
+    pass
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Early Environment Setup (MUST be before any unity/unify imports)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,8 +61,21 @@ def _path_to_name(path: str) -> str:
     Examples:
         tests/test_contact_manager/test_ask.py → test_contact_manager-test_ask
         test_foo.py → test_foo
+        /abs/path/to/workspace/tests/test_foo.py → test_foo
     """
     name = path.rstrip("/\\")
+
+    # Handle absolute paths: strip workspace root first
+    path_obj = Path(name)
+    if path_obj.is_absolute():
+        # Try to make it relative to the workspace root
+        try:
+            workspace_root = Path(__file__).parent  # conftest.py is at workspace root
+            name = str(path_obj.relative_to(workspace_root))
+        except ValueError:
+            # Path is not relative to workspace; use as-is
+            pass
+
     # Strip common prefixes
     for prefix in ("tests/", "tests\\", "./", ".\\"):
         if name.startswith(prefix):
@@ -65,7 +87,7 @@ def _path_to_name(path: str) -> str:
     return name.replace("/", "-").replace("\\", "-")
 
 
-def _sanitize_filename(name: str) -> str:
+def _sanitize_filename(name: str, max_length: int = 200) -> str:
     """Sanitize a string to be safe for use in filenames on all platforms.
 
     Removes/replaces characters that are invalid on Windows/NTFS:
@@ -79,8 +101,18 @@ def _sanitize_filename(name: str) -> str:
     - Carriage return \r
     - Line feed \n
     - Backslash \\ (path separator on Windows)
+
+    Also truncates long names while preserving uniqueness via hash suffix.
+
+    Args:
+        name: The string to sanitize
+        max_length: Maximum length for the resulting filename (default 200)
+
+    Returns:
+        Sanitized filename safe for all platforms
     """
     import re
+    import hashlib
 
     # Replace invalid characters with underscore or dash
     name = re.sub(r'["\:<>|*?\r\n\\]', "_", name)
@@ -88,6 +120,15 @@ def _sanitize_filename(name: str) -> str:
     name = re.sub(r"[_-]{2,}", "-", name)
     # Remove leading/trailing underscores/dashes
     name = name.strip("_-")
+
+    # If name exceeds max_length, truncate and add hash for uniqueness
+    if len(name) > max_length:
+        # Create a short hash of the full name
+        name_hash = hashlib.md5(name.encode()).hexdigest()[:8]
+        # Truncate to leave room for hash suffix (hash + underscore)
+        truncate_at = max_length - 9  # Leave room for "_" + 8-char hash
+        name = f"{name[:truncate_at]}_{name_hash}"
+
     return name
 
 
@@ -124,11 +165,15 @@ def _derive_multi_target_name(paths: list) -> str:
             if len(first_node) > 40:
                 first_node = first_node[:37] + "..."
             extra = len(paths) - 1
-            if extra > 0:
-                return f"{base_name}--{first_node}+{extra}more"
-            return f"{base_name}--{first_node}"
+            combined = (
+                f"{base_name}--{first_node}+{extra}more"
+                if extra > 0
+                else f"{base_name}--{first_node}"
+            )
+            return _sanitize_filename(combined, max_length=200)
         extra = len(paths) - 1
-        return f"{base_name}+{extra}more" if extra > 0 else base_name
+        combined = f"{base_name}+{extra}more" if extra > 0 else base_name
+        return _sanitize_filename(combined, max_length=200)
 
     # Check for common directory prefix
     def get_dir(p: str) -> str:
@@ -149,9 +194,12 @@ def _derive_multi_target_name(paths: list) -> str:
         if first_file.startswith(dir_name + "-"):
             first_file = first_file[len(dir_name) + 1 :]
         extra = len(paths) - 1
-        if extra > 0:
-            return f"{dir_name}--{first_file}+{extra}more"
-        return f"{dir_name}--{first_file}"
+        combined = (
+            f"{dir_name}--{first_file}+{extra}more"
+            if extra > 0
+            else f"{dir_name}--{first_file}"
+        )
+        return _sanitize_filename(combined, max_length=200)
 
     # Fallback: use first target + count
     first_name = _path_to_name(paths[0].split("::")[0])
@@ -163,7 +211,8 @@ def _derive_multi_target_name(paths: list) -> str:
             node = node[:27] + "..."
         first_name = f"{first_name}--{node}"
     extra = len(paths) - 1
-    return f"{first_name}+{extra}more" if extra > 0 else first_name
+    combined = f"{first_name}+{extra}more" if extra > 0 else first_name
+    return _sanitize_filename(combined, max_length=200)
 
 
 def _derive_log_name_from_args(args: list) -> str:
@@ -211,7 +260,10 @@ def _derive_log_name_from_args(args: list) -> str:
             # Sanitize node: replace :: with -, remove brackets, sanitize for filename
             node_name = node.replace("::", "-").replace("[", "-").replace("]", "")
             node_name = _sanitize_filename(node_name)
-            return f"{base_name}--{node_name}"
+            # Combine and ensure total length is within limits (accounting for .txt extension)
+            combined = f"{base_name}--{node_name}"
+            # Truncate combined name if needed (max 200 chars to leave room for path/extension)
+            return _sanitize_filename(combined, max_length=200)
         return _path_to_name(target)
 
     # Multiple targets: find common structure for a meaningful name
