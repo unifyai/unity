@@ -35,6 +35,10 @@ def _llm_judge_contact_retrieval(
         "Your task is to decide if the candidate answer accurately and sufficiently answers the question, "
         "specifically checking if it includes the expected key information. "
         "Minor formatting or wording differences are acceptable as long as the core factual information is present. "
+        "Note: The contact list always includes two system contacts (a default assistant and a default user) "
+        "which are part of the standard data model. These may or may not appear in answers depending on the query, "
+        "and their presence or absence should not affect your judgment of correctness. "
+        "Focus only on whether the expected_key_information is present in the candidate_answer. "
         'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}.'
     )
     judge.set_system_message(system_prompt)
@@ -44,15 +48,9 @@ def _llm_judge_contact_retrieval(
         "expected_key_information": expected_answer_fragment,
         "candidate_answer": candidate_answer,
     }
-    if all_contacts_for_context:  # Provide more context to the judge if helpful
-        # Hide system contacts (ids 0 and 1) to match the assistant's own filtering
-        filtered_contacts = [
-            c
-            for c in all_contacts_for_context
-            if getattr(c, "contact_id", None) not in (0, 1)
-        ]
+    if all_contacts_for_context:
         payload_dict["relevant_contacts_data_for_context"] = [
-            c.model_dump_json() for c in filtered_contacts
+            c.model_dump_json() for c in all_contacts_for_context
         ]
 
     payload = json.dumps(payload_dict, indent=2)
