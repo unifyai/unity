@@ -8,6 +8,71 @@ All helpers are pure functions with no logging or side effects.
 
 from typing import Any, Dict, List, Optional
 
+# =============================================================================
+# TABLE CONSTANTS
+# =============================================================================
+
+REPAIRS_FILE = (
+    "/home/hmahmood24/unity/intranet/repairs/"
+    "MDH Repairs Data July - Nov 25 - DL V1.xlsx"
+)
+TELEMATICS_FILE = (
+    "/home/hmahmood24/unity/intranet/repairs/"
+    "MDH Telematics Data July - Nov 25 - DL V1.xlsx"
+)
+
+REPAIRS_TABLE = f"{REPAIRS_FILE}.Tables.Raised_01-07-2025_to_30-11-2025"
+TELEMATICS_TABLES = {
+    "july": f"{TELEMATICS_FILE}.Tables.July_2025",
+    "august": f"{TELEMATICS_FILE}.Tables.August_2025",
+    "september": f"{TELEMATICS_FILE}.Tables.September_2025",
+    "october": f"{TELEMATICS_FILE}.Tables.October_2025",
+    "november": f"{TELEMATICS_FILE}.Tables.November_2025",
+}
+ALL_TELEMATICS_TABLES = list(TELEMATICS_TABLES.values())
+
+# =============================================================================
+# FILTER CONSTANTS
+# =============================================================================
+
+COMPLETED_FILTER = "`WorksOrderStatusDescription` in ['Complete', 'Closed']"
+NO_ACCESS_FILTER = "`NoAccess` != 'None' and `NoAccess` != ''"
+FIRST_TIME_FIX_FILTER = "`FirstTimeFix` == 'Yes'"
+FOLLOW_ON_FILTER = "`FollowOn` == 'Yes'"
+ISSUED_FILTER = "`WorksOrderStatusDescription` == 'Issued'"
+
+# Known merchant names for telematics location matching
+MERCHANT_NAMES = [
+    "Travis Perkins",
+    "Screwfix",
+    "Toolstation",
+    "Plumb Center",
+    "City Plumbing",
+    "Jewson",
+    "Selco",
+    "Wickes",
+]
+
+# =============================================================================
+# GROUP BY FIELD MAPPINGS
+# =============================================================================
+
+GROUP_BY_FIELDS = {
+    "operative": "OperativeWhoCompletedJob",
+    "patch": "RepairsPatch",
+    "region": "RepairsRegion",
+    "trade": "Trade",
+    "total": None,
+}
+
+TELEMATICS_GROUP_BY_FIELDS = {
+    "operative": "Vehicle",  # Vehicle contains operative name in telematics
+}
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
 
 def discover_repairs_table(tools: Dict[str, Any]) -> Optional[str]:
     """
@@ -178,23 +243,61 @@ def extract_count(value: Any) -> int:
     return 0
 
 
-def normalize_grouped_result(result: Dict[str, Any]) -> Dict[str, int]:
+def extract_sum(value: Any) -> float:
     """
-    Normalize grouped reduce results to {group: count} format.
+    Extract sum from a reduce result.
+
+    Handles various return formats:
+    - Direct int/float: 123.5 → 123.5
+    - Dict with sum: {"sum": 123.5} → 123.5
+    - Dict with count fallback: {"count": 10} → 10.0
+    - None → 0.0
+
+    Parameters
+    ----------
+    value : Any
+        Result from reduce tool
+
+    Returns
+    -------
+    float
+        Extracted sum value
+    """
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        for key in ("sum", "count", "value"):
+            val = value.get(key)
+            if val is not None and isinstance(val, (int, float)):
+                return float(val)
+    return 0.0
+
+
+def normalize_grouped_result(
+    result: Dict[str, Any],
+    extract_fn: Any = None,
+) -> Dict[str, Any]:
+    """
+    Normalize grouped reduce results to {group: value} format.
 
     Parameters
     ----------
     result : dict
         Raw grouped result from reduce tool
+    extract_fn : callable, optional
+        Function to extract values (default: extract_count)
 
     Returns
     -------
-    dict[str, int]
-        Normalized {group_name: count} mapping
+    dict[str, Any]
+        Normalized {group_name: value} mapping
     """
     if not isinstance(result, dict):
         return {}
-    return {k: extract_count(v) for k, v in result.items()}
+    fn = extract_fn if extract_fn is not None else extract_count
+    return {k: fn(v) for k, v in result.items()}
 
 
 def compute_percentage(numerator: int, denominator: int, decimals: int = 2) -> float:
@@ -229,6 +332,7 @@ HELPER_FUNCTIONS = [
     "resolve_group_by",
     "build_filter",
     "extract_count",
+    "extract_sum",
     "normalize_grouped_result",
     "compute_percentage",
 ]
