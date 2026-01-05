@@ -705,7 +705,7 @@ class GuidanceManager(BaseGuidanceManager):
         *,
         title: Optional[str] = None,
         content: Optional[str] = None,
-        images: Optional[Any] = None,
+        images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         """Create a new guidance entry.
@@ -722,9 +722,8 @@ class GuidanceManager(BaseGuidanceManager):
             Short human-readable title for the guidance entry.
         content : str | None
             Longer freeform guidance text.
-        images : Any | None
-            AnnotatedImageRefs or a structure compatible with the model; when
-            omitted, an empty set is stored.
+        images : AnnotatedImageRefs | None
+            Annotated image references to attach to this guidance entry.
         function_ids : list[int] | None
             Optional ids of related functions to surface in read flows.
 
@@ -765,7 +764,7 @@ class GuidanceManager(BaseGuidanceManager):
         guidance_id: int,
         title: Optional[str] = None,
         content: Optional[str] = None,
-        images: Optional[Any] = None,
+        images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         """Update fields of an existing guidance entry by id.
