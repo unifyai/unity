@@ -8,6 +8,8 @@ All helpers are pure functions with no logging or side effects.
 
 from typing import Any, Dict, List, Optional
 
+from intranet.repairs_agent.metrics.types import MetricResult
+
 # =============================================================================
 # TABLE CONSTANTS
 # =============================================================================
@@ -325,6 +327,67 @@ def compute_percentage(numerator: int, denominator: int, decimals: int = 2) -> f
     return round((numerator / denominator) * 100, decimals)
 
 
+def build_metric_result(
+    metric_name: str,
+    group_by: Any,
+    time_period: Any,
+    start_date: Optional[str],
+    end_date: Optional[str],
+    results: List[Dict[str, Any]],
+    total: float,
+    metadata: Optional[Dict[str, Any]] = None,
+    plots: Optional[List[Any]] = None,
+) -> MetricResult:
+    """
+    Build standardized metric result dictionary.
+
+    Creates a consistent output format for all metrics, handling
+    enum-to-string conversions.
+
+    Parameters
+    ----------
+    metric_name : str
+        Name of the metric (e.g., "first_time_fix_rate")
+    group_by : str or Enum
+        Grouping dimension used
+    time_period : str or Enum
+        Time granularity used
+    start_date : str or None
+        Start date of analysis period
+    end_date : str or None
+        End date of analysis period
+    results : list
+        List of result dicts with metric values
+    total : float
+        Aggregate total across all groups
+    metadata : dict or None
+        Additional metadata about the calculation
+    plots : list or None
+        Generated plot visualizations
+
+    Returns
+    -------
+    dict
+        Standardized metric result with all fields
+    """
+    # Handle enum to string conversion
+    group_by_value = group_by.value if hasattr(group_by, "value") else group_by
+    time_period_value = (
+        time_period.value if hasattr(time_period, "value") else time_period
+    )
+    return MetricResult(
+        metric_name=metric_name,
+        group_by=group_by_value,
+        time_period=time_period_value,
+        start_date=start_date,
+        end_date=end_date,
+        results=results,
+        total=total,
+        metadata=metadata,
+        plots=plots or [],
+    )
+
+
 # List of all helper functions for sync to FunctionManager
 HELPER_FUNCTIONS = [
     "discover_repairs_table",
@@ -335,4 +398,5 @@ HELPER_FUNCTIONS = [
     "extract_sum",
     "normalize_grouped_result",
     "compute_percentage",
+    "build_metric_result",
 ]

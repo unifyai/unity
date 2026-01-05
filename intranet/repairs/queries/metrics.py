@@ -9,8 +9,8 @@ grouping and time filtering. Metrics can be broken down by:
 - region
 - time_period
 
-Use execute_tool/execute_tools for tool calls and write any custom
-Python aggregation logic you need.
+All helpers, constants, and utility functions are imported from
+`intranet.repairs_agent.metrics.helpers` - the single source of truth.
 
 Metric Reference (from requirements):
 --------------------------------------
@@ -33,18 +33,16 @@ Metric Reference (from requirements):
 
 from __future__ import annotations
 
-import logging
-import time
-from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Dict, List, Optional
 
 from intranet.repairs_agent.static.registry import register
 
 from ._types import GroupBy, MetricResult, PlotResult, TimePeriod, ToolsDict
 from .plot_utils import generate_plots
 
-# Import helpers for standardized operations
+# Import ALL helpers and constants from the single source of truth
 from intranet.repairs_agent.metrics.helpers import (
+    # Constants
     ALL_TELEMATICS_TABLES,
     COMPLETED_FILTER,
     FIRST_TIME_FIX_FILTER,
@@ -55,7 +53,9 @@ from intranet.repairs_agent.metrics.helpers import (
     NO_ACCESS_FILTER,
     REPAIRS_TABLE,
     TELEMATICS_GROUP_BY_FIELDS,
+    # Helper functions
     build_filter,
+    build_metric_result,
     compute_percentage,
     discover_repairs_table,
     discover_telematics_tables,
@@ -64,375 +64,6 @@ from intranet.repairs_agent.metrics.helpers import (
     normalize_grouped_result,
     resolve_group_by,
 )
-
-# =============================================================================
-# LOGGING SETUP
-# =============================================================================
-
-logger = logging.getLogger(__name__)
-
-# Type variable for decorators
-F = TypeVar("F", bound=Callable[..., Any])
-
-
-def _format_duration(seconds: float) -> str:
-    """Format duration in human-readable format."""
-    if seconds < 1:
-        return f"{seconds * 1000:.1f}ms"
-    elif seconds < 60:
-        return f"{seconds:.2f}s"
-    else:
-        minutes = int(seconds // 60)
-        secs = seconds % 60
-        return f"{minutes}m {secs:.1f}s"
-
-
-def metric_timer(metric_name: str):
-    """Decorator to add timing and logging to metric functions."""
-
-    def decorator(func: F) -> F:
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            start_time = time.perf_counter()
-            logger.info(f"[{metric_name}] Starting metric calculation...")
-            logger.debug(f"[{metric_name}] Parameters: {kwargs}")
-
-            try:
-                result = await func(*args, **kwargs)
-                elapsed = time.perf_counter() - start_time
-
-                # Log summary of results
-                if isinstance(result, dict):
-                    num_results = len(result.get("results", []))
-                    total = result.get("total", "N/A")
-                    logger.info(
-                        f"[{metric_name}] ✓ Completed in {_format_duration(elapsed)} | "
-                        f"Results: {num_results} groups | Total: {total}",
-                    )
-                else:
-                    logger.info(
-                        f"[{metric_name}] ✓ Completed in {_format_duration(elapsed)}",
-                    )
-
-                return result
-
-            except Exception as e:
-                elapsed = time.perf_counter() - start_time
-                logger.error(
-                    f"[{metric_name}] ✗ Failed after {_format_duration(elapsed)}: {type(e).__name__}: {e}",
-                )
-                raise
-
-        return wrapper  # type: ignore
-
-    return decorator
-
-
-def _timed_tool(
-    metric_name: str,
-    tool_name: str,
-    tool: Callable,
-    label: str = "",
-    **kwargs: Any,
-) -> Any:
-    """
-    Generic timing wrapper for any file manager tool call.
-
-    Parameters
-    ----------
-    metric_name : str
-        Name of the metric (for log prefix)
-    tool_name : str
-        Name of the tool being called (e.g., "reduce", "filter_files")
-    tool : Callable
-        The tool function to call
-    label : str, optional
-        Additional context label for the log message
-    **kwargs : Any
-        Arguments to pass to the tool
-
-    Returns
-    -------
-    Any
-        The result from the tool call
-
-    Example
-    -------
-    >>> result = _timed_tool(
-    ...     "jobs_completed_per_day", "reduce", reduce_tool,
-    ...     label="count jobs",
-    ...     table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-    ...     filter=filter_expr, group_by=group_by_field,
-    ... )
-    """
-    start_time = time.perf_counter()
-    result = tool(**kwargs)
-    elapsed = time.perf_counter() - start_time
-
-    # Generic result summary based on type
-    if result is None:
-        summary = "None"
-    elif isinstance(result, dict):
-        summary = f"{len(result)} items"
-    elif isinstance(result, list):
-        summary = f"{len(result)} rows"
-    elif isinstance(result, (int, float)):
-        summary = str(result)
-    else:
-        summary = f"{type(result).__name__}"
-
-    label_str = f" ({label})" if label else ""
-    logger.debug(
-        f"[{metric_name}] {tool_name}{label_str} took {_format_duration(elapsed)}: {summary}",
-    )
-    return result
-
-
-def _extract_count(value: Any) -> int:
-    """
-    Extract count from reduce result value.
-
-    The reduce tool can return values in different formats:
-    - Direct int: 123
-    - Dict with 'count' key: {'shared_value': None, 'count': 123}
-    - Dict with 'count' as None: {'shared_value': 'xxx', 'count': None}
-
-    Returns 0 if count cannot be extracted.
-    """
-    if value is None:
-        return 0
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, dict):
-        count = value.get("count")
-        if count is not None:
-            return int(count)
-        # Fallback: try shared_value if it's numeric
-        shared = value.get("shared_value")
-        if isinstance(shared, (int, float)):
-            return int(shared)
-        return 0
-    logger.warning(
-        f"Unexpected value type in reduce result: {type(value).__name__} = {value}",
-    )
-    return 0
-
-
-def _extract_sum(value: Any) -> float:
-    """
-    Extract sum from reduce result value.
-
-    Similar to _extract_count but for sum operations, returns float.
-    """
-    if value is None:
-        return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, dict):
-        # Try 'sum' key first, then 'count'
-        for key in ("sum", "count", "value"):
-            val = value.get(key)
-            if val is not None and isinstance(val, (int, float)):
-                return float(val)
-        return 0.0
-    logger.warning(
-        f"Unexpected value type in reduce sum result: {type(value).__name__} = {value}",
-    )
-    return 0.0
-
-
-def _normalize_grouped_result(
-    result: Dict[str, Any],
-    extract_fn: Callable[[Any], Any] = _extract_count,
-) -> Dict[str, Any]:
-    """
-    Normalize grouped reduce results to simple {group: value} format.
-
-    Handles the nested {'shared_value': ..., 'count': ...} format.
-    """
-    if not isinstance(result, dict):
-        return result
-
-    normalized = {}
-    for key, value in result.items():
-        normalized[key] = extract_fn(value)
-    return normalized
-
-
-# =============================================================================
-# TABLE CONSTANTS
-# =============================================================================
-
-REPAIRS_FILE = "/home/hmahmood24/unity/intranet/repairs/MDH Repairs Data July - Nov 25 - DL V1.xlsx"
-TELEMATICS_FILE = "/home/hmahmood24/unity/intranet/repairs/MDH Telematics Data July - Nov 25 - DL V1.xlsx"
-
-REPAIRS_TABLE = f"{REPAIRS_FILE}.Tables.Raised_01-07-2025_to_30-11-2025"
-
-TELEMATICS_TABLES = {
-    "july": f"{TELEMATICS_FILE}.Tables.July_2025",
-    "august": f"{TELEMATICS_FILE}.Tables.August_2025",
-    "september": f"{TELEMATICS_FILE}.Tables.September_2025",
-    "october": f"{TELEMATICS_FILE}.Tables.October_2025",
-    "november": f"{TELEMATICS_FILE}.Tables.November_2025",
-}
-
-ALL_TELEMATICS_TABLES = list(TELEMATICS_TABLES.values())
-
-# =============================================================================
-# FILTER CONSTANTS
-# =============================================================================
-
-COMPLETED_FILTER = "`WorksOrderStatusDescription` in ['Complete', 'Closed']"
-NO_ACCESS_FILTER = "`NoAccess` != 'None' and `NoAccess` != ''"
-FIRST_TIME_FIX_FILTER = "`FirstTimeFix` == 'Yes'"
-SECOND_TIME_FIX_FILTER = "`SecondTimeFix` == 'Yes'"
-THIRD_TIME_FIX_FILTER = "`ThirdTimePlusFix` == 'Yes'"
-FOLLOW_ON_FILTER = "`FollowOn` == 'Yes'"
-ISSUED_FILTER = "`WorksOrderStatusDescription` == 'Issued'"
-
-# Known merchant names for telematics location matching
-MERCHANT_NAMES = [
-    "Travis Perkins",
-    "Screwfix",
-    "Toolstation",
-    "Plumb Center",
-    "City Plumbing",
-    "Jewson",
-    "Selco",
-    "Wickes",
-]
-
-# =============================================================================
-# GROUP BY FIELD MAPPINGS
-# =============================================================================
-
-GROUP_BY_FIELDS = {
-    GroupBy.OPERATIVE: "OperativeWhoCompletedJob",
-    GroupBy.PATCH: "RepairsPatch",
-    GroupBy.REGION: "RepairsRegion",
-    GroupBy.TOTAL: None,  # No grouping
-}
-
-TELEMATICS_GROUP_BY_FIELDS = {
-    GroupBy.OPERATIVE: "Vehicle",  # Vehicle contains operative name
-}
-
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-
-def _resolve_group_by(group_by: GroupBy | str) -> Optional[str]:
-    """Resolve GroupBy enum or string to actual column name."""
-    # Handle string inputs (from CLI JSON params)
-    if isinstance(group_by, str):
-        try:
-            group_by = GroupBy(group_by)
-        except ValueError:
-            logger.warning(f"Unknown group_by value: {group_by}, returning None")
-            return None
-    return GROUP_BY_FIELDS.get(group_by)
-
-
-def _resolve_telematics_group_by(group_by: GroupBy | str) -> Optional[str]:
-    """Resolve GroupBy enum or string to telematics column name."""
-    # Handle string inputs (from CLI JSON params)
-    if isinstance(group_by, str):
-        try:
-            group_by = GroupBy(group_by)
-        except ValueError:
-            return None
-    # Only operative grouping is supported for telematics
-    if group_by == GroupBy.OPERATIVE:
-        return TELEMATICS_GROUP_BY_FIELDS.get(group_by)
-    return None
-
-
-def _build_date_filter(
-    base_filter: Optional[str],
-    start_date: Optional[str],
-    end_date: Optional[str],
-    date_column: str = "`VisitDate`",
-) -> Optional[str]:
-    """Build combined filter with date range."""
-    filters = []
-    if base_filter:
-        filters.append(f"({base_filter})")
-    if start_date:
-        filters.append(f"{date_column} >= '{start_date}'")
-    if end_date:
-        filters.append(f"{date_column} <= '{end_date}'")
-    return " and ".join(filters) if filters else None
-
-
-def _compute_percentage(numerator: int, denominator: int) -> float:
-    """Compute percentage safely."""
-    if denominator == 0:
-        return 0.0
-    return round((numerator / denominator) * 100, 2)
-
-
-def _build_metric_result(
-    metric_name: str,
-    group_by: GroupBy | str,
-    time_period: TimePeriod | str,
-    start_date: Optional[str],
-    end_date: Optional[str],
-    results: List[Dict[str, Any]],
-    total: Optional[float] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    plots: Optional[List[PlotResult]] = None,
-) -> MetricResult:
-    """
-    Build standardized MetricResult with optional plot visualizations.
-
-    This function creates a consistent output format for all metrics,
-    handling enum-to-string conversions and optional fields.
-
-    Parameters
-    ----------
-    metric_name : str
-        Name of the metric (e.g., "first_time_fix_rate")
-    group_by : GroupBy | str
-        Grouping dimension used (enum or string value)
-    time_period : TimePeriod | str
-        Time granularity used (enum or string value)
-    start_date : str | None
-        Start date of analysis period
-    end_date : str | None
-        End date of analysis period
-    results : list
-        List of result dicts with metric values
-    total : float | None
-        Aggregate total across all groups
-    metadata : dict | None
-        Additional metadata about the calculation
-    plots : list[PlotResult] | None
-        Generated plot visualizations (empty list if plots were not requested)
-
-    Returns
-    -------
-    MetricResult
-        Pydantic model with all metric data and optional plots
-    """
-    # Handle both enum and string inputs (strings come from CLI JSON params)
-    group_by_value = group_by.value if isinstance(group_by, GroupBy) else group_by
-    time_period_value = (
-        time_period.value if isinstance(time_period, TimePeriod) else time_period
-    )
-
-    return MetricResult(
-        metric_name=metric_name,
-        group_by=group_by_value,
-        time_period=time_period_value,
-        start_date=start_date,
-        end_date=end_date,
-        results=results,
-        total=total,
-        metadata=metadata,
-        plots=plots or [],
-    )
 
 
 # =============================================================================
@@ -550,7 +181,7 @@ async def jobs_completed_per_day(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -718,7 +349,7 @@ async def no_access_rate(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -886,7 +517,7 @@ async def first_time_fix_rate(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -1044,7 +675,7 @@ async def follow_on_required_rate(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name="follow_on_required_rate",
         group_by=group_by,
         time_period=time_period,
@@ -1202,7 +833,7 @@ async def follow_on_materials_rate(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name="follow_on_materials_rate",
         group_by=group_by,
         time_period=time_period,
@@ -1359,7 +990,7 @@ async def job_completed_on_time_rate(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name="job_completed_on_time_rate",
         group_by=group_by,
         time_period=time_period,
@@ -1459,7 +1090,7 @@ async def merchant_stops_per_day(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -1567,7 +1198,7 @@ async def avg_duration_at_merchant(
             include_plots=include_plots,
         )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -1682,7 +1313,7 @@ async def distance_travelled_per_day(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -1782,7 +1413,7 @@ async def avg_time_travelling(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -1886,7 +1517,7 @@ async def repairs_completed_per_day(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -1992,7 +1623,7 @@ async def jobs_issued_per_day(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -2148,7 +1779,7 @@ async def jobs_requiring_materials_rate(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -2256,7 +1887,7 @@ async def avg_repairs_per_property(
                     include_plots=include_plots,
                 )
 
-        return _build_metric_result(
+        return build_metric_result(
             metric_name=metric_name,
             group_by=group_by,
             time_period=time_period,
@@ -2274,7 +1905,7 @@ async def avg_repairs_per_property(
             plots=plots,
         )
     else:
-        return _build_metric_result(
+        return build_metric_result(
             metric_name=metric_name,
             group_by=group_by,
             time_period=time_period,
@@ -2343,7 +1974,7 @@ async def complaints_rate(
             )
 
     # Note: No complaints column exists in the repairs data
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
@@ -2433,7 +2064,7 @@ async def appointment_adherence_rate(
             ]
             missing_cols = [col for col in required_cols if col not in (columns or {})]
             if missing_cols:
-                return _build_metric_result(
+                return build_metric_result(
                     metric_name=metric_name,
                     group_by=group_by,
                     time_period=time_period,
@@ -2578,7 +2209,7 @@ async def appointment_adherence_rate(
                 include_plots=include_plots,
             )
 
-    return _build_metric_result(
+    return build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
