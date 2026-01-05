@@ -48,6 +48,7 @@ def create_base_globals() -> Dict[str, Any]:
     safe_builtins = {
         k: __builtins__.get(k)
         for k in [
+            "repr",
             "print",
             "len",
             "str",
@@ -101,6 +102,7 @@ def create_base_globals() -> Dict[str, Any]:
             "RuntimeError",
             "StopIteration",
             "AssertionError",
+            "OSError",
             # Class-related
             "super",
             "property",
