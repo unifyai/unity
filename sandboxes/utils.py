@@ -49,7 +49,7 @@ from av import AudioFrame
 import pyaudio
 import math
 import struct
-from deepgram import DeepgramClient, FileSource, PrerecordedOptions
+from deepgram import DeepgramClient
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
@@ -1973,7 +1973,7 @@ async def call_manager_with_optional_clarifications(
     clar_down_q: Optional[asyncio.Queue[str]] = None  # type: ignore[name-defined]
 
     fn_kwargs: Dict[str, Any] = {
-        "parent_chat_context": parent_chat_context,
+        "_parent_chat_context": parent_chat_context,
         "_return_reasoning_steps": return_reasoning_steps,
         **kwargs,
     }
@@ -1986,13 +1986,13 @@ async def call_manager_with_optional_clarifications(
     if (
         clarifications_enabled
         and sig is not None
-        and "clarification_up_q" in sig.parameters
-        and "clarification_down_q" in sig.parameters
+        and "_clarification_up_q" in sig.parameters
+        and "_clarification_down_q" in sig.parameters
     ):
         clar_up_q = _asyncio.Queue()
         clar_down_q = _asyncio.Queue()
-        fn_kwargs["clarification_up_q"] = clar_up_q
-        fn_kwargs["clarification_down_q"] = clar_down_q
+        fn_kwargs["_clarification_up_q"] = clar_up_q
+        fn_kwargs["_clarification_down_q"] = clar_down_q
 
     handle = await fn(text, **fn_kwargs)
     return handle, clar_up_q, clar_down_q

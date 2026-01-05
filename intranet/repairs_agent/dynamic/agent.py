@@ -13,9 +13,84 @@ Key Architecture:
 
 from __future__ import annotations
 
-import logging
+# ─────────────────────────────────────────────────────────────────────────────
+# PATH AND ENVIRONMENT SETUP - MUST HAPPEN BEFORE ANY intranet/unity IMPORTS
+# ─────────────────────────────────────────────────────────────────────────────
+import sys
 from pathlib import Path
+
+# Add project root to sys.path for module resolution
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+# Initialize script environment (loads .env, sets up logging, etc.)
+# This must happen at module level before any unity/intranet imports
+from intranet.scripts.utils import initialize_script_environment
+
+if not initialize_script_environment():
+    print("ERROR: Failed to initialize script environment", file=sys.stderr)
+    sys.exit(1)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Standard imports (now safe after environment init)
+# ─────────────────────────────────────────────────────────────────────────────
+import logging
+import warnings
 from typing import TYPE_CHECKING, Optional
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Suppress only the noisy "Task exception was never retrieved" warnings
+# from unillm's background telemetry task (which fails with 405 on staging).
+# We keep other logging intact so CodeActActor output remains visible.
+# ─────────────────────────────────────────────────────────────────────────────
+warnings.filterwarnings("ignore", category=ResourceWarning)
+
+
+def _install_asyncio_exception_filter() -> None:
+    """
+    Install a custom exception handler that silences only the unillm_log_query
+    background task errors while letting other exceptions through.
+    """
+    import asyncio
+    import sys
+
+    _original_handler = sys.excepthook
+
+    def _filtered_excepthook(exc_type, exc_value, exc_tb):
+        # Check if this is from the unillm telemetry task
+        tb_str = "".join(__import__("traceback").format_tb(exc_tb or []))
+        if "unillm_log_query" in tb_str or "/v0/queries" in str(exc_value):
+            return  # Silently ignore
+        _original_handler(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _filtered_excepthook
+
+    # Also handle unhandled exceptions in asyncio tasks
+    def _task_exception_handler(loop, context):
+        exception = context.get("exception")
+        task_name = ""
+        if "task" in context:
+            task_name = getattr(context["task"], "get_name", lambda: "")()
+
+        # Suppress unillm_log_query task errors
+        if task_name == "unillm_log_query":
+            return
+        if exception and "/v0/queries" in str(exception):
+            return
+
+        # Let other exceptions through to default handler
+        loop.default_exception_handler(context)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.set_exception_handler(_task_exception_handler)
+    except RuntimeError:
+        pass  # No event loop yet, will be set when one is created
+
+
+_install_asyncio_exception_filter()
+
 
 if TYPE_CHECKING:
     from unity.actor.handle import ActorHandle
@@ -23,67 +98,9 @@ if TYPE_CHECKING:
     from unity.image_manager.types.image_refs import ImageRefs
     from unity.image_manager.types.raw_image_ref import RawImageRef
 
-from intranet.repairs_agent.config.prompt_builder import build_repairs_business_context
+from intranet.repairs_agent.config.prompt_builder import build_repairs_system_prompt
 
 logger = logging.getLogger(__name__)
-
-
-REPAIRS_SYSTEM_PROMPT_EXTENSION = """
-### Domain: Repairs & Telematics Analysis
-
-You are analyzing repairs operations data for a housing association.
-
-{business_context}
-
-### Available Tools
-
-1. **Pre-built Metric Functions** (via FunctionManager):
-   - Search with `search_functions_by_similarity("first time fix rate")` to find relevant metrics
-   - Retrieved functions include FULL SOURCE CODE - study them to understand the approach
-   - Functions use FileManager primitives (reduce, filter_files, visualize)
-
-2. **FileManager Primitives** (via `primitives.files`):
-   - `primitives.files.tables_overview()` - **START HERE** - List all available tables
-   - `primitives.files.list_columns(table=...)` - Get column names and descriptions
-   - `primitives.files.schema_explain(table=...)` - Get detailed schema explanation
-   - `primitives.files.reduce(table, metric, keys, filter, group_by)` - Aggregate data
-   - `primitives.files.filter_files(filter, tables, limit)` - Query raw records
-   - `primitives.files.visualize(tables, plot_type, x_axis, y_axis, ...)` - Generate charts
-
-### Discovery-First Workflow
-
-**ALWAYS start by discovering what data is available:**
-
-```python
-# Step 1: See what tables exist
-tables = primitives.files.tables_overview()
-for t in tables:
-    print(f"  {{t['name']}}: {{t['path']}}")
-
-# Step 2: Find the right table
-repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-
-# Step 3: Check columns
-columns = primitives.files.list_columns(table=repairs_table)
-print(columns)
-
-# Step 4: Now query with the discovered path
-result = primitives.files.reduce(
-    table=repairs_table,
-    metric="count",
-    keys="JobTicketReference",
-    filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-)
-```
-
-### Workflow for Answering Queries
-
-1. **Search** for existing metric functions that match the user's query
-2. **Read** the implementation source code to understand the approach
-3. **Discover** tables with `tables_overview()` if composing new queries
-4. **Compose** a solution using discovered functions or primitives
-5. **Visualize** when the user requests charts/plots (use `include_plots=True` or call `visualize` directly)
-"""
 
 
 class DynamicRepairsAgent:
@@ -128,13 +145,8 @@ class DynamicRepairsAgent:
         # Initialize primitives for sandbox execution
         self._primitives = Primitives()
 
-        # Load business context from FilePipelineConfig
-        self._business_context = build_repairs_business_context(config_path)
-
-        # Build system prompt extension with injected business context
-        self._system_prompt_extension = REPAIRS_SYSTEM_PROMPT_EXTENSION.format(
-            business_context=self._business_context,
-        )
+        # Build system prompt extension from FilePipelineConfig
+        self._system_prompt_extension = build_repairs_system_prompt(config_path)
 
         # Create CodeActActor with FunctionManager access and only StateManager environment
         # (no browser environment needed for data analysis)
@@ -191,3 +203,61 @@ class DynamicRepairsAgent:
         """Clean up resources."""
         if hasattr(self._actor, "close"):
             await self._actor.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI Entry Point
+# ─────────────────────────────────────────────────────────────────────────────
+async def _run_query(query: str, project: str) -> None:
+    """Run a single query and print the result."""
+    print("Creating DynamicRepairsAgent...", flush=True)
+    agent = DynamicRepairsAgent()
+    print("Agent created!\n", flush=True)
+
+    print(f"Query: {query}\n", flush=True)
+    print("=" * 60, flush=True)
+
+    handle = await agent.ask(query)
+    result = await handle.result()
+
+    print("=" * 60, flush=True)
+    print(f"\nResult:\n{result}", flush=True)
+
+
+def main() -> None:
+    """CLI entry point for DynamicRepairsAgent."""
+    import argparse
+    import asyncio
+
+    from intranet.scripts.utils import activate_project
+
+    parser = argparse.ArgumentParser(
+        description="DynamicRepairsAgent - Natural language repairs analysis",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python agent.py "What is the first time fix rate?"
+  python agent.py "Show me jobs completed per day by region" --project RepairsAgent5M
+        """,
+    )
+    parser.add_argument(
+        "query",
+        help="Natural language query about repairs/telematics data",
+    )
+    parser.add_argument(
+        "--project",
+        default="RepairsAgent5M",
+        help="Unity project name (default: RepairsAgent5M)",
+    )
+
+    args = parser.parse_args()
+
+    # Activate the Unity project
+    activate_project(args.project, overwrite=False)
+
+    # Run the query
+    asyncio.run(_run_query(args.query, args.project))
+
+
+if __name__ == "__main__":
+    main()
