@@ -113,8 +113,18 @@ Each manager owns a specific domain. The Conductor routes requests to the approp
 ### Installation
 
 ```bash
-# Clone the repository
+# Clone all three repositories as siblings
+cd ~/projects  # or your preferred directory
 git clone git@github.com:unifyai/unity.git
+git clone git@github.com:unifyai/unify.git
+git clone git@github.com:unifyai/unillm.git
+
+# Directory structure should be:
+# ~/projects/
+# ├── unity/    ← this repo
+# ├── unify/    ← required sibling
+# └── unillm/   ← required sibling
+
 cd unity
 
 # Install dependencies using uv
@@ -123,6 +133,10 @@ uv sync --all-groups
 # Activate the virtual environment
 source .venv/bin/activate
 ```
+
+> **Note:** Unity requires local clones of `unify` and `unillm` as sibling directories. This enables rapid cross-repo development—changes to unify/unillm are immediately available without pushing to GitHub.
+>
+> If you see `error: Distribution not found at: file:///path/to/unify`, you're missing the sibling clones.
 
 ### Environment Variables
 
@@ -183,19 +197,28 @@ Cursor Cloud Agents run in isolated VMs and need user-specific secrets. Add thes
 
 The git identity secrets ensure commits are attributed to you rather than `cursoragent@cursor.com`. A pre-commit hook blocks commits from `cursoragent@cursor.com` as a safety net.
 
-### Local Unify Development (Optional)
+### Cross-Repo Development
 
-If you're developing features in the [unify](https://github.com/unifyai/unify) package alongside Unity, you can bind your `.venv` to a local clone:
+Unity is configured to use local sibling clones of `unify` and `unillm` by default. This means:
+
+- **Changes are instant**: Edit code in `../unify` or `../unillm` and it's immediately available in Unity
+- **No push required**: Test local commits before pushing to GitHub
+- **CI uses git**: GitHub Actions automatically replaces local paths with git URLs
+
+**Branch alignment**: Keep your local clones on `staging` for development work:
 
 ```bash
-# Install local unify in editable mode (overrides the remote source)
-uv pip install -e /path/to/local/unify
-
-# To revert to the upstream version
-uv sync --all-groups
+cd ../unify && git checkout staging && git pull
+cd ../unillm && git checkout staging && git pull
 ```
 
-This is useful when debugging new features that haven't been pushed upstream. Running `uv sync --all-groups` restores the locked dependency set (including pulling `unify` from its configured Git source).
+**Pulling upstream changes**: When you want the latest from GitHub:
+
+```bash
+cd ../unify && git pull
+cd ../unillm && git pull
+cd ../unity && uv sync --all-groups  # Re-sync to pick up changes
+```
 
 ---
 

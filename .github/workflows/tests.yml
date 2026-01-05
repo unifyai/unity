@@ -635,14 +635,23 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.UNILLM_CLONE_TOKEN }}
 
-    - name: Override dependency branches for main
-      if: github.ref_name == 'main'
+    - name: Configure unify/unillm for CI
       run: |
-        # On Unity main branch, use main branches for unify/unillm instead of staging
-        # (pyproject.toml defaults to staging for local development)
-        echo "Unity on main branch - switching unify/unillm to main branches"
-        sed -i 's/branch = "staging"/branch = "main"/g' pyproject.toml
-        # Re-lock to get the main branch commits
+        # Local development uses editable local paths (../unify, ../unillm).
+        # CI doesn't have these sibling directories, so we replace with git URLs.
+        # Branch selection: main→main, all others→staging
+        if [[ "${{ github.ref_name }}" == "main" ]]; then
+          BRANCH="main"
+        else
+          BRANCH="staging"
+        fi
+        echo "Configuring unify/unillm to use $BRANCH branch"
+
+        # Replace local paths with git URLs
+        sed -i 's|unifyai = { path = "../unify", editable = true }|unifyai = { git = "https://github.com/unifyai/unify.git", branch = "'"$BRANCH"'" }|g' pyproject.toml
+        sed -i 's|unillm = { path = "../unillm", editable = true }|unillm = { git = "https://github.com/unifyai/unillm.git", branch = "'"$BRANCH"'" }|g' pyproject.toml
+
+        # Re-lock to resolve the git dependencies
         uv lock --upgrade-package unifyai --upgrade-package unillm
 
     - name: Sync dependencies with uv
