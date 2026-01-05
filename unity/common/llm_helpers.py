@@ -215,7 +215,7 @@ def _dumps(
     context: dict | None = None,
 ) -> Any:
     # prevents circular import
-    from unify.logging.logs import Log
+    from unify import Log
 
     base = False
     if idx is None:
