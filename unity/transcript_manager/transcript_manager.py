@@ -512,7 +512,6 @@ class TranscriptManager(BaseTranscriptManager):
                 future = self._get_logger().log_create(
                     project=unify.active_project(),
                     context=self._transcripts_ctx,
-                    params={},
                     entries=entries_with_private,
                 )
                 # Add callback to mirror to aggregation contexts when log is created
