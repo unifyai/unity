@@ -9,9 +9,6 @@ grouping and time filtering. Metrics can be broken down by:
 - region
 - time_period
 
-All helpers, constants, and utility functions are imported from
-`intranet.repairs_agent.metrics.helpers` - the single source of truth.
-
 Metric Reference (from requirements):
 --------------------------------------
 1.  jobs_completed_per_day - Jobs completed per man per day
@@ -40,20 +37,9 @@ from intranet.repairs_agent.static.registry import register
 from ._types import GroupBy, MetricResult, PlotResult, TimePeriod, ToolsDict
 from .plot_utils import generate_plots
 
-# Import ALL helpers and constants from the single source of truth
+# Import ONLY helper functions - NO global constants
+# All filter expressions and column mappings are INLINE in each metric
 from intranet.repairs_agent.metrics.helpers import (
-    # Constants
-    ALL_TELEMATICS_TABLES,
-    COMPLETED_FILTER,
-    FIRST_TIME_FIX_FILTER,
-    FOLLOW_ON_FILTER,
-    GROUP_BY_FIELDS,
-    ISSUED_FILTER,
-    MERCHANT_NAMES,
-    NO_ACCESS_FILTER,
-    REPAIRS_TABLE,
-    TELEMATICS_GROUP_BY_FIELDS,
-    # Helper functions
     build_filter,
     build_metric_result,
     compute_percentage,
@@ -92,9 +78,9 @@ async def jobs_completed_per_day(
 
     Discovery Pattern
     -----------------
-    repairs_table = discover_repairs_table(tools)
-    columns = tools["list_columns"](table=repairs_table)
-    # Required: JobTicketReference, WorksOrderStatusDescription, OperativeWhoCompletedJob
+    table_info = discover_repairs_table(tools)
+    # Returns: {"table": "<path>", "description": "...", "columns": [...]}
+    repairs_table = table_info["table"]
 
     Tool Chain
     ----------
@@ -103,14 +89,21 @@ async def jobs_completed_per_day(
               group_by="OperativeWhoCompletedJob")
        → Returns: {"John Smith": 150, "Jane Doe": 120, ...}
 
-    Filter Expressions
-    ------------------
+    Filter Expressions (INLINE - no globals)
+    ----------------------------------------
     - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+
+    Column Mappings (INLINE - no globals)
+    -------------------------------------
+    - "operative" → "OperativeWhoCompletedJob"
+    - "patch" → "RepairsPatch"
+    - "region" → "RepairsRegion"
+    - "total" → None (no grouping)
 
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager (reduce, filter_files, visualize, etc.)
+        Tools from FileManager (reduce, filter_files, visualize, tables_overview, schema_explain)
     group_by : GroupBy | str
         "operative", "patch", "region", or "total"
     start_date : str, optional
@@ -133,17 +126,16 @@ async def jobs_completed_per_day(
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    # Discover repairs table
+    repairs_table = discover_repairs_table(tools)["table"]
 
-    # Resolve group_by (handles both enum and string)
-    if isinstance(group_by, str):
-        group_by_field = resolve_group_by(group_by)
-    else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+    # Resolve group_by to column name
+    group_by_str = group_by.value if hasattr(group_by, "value") else str(group_by)
+    group_by_field = resolve_group_by(group_by_str)
 
-    # Build filter
-    filter_expr = build_filter([COMPLETED_FILTER], start_date, end_date)
+    # Filter for completed jobs
+    completed_filter = "`WorksOrderStatusDescription` in ['Complete', 'Closed']"
+    filter_expr = build_filter([completed_filter], start_date, end_date)
 
     # Query: count completed jobs
     raw_result = reduce_tool(
@@ -252,16 +244,22 @@ async def no_access_rate(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Query: count no-access jobs
-    no_access_filter = build_filter([NO_ACCESS_FILTER], start_date, end_date)
+    no_access_filter = build_filter(
+        ["`NoAccess` != 'None' and `NoAccess` != ''"],
+        start_date,
+        end_date,
+    )
     raw_no_access = reduce_tool(
         table=repairs_table,
         metric="count",
@@ -286,7 +284,11 @@ async def no_access_rate(
             total = no_access_result
     else:
         # Calculate percentages - need total completed jobs
-        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        completed_filter = build_filter(
+            ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
+            start_date,
+            end_date,
+        )
         raw_total = reduce_tool(
             table=repairs_table,
             metric="count",
@@ -421,16 +423,18 @@ async def first_time_fix_rate(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Query: count first-time-fix jobs
-    ftf_filter = build_filter([FIRST_TIME_FIX_FILTER], start_date, end_date)
+    ftf_filter = build_filter(["`FirstTimeFix` == 'Yes'"], start_date, end_date)
     raw_ftf = reduce_tool(
         table=repairs_table,
         metric="count",
@@ -454,7 +458,11 @@ async def first_time_fix_rate(
             total = ftf_result
     else:
         # Calculate percentages
-        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        completed_filter = build_filter(
+            ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
+            start_date,
+            end_date,
+        )
         raw_total = reduce_tool(
             table=repairs_table,
             metric="count",
@@ -579,16 +587,18 @@ async def follow_on_required_rate(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Count follow-on jobs
-    fo_filter = build_filter([FOLLOW_ON_FILTER], start_date, end_date)
+    fo_filter = build_filter(["`FollowOn` == 'Yes'"], start_date, end_date)
     raw_fo = reduce_tool(
         table=repairs_table,
         metric="count",
@@ -612,7 +622,11 @@ async def follow_on_required_rate(
             total = fo_result
     else:
         # Calculate percentages
-        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        completed_filter = build_filter(
+            ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
+            start_date,
+            end_date,
+        )
         raw_total = reduce_tool(
             table=repairs_table,
             metric="count",
@@ -734,16 +748,18 @@ async def follow_on_materials_rate(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Count total follow-on jobs
-    fo_filter = build_filter([FOLLOW_ON_FILTER], start_date, end_date)
+    fo_filter = build_filter(["`FollowOn` == 'Yes'"], start_date, end_date)
     raw_total_fo = reduce_tool(
         table=repairs_table,
         metric="count",
@@ -758,8 +774,9 @@ async def follow_on_materials_rate(
         total_fo = extract_count(raw_total_fo)
 
     # Count materials-related follow-on jobs
+    # Filter: follow-on jobs with description (proxy for materials)
     materials_filter = build_filter(
-        [f"({FOLLOW_ON_FILTER}) and (FollowOnDescription != 'None')"],
+        ["(`FollowOn` == 'Yes') and (FollowOnDescription != 'None')"],
         start_date,
         end_date,
     )
@@ -890,17 +907,21 @@ async def job_completed_on_time_rate(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Jobs completed on time: CompletedDate <= TargetDate
+    # Filter: completed jobs where completion date is on or before target
     on_time_condition = (
-        f"({COMPLETED_FILTER}) and `WorksOrderReportedCompletedDate` != 'None' "
+        "(`WorksOrderStatusDescription` in ['Complete', 'Closed']) "
+        "and `WorksOrderReportedCompletedDate` != 'None' "
         "and `WorksOrderTargetDate` != 'None' "
         "and `WorksOrderReportedCompletedDate` <= `WorksOrderTargetDate`"
     )
@@ -927,7 +948,11 @@ async def job_completed_on_time_rate(
             total = on_time_result
     else:
         # Calculate percentage
-        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        completed_filter = build_filter(
+            ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
+            start_date,
+            end_date,
+        )
         raw_total = reduce_tool(
             table=repairs_table,
             metric="count",
@@ -1042,13 +1067,25 @@ async def merchant_stops_per_day(
         raise ValueError("Required 'filter_files' tool not available")
 
     # Discovery with fallback
-    telematics_tables = discover_telematics_tables(tools) or ALL_TELEMATICS_TABLES
+    telematics_tables = [t["table"] for t in discover_telematics_tables(tools)]
+
+    # Merchant names to search for
+    merchant_names = [
+        "Travis Perkins",
+        "Screwfix",
+        "Toolstation",
+        "Plumb Center",
+        "City Plumbing",
+        "Jewson",
+        "Selco",
+        "Wickes",
+    ]
 
     total_stops = 0
     results_by_group: Dict[str, int] = {}
 
     for table in telematics_tables:
-        for merchant in MERCHANT_NAMES:
+        for merchant in merchant_names:
             try:
                 rows = filter_files_tool(
                     filter=f"'{merchant}' in `EndLocation`",
@@ -1099,7 +1136,7 @@ async def merchant_stops_per_day(
         results=results,
         total=float(total_stops),
         metadata={
-            "merchants_searched": MERCHANT_NAMES,
+            "merchants_searched": merchant_names,
             "note": "Approximate - based on EndLocation text matching",
         },
         plots=plots,
@@ -1180,12 +1217,25 @@ async def avg_duration_at_merchant(
     """
     metric_name = "avg_duration_at_merchant"
 
+    # Merchant names to search for
+    merchant_names = [
+        "Travis Perkins",
+        "Screwfix",
+        "Toolstation",
+        "Plumb Center",
+        "City Plumbing",
+        "Jewson",
+        "Selco",
+        "Wickes",
+    ]
+
     # Note: Duration at merchant would require:
     # 1. Identifying merchant stops via EndLocation
     # 2. Calculating dwell time from arrival/departure timestamps
     # This is complex due to telematics data structure
 
     # Generate plots if requested - for each month's telematics table
+    telematics_tables = [t["table"] for t in discover_telematics_tables(tools)]
     group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
     visualize_tool = tools.get("visualize")
     plots: List[PlotResult] = []
@@ -1194,7 +1244,7 @@ async def avg_duration_at_merchant(
             visualize_tool=visualize_tool,
             metric_name=metric_name,
             group_by=group_by_enum,
-            tables=ALL_TELEMATICS_TABLES,
+            tables=telematics_tables,
             include_plots=include_plots,
         )
 
@@ -1207,7 +1257,7 @@ async def avg_duration_at_merchant(
         results=[
             {
                 "note": "Duration calculation requires timestamp parsing from telematics Arrival/Departure fields",
-                "merchants_list": MERCHANT_NAMES,
+                "merchants_list": merchant_names,
             },
         ],
         total=0.0,
@@ -1258,12 +1308,11 @@ async def distance_travelled_per_day(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    telematics_tables = discover_telematics_tables(tools) or ALL_TELEMATICS_TABLES
+    telematics_tables = [t["table"] for t in discover_telematics_tables(tools)]
 
-    # For telematics, group by Vehicle
-    group_by_field = TELEMATICS_GROUP_BY_FIELDS.get(
-        group_by if isinstance(group_by, GroupBy) else GroupBy(group_by),
-    )
+    # For telematics, group by Vehicle column
+    group_by_str = group_by.value if hasattr(group_by, "value") else str(group_by)
+    group_by_field = resolve_group_by(group_by_str, telematics=True)
 
     base_filter = "`Business distance` != 'None'"
 
@@ -1365,12 +1414,11 @@ async def avg_time_travelling(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    telematics_tables = discover_telematics_tables(tools) or ALL_TELEMATICS_TABLES
+    telematics_tables = [t["table"] for t in discover_telematics_tables(tools)]
 
-    # For telematics, group by Vehicle
-    group_by_field = TELEMATICS_GROUP_BY_FIELDS.get(
-        group_by if isinstance(group_by, GroupBy) else GroupBy(group_by),
-    )
+    # For telematics, group by Vehicle column
+    group_by_str = group_by.value if hasattr(group_by, "value") else str(group_by)
+    group_by_field = resolve_group_by(group_by_str, telematics=True)
 
     total_trips: Dict[str, int] = {}
     grand_total = 0
@@ -1472,15 +1520,21 @@ async def repairs_completed_per_day(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
-    filter_expr = build_filter([COMPLETED_FILTER], start_date, end_date)
+    filter_expr = build_filter(
+        ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
+        start_date,
+        end_date,
+    )
 
     raw_result = reduce_tool(
         table=repairs_table,
@@ -1572,17 +1626,19 @@ async def jobs_issued_per_day(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Filter by WorksOrderIssuedDate
     filter_expr = build_filter(
-        [ISSUED_FILTER],
+        ["`WorksOrderStatusDescription` == 'Issued'"],
         start_date,
         end_date,
         date_column="WorksOrderIssuedDate",
@@ -1681,17 +1737,20 @@ async def jobs_requiring_materials_rate(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Count jobs with FollowOnDescription (proxy for materials)
+    # Filter: completed jobs with follow-on description (proxy for materials)
     materials_condition = (
-        f"({COMPLETED_FILTER}) and "
+        "(`WorksOrderStatusDescription` in ['Complete', 'Closed']) and "
         "`FollowOnDescription` != 'None' and `FollowOnDescription` != ''"
     )
     materials_filter = build_filter([materials_condition], start_date, end_date)
@@ -1716,7 +1775,11 @@ async def jobs_requiring_materials_rate(
             results = [{"group": "total", "count": materials_result}]
             total = materials_result
     else:
-        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        completed_filter = build_filter(
+            ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
+            start_date,
+            end_date,
+        )
         raw_total = reduce_tool(
             table=repairs_table,
             metric="count",
@@ -1835,9 +1898,13 @@ async def avg_repairs_per_property(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
-    filter_expr = build_filter([COMPLETED_FILTER], start_date, end_date)
+    filter_expr = build_filter(
+        ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
+        start_date,
+        end_date,
+    )
 
     # Group by FullAddress to count repairs per property
     raw_property_counts = reduce_tool(
@@ -1955,7 +2022,7 @@ async def complaints_rate(
     metric_name = "complaints_rate"
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Generate plots if requested
     plots: List[PlotResult] = []
@@ -2044,13 +2111,15 @@ async def appointment_adherence_rate(
         raise ValueError("Required 'reduce' tool not available")
 
     # Discovery with fallback
-    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+    repairs_table = discover_repairs_table(tools)["table"]
 
     # Resolve group_by
     if isinstance(group_by, str):
         group_by_field = resolve_group_by(group_by)
     else:
-        group_by_field = GROUP_BY_FIELDS.get(group_by)
+        group_by_field = resolve_group_by(
+            group_by.value if hasattr(group_by, "value") else str(group_by),
+        )
 
     # Check if required columns exist
     list_columns_tool = tools.get("list_columns")

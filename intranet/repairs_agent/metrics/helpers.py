@@ -3,15 +3,21 @@ Facade helpers for repairs metrics - synced to FunctionManager.
 
 These functions encapsulate common patterns used across all metrics,
 providing a stable interface for both static and dynamic agents.
-All helpers are pure functions with no logging or side effects.
+
+DESIGN PRINCIPLES:
+1. Discovery-first: Use tables_overview and schema_explain to discover schema
+2. No magic globals: All filter expressions and column mappings are inline
+3. Rich return values: Discovery functions return table + description + columns
+4. Pure functions: No logging or side effects
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypedDict
 
 from intranet.repairs_agent.metrics.types import MetricResult
 
+
 # =============================================================================
-# TABLE CONSTANTS
+# FILE PATH CONSTANTS (Data sources - these identify WHERE the data is)
 # =============================================================================
 
 REPAIRS_FILE = (
@@ -23,151 +29,256 @@ TELEMATICS_FILE = (
     "MDH Telematics Data July - Nov 25 - DL V1.xlsx"
 )
 
-REPAIRS_TABLE = f"{REPAIRS_FILE}.Tables.Raised_01-07-2025_to_30-11-2025"
-TELEMATICS_TABLES = {
-    "july": f"{TELEMATICS_FILE}.Tables.July_2025",
-    "august": f"{TELEMATICS_FILE}.Tables.August_2025",
-    "september": f"{TELEMATICS_FILE}.Tables.September_2025",
-    "october": f"{TELEMATICS_FILE}.Tables.October_2025",
-    "november": f"{TELEMATICS_FILE}.Tables.November_2025",
-}
-ALL_TELEMATICS_TABLES = list(TELEMATICS_TABLES.values())
 
 # =============================================================================
-# FILTER CONSTANTS
-# =============================================================================
-
-COMPLETED_FILTER = "`WorksOrderStatusDescription` in ['Complete', 'Closed']"
-NO_ACCESS_FILTER = "`NoAccess` != 'None' and `NoAccess` != ''"
-FIRST_TIME_FIX_FILTER = "`FirstTimeFix` == 'Yes'"
-FOLLOW_ON_FILTER = "`FollowOn` == 'Yes'"
-ISSUED_FILTER = "`WorksOrderStatusDescription` == 'Issued'"
-
-# Known merchant names for telematics location matching
-MERCHANT_NAMES = [
-    "Travis Perkins",
-    "Screwfix",
-    "Toolstation",
-    "Plumb Center",
-    "City Plumbing",
-    "Jewson",
-    "Selco",
-    "Wickes",
-]
-
-# =============================================================================
-# GROUP BY FIELD MAPPINGS
-# =============================================================================
-
-GROUP_BY_FIELDS = {
-    "operative": "OperativeWhoCompletedJob",
-    "patch": "RepairsPatch",
-    "region": "RepairsRegion",
-    "trade": "Trade",
-    "total": None,
-}
-
-TELEMATICS_GROUP_BY_FIELDS = {
-    "operative": "Vehicle",  # Vehicle contains operative name in telematics
-}
-
-# =============================================================================
-# HELPER FUNCTIONS
+# TYPE DEFINITIONS
 # =============================================================================
 
 
-def discover_repairs_table(tools: Dict[str, Any]) -> Optional[str]:
+class ColumnInfo(TypedDict, total=False):
+    """Column information from schema discovery."""
+
+    name: str
+    description: str
+
+
+class TableInfo(TypedDict, total=False):
+    """Table information from discovery."""
+
+    table: str  # The table path/context for queries
+    description: str  # Table description
+    columns: List[ColumnInfo]  # Column names and descriptions
+
+
+# =============================================================================
+# DISCOVERY FUNCTIONS - Return rich schema info
+# =============================================================================
+
+
+def discover_repairs_table(tools: Dict[str, Any]) -> Optional[TableInfo]:
     """
-    Discover the repairs data table dynamically.
+    Discover the repairs data table with full schema information.
 
-    Uses tables_overview() to find a table containing "Repairs" in its name
-    or context. Returns the table path/context for use in queries.
+    Uses tables_overview(file=REPAIRS_FILE) to find the repairs table,
+    then schema_explain to get column details.
 
     Parameters
     ----------
     tools : dict
-        Tools dict containing tables_overview callable
+        Tools dict containing tables_overview, schema_explain callables
 
     Returns
     -------
-    str or None
-        Table path if found, None otherwise
+    TableInfo or None
+        Dict with 'table' (path), 'description', and 'columns' list,
+        or None if discovery fails
 
     Example
     -------
-    >>> repairs_table = discover_repairs_table(tools)
-    >>> if repairs_table:
-    ...     result = tools["reduce"](table=repairs_table, ...)
+    >>> info = discover_repairs_table(tools)
+    >>> if info:
+    ...     print(f"Table: {info['table']}")
+    ...     print(f"Description: {info['description']}")
+    ...     for col in info['columns']:
+    ...         print(f"  - {col['name']}: {col.get('description', '')}")
+    ...     # Now query using the table path
+    ...     result = tools["reduce"](table=info['table'], ...)
     """
     tables_overview = tools.get("tables_overview")
+    schema_explain = tools.get("schema_explain")
+
     if not tables_overview:
         return None
 
-    all_tables = tables_overview()
-    for name, info in all_tables.items():
-        context = info.get("context", "")
-        if "Repairs" in name or "repairs" in context.lower():
-            return context or name
-    return None
+    # Scope to the repairs file only
+    file_tables = tables_overview(file=REPAIRS_FILE)
+
+    # Navigate the nested structure to find the repairs table
+    # Structure: {<safe_file_path>: {"Tables": {<label>: {"context": ..., "description": ...}}}}
+    table_path: Optional[str] = None
+    table_desc: str = ""
+
+    for file_key, file_info in file_tables.items():
+        if file_key == "FileRecords":
+            continue
+        if isinstance(file_info, dict) and "Tables" in file_info:
+            tables = file_info["Tables"]
+            for label, tinfo in tables.items():
+                if isinstance(tinfo, dict):
+                    ctx = tinfo.get("context", "")
+                    if "Repairs" in label or "Raised" in label:
+                        table_path = ctx
+                        table_desc = tinfo.get("description", "")
+                        break
+
+    if not table_path:
+        return None
+
+    # Get column information via schema_explain
+    columns: List[ColumnInfo] = []
+    if schema_explain:
+        try:
+            schema_text = schema_explain(table=table_path)
+            # Parse the schema_explain output to extract columns
+            # Format: "Table: ...\n\nColumns:\n  - ColName: Description\n  - ColName\n\nRow count: N"
+            in_columns = False
+            for line in schema_text.split("\n"):
+                line = line.strip()
+                if line == "Columns:":
+                    in_columns = True
+                elif in_columns and line.startswith("- "):
+                    col_part = line[2:]  # Remove "- "
+                    if ": " in col_part:
+                        name, desc = col_part.split(": ", 1)
+                        columns.append({"name": name, "description": desc})
+                    else:
+                        columns.append({"name": col_part, "description": ""})
+                elif in_columns and not line.startswith("-"):
+                    in_columns = False
+        except Exception:
+            pass
+
+    return {
+        "table": table_path,
+        "description": table_desc,
+        "columns": columns,
+    }
 
 
-def discover_telematics_tables(tools: Dict[str, Any]) -> List[str]:
+def discover_telematics_tables(tools: Dict[str, Any]) -> List[TableInfo]:
     """
-    Discover telematics data tables dynamically.
+    Discover telematics data tables with full schema information.
 
-    Telematics data is split by month (July-November 2025).
-    Returns all matching table paths for aggregation.
+    Uses tables_overview(file=TELEMATICS_FILE) to find monthly tables,
+    then schema_explain for each to get column details.
 
     Parameters
     ----------
     tools : dict
-        Tools dict containing tables_overview callable
+        Tools dict containing tables_overview, schema_explain callables
 
     Returns
     -------
-    list[str]
-        List of telematics table paths
+    list[TableInfo]
+        List of dicts, each with 'table', 'description', 'columns'
+
+    Example
+    -------
+    >>> tables = discover_telematics_tables(tools)
+    >>> for tinfo in tables:
+    ...     print(f"Table: {tinfo['table']}")
+    ...     # Aggregate across all monthly tables
+    ...     result = tools["reduce"](table=tinfo['table'], ...)
     """
     tables_overview = tools.get("tables_overview")
+    schema_explain = tools.get("schema_explain")
+
     if not tables_overview:
         return []
 
-    all_tables = tables_overview()
-    telematics = []
-    for name, info in all_tables.items():
-        context = info.get("context", "")
-        if "Telematics" in name or "telematics" in context.lower():
-            telematics.append(context or name)
-    return telematics
+    # Scope to the telematics file only
+    file_tables = tables_overview(file=TELEMATICS_FILE)
+
+    # Collect all telematics tables
+    result: List[TableInfo] = []
+
+    for file_key, file_info in file_tables.items():
+        if file_key == "FileRecords":
+            continue
+        if isinstance(file_info, dict) and "Tables" in file_info:
+            tables = file_info["Tables"]
+            for label, tinfo in tables.items():
+                if isinstance(tinfo, dict):
+                    ctx = tinfo.get("context", "")
+                    desc = tinfo.get("description", "")
+
+                    # Get column information
+                    columns: List[ColumnInfo] = []
+                    if schema_explain:
+                        try:
+                            schema_text = schema_explain(table=ctx)
+                            in_columns = False
+                            for line in schema_text.split("\n"):
+                                line = line.strip()
+                                if line == "Columns:":
+                                    in_columns = True
+                                elif in_columns and line.startswith("- "):
+                                    col_part = line[2:]
+                                    if ": " in col_part:
+                                        name, col_desc = col_part.split(": ", 1)
+                                        columns.append(
+                                            {"name": name, "description": col_desc},
+                                        )
+                                    else:
+                                        columns.append(
+                                            {"name": col_part, "description": ""},
+                                        )
+                                elif in_columns and not line.startswith("-"):
+                                    in_columns = False
+                        except Exception:
+                            pass
+
+                    result.append(
+                        {
+                            "table": ctx,
+                            "description": desc,
+                            "columns": columns,
+                        },
+                    )
+
+    return result
 
 
-def resolve_group_by(group_by: str) -> Optional[str]:
+# =============================================================================
+# INLINE HELPERS - No magic globals, everything visible
+# =============================================================================
+
+
+def resolve_group_by(group_by: str, telematics: bool = False) -> Optional[str]:
     """
     Resolve group_by string to actual column name.
 
-    Mapping:
-    - "operative" → "OperativeWhoCompletedJob"
-    - "patch" → "RepairsPatch"
-    - "region" → "RepairsRegion"
-    - "total" → None (no grouping)
+    The mapping is INLINE so the CodeActActor can see exactly which
+    columns are used for each grouping dimension.
 
     Parameters
     ----------
     group_by : str
-        Group dimension: "operative", "patch", "region", or "total"
+        Group dimension: "operative", "patch", "region", "trade", or "total"
+    telematics : bool
+        If True, use telematics column mappings (Vehicle instead of Operative)
 
     Returns
     -------
     str or None
         Column name for grouping, or None for total aggregation
+
+    Example
+    -------
+    >>> resolve_group_by("operative")
+    'OperativeWhoCompletedJob'
+    >>> resolve_group_by("operative", telematics=True)
+    'Vehicle'
     """
-    mapping = {
+    # INLINE mapping - no hidden globals
+    # Repairs data column mappings:
+    repairs_mapping = {
         "operative": "OperativeWhoCompletedJob",
         "patch": "RepairsPatch",
         "region": "RepairsRegion",
+        "trade": "Trade",
         "total": None,
     }
-    return mapping.get(group_by.lower() if isinstance(group_by, str) else "total")
+
+    # Telematics data column mappings:
+    telematics_mapping = {
+        "operative": "Vehicle",  # Vehicle contains operative name in telematics
+        "total": None,
+    }
+
+    mapping = telematics_mapping if telematics else repairs_mapping
+    key = group_by.lower() if isinstance(group_by, str) else "total"
+    return mapping.get(key)
 
 
 def build_filter(
@@ -182,7 +293,9 @@ def build_filter(
     Parameters
     ----------
     base_conditions : list[str]
-        List of filter conditions (will be AND-ed together)
+        List of filter conditions (will be AND-ed together).
+        Pass the ACTUAL FILTER STRINGS, not global constant names.
+
     start_date : str, optional
         Start date in YYYY-MM-DD format
     end_date : str, optional
@@ -197,11 +310,15 @@ def build_filter(
 
     Example
     -------
+    >>> # GOOD: Inline filter expression - CodeActActor can see exactly what it means
     >>> build_filter(
-    ...     ["`FirstTimeFix` == 'Yes'", "`WorksOrderStatusDescription` == 'Complete'"],
+    ...     ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
     ...     start_date="2025-07-01"
     ... )
-    "(`FirstTimeFix` == 'Yes') and (`WorksOrderStatusDescription` == 'Complete') and `VisitDate` >= '2025-07-01'"
+    "(`WorksOrderStatusDescription` in ['Complete', 'Closed']) and `VisitDate` >= '2025-07-01'"
+
+    >>> # BAD: Using a magic constant - CodeActActor can't see what COMPLETED_FILTER means
+    >>> build_filter([COMPLETED_FILTER], start_date="2025-07-01")  # Don't do this!
     """
     parts = [f"({c})" for c in base_conditions if c]
     if start_date:
@@ -279,7 +396,7 @@ def extract_sum(value: Any) -> float:
 
 def normalize_grouped_result(
     result: Dict[str, Any],
-    extract_fn: Any = None,
+    extract_fn: Optional[Callable[[Any], Any]] = None,
 ) -> Dict[str, Any]:
     """
     Normalize grouped reduce results to {group: value} format.
@@ -339,7 +456,7 @@ def build_metric_result(
     plots: Optional[List[Any]] = None,
 ) -> MetricResult:
     """
-    Build standardized metric result dictionary.
+    Build standardized metric result.
 
     Creates a consistent output format for all metrics, handling
     enum-to-string conversions.
@@ -367,10 +484,9 @@ def build_metric_result(
 
     Returns
     -------
-    dict
-        Standardized metric result with all fields
+    MetricResult
+        Standardized metric result
     """
-    # Handle enum to string conversion
     group_by_value = group_by.value if hasattr(group_by, "value") else group_by
     time_period_value = (
         time_period.value if hasattr(time_period, "value") else time_period
@@ -388,7 +504,10 @@ def build_metric_result(
     )
 
 
-# List of all helper functions for sync to FunctionManager
+# =============================================================================
+# EXPORTS - List of helpers for FunctionManager sync
+# =============================================================================
+
 HELPER_FUNCTIONS = [
     "discover_repairs_table",
     "discover_telematics_tables",
