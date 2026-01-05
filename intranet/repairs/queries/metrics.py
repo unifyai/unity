@@ -43,6 +43,16 @@ from intranet.repairs_agent.static.registry import register
 from ._types import GroupBy, MetricResult, PlotResult, TimePeriod, ToolsDict
 from .plot_utils import generate_plots
 
+# Import helpers for standardized operations
+from intranet.repairs_agent.metrics.helpers import (
+    build_filter,
+    compute_percentage,
+    discover_repairs_table,
+    extract_count,
+    normalize_grouped_result,
+    resolve_group_by,
+)
+
 # =============================================================================
 # LOGGING SETUP
 # =============================================================================
@@ -422,10 +432,9 @@ def _build_metric_result(
     "jobs_completed_per_day",
     "Jobs completed per man per day (by operative/trade/patch/region/time)",
 )
-@metric_timer("jobs_completed_per_day")
 async def jobs_completed_per_day(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -438,49 +447,29 @@ async def jobs_completed_per_day(
     of jobs each operative completed, grouped by the specified dimension.
     Used for performance benchmarking and workload analysis.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-    To replicate or adapt this metric:
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    columns = tools["list_columns"](table=repairs_table)
+    # Required: JobTicketReference, WorksOrderStatusDescription, OperativeWhoCompletedJob
 
-        # Step 1: Discover tables
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-
-        # Step 2: Verify columns
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: JobTicketReference, WorksOrderStatusDescription, OperativeWhoCompletedJob
-
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+    Tool Chain
+    ----------
+    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
               filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
               group_by="OperativeWhoCompletedJob")
-       → Returns: {"John Smith": {"count": 150}, "Jane Doe": {"count": 120}, ...}
+       → Returns: {"John Smith": 150, "Jane Doe": 120, ...}
 
-    2. Python: No additional calculation needed for counts
-
-    3. visualize(tables=REPAIRS_TABLE, plot_type="bar",
-                 x_axis="OperativeWhoCompletedJob", y_axis="JobTicketReference",
-                 aggregate="count") if include_plots=True
-
-    Filter Expressions Used:
-    ------------------------
+    Filter Expressions
+    ------------------
     - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
-    - With date range: ... and `WorksOrderReportedCompletedDate` >= '2025-07-01'
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-    - GroupBy.TOTAL → None
 
     Parameters
     ----------
     tools : ToolsDict
         Tools from FileManager (reduce, filter_files, visualize, etc.)
-    group_by : GroupBy
-        Dimension to group results by (operative, trade, patch, region)
+    group_by : GroupBy | str
+        "operative", "patch", "region", or "total"
     start_date : str, optional
         Start date filter (YYYY-MM-DD format)
     end_date : str, optional
@@ -488,87 +477,77 @@ async def jobs_completed_per_day(
     time_period : TimePeriod
         Time granularity for aggregation
     include_plots : bool
-        If True, generate visualization URLs for the results
+        If True, generate visualization URLs
 
     Returns
     -------
     MetricResult
         Aggregated results with grouping metadata and optional plots
-
-    Example
-    -------
-    >>> result = await jobs_completed_per_day(tools, group_by=GroupBy.OPERATIVE)
-    >>> for r in result.results[:5]:
-    ...     print(f"{r['group']}: {r['count']} jobs")
     """
     metric_name = "jobs_completed_per_day"
 
-    try:
-        reduce_tool = tools.get("reduce")
-        if not reduce_tool:
-            logger.error(f"[{metric_name}] 'reduce' tool not found in tools dict")
-            raise ValueError("Required 'reduce' tool not available")
+    reduce_tool = tools.get("reduce")
+    if not reduce_tool:
+        raise ValueError("Required 'reduce' tool not available")
 
-        group_by_field = _resolve_group_by(group_by)
-        filter_expr = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
 
-        logger.debug(f"[{metric_name}] Filter: {filter_expr}")
-        logger.debug(f"[{metric_name}] Group by: {group_by_field}")
+    # Resolve group_by (handles both enum and string)
+    if isinstance(group_by, str):
+        group_by_field = resolve_group_by(group_by)
+    else:
+        group_by_field = GROUP_BY_FIELDS.get(group_by)
 
-        # Count completed jobs grouped by dimension
-        raw_result = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label="completed jobs",
-            table=REPAIRS_TABLE,
-            metric="count",
-            keys="JobTicketReference",
-            filter=filter_expr,
-            group_by=group_by_field,
-        )
+    # Build filter
+    filter_expr = build_filter([COMPLETED_FILTER], start_date, end_date)
 
-        # Format results - normalize nested reduce output
-        if isinstance(raw_result, dict):
-            result = _normalize_grouped_result(raw_result, _extract_count)
-            results = [{"group": k, "count": v} for k, v in result.items()]
-            total = sum(result.values())
-            logger.debug(f"[{metric_name}] Found {len(result)} groups, total={total}")
-        else:
-            count_val = _extract_count(raw_result)
-            results = [{"group": "total", "count": count_val}]
-            total = count_val
-            logger.debug(f"[{metric_name}] Single total result: {total}")
+    # Query: count completed jobs
+    raw_result = reduce_tool(
+        table=repairs_table,
+        metric="count",
+        keys="JobTicketReference",
+        filter=filter_expr,
+        group_by=group_by_field,
+    )
 
-        # Generate plots if requested
-        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-        # Generate plots if requested
+    # Normalize results
+    if isinstance(raw_result, dict):
+        counts = normalize_grouped_result(raw_result)
+        results = [{"group": k, "count": v} for k, v in counts.items()]
+        total = sum(counts.values())
+    else:
+        count_val = extract_count(raw_result)
+        results = [{"group": "total", "count": count_val}]
+        total = count_val
+
+    # Generate plots if requested
+    plots: List[PlotResult] = []
+    if include_plots:
         visualize_tool = tools.get("visualize")
-        plots: List[PlotResult] = []
-        if visualize_tool and include_plots:
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
             plots = generate_plots(
                 visualize_tool=visualize_tool,
                 metric_name=metric_name,
                 group_by=group_by_enum,
-                tables=REPAIRS_TABLE,
+                tables=repairs_table,
                 filter_expr=filter_expr,
                 include_plots=include_plots,
             )
 
-        return _build_metric_result(
-            metric_name=metric_name,
-            group_by=group_by,
-            time_period=time_period,
-            start_date=start_date,
-            end_date=end_date,
-            results=results,
-            total=float(total),
-            plots=plots,
-        )
-
-    except Exception as e:
-        logger.exception(f"[{metric_name}] Unexpected error during calculation")
-        raise RuntimeError(f"Failed to calculate {metric_name}: {e}") from e
+    return _build_metric_result(
+        metric_name=metric_name,
+        group_by=group_by,
+        time_period=time_period,
+        start_date=start_date,
+        end_date=end_date,
+        results=results,
+        total=float(total),
+        plots=plots,
+    )
 
 
 # =============================================================================
@@ -580,10 +559,9 @@ async def jobs_completed_per_day(
     "no_access_rate",
     "No Access % / Absolute number (by operative/trade/patch/region/time)",
 )
-@metric_timer("no_access_rate")
 async def no_access_rate(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -594,211 +572,151 @@ async def no_access_rate(
     Get No Access rate as percentage or absolute number.
 
     No Access measures repair visits where the operative could not gain access
-    to the property (tenant not home, no answer, etc.). High no-access rates
-    indicate scheduling issues or tenant communication problems.
+    to the property (tenant not home, no answer, etc.).
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-    To replicate or adapt this metric:
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    columns = tools["list_columns"](table=repairs_table)
+    # Required: NoAccess, JobTicketReference
 
-        # Step 1: Discover tables
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+    Tool Chain
+    ----------
+    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+              filter="`NoAccess` != 'None' and `NoAccess` != ''", group_by=...)
+    2. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+              filter=COMPLETED_FILTER, group_by=...) for percentage
+    3. Python: percentage = (no_access / total) * 100
 
-        # Step 2: Verify columns
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: NoAccess, JobTicketReference
-
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`NoAccess` != 'None' and `NoAccess` != ''",
-              group_by="[column_name]")
-       → Returns: {"North": {"count": 20}, "South": {"count": 15}, ...}
-
-    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter=None, group_by="[column_name]")
-       → Returns total jobs per group for percentage calculation
-
-    3. Python: percentage = (no_access_count / total_count) * 100
-
-    Filter Expressions Used:
-    ------------------------
+    Filter Expressions
+    ------------------
     - No Access: `NoAccess` != 'None' and `NoAccess` != ''
-    - With date range: ... and `VisitDate` >= '2025-07-01'
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-    - GroupBy.TOTAL → None
+    - Completed: `WorksOrderStatusDescription` in ['Complete', 'Closed']
 
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager (reduce, filter_files, visualize, etc.)
-    group_by : GroupBy
-        Dimension to group results by (operative, patch, region, total)
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD format)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD format)
-    time_period : TimePeriod
-        Time granularity for aggregation
+        FileManager tools
+    group_by : GroupBy | str
+        "operative", "patch", "region", or "total"
     return_absolute : bool
-        If True, return absolute count; if False, return percentage
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Rate or count of no-access jobs with optional plots
-
-    Example
-    -------
-    >>> result = await no_access_rate(tools, group_by=GroupBy.PATCH)
-    >>> print(f"Average No-Access Rate: {result.total}%")
+        If True return counts, if False return percentages
     """
     metric_name = "no_access_rate"
 
-    try:
-        reduce_tool = tools.get("reduce")
-        if not reduce_tool:
-            logger.error(f"[{metric_name}] 'reduce' tool not found")
-            raise ValueError("Required 'reduce' tool not available")
+    reduce_tool = tools.get("reduce")
+    if not reduce_tool:
+        raise ValueError("Required 'reduce' tool not available")
 
-        group_by_field = _resolve_group_by(group_by)
-        logger.debug(
-            f"[{metric_name}] return_absolute={return_absolute}, group_by={group_by_field}",
-        )
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
 
-        # Count no-access jobs
-        no_access_filter = _build_date_filter(NO_ACCESS_FILTER, start_date, end_date)
-        raw_no_access = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label="no-access jobs",
-            table=REPAIRS_TABLE,
+    # Resolve group_by
+    if isinstance(group_by, str):
+        group_by_field = resolve_group_by(group_by)
+    else:
+        group_by_field = GROUP_BY_FIELDS.get(group_by)
+
+    # Query: count no-access jobs
+    no_access_filter = build_filter([NO_ACCESS_FILTER], start_date, end_date)
+    raw_no_access = reduce_tool(
+        table=repairs_table,
+        metric="count",
+        keys="JobTicketReference",
+        filter=no_access_filter,
+        group_by=group_by_field,
+    )
+
+    # Normalize no-access results
+    if isinstance(raw_no_access, dict):
+        no_access_result = normalize_grouped_result(raw_no_access)
+    else:
+        no_access_result = extract_count(raw_no_access)
+
+    if return_absolute:
+        # Return absolute counts
+        if isinstance(no_access_result, dict):
+            results = [{"group": k, "count": v} for k, v in no_access_result.items()]
+            total = sum(no_access_result.values())
+        else:
+            results = [{"group": "total", "count": no_access_result}]
+            total = no_access_result
+    else:
+        # Calculate percentages - need total completed jobs
+        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        raw_total = reduce_tool(
+            table=repairs_table,
             metric="count",
             keys="JobTicketReference",
-            filter=no_access_filter,
+            filter=completed_filter,
             group_by=group_by_field,
         )
 
-        # Normalize results
-        if isinstance(raw_no_access, dict):
-            no_access_result = _normalize_grouped_result(raw_no_access, _extract_count)
-            logger.debug(
-                f"[{metric_name}] Normalized no-access: {len(no_access_result)} groups",
-            )
+        if isinstance(raw_total, dict):
+            total_result = normalize_grouped_result(raw_total)
         else:
-            no_access_result = _extract_count(raw_no_access)
-            logger.debug(
-                f"[{metric_name}] Extracted no-access count: {no_access_result}",
-            )
+            total_result = extract_count(raw_total)
 
-        if return_absolute:
-            # Return absolute counts
-            if isinstance(no_access_result, dict):
-                results = [
-                    {"group": k, "count": v} for k, v in no_access_result.items()
-                ]
-                total = sum(no_access_result.values())
-            else:
-                results = [{"group": "total", "count": no_access_result}]
-                total = no_access_result
-        else:
-            # Calculate percentages - need total completed jobs
-            logger.debug(
-                f"[{metric_name}] Fetching total completed jobs for percentage calculation",
-            )
-            completed_filter = _build_date_filter(
-                COMPLETED_FILTER,
-                start_date,
-                end_date,
-            )
-            raw_total = _timed_tool(
-                metric_name,
-                "reduce",
-                reduce_tool,
-                label="total completed",
-                table=REPAIRS_TABLE,
-                metric="count",
-                keys="JobTicketReference",
-                filter=completed_filter,
-                group_by=group_by_field,
-            )
-
-            # Normalize total results
-            if isinstance(raw_total, dict):
-                total_result = _normalize_grouped_result(raw_total, _extract_count)
-            else:
-                total_result = _extract_count(raw_total)
-
-            if isinstance(no_access_result, dict) and isinstance(total_result, dict):
-                results = []
-                for k in total_result:
-                    na_count = no_access_result.get(k, 0)
-                    tot_count = total_result.get(k, 0)
-                    pct = _compute_percentage(na_count, tot_count)
-                    results.append(
-                        {
-                            "group": k,
-                            "percentage": pct,
-                            "count": na_count,
-                            "total": tot_count,
-                        },
-                    )
-                total = _compute_percentage(
-                    sum(no_access_result.values()),
-                    sum(total_result.values()),
-                )
-            else:
-                na_count = no_access_result if isinstance(no_access_result, int) else 0
-                tot_count = total_result if isinstance(total_result, int) else 0
-                pct = _compute_percentage(na_count, tot_count)
-                results = [
+        if isinstance(no_access_result, dict) and isinstance(total_result, dict):
+            results = []
+            for k in total_result:
+                na_count = no_access_result.get(k, 0)
+                tot_count = total_result.get(k, 0)
+                pct = compute_percentage(na_count, tot_count)
+                results.append(
                     {
-                        "group": "total",
+                        "group": k,
                         "percentage": pct,
                         "count": na_count,
                         "total": tot_count,
                     },
-                ]
-                total = pct
+                )
+            total = compute_percentage(
+                sum(no_access_result.values()),
+                sum(total_result.values()),
+            )
+        else:
+            na_count = no_access_result if isinstance(no_access_result, int) else 0
+            tot_count = total_result if isinstance(total_result, int) else 0
+            pct = compute_percentage(na_count, tot_count)
+            results = [
+                {
+                    "group": "total",
+                    "percentage": pct,
+                    "count": na_count,
+                    "total": tot_count,
+                },
+            ]
+            total = pct
 
-        # Generate plots if requested
-        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+    # Generate plots if requested
+    plots: List[PlotResult] = []
+    if include_plots:
         visualize_tool = tools.get("visualize")
-        plots: List[PlotResult] = []
-        if visualize_tool and include_plots:
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
             plots = generate_plots(
                 visualize_tool=visualize_tool,
                 metric_name=metric_name,
                 group_by=group_by_enum,
-                tables=REPAIRS_TABLE,
+                tables=repairs_table,
                 filter_expr=no_access_filter,
                 include_plots=include_plots,
             )
 
-        return _build_metric_result(
-            metric_name=metric_name,
-            group_by=group_by,
-            time_period=time_period,
-            start_date=start_date,
-            end_date=end_date,
-            results=results,
-            total=float(total),
-            metadata={"return_absolute": return_absolute},
-            plots=plots,
-        )
-
-    except Exception as e:
-        logger.exception(f"[{metric_name}] Unexpected error during calculation")
-        raise RuntimeError(f"Failed to calculate {metric_name}: {e}") from e
+    return _build_metric_result(
+        metric_name=metric_name,
+        group_by=group_by,
+        time_period=time_period,
+        start_date=start_date,
+        end_date=end_date,
+        results=results,
+        total=float(total),
+        metadata={"return_absolute": return_absolute},
+        plots=plots,
+    )
 
 
 # =============================================================================
@@ -810,10 +728,9 @@ async def no_access_rate(
     "first_time_fix_rate",
     "First Time Fix % / Absolute Number (by operative/trade/patch/region/time)",
 )
-@metric_timer("first_time_fix_rate")
 async def first_time_fix_rate(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -825,94 +742,54 @@ async def first_time_fix_rate(
 
     First Time Fix (FTF) measures the percentage of repair jobs completed
     successfully on the first visit without requiring a follow-up appointment.
-    This is a key efficiency metric for housing repairs operations.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-    To replicate or adapt this metric, first discover available tables:
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    columns = tools["list_columns"](table=repairs_table)
+    # Required: FirstTimeFix, JobTicketReference, WorksOrderStatusDescription
 
-        # Step 1: Discover tables
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+    Tool Chain
+    ----------
+    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+              filter="`FirstTimeFix` == 'Yes'", group_by=...)
+    2. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+              filter=COMPLETED_FILTER, group_by=...) for percentage
+    3. Python: percentage = (ftf / total) * 100
 
-        # Step 2: Verify columns exist
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: FirstTimeFix, JobTicketReference, WorksOrderStatusDescription
-
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`FirstTimeFix` == 'Yes'", group_by="[column_name]")
-       → Returns: {"North": {"count": 50}, "South": {"count": 75}, ...}
-
-    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-              group_by="[column_name]")
-       → Returns: {"North": {"count": 100}, "South": {"count": 150}, ...}
-
-    3. Python: percentage = (ftf_count / total_count) * 100
-
-    4. visualize(tables=REPAIRS_TABLE, plot_type="bar", x_axis="[group_column]",
-                 y_axis="JobTicketReference") if include_plots=True
-
-    Filter Expressions Used:
-    ------------------------
+    Filter Expressions
+    ------------------
     - First Time Fix: `FirstTimeFix` == 'Yes'
-    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
-    - With date range: ... and `VisitDate` >= '2025-07-01' and `VisitDate` <= '2025-09-30'
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-    - GroupBy.TOTAL → None (aggregate all)
+    - Completed: `WorksOrderStatusDescription` in ['Complete', 'Closed']
 
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager (reduce, filter_files, visualize, etc.)
-    group_by : GroupBy
-        Dimension to group results by (operative, patch, region, total)
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD format)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD format)
-    time_period : TimePeriod
-        Time granularity for aggregation (day, week, month)
+        FileManager tools
+    group_by : GroupBy | str
+        "operative", "patch", "region", or "total"
     return_absolute : bool
-        If True, return absolute count; if False, return percentage
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Rate or count of first-time-fix jobs with optional plots
-
-    Example
-    -------
-    >>> result = await first_time_fix_rate(tools, group_by=GroupBy.REGION)
-    >>> print(f"North FTF Rate: {result.results[0]['rate']}%")
+        If True return counts, if False return percentages
     """
     metric_name = "first_time_fix_rate"
+
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    group_by_field = _resolve_group_by(group_by)
-    logger.debug(
-        f"[{metric_name}] group_by_field={group_by_field}, return_absolute={return_absolute}",
-    )
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
 
-    # Count first-time-fix jobs
-    ftf_filter = _build_date_filter(FIRST_TIME_FIX_FILTER, start_date, end_date)
-    raw_ftf = _timed_tool(
-        metric_name,
-        "reduce",
-        reduce_tool,
-        label="first-time-fix jobs",
-        table=REPAIRS_TABLE,
+    # Resolve group_by
+    if isinstance(group_by, str):
+        group_by_field = resolve_group_by(group_by)
+    else:
+        group_by_field = GROUP_BY_FIELDS.get(group_by)
+
+    # Query: count first-time-fix jobs
+    ftf_filter = build_filter([FIRST_TIME_FIX_FILTER], start_date, end_date)
+    raw_ftf = reduce_tool(
+        table=repairs_table,
         metric="count",
         keys="JobTicketReference",
         filter=ftf_filter,
@@ -921,11 +798,9 @@ async def first_time_fix_rate(
 
     # Normalize results
     if isinstance(raw_ftf, dict):
-        ftf_result = _normalize_grouped_result(raw_ftf, _extract_count)
-        logger.debug(f"[{metric_name}] Normalized FTF: {len(ftf_result)} groups")
+        ftf_result = normalize_grouped_result(raw_ftf)
     else:
-        ftf_result = _extract_count(raw_ftf)
-        logger.debug(f"[{metric_name}] Extracted FTF count: {ftf_result}")
+        ftf_result = extract_count(raw_ftf)
 
     if return_absolute:
         if isinstance(ftf_result, dict):
@@ -934,36 +809,28 @@ async def first_time_fix_rate(
         else:
             results = [{"group": "total", "count": ftf_result}]
             total = ftf_result
-        logger.debug(
-            f"[{metric_name}] Returning absolute: total={total}, groups={len(results)}",
-        )
     else:
         # Calculate percentages
-        completed_filter = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
-        raw_total = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label="total completed",
-            table=REPAIRS_TABLE,
+        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        raw_total = reduce_tool(
+            table=repairs_table,
             metric="count",
             keys="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
 
-        # Normalize total results
         if isinstance(raw_total, dict):
-            total_result = _normalize_grouped_result(raw_total, _extract_count)
+            total_result = normalize_grouped_result(raw_total)
         else:
-            total_result = _extract_count(raw_total)
+            total_result = extract_count(raw_total)
 
         if isinstance(ftf_result, dict) and isinstance(total_result, dict):
             results = []
             for k in total_result:
                 ftf_count = ftf_result.get(k, 0)
                 tot_count = total_result.get(k, 0)
-                pct = _compute_percentage(ftf_count, tot_count)
+                pct = compute_percentage(ftf_count, tot_count)
                 results.append(
                     {
                         "group": k,
@@ -972,14 +839,14 @@ async def first_time_fix_rate(
                         "total": tot_count,
                     },
                 )
-            total = _compute_percentage(
+            total = compute_percentage(
                 sum(ftf_result.values()),
                 sum(total_result.values()),
             )
         else:
             ftf_count = ftf_result if isinstance(ftf_result, int) else 0
             tot_count = total_result if isinstance(total_result, int) else 0
-            pct = _compute_percentage(ftf_count, tot_count)
+            pct = compute_percentage(ftf_count, tot_count)
             results = [
                 {
                     "group": "total",
@@ -991,21 +858,24 @@ async def first_time_fix_rate(
             total = pct
 
     # Generate plots if requested
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=REPAIRS_TABLE,
-            filter_expr=ftf_filter,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=repairs_table,
+                filter_expr=ftf_filter,
+                include_plots=include_plots,
+            )
 
     return _build_metric_result(
-        metric_name="first_time_fix_rate",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -1026,7 +896,6 @@ async def first_time_fix_rate(
     "follow_on_required_rate",
     "Follow on Required % / Absolute Number (by operative/trade/patch/region/time)",
 )
-@metric_timer("follow_on_required_rate")
 async def follow_on_required_rate(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -1220,7 +1089,6 @@ async def follow_on_required_rate(
     "follow_on_materials_rate",
     "Follow on Required for Materials % (by operative/trade/patch/region/time)",
 )
-@metric_timer("follow_on_materials_rate")
 async def follow_on_materials_rate(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -1425,7 +1293,6 @@ async def follow_on_materials_rate(
     "job_completed_on_time_rate",
     "Job completed on time % / Absolute Number (by operative/trade/patch/region/time)",
 )
-@metric_timer("job_completed_on_time_rate")
 async def job_completed_on_time_rate(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -1626,7 +1493,6 @@ async def job_completed_on_time_rate(
     "merchant_stops_per_day",
     "Number of merchant stops per day (by operative/trade/patch/region/time)",
 )
-@metric_timer("merchant_stops_per_day")
 async def merchant_stops_per_day(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -1782,7 +1648,6 @@ async def merchant_stops_per_day(
     "avg_duration_at_merchant",
     "Average duration at a Merchant per day (by operative/trade/patch/region/time)",
 )
-@metric_timer("avg_duration_at_merchant")
 async def avg_duration_at_merchant(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -1896,7 +1761,6 @@ async def avg_duration_at_merchant(
     "distance_travelled_per_day",
     "Distance travelled per day (by operative/trade/patch/region/time)",
 )
-@metric_timer("distance_travelled_per_day")
 async def distance_travelled_per_day(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -2044,7 +1908,6 @@ async def distance_travelled_per_day(
     "avg_time_travelling",
     "Average time travelling per day (by operative/trade/patch/region/time)",
 )
-@metric_timer("avg_time_travelling")
 async def avg_time_travelling(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -2190,7 +2053,6 @@ async def avg_time_travelling(
     "repairs_completed_per_day",
     "Repairs completed per day (total/by trade/patch/region/time)",
 )
-@metric_timer("repairs_completed_per_day")
 async def repairs_completed_per_day(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.TOTAL,
@@ -2320,7 +2182,6 @@ async def repairs_completed_per_day(
     "jobs_issued_per_day",
     "Jobs issued per day (total/by trade/patch/region/time)",
 )
-@metric_timer("jobs_issued_per_day")
 async def jobs_issued_per_day(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.TOTAL,
@@ -2457,7 +2318,6 @@ async def jobs_issued_per_day(
     "jobs_requiring_materials_rate",
     "% of jobs completed that require materials (by operative/trade/patch/region/time)",
 )
-@metric_timer("jobs_requiring_materials_rate")
 async def jobs_requiring_materials_rate(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -2659,7 +2519,6 @@ async def jobs_requiring_materials_rate(
     "avg_repairs_per_property",
     "Average number of repairs per property completed (per operative/month/quarter/year)",
 )
-@metric_timer("avg_repairs_per_property")
 async def avg_repairs_per_property(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -2823,7 +2682,6 @@ async def avg_repairs_per_property(
     "complaints_rate",
     "Complaints as % of total jobs completed (by operative/trade/patch/region/time)",
 )
-@metric_timer("complaints_rate")
 async def complaints_rate(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
@@ -2940,7 +2798,6 @@ async def complaints_rate(
     "Percentage of appointments where operative arrived within scheduled window "
     "(by operative/patch/region/time)",
 )
-@metric_timer("appointment_adherence_rate")
 async def appointment_adherence_rate(
     tools: ToolsDict,
     group_by: GroupBy = GroupBy.OPERATIVE,
