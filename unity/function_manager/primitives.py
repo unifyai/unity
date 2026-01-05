@@ -336,8 +336,13 @@ PRIMITIVE_SOURCES: List[Tuple[str, List[str]]] = [
     (
         "unity.file_manager.managers.file_manager.FileManager",
         [
-            "ask",
-            "ask_about_file",
+            # "ask",
+            # "ask_about_file",
+            # Discovery tools (synchronous - return dict directly)
+            "tables_overview",
+            "list_columns",
+            "schema_explain",
+            # Query/aggregation tools (synchronous)
             "reduce",
             "filter_files",
             "search_files",
@@ -551,6 +556,168 @@ def get_primitive_callable(
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Async FileManager Wrapper
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class _AsyncFileManagerWrapper:
+    """
+    Wrapper that makes synchronous FileManager methods awaitable.
+
+    This ensures consistency across all `primitives.*` namespaces - the LLM can
+    safely use `await` on all primitives methods without needing to know which
+    underlying implementations are sync vs async.
+
+    The wrapper delegates to the underlying FileManager but wraps each method
+    in an async function that simply returns the sync result.
+    """
+
+    def __init__(self, file_manager: "FileManager"):
+        self._fm = file_manager
+
+    async def tables_overview(
+        self,
+        *,
+        include_column_info: bool = True,
+        file: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Show the information for all tables. Async wrapper for consistency.
+
+        See FileManager.tables_overview for full documentation.
+        """
+        return self._fm.tables_overview(
+            include_column_info=include_column_info,
+            file=file,
+        )
+
+    async def list_columns(
+        self,
+        *,
+        include_types: bool = True,
+        table: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        List columns for the FileRecords index or a resolved logical table.
+        Async wrapper for consistency.
+
+        See FileManager.list_columns for full documentation.
+        """
+        return self._fm.list_columns(
+            include_types=include_types,
+            table=table,
+        )
+
+    async def schema_explain(self, *, table: str) -> str:
+        """
+        Return a natural-language explanation of a table's structure.
+        Async wrapper for consistency.
+
+        See FileManager.schema_explain for full documentation.
+        """
+        return self._fm.schema_explain(table=table)
+
+    async def reduce(
+        self,
+        *,
+        table: Optional[str] = None,
+        metric: str,
+        keys: Any,
+        filter: Optional[Any] = None,
+        group_by: Optional[Any] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over a table. Async wrapper for consistency.
+
+        See FileManager.reduce for full documentation.
+        """
+        return self._fm.reduce(
+            table=table,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
+
+    async def filter_files(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        tables: Optional[Any] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter files or resolve-and-filter per-file Content/Tables.
+        Async wrapper for consistency.
+
+        See FileManager.filter_files for full documentation.
+        """
+        return self._fm.filter_files(
+            filter=filter,
+            offset=offset,
+            limit=limit,
+            tables=tables,
+        )
+
+    async def search_files(
+        self,
+        *,
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+        table: Optional[str] = None,
+        filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Semantic search over a resolved context. Async wrapper for consistency.
+
+        See FileManager.search_files for full documentation.
+        """
+        return self._fm.search_files(
+            references=references,
+            k=k,
+            table=table,
+            filter=filter,
+        )
+
+    async def visualize(
+        self,
+        *,
+        tables: Any,
+        plot_type: str,
+        x_axis: str,
+        y_axis: Optional[str] = None,
+        group_by: Optional[str] = None,
+        filter: Optional[str] = None,
+        title: Optional[str] = None,
+        aggregate: Optional[str] = None,
+        scale_x: Optional[str] = None,
+        scale_y: Optional[str] = None,
+        bin_count: Optional[int] = None,
+        show_regression: Optional[bool] = None,
+    ) -> Any:
+        """
+        Generate plot visualizations from table data. Async wrapper for consistency.
+
+        See FileManager.visualize for full documentation.
+        """
+        return self._fm.visualize(
+            tables=tables,
+            plot_type=plot_type,
+            x_axis=x_axis,
+            y_axis=y_axis,
+            group_by=group_by,
+            filter=filter,
+            title=title,
+            aggregate=aggregate,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            bin_count=bin_count,
+            show_regression=show_regression,
+        )
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Primitives Runtime Class
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -586,7 +753,7 @@ class Primitives:
         self._guidance: Optional["GuidanceManager"] = None
         self._web: Optional["WebSearcher"] = None
         self._computer: Optional[ComputerPrimitives] = None
-        self._files: Optional["FileManager"] = None
+        self._files: Optional[_AsyncFileManagerWrapper] = None
 
     @property
     def contacts(self) -> "ContactManager":
@@ -665,15 +832,28 @@ class Primitives:
         return self._computer
 
     @property
-    def files(self) -> "FileManager":
+    def files(self) -> _AsyncFileManagerWrapper:
         """
-        File management primitives (ask, ask_about_file, reduce, filter_files, search_files, visualize).
+        File management primitives for data discovery, querying, and visualization.
 
-        Provides access to file parsing, data reduction, filtering, searching, and visualization
-        capabilities. Only imported and initialized when actually accessed.
+        All methods are async for consistency with other primitives - use `await`:
+
+        Discovery tools:
+        - await tables_overview() - List all available tables
+        - await list_columns(table=...) - Get column names and types
+        - await schema_explain(table=...) - Get natural language schema explanation
+
+        Query tools:
+        - await reduce(table, metric, keys, filter, group_by) - Aggregate data
+        - await filter_files(filter, tables, limit) - Query raw records
+        - await search_files(references, k, table) - Semantic search
+        - await visualize(tables, plot_type, x_axis, y_axis, ...) - Generate charts
+
+        Only imported and initialized when actually accessed.
         """
         if self._files is None:
             from unity.manager_registry import ManagerRegistry
 
-            self._files = ManagerRegistry.get_file_manager()
+            fm = ManagerRegistry.get_file_manager()
+            self._files = _AsyncFileManagerWrapper(fm)
         return self._files

@@ -88,12 +88,12 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._computer_primitives = computer_primitives
 
         self._client = new_llm_client(
-            "claude-4.5-sonnet@anthropic",
+            "claude-4.5-opus@anthropic",
             reasoning_effort=None,
             service_tier=None,
         )
         self._ask_client = new_llm_client(
-            "claude-4.5-sonnet@anthropic",
+            "claude-4.5-opus@anthropic",
             reasoning_effort=None,
             service_tier=None,
         )
