@@ -443,10 +443,53 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
 
     # Check if local orchestra is already running
     if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
-      echo "Local orchestra already running: $_local_url"
-      export UNIFY_BASE_URL="$_local_url"
-      # Seed models even if orchestra was already running (idempotent)
-      _seed_unity_models_and_endpoints
+      # Orchestra is running - check if logging config matches what we need
+      _config_file="/tmp/${ORCHESTRA_PREFIX}-local-server.config"
+      _needs_restart=false
+
+      if [[ -f "$_config_file" ]]; then
+        # Read current config and compare with desired logging dirs
+        _current_log_dir=$(grep "^ORCHESTRA_LOG_DIR=" "$_config_file" 2>/dev/null | cut -d= -f2-)
+        _current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$_config_file" 2>/dev/null | cut -d= -f2-)
+
+        # Check if OTEL dir points to our logs/all directory
+        if [[ "$_current_otel_dir" != "$ORCHESTRA_OTEL_LOG_DIR" ]]; then
+          _needs_restart=true
+        fi
+        # Check if per-request log dir points inside our logs/orchestra directory
+        if [[ -z "$_current_log_dir" || "$_current_log_dir" != "$_orchestra_logs_dir"/* ]]; then
+          _needs_restart=true
+        fi
+      else
+        # No config file means orchestra was started without our logging setup
+        _needs_restart=true
+      fi
+
+      if [[ "$_needs_restart" == "true" ]]; then
+        # Restart to pick up logging config. The restart wipes the database,
+        # which is intentional for test runs to ensure isolation.
+        _original_url="$_local_url"
+        echo "Restarting orchestra to apply logging configuration..."
+        "$_local_orchestra_script" restart >/dev/null 2>&1 || true
+        if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
+          echo "Using local orchestra: $_local_url"
+          export UNIFY_BASE_URL="$_local_url"
+          _seed_unity_models_and_endpoints
+        else
+          echo "Warning: Orchestra restart failed, using existing instance (logging may not work)" >&2
+          export UNIFY_BASE_URL="$_original_url"
+          _seed_unity_models_and_endpoints
+        fi
+        unset _original_url
+      else
+        # Logging already configured correctly, reuse existing instance
+        # Update ORCHESTRA_LOG_DIR to match what's currently configured
+        export ORCHESTRA_LOG_DIR="$_current_log_dir"
+        echo "Local orchestra already running with logging enabled: $_local_url"
+        export UNIFY_BASE_URL="$_local_url"
+        _seed_unity_models_and_endpoints
+      fi
+      unset _config_file _needs_restart _current_log_dir _current_otel_dir
     else
       # Not running - need to start it
       # Stop any stale orchestra state first
