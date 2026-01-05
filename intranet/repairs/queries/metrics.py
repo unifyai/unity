@@ -2297,7 +2297,7 @@ async def jobs_requiring_materials_rate(
 )
 async def avg_repairs_per_property(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     time_period: TimePeriod = TimePeriod.MONTH,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -2306,76 +2306,33 @@ async def avg_repairs_per_property(
     """
     Get average number of repairs per property.
 
-    Identifies properties with multiple repairs (potential issues or
-    problematic buildings). Groups by PropertyReference to count repeat repairs.
+    Identifies properties with multiple repairs.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: PropertyReference, JobTicketReference, WorksOrderStatusDescription
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    # Required: FullAddress, JobTicketReference, WorksOrderStatusDescription
 
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-              group_by="PropertyReference")
-       → Returns: {"PROP001": {"count": 3}, "PROP002": {"count": 1}, ...}
-
-    2. Python: Calculate average repairs per property
-       total_repairs = sum(counts)
-       unique_properties = len(counts)
-       avg = total_repairs / unique_properties
-
-    3. Identify properties with > 2 repairs as "high repeat" properties
-
-    Filter Expressions Used:
-    ------------------------
-    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
-    - With date range: ... and `WorksOrderReportedCompletedDate` >= '2025-07-01'
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob" (within property context)
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-
-    Parameters
+    Tool Chain
     ----------
-    tools : ToolsDict
-        Tools from FileManager (reduce, visualize)
-    group_by : GroupBy
-        Dimension to group results by (per operative)
-    time_period : TimePeriod
-        Time granularity (month, quarter, year)
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Average repairs per property, with list of properties having multiple repairs
-        and optional plots
+    1. reduce(..., filter=COMPLETED, group_by="FullAddress")
+       → {property: count}
+    2. Python: avg = total_repairs / unique_properties
     """
     metric_name = "avg_repairs_per_property"
+
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    filter_expr = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+
+    filter_expr = build_filter([COMPLETED_FILTER], start_date, end_date)
 
     # Group by FullAddress to count repairs per property
-    raw_property_counts = _timed_tool(
-        metric_name,
-        "reduce",
-        reduce_tool,
-        label="property counts",
-        table=REPAIRS_TABLE,
+    raw_property_counts = reduce_tool(
+        table=repairs_table,
         metric="count",
         keys="JobTicketReference",
         filter=filter_expr,
@@ -2383,17 +2340,16 @@ async def avg_repairs_per_property(
     )
 
     if isinstance(raw_property_counts, dict):
-        # Normalize the results
-        property_counts = _normalize_grouped_result(raw_property_counts, _extract_count)
+        property_counts = normalize_grouped_result(raw_property_counts)
 
-        # Calculate average repairs per property
+        # Calculate average
         total_repairs = sum(property_counts.values())
         num_properties = len(property_counts)
         avg_repairs = (
             round(total_repairs / num_properties, 2) if num_properties > 0 else 0.0
         )
 
-        # Find properties with multiple repairs (threshold: 2+)
+        # Find properties with multiple repairs
         multi_repair_properties = {k: v for k, v in property_counts.items() if v >= 2}
 
         results = [
@@ -2406,21 +2362,24 @@ async def avg_repairs_per_property(
         ]
 
         # Generate plots if requested
-        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-        visualize_tool = tools.get("visualize")
         plots: List[PlotResult] = []
-        if visualize_tool and include_plots:
-            plots = generate_plots(
-                visualize_tool=visualize_tool,
-                metric_name=metric_name,
-                group_by=group_by_enum,
-                tables=REPAIRS_TABLE,
-                filter_expr=filter_expr,
-                include_plots=include_plots,
-            )
+        if include_plots:
+            visualize_tool = tools.get("visualize")
+            if visualize_tool:
+                group_by_enum = (
+                    group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+                )
+                plots = generate_plots(
+                    visualize_tool=visualize_tool,
+                    metric_name=metric_name,
+                    group_by=group_by_enum,
+                    tables=repairs_table,
+                    filter_expr=filter_expr,
+                    include_plots=include_plots,
+                )
 
         return _build_metric_result(
-            metric_name="avg_repairs_per_property",
+            metric_name=metric_name,
             group_by=group_by,
             time_period=time_period,
             start_date=start_date,
@@ -2438,7 +2397,7 @@ async def avg_repairs_per_property(
         )
     else:
         return _build_metric_result(
-            metric_name="avg_repairs_per_property",
+            metric_name=metric_name,
             group_by=group_by,
             time_period=time_period,
             start_date=start_date,
@@ -2460,7 +2419,7 @@ async def avg_repairs_per_property(
 )
 async def complaints_rate(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -2470,79 +2429,42 @@ async def complaints_rate(
     """
     Get complaints as percentage of total jobs completed.
 
-    NOTE: Complaints data is not currently available in the repairs dataset.
-    Returns placeholder result. Would require a separate complaints table
-    or a Complaint column in repairs data.
+    NOTE: Complaints data not currently available in repairs dataset.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Check for: Complaint column (not present in current dataset)
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    columns = tools["list_columns"](table=repairs_table)
+    # Check for: Complaint column (not present in current dataset)
 
-    Tool Chain (if complaints data available):
-    ------------------------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`Complaint` == 'Yes'", group_by="[column_name]")
-       → Returns complaint counts per group
-
-    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-              group_by="[column_name]")
-       → Returns total for percentage
-
+    Tool Chain (if available)
+    -------------------------
+    1. reduce(..., filter="`Complaint` == 'Yes'", ...)
+    2. reduce(..., filter=COMPLETED_FILTER, ...) for percentage
     3. Python: percentage = (complaints / total) * 100
-
-    Current Status:
-    ---------------
-    Returns placeholder - complaints column not available in current dataset
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-
-    Parameters
-    ----------
-    tools : ToolsDict
-        Tools from FileManager (reduce, visualize)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    return_absolute : bool
-        If True, return absolute count; if False, return percentage
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Rate or count of complaints with optional plots
     """
     metric_name = "complaints_rate"
 
-    # Generate plots if requested (will be empty for this unavailable metric)
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+
+    # Generate plots if requested
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=REPAIRS_TABLE,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=repairs_table,
+                include_plots=include_plots,
+            )
 
     # Note: No complaints column exists in the repairs data
-    # This metric cannot be calculated from the current dataset
     return _build_metric_result(
         metric_name=metric_name,
         group_by=group_by,
@@ -2576,7 +2498,7 @@ async def complaints_rate(
 )
 async def appointment_adherence_rate(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -2586,295 +2508,209 @@ async def appointment_adherence_rate(
     """
     Get appointment adherence rate as percentage or absolute number.
 
-    This metric measures punctuality and scheduling reliability by calculating
-    the percentage of repair appointments where the operative arrived within
-    the scheduled appointment window.
+    Measures punctuality: arrived within scheduled window.
 
-    Business Context (from PDF Analysis):
-        - Target: 95%+ on-time arrival
-        - High adherence indicates reliable scheduling and respects tenants' time
-        - Low adherence causes tenant frustration and can lead to no-access incidents
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    columns = tools["list_columns"](table=repairs_table)
+    # Required: ArrivedOnSite, ScheduledAppointmentStart, ScheduledAppointmentEnd
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: ArrivedOnSite, ScheduledAppointmentStart, ScheduledAppointmentEnd
-
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`ArrivedOnSite` != 'None' and `ScheduledAppointmentStart` != 'None' and "
-                     "`ArrivedOnSite` >= `ScheduledAppointmentStart` and "
-                     "`ArrivedOnSite` <= `ScheduledAppointmentEnd`",
-              group_by="[column_name]")
-       → Returns on-time arrivals per group
-
-    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`ArrivedOnSite` != 'None' and `ScheduledAppointmentStart` != 'None'",
-              group_by="[column_name]")
-       → Returns total scheduled appointments with arrival times
-
-    3. Python: adherence_rate = (on_time / total_scheduled) * 100
-
-    Filter Expressions Used:
-    ------------------------
-    - On-time arrival: ArrivedOnSite between ScheduledAppointmentStart and End
-    - Scheduled appointments: ScheduledAppointmentStart != 'None'
-    - With recorded arrival: ArrivedOnSite != 'None'
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-
-    Parameters
+    Tool Chain
     ----------
-    tools : ToolsDict
-        Tools from FileManager containing reduce, filter_files, list_columns
-    group_by : GroupBy
-        Dimension to group results by (operative, patch, region, total)
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD format)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD format)
-    time_period : TimePeriod
-        Time granularity for aggregation (day, week, month, quarter, year)
-    return_absolute : bool
-        If True, return absolute counts of on-time/late arrivals
-        If False, return percentage adherence rate
+    1. reduce(..., filter="scheduled and arrived") → total scheduled
+    2. reduce(..., filter="arrived <= end_window") → on-time
+    3. Python: adherence = (on_time / total) * 100
 
-    Returns
-    -------
-    MetricResult
-        Appointment adherence rate or counts per group, with:
-        - percentage: Adherence rate (if return_absolute=False)
-        - on_time_count: Number of on-time arrivals
-        - late_count: Number of late arrivals
-        - total_scheduled: Total scheduled appointments
-
-    Example Usage
-    -------------
-    >>> result = await appointment_adherence_rate(
-    ...     group_by=GroupBy.OPERATIVE,
-    ...     return_absolute=False,
-    ... )
-    >>> # Result: {"results": [{"group": "John Smith", "percentage": 92.5, ...}], ...}
+    Filter Expressions
+    ------------------
+    - Scheduled: ScheduledAppointmentStart non-empty
+    - Arrived: ArrivedOnSite non-empty
+    - On-time: ArrivedOnSite <= ScheduledAppointmentEnd
     """
     metric_name = "appointment_adherence_rate"
 
-    try:
-        reduce_tool = tools.get("reduce")
-        filter_files_tool = tools.get("filter_files")
+    reduce_tool = tools.get("reduce")
+    if not reduce_tool:
+        raise ValueError("Required 'reduce' tool not available")
 
-        if not reduce_tool:
-            logger.error(f"[{metric_name}] 'reduce' tool not found")
-            raise ValueError("Required 'reduce' tool not available")
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
 
-        group_by_field = _resolve_group_by(group_by)
-        logger.debug(
-            f"[{metric_name}] return_absolute={return_absolute}, group_by={group_by_field}",
-        )
+    # Resolve group_by
+    if isinstance(group_by, str):
+        group_by_field = resolve_group_by(group_by)
+    else:
+        group_by_field = GROUP_BY_FIELDS.get(group_by)
 
-        # Note: This metric requires ScheduledAppointmentStart, ScheduledAppointmentEnd,
-        # and ArrivedOnSite columns. If these don't exist in the repairs data,
-        # we need to check and return appropriate message.
-
-        # First, check if the required columns exist
-        list_columns_tool = tools.get("list_columns")
-        if list_columns_tool:
-            try:
-                columns = list_columns_tool(table=REPAIRS_TABLE)
-                required_cols = [
-                    "ScheduledAppointmentStart",
-                    "ScheduledAppointmentEnd",
-                    "ArrivedOnSite",
-                ]
-                missing_cols = [
-                    col for col in required_cols if col not in (columns or {})
-                ]
-
-                if missing_cols:
-                    logger.warning(
-                        f"[{metric_name}] Missing required columns: {missing_cols}. "
-                        "Appointment adherence cannot be calculated.",
-                    )
-                    return _build_metric_result(
-                        metric_name=metric_name,
-                        group_by=group_by,
-                        time_period=time_period,
-                        start_date=start_date,
-                        end_date=end_date,
-                        results=[
-                            {
-                                "error": "Required columns not available",
-                                "missing_columns": missing_cols,
-                                "note": (
-                                    "Appointment adherence requires "
-                                    "ScheduledAppointmentStart, ScheduledAppointmentEnd, "
-                                    "and ArrivedOnSite columns"
-                                ),
-                            },
-                        ],
-                        total=0.0,
-                        metadata={"status": "data_not_available"},
-                    )
-            except Exception as e:
-                logger.warning(f"[{metric_name}] Could not check columns: {e}")
-
-        # Build filter for scheduled appointments with arrival times
-        # Appointments must have both scheduled window and arrival recorded
-        scheduled_filter = (
-            "`ScheduledAppointmentStart` != '' and "
-            "`ScheduledAppointmentStart` is not None and "
-            "`ArrivedOnSite` != '' and "
-            "`ArrivedOnSite` is not None"
-        )
-        base_filter = _build_date_filter(scheduled_filter, start_date, end_date)
-
-        # Count total scheduled appointments
-        raw_total = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label="total scheduled",
-            table=REPAIRS_TABLE,
-            metric="count",
-            keys="JobTicketReference",
-            filter=base_filter,
-            group_by=group_by_field,
-        )
-
-        # Count on-time arrivals
-        # An arrival is on-time if ArrivedOnSite <= ScheduledAppointmentEnd
-        # (i.e., arrived before or at the end of the window)
-        on_time_filter = (
-            f"({base_filter}) and " "`ArrivedOnSite` <= `ScheduledAppointmentEnd`"
-        )
-        raw_on_time = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label="on-time arrivals",
-            table=REPAIRS_TABLE,
-            metric="count",
-            keys="JobTicketReference",
-            filter=on_time_filter,
-            group_by=group_by_field,
-        )
-
-        # Normalize results
-        if isinstance(raw_total, dict):
-            total_result = _normalize_grouped_result(raw_total, _extract_count)
-        else:
-            total_result = _extract_count(raw_total)
-
-        if isinstance(raw_on_time, dict):
-            on_time_result = _normalize_grouped_result(raw_on_time, _extract_count)
-        else:
-            on_time_result = _extract_count(raw_on_time)
-
-        # Build results based on return_absolute flag
-        if isinstance(total_result, dict) and isinstance(on_time_result, dict):
-            results = []
-            total_on_time = 0
-            total_scheduled = 0
-
-            for group_key in total_result:
-                scheduled_count = total_result.get(group_key, 0)
-                on_time_count = on_time_result.get(group_key, 0)
-                late_count = scheduled_count - on_time_count
-
-                total_on_time += on_time_count
-                total_scheduled += scheduled_count
-
-                if return_absolute:
-                    results.append(
+    # Check if required columns exist
+    list_columns_tool = tools.get("list_columns")
+    if list_columns_tool:
+        try:
+            columns = list_columns_tool(table=repairs_table)
+            required_cols = [
+                "ScheduledAppointmentStart",
+                "ScheduledAppointmentEnd",
+                "ArrivedOnSite",
+            ]
+            missing_cols = [col for col in required_cols if col not in (columns or {})]
+            if missing_cols:
+                return _build_metric_result(
+                    metric_name=metric_name,
+                    group_by=group_by,
+                    time_period=time_period,
+                    start_date=start_date,
+                    end_date=end_date,
+                    results=[
                         {
-                            "group": group_key,
-                            "on_time_count": on_time_count,
-                            "late_count": late_count,
-                            "total_scheduled": scheduled_count,
+                            "error": "Required columns not available",
+                            "missing_columns": missing_cols,
+                            "note": (
+                                "Appointment adherence requires "
+                                "ScheduledAppointmentStart, ScheduledAppointmentEnd, "
+                                "and ArrivedOnSite columns"
+                            ),
                         },
-                    )
-                else:
-                    pct = _compute_percentage(on_time_count, scheduled_count)
-                    results.append(
-                        {
-                            "group": group_key,
-                            "percentage": pct,
-                            "on_time_count": on_time_count,
-                            "late_count": late_count,
-                            "total_scheduled": scheduled_count,
-                        },
-                    )
+                    ],
+                    total=0.0,
+                    metadata={"status": "data_not_available"},
+                )
+        except Exception:
+            pass  # Proceed anyway if column check fails
 
-            # Calculate overall total
-            if return_absolute:
-                total = float(total_on_time)
-            else:
-                total = _compute_percentage(total_on_time, total_scheduled)
+    # Filter for scheduled appointments with arrival times
+    scheduled_condition = (
+        "`ScheduledAppointmentStart` != '' and "
+        "`ScheduledAppointmentStart` is not None and "
+        "`ArrivedOnSite` != '' and "
+        "`ArrivedOnSite` is not None"
+    )
+    base_filter = build_filter([scheduled_condition], start_date, end_date)
 
-        else:
-            # Non-grouped result
-            scheduled_count = total_result if isinstance(total_result, int) else 0
-            on_time_count = on_time_result if isinstance(on_time_result, int) else 0
+    # Count total scheduled appointments
+    raw_total = reduce_tool(
+        table=repairs_table,
+        metric="count",
+        keys="JobTicketReference",
+        filter=base_filter,
+        group_by=group_by_field,
+    )
+
+    # Count on-time arrivals
+    on_time_filter = f"({base_filter}) and `ArrivedOnSite` <= `ScheduledAppointmentEnd`"
+    raw_on_time = reduce_tool(
+        table=repairs_table,
+        metric="count",
+        keys="JobTicketReference",
+        filter=on_time_filter,
+        group_by=group_by_field,
+    )
+
+    # Normalize results
+    if isinstance(raw_total, dict):
+        total_result = normalize_grouped_result(raw_total)
+    else:
+        total_result = extract_count(raw_total)
+
+    if isinstance(raw_on_time, dict):
+        on_time_result = normalize_grouped_result(raw_on_time)
+    else:
+        on_time_result = extract_count(raw_on_time)
+
+    # Build results
+    if isinstance(total_result, dict) and isinstance(on_time_result, dict):
+        results = []
+        total_on_time = 0
+        total_scheduled = 0
+
+        for group_key in total_result:
+            scheduled_count = total_result.get(group_key, 0)
+            on_time_count = on_time_result.get(group_key, 0)
             late_count = scheduled_count - on_time_count
+            total_on_time += on_time_count
+            total_scheduled += scheduled_count
 
             if return_absolute:
-                results = [
+                results.append(
                     {
-                        "group": "total",
+                        "group": group_key,
                         "on_time_count": on_time_count,
                         "late_count": late_count,
                         "total_scheduled": scheduled_count,
                     },
-                ]
-                total = float(on_time_count)
+                )
             else:
-                pct = _compute_percentage(on_time_count, scheduled_count)
-                results = [
+                pct = compute_percentage(on_time_count, scheduled_count)
+                results.append(
                     {
-                        "group": "total",
+                        "group": group_key,
                         "percentage": pct,
                         "on_time_count": on_time_count,
                         "late_count": late_count,
                         "total_scheduled": scheduled_count,
                     },
-                ]
-                total = pct
+                )
 
-        # Generate plots if requested
-        group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+        if return_absolute:
+            total = float(total_on_time)
+        else:
+            total = compute_percentage(total_on_time, total_scheduled)
+    else:
+        scheduled_count = total_result if isinstance(total_result, int) else 0
+        on_time_count = on_time_result if isinstance(on_time_result, int) else 0
+        late_count = scheduled_count - on_time_count
+
+        if return_absolute:
+            results = [
+                {
+                    "group": "total",
+                    "on_time_count": on_time_count,
+                    "late_count": late_count,
+                    "total_scheduled": scheduled_count,
+                },
+            ]
+            total = float(on_time_count)
+        else:
+            pct = compute_percentage(on_time_count, scheduled_count)
+            results = [
+                {
+                    "group": "total",
+                    "percentage": pct,
+                    "on_time_count": on_time_count,
+                    "late_count": late_count,
+                    "total_scheduled": scheduled_count,
+                },
+            ]
+            total = pct
+
+    # Generate plots if requested
+    plots: List[PlotResult] = []
+    if include_plots:
         visualize_tool = tools.get("visualize")
-        plots: List[PlotResult] = []
-        if visualize_tool and include_plots:
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
             plots = generate_plots(
                 visualize_tool=visualize_tool,
                 metric_name=metric_name,
                 group_by=group_by_enum,
-                tables=REPAIRS_TABLE,
+                tables=repairs_table,
                 filter_expr=base_filter,
                 include_plots=include_plots,
             )
 
-        return _build_metric_result(
-            metric_name=metric_name,
-            group_by=group_by,
-            time_period=time_period,
-            start_date=start_date,
-            end_date=end_date,
-            results=results,
-            total=float(total),
-            metadata={"return_absolute": return_absolute},
-            plots=plots,
-        )
-
-    except Exception as e:
-        logger.exception(f"[{metric_name}] Unexpected error during calculation")
-        raise RuntimeError(f"Failed to calculate {metric_name}: {e}") from e
+    return _build_metric_result(
+        metric_name=metric_name,
+        group_by=group_by,
+        time_period=time_period,
+        start_date=start_date,
+        end_date=end_date,
+        results=results,
+        total=float(total),
+        metadata={"return_absolute": return_absolute},
+        plots=plots,
+    )
 
 
 # =============================================================================
