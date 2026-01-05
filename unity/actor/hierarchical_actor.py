@@ -2436,37 +2436,31 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
 
         self.plan_generation_client: unillm.AsyncUnify = new_llm_client(
-            "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.verification_client: unillm.AsyncUnify = new_llm_client(
-            "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.implementation_client: unillm.AsyncUnify = new_llm_client(
-            "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.summarization_client: unillm.AsyncUnify = new_llm_client(
-            "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.modification_client: unillm.AsyncUnify = new_llm_client(
-            "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.ask_client: unillm.AsyncUnify = new_llm_client(
-            "gemini-2.5-pro@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
