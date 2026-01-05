@@ -37,4 +37,6 @@ intranet/logs/
 assets/
 discord_messages.md
 .cursor/debug.log
-logs/
+# Ignore log contents but keep the README
+logs/*
+!logs/README.md
