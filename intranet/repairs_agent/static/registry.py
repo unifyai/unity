@@ -1,8 +1,8 @@
 """
 Query registry for BespokeRepairsAgent.
 
-This module provides the @register decorator and query registry
-for registering metric query functions.
+This is the canonical registry for all metric query functions.
+Metrics should import `register` from here.
 
 Usage:
     from intranet.repairs_agent.static.registry import register
