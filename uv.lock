@@ -8706,7 +8706,7 @@ wheels = [
 [[package]]
 name = "unifyai"
 version = "0.9.10"
-source = { git = "https://github.com/unifyai/unify.git?branch=staging#a5c9d1d10740716a594af259b528d0031ad7034b" }
+source = { editable = "../unify" }
 dependencies = [
     { name = "aiohttp" },
     { name = "google-genai" },
@@ -8722,15 +8722,53 @@ dependencies = [
     { name = "termcolor" },
 ]
 
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.12.14,<4.0.0" },
+    { name = "google-genai", specifier = ">=1.52.0,<2.0.0" },
+    { name = "jsonlines", specifier = ">=3.1.0,<4.0.0" },
+    { name = "litellm", specifier = ">=1.80.7,<2.0.0" },
+    { name = "openai", specifier = ">=2.8.1,<3.0.0" },
+    { name = "pytest", specifier = ">=8.3.3,<9.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-timeout", specifier = ">=2.3.1,<3.0.0" },
+    { name = "requests", specifier = ">=2.32.4,<3.0.0" },
+    { name = "requests-toolbelt", specifier = ">=1.0.0,<2.0.0" },
+    { name = "rich", specifier = ">=13.8.1,<14.0.0" },
+    { name = "termcolor", specifier = "==2.5.0" },
+]
+
 [[package]]
 name = "unillm"
 version = "0.1.0"
-source = { git = "https://github.com/unifyai/unillm.git?branch=staging#33971415ef55526e06cb83a2b29fac55d64eb960" }
+source = { editable = "../unillm" }
 dependencies = [
     { name = "litellm" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "unifyai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "litellm", specifier = ">=1.80.10" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "unifyai", editable = "../unify" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "autoflake", specifier = ">=2.3.1" },
+    { name = "black", specifier = ">=25.9.0" },
+    { name = "opentelemetry-api", specifier = ">=1.20.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-dotenv", specifier = ">=0.5.2" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
 ]
 
 [[package]]
@@ -8843,8 +8881,8 @@ requires-dist = [
     { name = "textual-dev", specifier = ">=1.2.0" },
     { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "twilio", specifier = ">=8.0.0" },
-    { name = "unifyai", git = "https://github.com/unifyai/unify.git?branch=staging" },
-    { name = "unillm", git = "https://github.com/unifyai/unillm.git?branch=staging" },
+    { name = "unifyai", editable = "../unify" },
+    { name = "unillm", editable = "../unillm" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
     { name = "websockify", specifier = ">=0.13.0" },
 ]
