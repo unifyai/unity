@@ -898,7 +898,7 @@ async def first_time_fix_rate(
 )
 async def follow_on_required_rate(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -909,78 +909,45 @@ async def follow_on_required_rate(
     Get Follow On Required rate as percentage or absolute number.
 
     Follow-on required measures repairs where additional work was needed after
-    the initial visit. High follow-on rates may indicate quality issues,
-    inadequate diagnosis, or parts availability problems.
+    the initial visit.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: FollowOn, JobTicketReference, WorksOrderStatusDescription
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    columns = tools["list_columns"](table=repairs_table)
+    # Required: FollowOn, JobTicketReference, WorksOrderStatusDescription
 
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`FollowOn` == 'Yes'", group_by="[column_name]")
-       → Returns follow-on job counts per group
-
-    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-              group_by="[column_name]")
-       → Returns total completed jobs for percentage calculation
-
-    3. Python: percentage = (follow_on_count / total_count) * 100
-
-    Filter Expressions Used:
-    ------------------------
-    - Follow-on required: `FollowOn` == 'Yes'
-    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-    - GroupBy.TOTAL → None
-
-    Parameters
+    Tool Chain
     ----------
-    tools : ToolsDict
-        Tools from FileManager (reduce, filter_files, visualize, etc.)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    return_absolute : bool
-        If True, return absolute count; if False, return percentage
-    include_plots : bool
-        If True, generate visualization URLs for the results
+    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+              filter="`FollowOn` == 'Yes'", group_by=...)
+    2. reduce(..., filter=COMPLETED_FILTER, ...) for percentage
+    3. Python: percentage = (follow_on / total) * 100
 
-    Returns
-    -------
-    MetricResult
-        Rate or count of jobs requiring follow-on with optional plots
+    Filter Expressions
+    ------------------
+    - Follow-on: `FollowOn` == 'Yes'
+    - Completed: `WorksOrderStatusDescription` in ['Complete', 'Closed']
     """
     metric_name = "follow_on_required_rate"
+
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    group_by_field = _resolve_group_by(group_by)
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+
+    # Resolve group_by
+    if isinstance(group_by, str):
+        group_by_field = resolve_group_by(group_by)
+    else:
+        group_by_field = GROUP_BY_FIELDS.get(group_by)
 
     # Count follow-on jobs
-    fo_filter = _build_date_filter(FOLLOW_ON_FILTER, start_date, end_date)
-    raw_fo = _timed_tool(
-        metric_name,
-        "reduce",
-        reduce_tool,
-        label="follow-on count",
-        table=REPAIRS_TABLE,
+    fo_filter = build_filter([FOLLOW_ON_FILTER], start_date, end_date)
+    raw_fo = reduce_tool(
+        table=repairs_table,
         metric="count",
         keys="JobTicketReference",
         filter=fo_filter,
@@ -989,9 +956,9 @@ async def follow_on_required_rate(
 
     # Normalize results
     if isinstance(raw_fo, dict):
-        fo_result = _normalize_grouped_result(raw_fo, _extract_count)
+        fo_result = normalize_grouped_result(raw_fo)
     else:
-        fo_result = _extract_count(raw_fo)
+        fo_result = extract_count(raw_fo)
 
     if return_absolute:
         if isinstance(fo_result, dict):
@@ -1002,31 +969,26 @@ async def follow_on_required_rate(
             total = fo_result
     else:
         # Calculate percentages
-        completed_filter = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
-        raw_total = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label="total completed",
-            table=REPAIRS_TABLE,
+        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        raw_total = reduce_tool(
+            table=repairs_table,
             metric="count",
             keys="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
 
-        # Normalize total results
         if isinstance(raw_total, dict):
-            total_result = _normalize_grouped_result(raw_total, _extract_count)
+            total_result = normalize_grouped_result(raw_total)
         else:
-            total_result = _extract_count(raw_total)
+            total_result = extract_count(raw_total)
 
         if isinstance(fo_result, dict) and isinstance(total_result, dict):
             results = []
             for k in total_result:
                 fo_count = fo_result.get(k, 0)
                 tot_count = total_result.get(k, 0)
-                pct = _compute_percentage(fo_count, tot_count)
+                pct = compute_percentage(fo_count, tot_count)
                 results.append(
                     {
                         "group": k,
@@ -1035,14 +997,14 @@ async def follow_on_required_rate(
                         "total": tot_count,
                     },
                 )
-            total = _compute_percentage(
+            total = compute_percentage(
                 sum(fo_result.values()),
                 sum(total_result.values()),
             )
         else:
             fo_count = fo_result if isinstance(fo_result, int) else 0
             tot_count = total_result if isinstance(total_result, int) else 0
-            pct = _compute_percentage(fo_count, tot_count)
+            pct = compute_percentage(fo_count, tot_count)
             results = [
                 {
                     "group": "total",
@@ -1054,18 +1016,21 @@ async def follow_on_required_rate(
             total = pct
 
     # Generate plots if requested
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=REPAIRS_TABLE,
-            filter_expr=fo_filter,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=repairs_table,
+                filter_expr=fo_filter,
+                include_plots=include_plots,
+            )
 
     return _build_metric_result(
         metric_name="follow_on_required_rate",
@@ -1091,7 +1056,7 @@ async def follow_on_required_rate(
 )
 async def follow_on_materials_rate(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -1101,118 +1066,72 @@ async def follow_on_materials_rate(
     """
     Get Follow On Required specifically for Materials as percentage or absolute.
 
-    Measures follow-on jobs caused by material/parts issues. Used to identify
-    supply chain problems or van stock deficiencies. Uses FollowOnDescription
-    as a proxy since there's no dedicated materials flag.
+    Measures follow-on jobs caused by material/parts issues.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: FollowOn, FollowOnDescription, JobTicketReference
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    # Required: FollowOn, FollowOnDescription, JobTicketReference
 
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`FollowOn` == 'Yes' and `FollowOnDescription` != 'None'",
-              group_by="[column_name]")
-       → Returns materials-related follow-on counts
-
-    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`FollowOn` == 'Yes'", group_by="[column_name]")
-       → Returns total follow-on jobs for percentage calculation
-
+    Tool Chain
+    ----------
+    1. reduce(..., filter="`FollowOn` == 'Yes' and `FollowOnDescription` != 'None'")
+    2. reduce(..., filter="`FollowOn` == 'Yes'") for total
     3. Python: percentage = (materials_fo / total_fo) * 100
 
-    Filter Expressions Used:
-    ------------------------
-    - Follow-on with description: `FollowOn` == 'Yes' and `FollowOnDescription` != 'None'
+    Filter Expressions
+    ------------------
+    - Materials follow-on: `FollowOn` == 'Yes' and `FollowOnDescription` != 'None'
     - All follow-on: `FollowOn` == 'Yes'
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-
-    Parameters
-    ----------
-    tools : ToolsDict
-        Tools from FileManager (reduce, filter_files, visualize, etc.)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    return_absolute : bool
-        If True, return absolute count; if False, return percentage
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Rate or count of jobs requiring follow-on due to materials with optional plots
     """
-    # Note: This searches FollowOnDescription/FollowOnNotes for material-related keywords
-    # This is a heuristic approach since there's no dedicated "materials" flag
     metric_name = "follow_on_materials_rate"
+
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    group_by_field = _resolve_group_by(group_by)
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
 
-    # Get all follow-on jobs and search for material-related keywords in descriptions
-    fo_filter = _build_date_filter(FOLLOW_ON_FILTER, start_date, end_date)
+    # Resolve group_by
+    if isinstance(group_by, str):
+        group_by_field = resolve_group_by(group_by)
+    else:
+        group_by_field = GROUP_BY_FIELDS.get(group_by)
 
     # Count total follow-on jobs
-    raw_total_fo = _timed_tool(
-        metric_name,
-        "reduce",
-        reduce_tool,
-        label="total follow-on",
-        table=REPAIRS_TABLE,
+    fo_filter = build_filter([FOLLOW_ON_FILTER], start_date, end_date)
+    raw_total_fo = reduce_tool(
+        table=repairs_table,
         metric="count",
         keys="JobTicketReference",
         filter=fo_filter,
         group_by=group_by_field,
     )
 
-    # Normalize
     if isinstance(raw_total_fo, dict):
-        total_fo = _normalize_grouped_result(raw_total_fo, _extract_count)
+        total_fo = normalize_grouped_result(raw_total_fo)
     else:
-        total_fo = _extract_count(raw_total_fo)
+        total_fo = extract_count(raw_total_fo)
 
-    # For materials, we'd need to search FollowOnDescription - using filter for now
-    # Material-related keywords: "material", "part", "order", "stock"
-    materials_filter = _build_date_filter(
-        f"({FOLLOW_ON_FILTER}) and (FollowOnDescription != 'None')",
+    # Count materials-related follow-on jobs
+    materials_filter = build_filter(
+        [f"({FOLLOW_ON_FILTER}) and (FollowOnDescription != 'None')"],
         start_date,
         end_date,
     )
-    raw_materials_fo = _timed_tool(
-        metric_name,
-        "reduce",
-        reduce_tool,
-        label="materials follow-on",
-        table=REPAIRS_TABLE,
+    raw_materials_fo = reduce_tool(
+        table=repairs_table,
         metric="count",
         keys="JobTicketReference",
         filter=materials_filter,
         group_by=group_by_field,
     )
 
-    # Normalize
     if isinstance(raw_materials_fo, dict):
-        materials_fo = _normalize_grouped_result(raw_materials_fo, _extract_count)
+        materials_fo = normalize_grouped_result(raw_materials_fo)
     else:
-        materials_fo = _extract_count(raw_materials_fo)
+        materials_fo = extract_count(raw_materials_fo)
 
     if return_absolute:
         if isinstance(materials_fo, dict):
@@ -1227,7 +1146,7 @@ async def follow_on_materials_rate(
             for k in total_fo:
                 mat_count = materials_fo.get(k, 0)
                 tot_count = total_fo.get(k, 0)
-                pct = _compute_percentage(mat_count, tot_count)
+                pct = compute_percentage(mat_count, tot_count)
                 results.append(
                     {
                         "group": k,
@@ -1236,14 +1155,14 @@ async def follow_on_materials_rate(
                         "total_follow_on": tot_count,
                     },
                 )
-            total = _compute_percentage(
+            total = compute_percentage(
                 sum(materials_fo.values()),
                 sum(total_fo.values()),
             )
         else:
             mat_count = materials_fo if isinstance(materials_fo, int) else 0
             tot_count = total_fo if isinstance(total_fo, int) else 0
-            pct = _compute_percentage(mat_count, tot_count)
+            pct = compute_percentage(mat_count, tot_count)
             results = [
                 {
                     "group": "total",
@@ -1255,18 +1174,21 @@ async def follow_on_materials_rate(
             total = pct
 
     # Generate plots if requested
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=REPAIRS_TABLE,
-            filter_expr=materials_filter,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=repairs_table,
+                filter_expr=materials_filter,
+                include_plots=include_plots,
+            )
 
     return _build_metric_result(
         metric_name="follow_on_materials_rate",
@@ -1295,7 +1217,7 @@ async def follow_on_materials_rate(
 )
 async def job_completed_on_time_rate(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -1305,97 +1227,53 @@ async def job_completed_on_time_rate(
     """
     Get Job Completed On Time rate as percentage or absolute number.
 
-    SLA compliance metric comparing actual completion date vs target date.
-    Jobs are "on time" when WorksOrderReportedCompletedDate <= WorksOrderTargetDate.
+    SLA compliance: CompletedDate <= TargetDate.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
-        columns = primitives.files.list_columns(table=repairs_table)
-        # Required: WorksOrderReportedCompletedDate, WorksOrderTargetDate, JobTicketReference
+    Discovery Pattern
+    -----------------
+    repairs_table = discover_repairs_table(tools)
+    # Required: WorksOrderReportedCompletedDate, WorksOrderTargetDate, JobTicketReference
 
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="(`WorksOrderStatusDescription` in ['Complete', 'Closed']) and "
-                     "`WorksOrderReportedCompletedDate` != 'None' and "
-                     "`WorksOrderTargetDate` != 'None' and "
-                     "`WorksOrderReportedCompletedDate` <= `WorksOrderTargetDate`",
-              group_by="[column_name]")
-       → Returns on-time completion counts
-
-    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
-              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
-              group_by="[column_name]")
-       → Returns total completed for percentage calculation
-
-    3. Python: percentage = (on_time_count / total_count) * 100
-
-    Filter Expressions Used:
-    ------------------------
-    - On-time: CompletedDate <= TargetDate (both non-null)
-    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
-    - GroupBy.PATCH → "RepairsPatch"
-    - GroupBy.REGION → "RepairsRegion"
-
-    Parameters
+    Tool Chain
     ----------
-    tools : ToolsDict
-        Tools from FileManager (reduce, filter_files, visualize, etc.)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    return_absolute : bool
-        If True, return absolute count; if False, return percentage
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Rate or count of jobs completed on time with optional plots
+    1. reduce(..., filter="COMPLETED and CompletedDate <= TargetDate")
+    2. reduce(..., filter=COMPLETED_FILTER) for percentage
+    3. Python: percentage = (on_time / total) * 100
     """
-    # Compare WorksOrderReportedCompletedDate vs WorksOrderTargetDate
     metric_name = "job_completed_on_time_rate"
+
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    group_by_field = _resolve_group_by(group_by)
+    # Discovery with fallback
+    repairs_table = discover_repairs_table(tools) or REPAIRS_TABLE
+
+    # Resolve group_by
+    if isinstance(group_by, str):
+        group_by_field = resolve_group_by(group_by)
+    else:
+        group_by_field = GROUP_BY_FIELDS.get(group_by)
 
     # Jobs completed on time: CompletedDate <= TargetDate
-    on_time_filter = _build_date_filter(
-        f"({COMPLETED_FILTER}) and `WorksOrderReportedCompletedDate` != 'None' and `WorksOrderTargetDate` != 'None' and `WorksOrderReportedCompletedDate` <= `WorksOrderTargetDate`",
-        start_date,
-        end_date,
+    on_time_condition = (
+        f"({COMPLETED_FILTER}) and `WorksOrderReportedCompletedDate` != 'None' "
+        "and `WorksOrderTargetDate` != 'None' "
+        "and `WorksOrderReportedCompletedDate` <= `WorksOrderTargetDate`"
     )
-    raw_on_time = _timed_tool(
-        metric_name,
-        "reduce",
-        reduce_tool,
-        label="on-time count",
-        table=REPAIRS_TABLE,
+    on_time_filter = build_filter([on_time_condition], start_date, end_date)
+    raw_on_time = reduce_tool(
+        table=repairs_table,
         metric="count",
         keys="JobTicketReference",
         filter=on_time_filter,
         group_by=group_by_field,
     )
 
-    # Normalize
     if isinstance(raw_on_time, dict):
-        on_time_result = _normalize_grouped_result(raw_on_time, _extract_count)
+        on_time_result = normalize_grouped_result(raw_on_time)
     else:
-        on_time_result = _extract_count(raw_on_time)
+        on_time_result = extract_count(raw_on_time)
 
     if return_absolute:
         if isinstance(on_time_result, dict):
@@ -1405,32 +1283,27 @@ async def job_completed_on_time_rate(
             results = [{"group": "total", "count": on_time_result}]
             total = on_time_result
     else:
-        # Calculate percentage of all completed jobs
-        completed_filter = _build_date_filter(COMPLETED_FILTER, start_date, end_date)
-        raw_total = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label="total completed",
-            table=REPAIRS_TABLE,
+        # Calculate percentage
+        completed_filter = build_filter([COMPLETED_FILTER], start_date, end_date)
+        raw_total = reduce_tool(
+            table=repairs_table,
             metric="count",
             keys="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
 
-        # Normalize
         if isinstance(raw_total, dict):
-            total_result = _normalize_grouped_result(raw_total, _extract_count)
+            total_result = normalize_grouped_result(raw_total)
         else:
-            total_result = _extract_count(raw_total)
+            total_result = extract_count(raw_total)
 
         if isinstance(on_time_result, dict) and isinstance(total_result, dict):
             results = []
             for k in total_result:
                 ot_count = on_time_result.get(k, 0)
                 tot_count = total_result.get(k, 0)
-                pct = _compute_percentage(ot_count, tot_count)
+                pct = compute_percentage(ot_count, tot_count)
                 results.append(
                     {
                         "group": k,
@@ -1439,14 +1312,14 @@ async def job_completed_on_time_rate(
                         "total": tot_count,
                     },
                 )
-            total = _compute_percentage(
+            total = compute_percentage(
                 sum(on_time_result.values()),
                 sum(total_result.values()),
             )
         else:
             ot_count = on_time_result if isinstance(on_time_result, int) else 0
             tot_count = total_result if isinstance(total_result, int) else 0
-            pct = _compute_percentage(ot_count, tot_count)
+            pct = compute_percentage(ot_count, tot_count)
             results = [
                 {
                     "group": "total",
@@ -1458,18 +1331,21 @@ async def job_completed_on_time_rate(
             total = pct
 
     # Generate plots if requested
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=REPAIRS_TABLE,
-            filter_expr=on_time_filter,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=repairs_table,
+                filter_expr=on_time_filter,
+                include_plots=include_plots,
+            )
 
     return _build_metric_result(
         metric_name="job_completed_on_time_rate",
