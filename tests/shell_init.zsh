@@ -79,7 +79,24 @@ project_cleanup() {
 }
 
 orchestra() {
-    "$(_unity_resolve_script orchestra.sh)" "$@"
+    # Orchestra management is now handled by the orchestra repo's scripts/local.sh.
+    # Find the orchestra repo relative to the unity repo.
+    local git_root
+    git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+    local orchestra_repo="${ORCHESTRA_REPO_PATH:-${git_root:-$UNITY_TESTS_DIR/..}/../orchestra}"
+
+    if [[ -x "$orchestra_repo/scripts/local.sh" ]]; then
+        # Set Unity-specific defaults if not already set
+        export ORCHESTRA_PREFIX="${ORCHESTRA_PREFIX:-unity}"
+        export ORCHESTRA_SEED_USER="${ORCHESTRA_SEED_USER:-1}"
+        export ORCHESTRA_TEST_USER_ID="${ORCHESTRA_TEST_USER_ID:-unity-test-user-001}"
+        export ORCHESTRA_TEST_EMAIL="${ORCHESTRA_TEST_EMAIL:-unity-test@debug.local}"
+        "$orchestra_repo/scripts/local.sh" "$@"
+    else
+        echo "Error: Orchestra script not found at $orchestra_repo/scripts/local.sh" >&2
+        echo "  Set ORCHESTRA_REPO_PATH or clone orchestra repo to ../orchestra" >&2
+        return 1
+    fi
 }
 
 # ---- Completion: attach ----
