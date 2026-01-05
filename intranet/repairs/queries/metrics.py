@@ -1039,10 +1039,46 @@ async def follow_on_required_rate(
     """
     Get Follow On Required rate as percentage or absolute number.
 
+    Follow-on required measures repairs where additional work was needed after
+    the initial visit. High follow-on rates may indicate quality issues,
+    inadequate diagnosis, or parts availability problems.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: FollowOn, JobTicketReference, WorksOrderStatusDescription
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`FollowOn` == 'Yes'", group_by="[column_name]")
+       → Returns follow-on job counts per group
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="[column_name]")
+       → Returns total completed jobs for percentage calculation
+
+    3. Python: percentage = (follow_on_count / total_count) * 100
+
+    Filter Expressions Used:
+    ------------------------
+    - Follow-on required: `FollowOn` == 'Yes'
+    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+    - GroupBy.TOTAL → None
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, filter_files, visualize, etc.)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -1197,10 +1233,45 @@ async def follow_on_materials_rate(
     """
     Get Follow On Required specifically for Materials as percentage or absolute.
 
+    Measures follow-on jobs caused by material/parts issues. Used to identify
+    supply chain problems or van stock deficiencies. Uses FollowOnDescription
+    as a proxy since there's no dedicated materials flag.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: FollowOn, FollowOnDescription, JobTicketReference
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`FollowOn` == 'Yes' and `FollowOnDescription` != 'None'",
+              group_by="[column_name]")
+       → Returns materials-related follow-on counts
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`FollowOn` == 'Yes'", group_by="[column_name]")
+       → Returns total follow-on jobs for percentage calculation
+
+    3. Python: percentage = (materials_fo / total_fo) * 100
+
+    Filter Expressions Used:
+    ------------------------
+    - Follow-on with description: `FollowOn` == 'Yes' and `FollowOnDescription` != 'None'
+    - All follow-on: `FollowOn` == 'Yes'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, filter_files, visualize, etc.)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -1367,10 +1438,48 @@ async def job_completed_on_time_rate(
     """
     Get Job Completed On Time rate as percentage or absolute number.
 
+    SLA compliance metric comparing actual completion date vs target date.
+    Jobs are "on time" when WorksOrderReportedCompletedDate <= WorksOrderTargetDate.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: WorksOrderReportedCompletedDate, WorksOrderTargetDate, JobTicketReference
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="(`WorksOrderStatusDescription` in ['Complete', 'Closed']) and "
+                     "`WorksOrderReportedCompletedDate` != 'None' and "
+                     "`WorksOrderTargetDate` != 'None' and "
+                     "`WorksOrderReportedCompletedDate` <= `WorksOrderTargetDate`",
+              group_by="[column_name]")
+       → Returns on-time completion counts
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="[column_name]")
+       → Returns total completed for percentage calculation
+
+    3. Python: percentage = (on_time_count / total_count) * 100
+
+    Filter Expressions Used:
+    ------------------------
+    - On-time: CompletedDate <= TargetDate (both non-null)
+    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, filter_files, visualize, etc.)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -1529,10 +1638,49 @@ async def merchant_stops_per_day(
     """
     Get number of merchant stops per day.
 
+    Uses telematics data to count trips ending at known merchant locations
+    (Travis Perkins, Screwfix, Toolstation, etc.). Indicates parts procurement
+    patterns and potential inefficiencies.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        # Find telematics tables (one per month)
+        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
+        columns = primitives.files.list_columns(table=telematics_tables[0])
+        # Required: EndLocation, Driver, Trip
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. For each telematics table (July-November):
+       filter_files(filter="'Travis Perkins' in `EndLocation`",
+                    tables=[TELEMATICS_TABLE], limit=1000)
+       → Returns rows with merchant stops
+
+    2. Repeat for each merchant name:
+       - Travis Perkins, Screwfix, Toolstation, Plumb Center,
+       - City Plumbing, Jewson, Selco, Wickes
+
+    3. Python: Aggregate counts by Driver or other group dimension
+
+    Filter Expressions Used:
+    ------------------------
+    - Merchant stop: "'MerchantName' in `EndLocation`"
+    - Combined: Multiple filter calls, aggregate in Python
+
+    Tables Used (Telematics):
+    -------------------------
+    - TELEMATICS_FILE.Tables.July_2025 through November_2025
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "Driver" (telematics column)
+    - GroupBy.TOTAL → None
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (filter_files, reduce, visualize)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -1646,10 +1794,42 @@ async def avg_duration_at_merchant(
     """
     Get average duration at a merchant per day.
 
+    Calculates time spent at merchant locations from telematics data.
+    Requires parsing arrival/departure timestamps for dwell time calculation.
+    NOTE: Currently returns placeholder - needs advanced timestamp parsing.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
+        columns = primitives.files.list_columns(table=telematics_tables[0])
+        # Required: EndLocation, Arrival time, Departure time, Driver
+
+    Tool Chain (conceptual - requires timestamp handling):
+    -----------------------------------------------------
+    1. filter_files(filter="'MerchantName' in `EndLocation`",
+                    tables=[TELEMATICS_TABLE])
+       → Returns rows at merchant locations
+
+    2. Python: Parse Arrival/Departure timestamps
+       duration_minutes = (departure - arrival).total_seconds() / 60
+
+    3. reduce(table=..., metric="mean", keys="dwell_time", group_by="Driver")
+       → Would need computed column for dwell time
+
+    Merchant Names Searched:
+    ------------------------
+    Travis Perkins, Screwfix, Toolstation, Plumb Center,
+    City Plumbing, Jewson, Selco, Wickes
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "Driver"
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (filter_files, reduce, visualize)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -1728,10 +1908,46 @@ async def distance_travelled_per_day(
     """
     Get distance travelled per day.
 
+    Aggregates business miles from telematics data across all monthly tables.
+    Uses "Business distance" column to sum total distance per driver/group.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
+        columns = primitives.files.list_columns(table=telematics_tables[0])
+        # Required: Business distance, Driver
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. For each telematics table (July-November):
+       reduce(table=TELEMATICS_TABLE, metric="sum",
+              keys="Business distance", group_by="Driver")
+       → Returns {"Driver1": {"sum": 1500}, "Driver2": {"sum": 1200}, ...}
+
+    2. Python: Aggregate results across all monthly tables
+
+    3. visualize(tables=TELEMATICS_TABLES, plot_type="bar",
+                 x_axis="Driver", y_axis="Total distance",
+                 aggregate="sum") if include_plots=True
+
+    Filter Expressions Used:
+    ------------------------
+    - Base filter: None (all trips)
+    - With date range: would need to parse trip dates
+
+    Tables Used (Telematics):
+    -------------------------
+    - TELEMATICS_FILE.Tables.July_2025 through November_2025
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "Driver"
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, visualize)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -1840,12 +2056,48 @@ async def avg_time_travelling(
     """
     Get average time spent travelling per day.
 
-    Note: This metric may depend on telematics data availability.
+    Uses telematics data "Trip travel time" field. Note: the field is in
+    HH:MM:SS string format, so returns trip counts as proxy (actual time
+    parsing requires custom Python logic).
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
+        columns = primitives.files.list_columns(table=telematics_tables[0])
+        # Required: Trip travel time, Driver
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. For each telematics table:
+       reduce(table=TELEMATICS_TABLE, metric="count",
+              keys="Trip travel time",
+              filter="`Trip travel time` != 'None'",
+              group_by="Driver")
+       → Returns trip counts per driver (proxy for travel time)
+
+    2. For actual time calculation:
+       filter_files(filter="`Trip travel time` != 'None'",
+                    tables=[TELEMATICS_TABLE])
+       → Returns rows with travel time strings
+       Python: Parse "HH:MM:SS" strings and calculate averages
+
+    Filter Expressions Used:
+    ------------------------
+    - Valid travel time: `Trip travel time` != 'None'
+
+    Tables Used (Telematics):
+    -------------------------
+    - TELEMATICS_FILE.Tables.July_2025 through November_2025
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "Driver"
 
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, filter_files, visualize)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -1950,13 +2202,43 @@ async def repairs_completed_per_day(
     """
     Get total repairs completed per day.
 
-    Unlike jobs_completed_per_day which is per-operative, this gives
-    aggregate totals across all patches.
+    Unlike jobs_completed_per_day which defaults to per-operative, this gives
+    aggregate totals across all patches (default group_by=TOTAL).
+    Service throughput metric for overall capacity monitoring.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: JobTicketReference, WorksOrderStatusDescription, WorksOrderReportedCompletedDate
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="WorksOrderReportedCompletedDate")
+       → Returns daily counts: {"2025-07-01": {"count": 45}, "2025-07-02": {"count": 52}, ...}
+
+    2. visualize(tables=REPAIRS_TABLE, plot_type="line",
+                 x_axis="WorksOrderReportedCompletedDate",
+                 y_axis="JobTicketReference", aggregate="count") if include_plots=True
+
+    Filter Expressions Used:
+    ------------------------
+    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+    - With date range: ... and `WorksOrderReportedCompletedDate` >= '2025-07-01'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.TOTAL → None (aggregate all)
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
 
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, visualize)
     group_by : GroupBy
         Dimension to group results by (default: TOTAL for all patches)
     start_date : str, optional
@@ -2050,12 +2332,43 @@ async def jobs_issued_per_day(
     """
     Get jobs issued per day.
 
-    Note: Need to identify how orders/jobs work (multiple jobs per order?).
+    Incoming demand metric counting jobs with "Issued" status by date.
+    Helps analyze workload patterns and capacity planning.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: JobTicketReference, WorksOrderStatusDescription, WorksOrderIssuedDate
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` == 'Issued'",
+              group_by="WorksOrderIssuedDate")
+       → Returns daily issue counts
+
+    2. visualize(tables=REPAIRS_TABLE, plot_type="line",
+                 x_axis="WorksOrderIssuedDate",
+                 y_axis="JobTicketReference", aggregate="count") if include_plots=True
+
+    Filter Expressions Used:
+    ------------------------
+    - Issued jobs: `WorksOrderStatusDescription` == 'Issued'
+    - With date range: ... and `WorksOrderIssuedDate` >= '2025-07-01'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.TOTAL → None
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+    - GroupBy.OPERATIVE → "OperativeName" (assigned operative)
 
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, visualize)
     group_by : GroupBy
         Dimension to group results by (default: TOTAL for all patches)
     start_date : str, optional
@@ -2157,10 +2470,46 @@ async def jobs_requiring_materials_rate(
     """
     Get percentage of completed jobs that required materials.
 
+    Uses FollowOnDescription as proxy since there's no dedicated
+    "materials required" column. Indicates parts/supply patterns.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: FollowOnDescription, JobTicketReference, WorksOrderStatusDescription
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="(`WorksOrderStatusDescription` in ['Complete', 'Closed']) and "
+                     "`FollowOnDescription` != 'None' and `FollowOnDescription` != ''",
+              group_by="[column_name]")
+       → Returns jobs with materials-related descriptions
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="[column_name]")
+       → Returns total completed for percentage calculation
+
+    3. Python: percentage = (materials_count / total_count) * 100
+
+    Filter Expressions Used:
+    ------------------------
+    - Materials proxy: FollowOnDescription != 'None' and != ''
+    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, visualize)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -2322,12 +2671,45 @@ async def avg_repairs_per_property(
     """
     Get average number of repairs per property.
 
-    This helps identify properties with multiple repairs (potential issues).
+    Identifies properties with multiple repairs (potential issues or
+    problematic buildings). Groups by PropertyReference to count repeat repairs.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: PropertyReference, JobTicketReference, WorksOrderStatusDescription
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="PropertyReference")
+       → Returns: {"PROP001": {"count": 3}, "PROP002": {"count": 1}, ...}
+
+    2. Python: Calculate average repairs per property
+       total_repairs = sum(counts)
+       unique_properties = len(counts)
+       avg = total_repairs / unique_properties
+
+    3. Identify properties with > 2 repairs as "high repeat" properties
+
+    Filter Expressions Used:
+    ------------------------
+    - Completed jobs: `WorksOrderStatusDescription` in ['Complete', 'Closed']
+    - With date range: ... and `WorksOrderReportedCompletedDate` >= '2025-07-01'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob" (within property context)
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
 
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, visualize)
     group_by : GroupBy
         Dimension to group results by (per operative)
     time_period : TimePeriod
@@ -2454,10 +2836,44 @@ async def complaints_rate(
     """
     Get complaints as percentage of total jobs completed.
 
+    NOTE: Complaints data is not currently available in the repairs dataset.
+    Returns placeholder result. Would require a separate complaints table
+    or a Complaint column in repairs data.
+
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Check for: Complaint column (not present in current dataset)
+
+    Tool Chain (if complaints data available):
+    ------------------------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`Complaint` == 'Yes'", group_by="[column_name]")
+       → Returns complaint counts per group
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+              group_by="[column_name]")
+       → Returns total for percentage
+
+    3. Python: percentage = (complaints / total) * 100
+
+    Current Status:
+    ---------------
+    Returns placeholder - complaints column not available in current dataset
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
+
     Parameters
     ----------
     tools : ToolsDict
-        Tools from FileManager
+        Tools from FileManager (reduce, visualize)
     group_by : GroupBy
         Dimension to group results by
     start_date : str, optional
@@ -2545,13 +2961,41 @@ async def appointment_adherence_rate(
         - Target: 95%+ on-time arrival
         - High adherence indicates reliable scheduling and respects tenants' time
         - Low adherence causes tenant frustration and can lead to no-access incidents
-        - "Even if the job is ultimately completed on time, being late to an agreed
-          appointment can frustrate tenants"
 
-    Calculation Logic:
-        - Compares ArrivedOnSite timestamp against ScheduledAppointmentStart/End window
-        - A visit is "on-time" if arrival occurred between start and end of window
-        - Visits where no arrival time is recorded are excluded from calculation
+    FOR CODEACT COMPOSITION - Discovery Pattern:
+    --------------------------------------------
+        tables = primitives.files.tables_overview()
+        repairs_table = next(t["path"] for t in tables if "Repairs" in t.get("name", ""))
+        columns = primitives.files.list_columns(table=repairs_table)
+        # Required: ArrivedOnSite, ScheduledAppointmentStart, ScheduledAppointmentEnd
+
+    Tool Chain (exact arguments):
+    -----------------------------
+    1. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`ArrivedOnSite` != 'None' and `ScheduledAppointmentStart` != 'None' and "
+                     "`ArrivedOnSite` >= `ScheduledAppointmentStart` and "
+                     "`ArrivedOnSite` <= `ScheduledAppointmentEnd`",
+              group_by="[column_name]")
+       → Returns on-time arrivals per group
+
+    2. reduce(table=REPAIRS_TABLE, metric="count", keys="JobTicketReference",
+              filter="`ArrivedOnSite` != 'None' and `ScheduledAppointmentStart` != 'None'",
+              group_by="[column_name]")
+       → Returns total scheduled appointments with arrival times
+
+    3. Python: adherence_rate = (on_time / total_scheduled) * 100
+
+    Filter Expressions Used:
+    ------------------------
+    - On-time arrival: ArrivedOnSite between ScheduledAppointmentStart and End
+    - Scheduled appointments: ScheduledAppointmentStart != 'None'
+    - With recorded arrival: ArrivedOnSite != 'None'
+
+    Column Mappings for group_by:
+    -----------------------------
+    - GroupBy.OPERATIVE → "OperativeWhoCompletedJob"
+    - GroupBy.PATCH → "RepairsPatch"
+    - GroupBy.REGION → "RepairsRegion"
 
     Parameters
     ----------
