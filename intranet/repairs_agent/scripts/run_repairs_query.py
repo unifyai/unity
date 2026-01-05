@@ -252,8 +252,8 @@ See README.md for comprehensive usage documentation.
     parser.add_argument(
         "--project",
         type=str,
-        default="RepairsAgent",
-        help="Project context to activate (default: RepairsAgent)",
+        default="RepairsAgent5M",
+        help="Project context to activate (default: RepairsAgent5M)",
     )
     parser.add_argument(
         "--log-dir",

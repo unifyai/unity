@@ -1320,6 +1320,7 @@ All metrics support grouping by:
 ### Phase 3: FunctionManager Integration (Post-Demo)
 - [x] Create `sync.py` script ✓
 - [x] Implement sync logic with proper dependency tracking ✓
+- [x] Add proper script initialization (activate_project) to sync.py ✓
 - [ ] Test that functions appear in FunctionManager search
 - [ ] Verify implementations returned with full source code
 
