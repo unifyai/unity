@@ -45,10 +45,22 @@ from .plot_utils import generate_plots
 
 # Import helpers for standardized operations
 from intranet.repairs_agent.metrics.helpers import (
+    ALL_TELEMATICS_TABLES,
+    COMPLETED_FILTER,
+    FIRST_TIME_FIX_FILTER,
+    FOLLOW_ON_FILTER,
+    GROUP_BY_FIELDS,
+    ISSUED_FILTER,
+    MERCHANT_NAMES,
+    NO_ACCESS_FILTER,
+    REPAIRS_TABLE,
+    TELEMATICS_GROUP_BY_FIELDS,
     build_filter,
     compute_percentage,
     discover_repairs_table,
+    discover_telematics_tables,
     extract_count,
+    extract_sum,
     normalize_grouped_result,
     resolve_group_by,
 )
@@ -1371,7 +1383,7 @@ async def job_completed_on_time_rate(
 )
 async def merchant_stops_per_day(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -1380,88 +1392,34 @@ async def merchant_stops_per_day(
     """
     Get number of merchant stops per day.
 
-    Uses telematics data to count trips ending at known merchant locations
-    (Travis Perkins, Screwfix, Toolstation, etc.). Indicates parts procurement
-    patterns and potential inefficiencies.
+    Uses telematics data to count trips ending at merchant locations.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        # Find telematics tables (one per month)
-        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
-        columns = primitives.files.list_columns(table=telematics_tables[0])
-        # Required: EndLocation, Driver, Trip
+    Discovery Pattern
+    -----------------
+    telematics_tables = discover_telematics_tables(tools)
+    # Required: EndLocation, Vehicle
 
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. For each telematics table (July-November):
-       filter_files(filter="'Travis Perkins' in `EndLocation`",
-                    tables=[TELEMATICS_TABLE], limit=1000)
-       → Returns rows with merchant stops
-
-    2. Repeat for each merchant name:
-       - Travis Perkins, Screwfix, Toolstation, Plumb Center,
-       - City Plumbing, Jewson, Selco, Wickes
-
-    3. Python: Aggregate counts by Driver or other group dimension
-
-    Filter Expressions Used:
-    ------------------------
-    - Merchant stop: "'MerchantName' in `EndLocation`"
-    - Combined: Multiple filter calls, aggregate in Python
-
-    Tables Used (Telematics):
-    -------------------------
-    - TELEMATICS_FILE.Tables.July_2025 through November_2025
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "Driver" (telematics column)
-    - GroupBy.TOTAL → None
-
-    Parameters
+    Tool Chain
     ----------
-    tools : ToolsDict
-        Tools from FileManager (filter_files, reduce, visualize)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Count of merchant stops grouped by dimension with optional plots
+    1. filter_files(..., filter="'MerchantName' in `EndLocation`")
+    2. Python: Aggregate counts by Vehicle
     """
-    # Search telematics EndLocation for known merchant names
     metric_name = "merchant_stops_per_day"
-    filter_files_tool = tools["filter_files"]
 
-    # Build filter to match merchant locations
-    merchant_filter_parts = [
-        f"`EndLocation`.contains('{m}', case=False)" for m in MERCHANT_NAMES
-    ]
-    # Simplified: count rows where EndLocation mentions any merchant
-    # Note: This is approximate as filter syntax may not support complex string matching
+    filter_files_tool = tools.get("filter_files")
+    if not filter_files_tool:
+        raise ValueError("Required 'filter_files' tool not available")
+
+    # Discovery with fallback
+    telematics_tables = discover_telematics_tables(tools) or ALL_TELEMATICS_TABLES
 
     total_stops = 0
     results_by_group: Dict[str, int] = {}
 
-    for table in ALL_TELEMATICS_TABLES:
+    for table in telematics_tables:
         for merchant in MERCHANT_NAMES:
             try:
-                # Try to filter by each merchant name
-                rows = _timed_tool(
-                    metric_name,
-                    "filter_files",
-                    filter_files_tool,
-                    label=f"{merchant}@{table.split('.')[-1]}",
+                rows = filter_files_tool(
                     filter=f"'{merchant}' in `EndLocation`",
                     tables=[table],
                     limit=1000,
@@ -1472,7 +1430,6 @@ async def merchant_stops_per_day(
                         vehicle = row.get("Vehicle", "Unknown")
                         results_by_group[vehicle] = results_by_group.get(vehicle, 0) + 1
             except Exception:
-                # Filter syntax may not support this; continue
                 pass
 
     if results_by_group:
@@ -1486,21 +1443,24 @@ async def merchant_stops_per_day(
             },
         ]
 
-    # Generate plots if requested - for each month's telematics table
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
+    # Generate plots if requested
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=ALL_TELEMATICS_TABLES,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=telematics_tables,
+                include_plots=include_plots,
+            )
 
     return _build_metric_result(
-        metric_name="merchant_stops_per_day",
+        metric_name=metric_name,
         group_by=group_by,
         time_period=time_period,
         start_date=start_date,
@@ -1639,7 +1599,7 @@ async def avg_duration_at_merchant(
 )
 async def distance_travelled_per_day(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -1648,83 +1608,40 @@ async def distance_travelled_per_day(
     """
     Get distance travelled per day.
 
-    Aggregates business miles from telematics data across all monthly tables.
-    Uses "Business distance" column to sum total distance per driver/group.
+    Aggregates business miles from telematics data.
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
-        columns = primitives.files.list_columns(table=telematics_tables[0])
-        # Required: Business distance, Driver
+    Discovery Pattern
+    -----------------
+    telematics_tables = discover_telematics_tables(tools)
+    # Required: Business distance, Vehicle
 
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. For each telematics table (July-November):
-       reduce(table=TELEMATICS_TABLE, metric="sum",
-              keys="Business distance", group_by="Driver")
-       → Returns {"Driver1": {"sum": 1500}, "Driver2": {"sum": 1200}, ...}
-
-    2. Python: Aggregate results across all monthly tables
-
-    3. visualize(tables=TELEMATICS_TABLES, plot_type="bar",
-                 x_axis="Driver", y_axis="Total distance",
-                 aggregate="sum") if include_plots=True
-
-    Filter Expressions Used:
-    ------------------------
-    - Base filter: None (all trips)
-    - With date range: would need to parse trip dates
-
-    Tables Used (Telematics):
-    -------------------------
-    - TELEMATICS_FILE.Tables.July_2025 through November_2025
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "Driver"
-
-    Parameters
+    Tool Chain
     ----------
-    tools : ToolsDict
-        Tools from FileManager (reduce, visualize)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Distance travelled (in miles/km) grouped by dimension with optional plots
+    1. reduce(table=telematics_table, metric="sum", keys="Business distance", group_by="Vehicle")
+    2. Python: Aggregate across monthly tables
     """
     metric_name = "distance_travelled_per_day"
+
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    # For telematics, group by Vehicle which contains operative name
-    group_by_field = _resolve_telematics_group_by(group_by)
+    # Discovery with fallback
+    telematics_tables = discover_telematics_tables(tools) or ALL_TELEMATICS_TABLES
 
-    # Filter for valid business distance values
+    # For telematics, group by Vehicle
+    group_by_field = TELEMATICS_GROUP_BY_FIELDS.get(
+        group_by if isinstance(group_by, GroupBy) else GroupBy(group_by),
+    )
+
     base_filter = "`Business distance` != 'None'"
 
-    # Aggregate across all telematics tables (monthly)
+    # Aggregate across all telematics tables
     total_distance: Dict[str, float] = {}
     grand_total = 0.0
 
-    for table in ALL_TELEMATICS_TABLES:
-        raw_result = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label=f"distance sum ({table.split('.')[-1]})",
+    for table in telematics_tables:
+        raw_result = reduce_tool(
             table=table,
             metric="sum",
             keys="Business distance",
@@ -1733,11 +1650,11 @@ async def distance_travelled_per_day(
         )
 
         if isinstance(raw_result, dict):
-            result = _normalize_grouped_result(raw_result, _extract_sum)
+            result = normalize_grouped_result(raw_result, extract_sum)
             for k, v in result.items():
                 total_distance[k] = total_distance.get(k, 0.0) + v
         else:
-            grand_total += _extract_sum(raw_result)
+            grand_total += extract_sum(raw_result)
 
     if total_distance:
         results = [
@@ -1748,19 +1665,22 @@ async def distance_travelled_per_day(
     else:
         results = [{"group": "total", "distance_miles": round(grand_total, 2)}]
 
-    # Generate plots if requested - for each month's telematics table
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
+    # Generate plots if requested
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=ALL_TELEMATICS_TABLES,
-            filter_expr=base_filter,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=telematics_tables,
+                filter_expr=base_filter,
+                include_plots=include_plots,
+            )
 
     return _build_metric_result(
         metric_name=metric_name,
@@ -1786,7 +1706,7 @@ async def distance_travelled_per_day(
 )
 async def avg_time_travelling(
     tools: ToolsDict,
-    group_by: GroupBy = GroupBy.OPERATIVE,
+    group_by: GroupBy | str = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     time_period: TimePeriod = TimePeriod.DAY,
@@ -1795,82 +1715,37 @@ async def avg_time_travelling(
     """
     Get average time spent travelling per day.
 
-    Uses telematics data "Trip travel time" field. Note: the field is in
-    HH:MM:SS string format, so returns trip counts as proxy (actual time
-    parsing requires custom Python logic).
+    Returns trip counts as proxy (HH:MM:SS parsing not implemented).
 
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
-        columns = primitives.files.list_columns(table=telematics_tables[0])
-        # Required: Trip travel time, Driver
+    Discovery Pattern
+    -----------------
+    telematics_tables = discover_telematics_tables(tools)
+    # Required: Trip travel time, Vehicle
 
-    Tool Chain (exact arguments):
-    -----------------------------
-    1. For each telematics table:
-       reduce(table=TELEMATICS_TABLE, metric="count",
-              keys="Trip travel time",
-              filter="`Trip travel time` != 'None'",
-              group_by="Driver")
-       → Returns trip counts per driver (proxy for travel time)
-
-    2. For actual time calculation:
-       filter_files(filter="`Trip travel time` != 'None'",
-                    tables=[TELEMATICS_TABLE])
-       → Returns rows with travel time strings
-       Python: Parse "HH:MM:SS" strings and calculate averages
-
-    Filter Expressions Used:
-    ------------------------
-    - Valid travel time: `Trip travel time` != 'None'
-
-    Tables Used (Telematics):
-    -------------------------
-    - TELEMATICS_FILE.Tables.July_2025 through November_2025
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "Driver"
-
-    Parameters
+    Tool Chain
     ----------
-    tools : ToolsDict
-        Tools from FileManager (reduce, filter_files, visualize)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Average travel time (in minutes) grouped by dimension with optional plots
+    1. reduce(..., metric="count", keys="Trip travel time", filter="!= 'None'")
+    2. Python: Aggregate across monthly tables
     """
-    # Telematics has "Trip travel time" in HH:MM:SS format
-    # Summing string times requires parsing; return event count as proxy
     metric_name = "avg_time_travelling"
+
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
         raise ValueError("Required 'reduce' tool not available")
 
-    group_by_field = _resolve_telematics_group_by(group_by)
+    # Discovery with fallback
+    telematics_tables = discover_telematics_tables(tools) or ALL_TELEMATICS_TABLES
+
+    # For telematics, group by Vehicle
+    group_by_field = TELEMATICS_GROUP_BY_FIELDS.get(
+        group_by if isinstance(group_by, GroupBy) else GroupBy(group_by),
+    )
 
     total_trips: Dict[str, int] = {}
     grand_total = 0
 
-    for table in ALL_TELEMATICS_TABLES:
-        raw_result = _timed_tool(
-            metric_name,
-            "reduce",
-            reduce_tool,
-            label=f"trip count ({table.split('.')[-1]})",
+    for table in telematics_tables:
+        raw_result = reduce_tool(
             table=table,
             metric="count",
             keys="Trip travel time",
@@ -1879,11 +1754,11 @@ async def avg_time_travelling(
         )
 
         if isinstance(raw_result, dict):
-            result = _normalize_grouped_result(raw_result, _extract_count)
+            result = normalize_grouped_result(raw_result)
             for k, v in result.items():
                 total_trips[k] = total_trips.get(k, 0) + v
         else:
-            grand_total += _extract_count(raw_result)
+            grand_total += extract_count(raw_result)
 
     if total_trips:
         results = [{"group": k, "trip_count": v} for k, v in total_trips.items()]
@@ -1891,18 +1766,21 @@ async def avg_time_travelling(
     else:
         results = [{"group": "total", "trip_count": grand_total}]
 
-    # Generate plots if requested - for each month's telematics table
-    group_by_enum = group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
-    visualize_tool = tools.get("visualize")
+    # Generate plots if requested
     plots: List[PlotResult] = []
-    if visualize_tool and include_plots:
-        plots = generate_plots(
-            visualize_tool=visualize_tool,
-            metric_name=metric_name,
-            group_by=group_by_enum,
-            tables=ALL_TELEMATICS_TABLES,
-            include_plots=include_plots,
-        )
+    if include_plots:
+        visualize_tool = tools.get("visualize")
+        if visualize_tool:
+            group_by_enum = (
+                group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
+            )
+            plots = generate_plots(
+                visualize_tool=visualize_tool,
+                metric_name=metric_name,
+                group_by=group_by_enum,
+                tables=telematics_tables,
+                include_plots=include_plots,
+            )
 
     return _build_metric_result(
         metric_name=metric_name,
