@@ -1302,10 +1302,12 @@ All metrics support grouping by:
 ### Phase 2: Restructure and Refactor (Post-Demo)
 - [x] Create `intranet/repairs_agent/` package structure ✓
 - [x] Migrate `static/agent.py` and `static/registry.py` (BespokeRepairsAgent) ✓
-- [ ] Move types from `intranet/repairs/queries/_types.py`
-- [ ] Move constants from `intranet/repairs/queries/metrics.py`
-- [ ] Refactor metrics to use `files: FileManager` parameter
-- [ ] Extract helpers to separate module
+- [x] Move types from `intranet/repairs/queries/_types.py` → `metrics/types.py` ✓
+- [x] Move plots from `intranet/repairs/queries/_plots.py` → `metrics/plots.py` ✓
+- [x] Migrate all scripts from `intranet/scripts/repairs/` → `scripts/` ✓
+- [ ] Move constants from `intranet/repairs/queries/metrics.py` (deferred - large file)
+- [ ] Refactor metrics to use `files: FileManager` parameter (Phase 4)
+- [ ] Extract helpers to separate module (Phase 4)
 - [ ] Update imports and ensure static demo works
 
 ### Phase 3: FunctionManager Integration (Post-Demo)
@@ -1355,34 +1357,34 @@ All metrics support grouping by:
 ### A. Migration Checklist
 
 #### From `intranet/repairs/queries/`:
-- [ ] `_types.py` → `metrics/types.py`
-- [ ] `metrics.py` → `metrics/definitions.py` + `metrics/constants.py`
-- [ ] `_plots.py` → `metrics/plots.py`
-- [ ] `plot_utils.py` → `metrics/plot_utils.py`
+- [x] `_types.py` → `metrics/types.py` ✓
+- [ ] `metrics.py` → `metrics/definitions.py` + `metrics/constants.py` (LARGE FILE - deferred)
+- [x] `_plots.py` → `metrics/plots.py` ✓
+- [ ] `plot_utils.py` → `metrics/plot_utils.py` (deferred - uses existing unity utilities)
 
 #### From `intranet/core/`:
-- [ ] `bespoke_repairs_agent.py` → `static/agent.py` + `static/registry.py`
+- [x] `bespoke_repairs_agent.py` → `static/agent.py` + `static/registry.py` ✓
 
 #### From `intranet/scripts/repairs/` (full directory migration):
 
 **Python Scripts:**
-- [ ] `run_repairs_query.py` → `scripts/run_repairs_query.py`
-- [ ] `query_logger.py` → `scripts/query_logger.py`
-- [ ] `repairs_query_logger.py` → `scripts/repairs_query_logger.py`
-- [ ] `_query_generator.py` → `scripts/_query_generator.py`
+- [x] `run_repairs_query.py` → `scripts/run_repairs_query.py` ✓
+- [x] `query_logger.py` → `scripts/query_logger.py` ✓
+- [x] `repairs_query_logger.py` → `scripts/repairs_query_logger.py` ✓
+- [x] `_query_generator.py` → `scripts/_query_generator.py` ✓
 
 **Shell Scripts - Query Execution:**
-- [ ] `parallel_queries.sh` → `scripts/parallel_queries.sh`
-- [ ] `list_queries.sh` → `scripts/list_queries.sh`
-- [ ] `watch_queries.sh` → `scripts/watch_queries.sh`
+- [x] `parallel_queries.sh` → `scripts/parallel_queries.sh` ✓
+- [x] `list_queries.sh` → `scripts/list_queries.sh` ✓
+- [x] `watch_queries.sh` → `scripts/watch_queries.sh` ✓
 
 **Shell Scripts - Session Management:**
-- [ ] `kill_failed_queries.sh` → `scripts/kill_failed_queries.sh`
-- [ ] `kill_server_queries.sh` → `scripts/kill_server_queries.sh`
-- [ ] `_repairs_common.sh` → `scripts/_repairs_common.sh`
+- [x] `kill_failed_queries.sh` → `scripts/kill_failed_queries.sh` ✓
+- [x] `kill_server_queries.sh` → `scripts/kill_server_queries.sh` ✓
+- [x] `_repairs_common.sh` → `scripts/_repairs_common.sh` ✓
 
 **Documentation:**
-- [ ] `README.md` → `scripts/README.md` (update paths)
+- [x] `README.md` → `scripts/README.md` (paths updated) ✓
 
 #### Post-Migration Tasks:
 - [ ] Update all import paths in Python scripts (e.g., `from intranet.repairs_agent.metrics...`)
