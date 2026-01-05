@@ -1226,7 +1226,7 @@ The `scripts/` directory consolidates all execution and management scripts from 
 | `kill_server_queries.sh` | Kill all query-related tmux sessions |
 | `_repairs_common.sh` | Shared shell functions (sourced by other scripts) |
 | `run_dynamic.sh` | Launch the dynamic CodeActActor agent (NEW) |
-| `sync_functions.sh` | Sync metric functions to FunctionManager (NEW) |
+| `sync_functions.sh` | Sync metric functions to FunctionManager ✓ |
 
 **Usage examples after migration:**
 
@@ -1318,8 +1318,8 @@ All metrics support grouping by:
 - [ ] Update imports and ensure static demo works
 
 ### Phase 3: FunctionManager Integration (Post-Demo)
-- [ ] Create `sync.py` script
-- [ ] Implement sync logic with proper dependency tracking
+- [x] Create `sync.py` script ✓
+- [x] Implement sync logic with proper dependency tracking ✓
 - [ ] Test that functions appear in FunctionManager search
 - [ ] Verify implementations returned with full source code
 
