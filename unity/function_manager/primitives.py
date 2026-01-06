@@ -730,11 +730,31 @@ class _AsyncFileManagerWrapper:
     underlying implementations are sync vs async.
 
     The wrapper delegates to the underlying FileManager but wraps each method
-    in an async function that simply returns the sync result.
+    in an async function that simply returns the sync result. Docstrings are
+    copied from the underlying FileManager methods for discoverability.
     """
+
+    # Methods whose docstrings should be copied from the underlying FileManager
+    _PROXIED_METHODS = (
+        "tables_overview",
+        "list_columns",
+        "schema_explain",
+        "reduce",
+        "filter_files",
+        "search_files",
+        "visualize",
+    )
 
     def __init__(self, file_manager: "FileManager"):
         self._fm = file_manager
+        # Copy docstrings from underlying FileManager methods
+        # Note: We only copy __doc__, NOT using update_wrapper which sets __wrapped__
+        # because __wrapped__ breaks inspect.signature() for async wrapper methods
+        for method_name in self._PROXIED_METHODS:
+            wrapper = getattr(self, method_name, None)
+            original = getattr(self._fm, method_name, None)
+            if wrapper and original and original.__doc__:
+                wrapper.__func__.__doc__ = original.__doc__
 
     async def tables_overview(
         self,
