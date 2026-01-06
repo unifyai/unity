@@ -3400,13 +3400,48 @@ async def async_tool_loop_inner(
                 continue  # finished scheduling tools, back to the very top
 
             # ── F.  No new tool calls  ──────────────────────────────────────
-            # NOTE: Two scenarios reach this block:
-            #   • `pending` **non-empty** → older tool tasks are still in
-            #     flight; loop back to wait for them.
-            #   • `pending` empty        → the model just produced a plain
+            # NOTE: Three scenarios reach this block:
+            #   • `pending` **non-empty** and NOT all blocked on clarification
+            #     → older tool tasks are still in flight; loop back to wait.
+            #   • `pending` **non-empty** but ALL blocked on clarification
+            #     → the LLM decided to end without answering; cancel blocked
+            #     tasks so we can exit gracefully instead of deadlocking.
+            #   • `pending` empty → the model just produced a plain
             #     assistant message; nothing more to do – return it.
-            if tools_data.pending:  # still running
-                continue  # wait for completions, then prompt LLM
+            if tools_data.pending:
+                # Check if ALL pending tasks are blocked waiting for clarification.
+                # If the LLM returned content (no tool calls) while tasks are waiting
+                # for clarification, the LLM has decided to end the conversation
+                # without answering. Cancel those blocked tasks to avoid deadlock.
+                blocked_on_clar = [
+                    t
+                    for t in tools_data.pending
+                    if getattr(
+                        tools_data.info.get(t),
+                        "waiting_for_clarification",
+                        False,
+                    )
+                ]
+                not_blocked = [
+                    t for t in tools_data.pending if t not in blocked_on_clar
+                ]
+
+                if blocked_on_clar and not not_blocked:
+                    # ALL pending tasks are blocked on clarification - cancel them
+                    logger.info(
+                        f"LLM returned content while {len(blocked_on_clar)} task(s) "
+                        f"await clarification. Cancelling blocked tasks to exit.",
+                        prefix="🔚",
+                    )
+                    for t in blocked_on_clar:
+                        t.cancel()
+                    await asyncio.gather(*blocked_on_clar, return_exceptions=True)
+                    for t in blocked_on_clar:
+                        tools_data.pending.discard(t)
+                    # Fall through to return the final answer
+                else:
+                    # Some tasks are still actively running - wait for them
+                    continue
 
             # If a patient interjection arrived during the last LLM step, or if there
             # are unprocessed interjections queued, process them before returning.
