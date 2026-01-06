@@ -2520,11 +2520,6 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     # Clears all contexts in the EventBus
     EVENT_BUS.clear()
 
-    # Set Trace Context
-    import unify as _unify
-
-    _unify.set_trace_context("Traces")
-
 
 # ===========================================================================
 #  Simulation planning (sandbox-only; does not touch TaskScheduler)
