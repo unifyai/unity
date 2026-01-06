@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Set
 
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
-from unity.function_manager.primitives import PRIMITIVE_SOURCES, Primitives
+from unity.function_manager.primitives import (
+    MANAGER_METADATA,
+    PRIMITIVE_SOURCES,
+    Primitives,
+)
 
 
 class StateManagerEnvironment(BaseEnvironment):
@@ -11,10 +15,24 @@ class StateManagerEnvironment(BaseEnvironment):
 
     Exposes state manager methods like `primitives.contacts.ask(...)` for use inside
     generated plan code.
+
+    Parameters
+    ----------
+    primitives : Primitives
+        The primitives instance to wrap.
+    exposed_managers : set[str] | None
+        If provided, only these managers will be exposed in tools and prompt context.
+        Example: {"files"} to only expose primitives.files.*
+        If None (default), all managers are exposed.
     """
 
-    def __init__(self, primitives: Primitives):
+    def __init__(
+        self,
+        primitives: Primitives,
+        exposed_managers: Optional[Set[str]] = None,
+    ):
         self._primitives = primitives
+        self._exposed_managers = exposed_managers
 
     @property
     def namespace(self) -> str:
@@ -23,11 +41,42 @@ class StateManagerEnvironment(BaseEnvironment):
     def get_instance(self) -> Primitives:
         return self._primitives
 
-    def get_prompt_context(self) -> str:
-        """Return Markdown-formatted rules/examples for using state managers."""
-        return ""
+    def _infer_primitives_attr_name(self, class_path: str) -> str | None:
+        """Infer the attribute name on Primitives from a class path."""
+        class_name = class_path.rsplit(".", 1)[-1]
+        for suffix in ("Manager", "Scheduler", "Searcher"):
+            if class_name.endswith(suffix):
+                class_name = class_name[: -len(suffix)]
+                break
+
+        base = class_name[:1].lower() + class_name[1:]
+        plural = f"{base}s"
+        if hasattr(Primitives, plural):
+            return plural
+        if hasattr(Primitives, base):
+            return base
+
+        special = {
+            "Task": "tasks",
+            "Contact": "contacts",
+            "Transcript": "transcripts",
+            "Secret": "secrets",
+            "Web": "web",
+            "File": "files",
+        }
+        for k, v in special.items():
+            if class_name == k and hasattr(Primitives, v):
+                return v
+        return None
+
+    def _is_manager_exposed(self, manager_attr: str) -> bool:
+        """Check if a manager should be exposed based on filtering."""
+        if self._exposed_managers is None:
+            return True
+        return manager_attr in self._exposed_managers
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
+        """Get tool metadata, filtered by exposed_managers if set."""
         # The public surface for state managers is driven by the shared primitives registry
         # (`PRIMITIVE_SOURCES`) to avoid hardcoding manager/method lists in multiple places.
         #
@@ -47,39 +96,10 @@ class StateManagerEnvironment(BaseEnvironment):
             "filter_files",  # FileManager read-only
             "search_files",  # FileManager read-only
             "visualize",  # FileManager read-only (generates plots, no mutation)
+            "tables_overview",  # FileManager read-only
+            "list_columns",  # FileManager read-only
+            "schema_explain",  # FileManager read-only
         }
-
-        def _infer_primitives_attr_name(class_path: str) -> str | None:
-            class_name = class_path.rsplit(".", 1)[-1]
-            # Strip common suffixes used by managers.
-            for suffix in ("Manager", "Scheduler", "Searcher"):
-                if class_name.endswith(suffix):
-                    class_name = class_name[: -len(suffix)]
-                    break
-
-            base = class_name[:1].lower() + class_name[1:]
-
-            # Prefer plural if present on Primitives (common convention: contacts, tasks, secrets).
-            plural = f"{base}s"
-            if hasattr(Primitives, plural):
-                return plural
-            if hasattr(Primitives, base):
-                return base
-
-            # Fallback for irregular cases.
-            special = {
-                "Task": "tasks",
-                "Tasks": "tasks",
-                "Contact": "contacts",
-                "Transcript": "transcripts",
-                "Secret": "secrets",
-                "Web": "web",
-                "File": "files",
-            }
-            for k, v in special.items():
-                if class_name == k and hasattr(Primitives, v):
-                    return v
-            return None
 
         tools: Dict[str, ToolMetadata] = {}
         for class_path, method_names in PRIMITIVE_SOURCES:
@@ -87,9 +107,13 @@ class StateManagerEnvironment(BaseEnvironment):
             if class_path.endswith(".ComputerPrimitives"):
                 continue
 
-            manager_attr = _infer_primitives_attr_name(class_path)
+            manager_attr = self._infer_primitives_attr_name(class_path)
             if not manager_attr:
                 # If the runtime `Primitives` interface doesn't expose this manager, skip it.
+                continue
+
+            # Apply exposed_managers filter
+            if not self._is_manager_exposed(manager_attr):
                 continue
 
             for method_name in method_names:
@@ -105,83 +129,106 @@ class StateManagerEnvironment(BaseEnvironment):
         return tools
 
     def get_prompt_context(self) -> str:
-        """Markdown-formatted guidance for using state-manager primitives in plans."""
+        """Dynamically generate prompt context from PRIMITIVE_SOURCES + MANAGER_METADATA.
 
-        return (
-            "### State manager primitives (`primitives.*`)\n"
-            "\n"
-            "Each manager owns a specific domain of the assistant's durable state. Choose the right manager for your task:\n"
-            "\n"
-            "**Facts/Policies & Domain Knowledge** → `primitives.knowledge`\n"
-            "- **Domain**: Organizational facts, policies, procedures, reference material, documentation, stored information\n"
-            "- `.ask(...)`: Query stored knowledge - company policies (return/refund/warranty/HR), procedures, facts, historical records\n"
-            "- `.update(...)`: Add/change facts, ingest structured data, update policies\n"
-            "- `.refactor(...)`: Restructure knowledge schemas (advanced)\n"
-            '- **Use when**: Questions about company policies, operational procedures, reference docs, "what is our X policy?", "summarize Y procedure"\n'
-            '- **Examples**: "What\'s our return policy?", "Summarize onboarding procedure", "Office hours?", "Warranty terms for X?"\n'
-            "\n"
-            "**People & Relationships** → `primitives.contacts`\n"
-            "- **Domain**: People, organizations, contact records (names, emails, phones, roles, locations)\n"
-            "- `.ask(...)`: Find contacts by name/email/attribute, query relationships, get contact details\n"
-            "- `.update(...)`: Create, edit, delete, or merge contact records\n"
-            '- **Use when**: Questions about specific people, contact info, "who is X?", "find contact in Y location"\n'
-            '- **Examples**: "Who is our contact at Acme Corp?", "Find Alice\'s email", "Contacts in Berlin?"\n'
-            "\n"
-            "**Durable Work & Tracking** → `primitives.tasks`\n"
-            "- **Domain**: Task management, work queues, assignments, deadlines, priorities\n"
-            "- `.ask(...)`: Query task status, what's due/scheduled, assignments, priorities\n"
-            "- `.update(...)`: Create, edit, delete, or reorder tasks (NOT for starting work)\n"
-            "- `.execute(...)`: Start durable, tracked execution (use this to run tasks, not `.update(...)`)\n"
-            '- **Use when**: Questions about tasks/work items, "what\'s due?", "tasks assigned to X?", "high-priority items?"\n'
-            '- **Examples**: "What tasks are due today?", "Show Alice\'s open tasks", "List high-priority items"\n'
-            "\n"
-            "**Conversation History** → `primitives.transcripts`\n"
-            "- **Domain**: Past messages, conversation history, communication records (chat/SMS/email)\n"
-            "- `.ask(...)`: Search messages, find what someone said, retrieve conversation context\n"
-            '- **Use when**: Questions about past communications, "what did X say?", "last message about Y?", "conversation with Z?"\n'
-            '- **Examples**: "What did Bob say yesterday?", "Last SMS with Alice?", "Messages mentioning budget?"\n'
-            "\n"
-            "**Time-Sensitive & Web** → `primitives.web`\n"
-            '- **Domain**: Current events, real-time information, external research, "today/latest/now" queries\n'
-            "- `.ask(...)`: Web search for current information, news, weather, public data\n"
-            "- **Use when**: Questions requiring up-to-date external information, current events, weather, news\n"
-            '- **Examples**: "Weather in Berlin today?", "Latest AI news?", "Current stock price?", "Recent announcements?"\n'
-            "\n"
-            "**Function & Task Guidance** → `primitives.guidance`\n"
-            "- **Domain**: Execution instructions, runbooks, how-to guides for functions/tasks\n"
-            "- `.ask(...)`: Query execution instructions, runbooks, best practices for specific operations\n"
-            "- `.update(...)`: Create, edit, or delete guidance entries linked to functions\n"
-            "- **Use when**: Questions about HOW to execute something, operational runbooks, incident response procedures\n"
-            '- **Examples**: "How do I handle DB failover?", "Incident response for API outage?"\n'
-            "\n"
-            "**Files & Documents** → `primitives.files`\n"
-            "- **Domain**: Received/downloaded files, document parsing, file metadata\n"
-            "- `.ask(...)`: Query about specific files, parse document contents, extract information from files\n"
-            "- `.organize(...)`: File management operations\n"
-            "- **Use when**: Questions about specific files/documents the user shared or system has\n"
-            '- **Examples**: "Parse the attached PDF", "What\'s in document X?", "Find files about Y"\n'
-            "\n"
-            "**Credentials & Secrets** → `primitives.secrets`\n"
-            "- **Domain**: API keys, passwords, tokens, credentials\n"
-            "- `.ask(...)`: Get metadata/placeholders only (never returns actual secret values)\n"
-            "- `.update(...)`: Create, edit, or delete secrets\n"
-            "- **Use when**: Managing credentials, API keys, secrets (rarely used in plans)\n"
-            "\n"
-            "**Manager Selection Priorities**:\n"
-            "1. **knowledge** takes priority for organizational policies, procedures, company facts, internal documentation\n"
-            "2. **transcripts** for historical communications (what was said/written)\n"
-            "3. **contacts** for people/relationship information\n"
-            "4. **tasks** for work items, deadlines, assignments\n"
-            "5. **web** for current external information (weather, news, real-time data)\n"
-            "6. **guidance** for execution instructions and runbooks\n"
-            "7. **files** when dealing with specific documents\n"
-            "\n"
-            "**General Rules**:\n"
-            "- All manager calls return a steerable handle; await `.result()` to get the final answer\n"
-            "- If a manager asks for clarification, wait for the user response and answer via the handle's API\n"
-            "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed\n"
-            "- When in doubt between managers, prefer the most specific domain match\n"
+        If exposed_managers is set, only those managers are included.
+        """
+        parts = ["### State manager primitives (`primitives.*`)\n"]
+        parts.append(
+            "Each manager owns a specific domain of the assistant's durable state. "
+            "Choose the right manager for your task:\n",
         )
+
+        # Collect exposed managers with their metadata
+        exposed: list[tuple[str, list[str], dict]] = []
+        for class_path, method_names in PRIMITIVE_SOURCES:
+            if class_path.endswith(".ComputerPrimitives"):
+                continue
+
+            manager_attr = self._infer_primitives_attr_name(class_path)
+            if not manager_attr:
+                continue
+
+            if not self._is_manager_exposed(manager_attr):
+                continue
+
+            meta = MANAGER_METADATA.get(manager_attr, {})
+            exposed.append((manager_attr, method_names, meta))
+
+        # Sort by priority (lower = higher priority)
+        exposed.sort(key=lambda x: x[2].get("priority", 99))
+
+        for manager_attr, method_names, meta in exposed:
+            if not meta:
+                # Fallback for managers without metadata
+                parts.append(f"\n**`primitives.{manager_attr}`**")
+                parts.append(
+                    f"- Methods: {', '.join(f'`.{m}(...)`' for m in method_names)}",
+                )
+                continue
+
+            # Format: **Domain** → `primitives.manager`
+            parts.append(f"\n**{meta['domain']}** → `primitives.{manager_attr}`")
+            parts.append(f"- **Domain**: {meta['description']}")
+
+            # Show methods with their descriptions
+            methods_meta = meta.get("methods", {})
+            for method_name in method_names:
+                if method_name in methods_meta:
+                    parts.append(
+                        f"- `.{method_name}(...)`: {methods_meta[method_name]}",
+                    )
+                else:
+                    # Method exists but no description in metadata
+                    parts.append(f"- `.{method_name}(...)`")
+
+            # Add get_tools for files (special case - not in PRIMITIVE_SOURCES)
+            if manager_attr == "files" and "get_tools" in methods_meta:
+                parts.append(f"- `.get_tools()`: {methods_meta['get_tools']}")
+
+            if meta.get("use_when"):
+                parts.append(f"- **Use when**: {meta['use_when']}")
+
+            if meta.get("examples"):
+                parts.append(f"- **Examples**: {meta['examples']}")
+
+            if meta.get("special_note"):
+                parts.append(f"- **Note**: {meta['special_note']}")
+
+        # Add general rules only if multiple managers exposed
+        if len(exposed) > 1:
+            parts.append("\n**Manager Selection Priorities**:")
+            parts.append(
+                "1. **knowledge** takes priority for organizational policies, procedures, company facts, internal documentation",
+            )
+            parts.append(
+                "2. **transcripts** for historical communications (what was said/written)",
+            )
+            parts.append("3. **contacts** for people/relationship information")
+            parts.append("4. **tasks** for work items, deadlines, assignments")
+            parts.append(
+                "5. **web** for current external information (weather, news, real-time data)",
+            )
+            parts.append("6. **guidance** for execution instructions and runbooks")
+            parts.append(
+                "7. **files** when dealing with specific documents or data operations",
+            )
+
+            parts.append("\n**General Rules**:")
+            parts.append(
+                "- All manager calls return a steerable handle; await `.result()` to get the final answer",
+            )
+            parts.append(
+                "- If a manager asks for clarification, wait for the user response and answer via the handle's API",
+            )
+            parts.append(
+                "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed",
+            )
+            parts.append(
+                "- When in doubt between managers, prefer the most specific domain match",
+            )
+
+        return "\n".join(parts)
 
     async def capture_state(self) -> Dict[str, Any]:
         """State manager \"state\" is primarily evidenced via return values."""

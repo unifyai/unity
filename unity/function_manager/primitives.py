@@ -352,6 +352,125 @@ PRIMITIVE_SOURCES: List[Tuple[str, List[str]]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Manager Metadata Registry (Single Source of Truth for Prompt Generation)
+# ---------------------------------------------------------------------------
+# This metadata is used by StateManagerEnvironment.get_prompt_context() to
+# dynamically generate manager descriptions without hardcoding.
+
+MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
+    "contacts": {
+        "domain": "People & Relationships",
+        "description": "People, organizations, contact records (names, emails, phones, roles, locations)",
+        "methods": {
+            "ask": "Find contacts by name/email/attribute, query relationships, get contact details",
+            "update": "Create, edit, delete, or merge contact records",
+        },
+        "use_when": "Questions about specific people, contact info, 'who is X?', 'find contact in Y location'",
+        "examples": "'Who is our contact at Acme Corp?', 'Find Alice's email', 'Contacts in Berlin?'",
+        "priority": 3,
+    },
+    "tasks": {
+        "domain": "Durable Work & Tracking",
+        "description": "Task management, work queues, assignments, deadlines, priorities",
+        "methods": {
+            "ask": "Query task status, what's due/scheduled, assignments, priorities",
+            "update": "Create, edit, delete, or reorder tasks (NOT for starting work)",
+            "execute": "Start durable, tracked execution (use this to run tasks, not `.update(...)`)",
+        },
+        "use_when": "Questions about tasks/work items, 'what's due?', 'tasks assigned to X?', 'high-priority items?'",
+        "examples": "'What tasks are due today?', 'Show Alice's open tasks', 'List high-priority items'",
+        "priority": 4,
+    },
+    "transcripts": {
+        "domain": "Conversation History",
+        "description": "Past messages, conversation history, communication records (chat/SMS/email)",
+        "methods": {
+            "ask": "Search messages, find what someone said, retrieve conversation context",
+        },
+        "use_when": "Questions about past communications, 'what did X say?', 'last message about Y?', 'conversation with Z?'",
+        "examples": "'What did Bob say yesterday?', 'Last SMS with Alice?', 'Messages mentioning budget?'",
+        "priority": 2,
+    },
+    "knowledge": {
+        "domain": "Facts, Policies & Domain Knowledge",
+        "description": "Organizational facts, policies, procedures, reference material, documentation, stored information",
+        "methods": {
+            "ask": "Query stored knowledge - company policies (return/refund/warranty/HR), procedures, facts, historical records",
+            "update": "Add/change facts, ingest structured data, update policies",
+            "refactor": "Restructure knowledge schemas (advanced)",
+        },
+        "use_when": "Questions about company policies, operational procedures, reference docs, 'what is our X policy?', 'summarize Y procedure'",
+        "examples": "'What's our return policy?', 'Summarize onboarding procedure', 'Office hours?', 'Warranty terms for X?'",
+        "priority": 1,
+    },
+    "web": {
+        "domain": "Time-Sensitive & External Research",
+        "description": "Current events, real-time information, external research, 'today/latest/now' queries",
+        "methods": {
+            "ask": "Web search for current information, news, weather, public data",
+        },
+        "use_when": "Questions requiring up-to-date external information, current events, weather, news",
+        "examples": "'Weather in Berlin today?', 'Latest AI news?', 'Current stock price?', 'Recent announcements?'",
+        "priority": 5,
+    },
+    "guidance": {
+        "domain": "Function & Task Guidance",
+        "description": "Execution instructions, runbooks, how-to guides for functions/tasks",
+        "methods": {
+            "ask": "Query execution instructions, runbooks, best practices for specific operations",
+            "update": "Create, edit, or delete guidance entries linked to functions",
+        },
+        "use_when": "Questions about HOW to execute something, operational runbooks, incident response procedures",
+        "examples": "'How do I handle DB failover?', 'Incident response for API outage?'",
+        "priority": 6,
+    },
+    "files": {
+        "domain": "Files & Data Operations",
+        "description": "Received/downloaded files, document parsing, file metadata, data queries",
+        "methods": {
+            "ask": "Query about specific files, parse document contents, extract information from files",
+            "tables_overview": "Discover available tables with optional column info",
+            "list_columns": "Get column names and types for a table",
+            "schema_explain": "Natural language explanation of table structure",
+            "reduce": "Aggregate data (count, sum, mean, min, max, etc.)",
+            "filter_files": "Query raw records with filtering",
+            "search_files": "Semantic search over table data",
+            "visualize": "Generate chart visualizations",
+            "get_tools": "Get tools dict for passing to functions that accept `tools: FileTools`",
+        },
+        "use_when": "Questions about specific files/documents, data operations, aggregations, visualizations",
+        "examples": "'Parse the attached PDF', 'What's in document X?', 'Find files about Y'",
+        "priority": 7,
+        "special_note": "Use `get_tools()` ONLY when passing to functions with `tools: FileTools` parameter. For direct operations, use method syntax: `await primitives.files.reduce(...)`",
+    },
+    "secrets": {
+        "domain": "Credentials & Secrets",
+        "description": "API keys, passwords, tokens, credentials",
+        "methods": {
+            "ask": "Get metadata/placeholders only (never returns actual secret values)",
+            "update": "Create, edit, or delete secrets",
+        },
+        "use_when": "Managing credentials, API keys, secrets (rarely used in plans)",
+        "examples": "Rarely used directly in plans",
+        "priority": 8,
+    },
+}
+
+
+# Tools exposed by get_tools() on files primitive (subset of all FileManager tools)
+_FILE_TOOLS_EXPOSED = frozenset(
+    {
+        "tables_overview",
+        "list_columns",
+        "schema_explain",
+        "reduce",
+        "filter_files",
+        "visualize",
+    },
+)
+
+
 def _import_class(class_path: str) -> Optional[type]:
     """
     Dynamically import a class from its fully-qualified path.
@@ -762,6 +881,10 @@ class _AsyncFileManagerWrapper:
         """
         Get FileManager tools as a dictionary for passing to other functions.
 
+        Returns ONLY the tools compatible with metric/analysis functions:
+        - tables_overview, list_columns, schema_explain
+        - reduce, filter_files, visualize
+
         Use this ONLY when calling a function that accepts a `tools: FileTools`
         parameter. For direct data operations, use method syntax instead:
             result = await primitives.files.reduce(table=..., metric="count", ...)
@@ -776,9 +899,11 @@ class _AsyncFileManagerWrapper:
         -------
         FileTools
             Dictionary with keys: tables_overview, list_columns, schema_explain,
-            reduce, filter_files, search_files, visualize
+            reduce, filter_files, visualize
         """
-        return dict(self._fm.get_tools("ask", include_sub_tools=True))
+        all_tools = dict(self._fm.get_tools("ask", include_sub_tools=True))
+        # Filter to only the tools exposed for external function use
+        return {k: v for k, v in all_tools.items() if k in _FILE_TOOLS_EXPOSED}
 
 
 # ────────────────────────────────────────────────────────────────────────────
