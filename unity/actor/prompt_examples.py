@@ -931,7 +931,147 @@ def get_verification_examples_for_environments(
 
 
 # ---------------------------------------------------------------------------
-# 7. Helper Functions for Prompt Composition
+# 7. Example Tags (for filtering by manager/capability)
+# ---------------------------------------------------------------------------
+
+# Maps manager names to their associated example function names
+EXAMPLE_TAGS: dict[str, list[str]] = {
+    "contacts": [
+        "get_primitives_contact_ask_example",
+        "get_primitives_contact_update_example",
+    ],
+    "tasks": [
+        "get_primitives_task_execute_example",
+        "get_primitives_task_lookup_and_execute_example",
+        "get_primitives_dynamic_methods_example",
+    ],
+    "knowledge": [
+        "get_primitives_cross_manager_example",
+    ],
+    "files": [
+        "get_primitives_files_ask_example",
+        "get_primitives_files_organize_example",
+        "get_primitives_files_get_tools_example",
+    ],
+    "guidance": [
+        "get_primitives_guidance_ask_example",
+        "get_primitives_guidance_update_example",
+    ],
+    "web": [
+        "get_primitives_web_ask_example",
+    ],
+    "core": [
+        "get_library_function_reuse_example",
+        "get_library_function_composition_example",
+        "get_library_function_adaptation_example",
+        "get_confidence_based_stubbing_example",
+        "get_structured_output_example",
+        "get_error_handling_example",
+        "get_handle_steering_example",
+        "get_clarification_example",
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# 8. Function-First Pattern Examples (for CodeActActor)
+# ---------------------------------------------------------------------------
+
+
+def get_function_first_pattern_example() -> str:
+    """Example: prioritizing pre-saved functions over raw primitives."""
+
+    return '''
+# ✅ PATTERN: Function-First Workflow
+# ALWAYS check for pre-saved functions before using raw primitives
+
+async def answer_query(query: str):
+    """Answer a data query using the optimal approach."""
+
+    # Step 1: Search for existing functions that match the query
+    functions = await function_manager.search_functions(query)
+
+    if functions:
+        # Step 2a: Found relevant function - USE IT DIRECTLY
+        best_match = functions[0]
+        print(f"Using pre-saved function: {best_match['name']}")
+
+        # Read its signature to understand parameters
+        tools = primitives.files.get_tools()
+        result = await best_match["fn"](tools, **appropriate_params)
+        return result
+
+    else:
+        # Step 2b: No function found - compose with primitives
+        print("No pre-saved function found, using primitives directly")
+        result = await primitives.files.reduce(...)
+        return result
+'''
+
+
+def get_function_first_anti_pattern_example() -> str:
+    """Anti-pattern: exploring with primitives when functions exist."""
+
+    return """
+# ❌ ANTI-PATTERN: Exploring when functions already exist
+# DON'T do this - it wastes time and may produce inconsistent results
+
+async def bad_approach(query: str):
+    # ❌ WRONG: Immediately exploring with primitives
+    tables = await primitives.files.tables_overview()  # Unnecessary!
+    schema = await primitives.files.schema_explain(table=tables[0])  # Unnecessary!
+    # ... then manually building reduce() calls
+
+    # The pre-saved function already handles all of this correctly!
+
+# ✅ CORRECT: Check functions first
+async def good_approach(query: str):
+    # Check if a function already handles this
+    functions = await function_manager.search_functions(query)
+    if functions:
+        return await functions[0]["fn"](...)  # Use it!
+"""
+
+
+def get_function_parameter_exploration_example() -> str:
+    """Example: reading function signatures to understand parameter options."""
+
+    return """
+# ✅ PATTERN: Read function signatures before calling
+# Pre-saved functions often support multiple parameter variations
+
+async def use_function_intelligently():
+    # Found function: jobs_completed_per_day(tools, group_by=None, include_plots=False, ...)
+
+    # Read its signature/docstring to understand options:
+    # - group_by: Optional[GroupBy | str] - can group by "operative", "trade", "patch", "region"
+    # - include_plots: bool - whether to generate visualizations
+    # - filter_date_from/to: date filtering
+
+    tools = primitives.files.get_tools()
+
+    # Call with appropriate parameters for user's question
+    result = await jobs_completed_per_day(
+        tools,
+        group_by="operative",  # User asked "by operative"
+        include_plots=True,     # User wants charts
+    )
+    return result
+"""
+
+
+def get_code_act_function_first_examples() -> str:
+    """Get function-first examples for CodeActActor."""
+    examples = [
+        get_function_first_pattern_example().strip(),
+        get_function_first_anti_pattern_example().strip(),
+        get_function_parameter_exploration_example().strip(),
+    ]
+    return "\n\n".join(examples)
+
+
+# ---------------------------------------------------------------------------
+# 9. Helper Functions for Prompt Composition
 # ---------------------------------------------------------------------------
 
 
@@ -954,9 +1094,8 @@ def get_core_pattern_examples() -> str:
 def get_code_act_pattern_examples() -> str:
     """Get core pattern examples relevant to CodeActActor.
 
-    Excludes library function and stubbing patterns (not applicable to CodeAct).
-    Includes patterns for error handling and clarification that complement
-    the primitives examples already provided via _build_state_manager_rules_and_examples().
+    Includes error handling, clarification patterns, and function-first workflow
+    that complement the primitives examples.
     """
 
     examples = [
@@ -977,23 +1116,46 @@ def get_browser_examples() -> str:
     return "\n\n".join(examples)
 
 
-def get_primitives_examples() -> str:
-    """Get all state manager examples."""
+def get_primitives_examples(*, managers: set[str] | None = None) -> str:
+    """Get state manager examples, optionally filtered by manager.
 
-    examples = [
-        get_primitives_contact_ask_example().strip(),
-        get_primitives_contact_update_example().strip(),
-        get_primitives_cross_manager_example().strip(),
-        get_primitives_task_lookup_and_execute_example().strip(),
-        get_primitives_task_execute_example().strip(),
-        get_primitives_dynamic_methods_example().strip(),
-        get_primitives_files_ask_example().strip(),
-        get_primitives_files_organize_example().strip(),
-        get_primitives_files_get_tools_example().strip(),
-        get_primitives_guidance_ask_example().strip(),
-        get_primitives_guidance_update_example().strip(),
-        get_primitives_web_ask_example().strip(),
-    ]
+    Args:
+        managers: If provided, only include examples for these managers.
+                  If None, include all examples.
+
+    Returns:
+        Formatted string with relevant examples.
+    """
+    # Map function names to their callables
+    all_fns: dict[str, callable] = {
+        "get_primitives_contact_ask_example": get_primitives_contact_ask_example,
+        "get_primitives_contact_update_example": get_primitives_contact_update_example,
+        "get_primitives_cross_manager_example": get_primitives_cross_manager_example,
+        "get_primitives_task_lookup_and_execute_example": get_primitives_task_lookup_and_execute_example,
+        "get_primitives_task_execute_example": get_primitives_task_execute_example,
+        "get_primitives_dynamic_methods_example": get_primitives_dynamic_methods_example,
+        "get_primitives_files_ask_example": get_primitives_files_ask_example,
+        "get_primitives_files_organize_example": get_primitives_files_organize_example,
+        "get_primitives_files_get_tools_example": get_primitives_files_get_tools_example,
+        "get_primitives_guidance_ask_example": get_primitives_guidance_ask_example,
+        "get_primitives_guidance_update_example": get_primitives_guidance_update_example,
+        "get_primitives_web_ask_example": get_primitives_web_ask_example,
+    }
+
+    if managers is None:
+        # Return all examples
+        return "\n\n".join(fn().strip() for fn in all_fns.values())
+
+    # Filter by manager tags
+    included_fn_names: set[str] = set()
+    for mgr in managers:
+        included_fn_names.update(EXAMPLE_TAGS.get(mgr, []))
+
+    examples = []
+    for fn_name, fn in all_fns.items():
+        if fn_name in included_fn_names:
+            examples.append(fn().strip())
+
     return "\n\n".join(examples)
 
 
@@ -1012,6 +1174,8 @@ def get_examples_for_environments(
     has_browser: bool,
     has_primitives: bool,
     include_core: bool = True,
+    *,
+    managers: set[str] | None = None,
 ) -> str:
     """Get examples appropriate for the given environment combination.
 
@@ -1019,6 +1183,7 @@ def get_examples_for_environments(
         has_browser: Whether computer_primitives environment is active
         has_primitives: Whether primitives environment is active
         include_core: Whether to include core patterns (default: True)
+        managers: If provided, only include examples for these managers
 
     Returns:
         Formatted string with relevant examples
@@ -1035,7 +1200,9 @@ def get_examples_for_environments(
         sections.append("### Browser Examples\n" + get_browser_examples())
 
     if has_primitives:
-        sections.append("### State Manager Examples\n" + get_primitives_examples())
+        sections.append(
+            "### State Manager Examples\n" + get_primitives_examples(managers=managers),
+        )
 
     if has_browser and has_primitives:
         sections.append("### Mixed-Mode Examples\n" + get_mixed_examples())
