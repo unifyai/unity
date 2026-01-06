@@ -58,9 +58,12 @@ Plot API Reference:
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, List
 
 from .types import GroupBy, PlotConfig
+
+logger = logging.getLogger(__name__)
 
 # Note: PlotConfig is re-exported from unity.file_manager.managers.utils.viz_utils
 # via types.py for type consistency with FileManager.visualize.
@@ -119,17 +122,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 # Rationale: Compare North vs South region productivity
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="line",
-                x_axis="WorksOrderReportedCompletedDate",
-                y_axis="JobTicketReference",
-                group_by="WorksOrderReportedCompletedDate",
-                aggregate="count",
-                title="Daily Jobs Completed",
-                # Rationale: Line chart for time-series trend analysis
-            ),
-        ],
     },
     # =========================================================================
     # 2. REPAIRS COMPLETED PER DAY (Service Throughput)
@@ -166,16 +158,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 title="Repairs Completed per Region",
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="line",
-                x_axis="WorksOrderReportedCompletedDate",
-                y_axis="JobTicketReference",
-                group_by="WorksOrderReportedCompletedDate",
-                aggregate="count",
-                title="Daily Repairs Completed",
-            ),
-        ],
     },
     # =========================================================================
     # 3. JOBS ISSUED PER DAY (Incoming Demand)
@@ -210,16 +192,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 group_by="RepairsRegion",
                 aggregate="count",
                 title="Jobs Issued per Region",
-            ),
-        ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="line",
-                x_axis="WorksOrderIssuedDate",
-                y_axis="JobTicketReference",
-                group_by="WorksOrderIssuedDate",
-                aggregate="count",
-                title="Daily Jobs Issued",
             ),
         ],
     },
@@ -262,17 +234,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 title="First-Time Fix Count by Region",
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="FirstTimeFix",
-                y_axis="JobTicketReference",
-                group_by="FirstTimeFix",
-                aggregate="count",
-                title="First-Time Fix Breakdown (Yes/No)",
-                # Rationale: Bar chart showing FTF=Yes vs FTF=No counts
-            ),
-        ],
     },
     # =========================================================================
     # 5. FOLLOW-ON REQUIRED RATE (%)
@@ -307,16 +268,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 group_by="RepairsRegion",
                 aggregate="count",
                 title="Follow-On Jobs by Region",
-            ),
-        ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="FollowOn",
-                y_axis="JobTicketReference",
-                group_by="FollowOn",
-                aggregate="count",
-                title="Follow-On Required Breakdown (Yes/No)",
             ),
         ],
     },
@@ -355,17 +306,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 title="Materials Follow-On by Region",
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="FollowOnDescription",
-                y_axis="JobTicketReference",
-                group_by="FollowOnDescription",
-                aggregate="count",
-                title="Follow-On Reasons Breakdown",
-                # Rationale: Shows distribution of follow-on reasons
-            ),
-        ],
     },
     # =========================================================================
     # 7. NO-ACCESS RATE (%)
@@ -400,16 +340,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 group_by="RepairsRegion",
                 aggregate="count",
                 title="No-Access Jobs by Region",
-            ),
-        ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="NoAccess",
-                y_axis="JobTicketReference",
-                group_by="NoAccess",
-                aggregate="count",
-                title="No-Access Reasons Breakdown",
             ),
         ],
     },
@@ -448,17 +378,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 title="On-Time Completions by Region",
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="WorksOrderPriorityDescription",
-                y_axis="JobTicketReference",
-                group_by="WorksOrderPriorityDescription",
-                aggregate="count",
-                title="Jobs by Priority Category",
-                # Rationale: Shows distribution across priority levels
-            ),
-        ],
     },
     # =========================================================================
     # 9. MERCHANT STOPS PER DAY (Telematics)
@@ -477,17 +396,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 # Rationale: Count of trips (stops) per driver
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="EndLocation",
-                y_axis="Trip",
-                group_by="EndLocation",
-                aggregate="count",
-                title="Trips by End Location",
-                # Rationale: Shows which locations are visited most
-            ),
-        ],
     },
     # =========================================================================
     # 10. AVERAGE DURATION AT MERCHANT (Telematics)
@@ -502,16 +410,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 group_by="Driver",
                 aggregate="mean",
                 title="Average Trip Duration per Driver",
-            ),
-        ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="EndLocation",
-                y_axis="Trip travel time",
-                group_by="EndLocation",
-                aggregate="mean",
-                title="Average Duration by Location",
             ),
         ],
     },
@@ -530,15 +428,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 title="Total Distance per Driver",
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="histogram",
-                x_axis="Total distance",
-                bin_count=20,
-                title="Distribution of Trip Distances",
-                # Rationale: Shows distribution of trip distances
-            ),
-        ],
     },
     # =========================================================================
     # 12. AVERAGE TIME TRAVELLING (Telematics)
@@ -553,14 +442,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 group_by="Driver",
                 aggregate="sum",
                 title="Total Travel Time per Driver",
-            ),
-        ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="histogram",
-                x_axis="Trip travel time",
-                bin_count=20,
-                title="Distribution of Travel Times",
             ),
         ],
     },
@@ -599,16 +480,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 title="Jobs with Materials by Region",
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="FollowOnDescription",
-                y_axis="JobTicketReference",
-                group_by="FollowOnDescription",
-                aggregate="count",
-                title="Materials-Related Follow-Ons",
-            ),
-        ],
     },
     # =========================================================================
     # 14. AVERAGE REPAIRS PER PROPERTY
@@ -645,33 +516,12 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 title="Repairs by Region",
             ),
         ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="PropertyType",
-                y_axis="JobTicketReference",
-                group_by="PropertyType",
-                aggregate="count",
-                title="Repairs by Property Type",
-            ),
-        ],
     },
     # =========================================================================
     # 15. COMPLAINTS RATE (%)
     # =========================================================================
     # Note: Complaints data not available in current dataset
-    "complaints_rate": {
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="RepairsRegion",
-                y_axis="JobTicketReference",
-                group_by="RepairsRegion",
-                aggregate="count",
-                title="Jobs by Region (Complaints Data Unavailable)",
-            ),
-        ],
-    },
+    "complaints_rate": {},
     # =========================================================================
     # 16. APPOINTMENT ADHERENCE RATE (%)
     # =========================================================================
@@ -705,16 +555,6 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
                 group_by="RepairsRegion",
                 aggregate="count",
                 title="Scheduled Jobs by Region",
-            ),
-        ],
-        GroupBy.TOTAL: [
-            PlotConfig(
-                plot_type="line",
-                x_axis="WorksOrderReportedCompletedDate",
-                y_axis="JobTicketReference",
-                group_by="WorksOrderReportedCompletedDate",
-                aggregate="count",
-                title="Scheduled Job Completions Over Time",
             ),
         ],
     },
@@ -781,3 +621,13 @@ def get_supported_group_bys(metric_name: str) -> List[GroupBy]:
     """
     metric_configs = METRIC_PLOT_CONFIGS.get(metric_name, {})
     return list(metric_configs.keys())
+
+
+# =============================================================================
+# NOTE: Plot generation is now INLINE in each metric function (core.py)
+# =============================================================================
+# The generate_plots function has been removed. Plot configurations are now
+# defined inline within each metric function to make them visible to CodeActActor
+# when the function source is retrieved via FunctionManager.
+#
+# See core.py for inline plot generation patterns.

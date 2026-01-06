@@ -23,7 +23,7 @@ Debug logging:
 
     from query_logger import DebugLogCapture
 
-    with DebugLogCapture("intranet.repairs.queries.metrics") as capture:
+    with DebugLogCapture("intranet.repairs_agent.metrics.core") as capture:
         result = await agent.ask(...)
         debug_output = capture.get_output()
 
@@ -48,21 +48,21 @@ class DebugLogCapture:
     Context manager to capture Python logger output during query execution.
 
     Usage:
-        with DebugLogCapture("intranet.repairs.queries.metrics") as capture:
+        with DebugLogCapture("intranet.repairs_agent.metrics.core") as capture:
             result = await some_query()
             debug_output = capture.get_output()
     """
 
     def __init__(
         self,
-        logger_name: str = "intranet.repairs.queries.metrics",
+        logger_name: str = "intranet.repairs_agent.metrics.core",
         level: int = logging.DEBUG,
     ):
         """
         Initialize the debug log capture.
 
         Args:
-            logger_name: Name of the logger to capture (e.g., "intranet.repairs.queries.metrics")
+            logger_name: Name of the logger to capture (e.g., "intranet.repairs_agent.metrics.core")
             level: Minimum log level to capture (default: DEBUG)
         """
         self.logger_name = logger_name

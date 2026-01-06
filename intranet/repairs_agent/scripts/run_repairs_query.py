@@ -45,8 +45,8 @@ from intranet.repairs_agent.static import (
     get_registered_count,
 )
 
-# Trigger query registration (still uses existing metrics module)
-import intranet.repairs.queries  # noqa: F401
+# Trigger query registration from the new canonical location
+import intranet.repairs_agent.metrics  # noqa: F401
 
 # Import the query logger (from same directory)
 try:
@@ -390,7 +390,7 @@ See README.md for comprehensive usage documentation.
     debug_output = ""
 
     # Capture debug logs from the metrics module during query execution
-    with DebugLogCapture("intranet.repairs.queries.metrics") as debug_capture:
+    with DebugLogCapture("intranet.repairs_agent.metrics.core") as debug_capture:
         try:
             logger.info(f"Executing query: {args.query}")
             result = await agent.ask(args.query, **params)

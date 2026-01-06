@@ -55,7 +55,7 @@ class TableInfo(TypedDict, total=False):
 # =============================================================================
 
 
-def discover_repairs_table(tools: Dict[str, Any]) -> Optional[TableInfo]:
+def discover_repairs_table(tools: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Discover the repairs data table with full schema information.
 
@@ -145,7 +145,7 @@ def discover_repairs_table(tools: Dict[str, Any]) -> Optional[TableInfo]:
     }
 
 
-def discover_telematics_tables(tools: Dict[str, Any]) -> List[TableInfo]:
+def discover_telematics_tables(tools: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Discover telematics data tables with full schema information.
 
@@ -234,7 +234,10 @@ def discover_telematics_tables(tools: Dict[str, Any]) -> List[TableInfo]:
 # =============================================================================
 
 
-def resolve_group_by(group_by: str, telematics: bool = False) -> Optional[str]:
+def resolve_group_by(
+    group_by: Optional[str],
+    telematics: bool = False,
+) -> Optional[str]:
     """
     Resolve group_by string to actual column name.
 
@@ -243,15 +246,16 @@ def resolve_group_by(group_by: str, telematics: bool = False) -> Optional[str]:
 
     Parameters
     ----------
-    group_by : str
-        Group dimension: "operative", "patch", "region", "trade", or "total"
+    group_by : str or None
+        Group dimension: "operative", "patch", "region", "trade".
+        Pass None for no grouping (aggregate total).
     telematics : bool
         If True, use telematics column mappings (Vehicle instead of Operative)
 
     Returns
     -------
     str or None
-        Column name for grouping, or None for total aggregation
+        Column name for grouping, or None if group_by is None
 
     Example
     -------
@@ -259,7 +263,13 @@ def resolve_group_by(group_by: str, telematics: bool = False) -> Optional[str]:
     'OperativeWhoCompletedJob'
     >>> resolve_group_by("operative", telematics=True)
     'Vehicle'
+    >>> resolve_group_by(None)
+    None
     """
+    # Return None early if no grouping requested
+    if group_by is None:
+        return None
+
     # INLINE mapping - no hidden globals
     # Repairs data column mappings:
     repairs_mapping = {
@@ -267,17 +277,15 @@ def resolve_group_by(group_by: str, telematics: bool = False) -> Optional[str]:
         "patch": "RepairsPatch",
         "region": "RepairsRegion",
         "trade": "Trade",
-        "total": None,
     }
 
     # Telematics data column mappings:
     telematics_mapping = {
         "operative": "Vehicle",  # Vehicle contains operative name in telematics
-        "total": None,
     }
 
     mapping = telematics_mapping if telematics else repairs_mapping
-    key = group_by.lower() if isinstance(group_by, str) else "total"
+    key = group_by.lower()
     return mapping.get(key)
 
 
@@ -517,5 +525,6 @@ HELPER_FUNCTIONS = [
     "extract_sum",
     "normalize_grouped_result",
     "compute_percentage",
-    "build_metric_result",
+    # Note: build_metric_result is NOT synced - it requires MetricResult import
+    # Metrics use it internally; LLM should compose results directly
 ]
