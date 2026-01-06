@@ -64,7 +64,7 @@ def discover_repairs_table(tools: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     Parameters
     ----------
-    tools : dict
+    tools : Dict[str, Any]
         Tools dict containing tables_overview, schema_explain callables
 
     Returns
@@ -154,7 +154,7 @@ def discover_telematics_tables(tools: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     Parameters
     ----------
-    tools : dict
+    tools : Dict[str, Any]
         Tools dict containing tables_overview, schema_explain callables
 
     Returns
