@@ -302,3 +302,121 @@ async def test_clarification_bubbles_through_returned_handle(model) -> None:
 
     # final sanity-check: assistant ends with the confirmation from inner_tool
     assert "blue" in outer_llm.messages[-1]["content"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Inner tool: always requests clarification and blocks forever without answer
+# ---------------------------------------------------------------------------
+async def inner_tool_that_requests_clarification(
+    *,
+    _clarification_up_q: asyncio.Queue[str] | None = None,
+    _clarification_down_q: asyncio.Queue[str] | None = None,
+) -> str:
+    """A tool that always asks a clarification question."""
+    if _clarification_up_q is None or _clarification_down_q is None:
+        raise RuntimeError("clarification queues missing")
+
+    await _clarification_up_q.put("What is the user's favorite color?")
+    answer = await _clarification_down_q.get()
+    return f"Got answer: {answer}"
+
+
+# ---------------------------------------------------------------------------
+# Outer tool: spawns an inner loop that will request clarification
+# ---------------------------------------------------------------------------
+async def tool_that_spawns_blocking_inner_loop(
+    *,
+    _clarification_up_q: asyncio.Queue[str] | None = None,
+    _clarification_down_q: asyncio.Queue[str] | None = None,
+) -> str:
+    """
+    Spawns an inner async tool loop.
+    The inner loop will call inner_tool_that_requests_clarification,
+    which blocks on clarification.
+    """
+    inner_llm = make_llm(
+        system_message=(
+            "You coordinate internal tools. "
+            "Call inner_tool_that_requests_clarification to gather user preferences."
+        ),
+    )
+
+    handle = start_async_tool_loop(
+        inner_llm,
+        message="Please run inner_tool_that_requests_clarification.",
+        tools={
+            "inner_tool_that_requests_clarification": inner_tool_that_requests_clarification,
+        },
+    )
+    return handle
+
+
+# ---------------------------------------------------------------------------
+# Test: Outer loop exits cleanly when inner is blocked on unanswered clarification
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_outer_loop_exits_when_inner_blocked_on_unanswered_clarification(
+    model,
+) -> None:
+    """
+    Regression test for deadlock when LLM ends conversation while inner tool
+    awaits clarification.
+
+    Scenario:
+    1. Outer loop's LLM calls `tool_that_spawns_blocking_inner_loop`
+    2. Inner loop's LLM calls `inner_tool_that_requests_clarification`
+    3. Inner tool blocks on `down_q.get()` waiting for clarification answer
+    4. Clarification bubbles up to outer loop
+    5. Outer loop's LLM (without request_clarification tool!) responds with content
+
+    Expected: Outer loop exits with the LLM's response.
+    Bug (before fix): Deadlock - outer waits for inner, inner waits forever.
+    """
+    import time
+
+    outer_llm = make_llm(
+        system_message=(
+            "You coordinate tools. If a nested tool requests clarification and you "
+            "cannot answer it (because you don't have a request_clarification tool), "
+            "just respond with: 'I cannot help with that.' and end the conversation.\n"
+            "IMPORTANT: When you see a clarification_request message, respond with "
+            "'I cannot help with that.' - do NOT try to answer it yourself or guess."
+        ),
+        model=model,
+    )
+
+    # NOTE: Outer loop does NOT have request_clarification tool!
+    handle = start_async_tool_loop(
+        outer_llm,
+        message="Please run tool_that_spawns_blocking_inner_loop.",
+        tools={
+            "tool_that_spawns_blocking_inner_loop": tool_that_spawns_blocking_inner_loop,
+        },
+    )
+
+    start = time.perf_counter()
+    try:
+        result = await asyncio.wait_for(handle.result(), timeout=60)
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "DEADLOCK: Outer loop timed out waiting for inner loop. "
+            "Inner loop is blocked on clarification that will never be answered.",
+        )
+    elapsed = time.perf_counter() - start
+
+    # Verify we got a real result (not the cancellation placeholder)
+    assert isinstance(result, str), f"Expected string result, got {type(result)}"
+    assert len(result) > 0, "Expected non-empty result"
+    assert result != "processed stopped early, no result", (
+        f"Got cancellation placeholder instead of real LLM response. "
+        f"This suggests the fix is not working - the loop deadlocked until timeout. "
+        f"Elapsed time: {elapsed:.1f}s"
+    )
+
+    # Verify we exited quickly (not via 60s timeout deadlock)
+    assert elapsed < 45, (
+        f"Loop took {elapsed:.1f}s to exit. If close to 60s, this suggests deadlock "
+        f"that was only broken by the asyncio.wait_for timeout, not the fix."
+    )
+
+    print(f"✅ Outer loop exited in {elapsed:.1f}s with: {result!r}")
