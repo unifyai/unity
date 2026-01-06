@@ -86,11 +86,45 @@ def build_code_act_system_prompt(
         has_fm_tools = any(k.startswith("FunctionManager_") for k in tools)
         if has_fm_tools:
             prompt += """
-### Function Library
+### Function Library (CRITICAL - READ THIS)
 
-You have access to a catalogue of pre-stored reusable functions via the FunctionManager tools.
-Use these to discover and retrieve existing implementations before writing code from scratch.
-When you find a relevant function, copy its implementation into your `execute_python_code` block.
+You have access to a catalogue of **pre-stored reusable functions** via the FunctionManager tools.
+
+**🎯 FUNCTION-FIRST WORKFLOW:**
+
+1. **ALWAYS search first**: Before using primitives directly, search for existing functions:
+   ```python
+   functions = await function_manager.search_functions("your query here")
+   ```
+
+2. **If found → USE IT**: Pre-saved functions are tested, optimized, and handle edge cases.
+   Don't re-explore tables/schemas when a function already does the job.
+
+3. **Read signatures carefully**: Functions often support multiple parameter variations.
+   Check `group_by`, `include_plots`, date filters, etc.
+
+4. **Only explore with primitives if**: No relevant function exists, or you need to extend/compose.
+
+**❌ ANTI-PATTERN (AVOID THIS):**
+```python
+# DON'T do this when functions already exist!
+tables = await primitives.files.tables_overview()  # Unnecessary exploration!
+schema = await primitives.files.schema_explain(...)  # More unnecessary exploration!
+# ... then manually building reduce() calls
+```
+
+**✅ CORRECT PATTERN:**
+```python
+# Search first, use if found
+functions = await function_manager.search_functions("jobs completed by operative")
+if functions:
+    tools = primitives.files.get_tools()
+    result = await functions[0]["fn"](tools, group_by="operative")
+```
+
+**When passing tools to functions:**
+- Functions that accept `tools: FileTools` need: `tools = primitives.files.get_tools()`
+- For direct operations, use method syntax: `await primitives.files.reduce(...)`
 """
 
     return prompt
