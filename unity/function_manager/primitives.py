@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING, TypedDict
 
 from pydantic import BaseModel
 
@@ -556,6 +556,48 @@ def get_primitive_callable(
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# FileTools TypedDict - Tools dictionary type for FileManager operations
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class FileTools(TypedDict, total=False):
+    """
+    Dictionary of FileManager tool callables.
+
+    Returned by `primitives.files.get_tools()` for passing to functions
+    that accept a `tools` parameter for data operations.
+
+    For direct data operations in your own code, use method syntax instead:
+        result = await primitives.files.reduce(table=..., metric="count", ...)
+
+    Keys
+    ----
+    tables_overview : Callable
+        Discover available tables with optional column info
+    list_columns : Callable
+        Get column names and types for a table
+    schema_explain : Callable
+        Natural language explanation of table structure
+    reduce : Callable
+        Aggregate data (count, sum, mean, min, max, etc.)
+    filter_files : Callable
+        Query raw records with filtering
+    search_files : Callable
+        Semantic search over table data
+    visualize : Callable
+        Generate chart visualizations
+    """
+
+    tables_overview: Callable[..., Dict[str, Any]]
+    list_columns: Callable[..., Dict[str, Any]]
+    schema_explain: Callable[..., str]
+    reduce: Callable[..., Any]
+    filter_files: Callable[..., List[Dict[str, Any]]]
+    search_files: Callable[..., List[Dict[str, Any]]]
+    visualize: Callable[..., Any]
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Async FileManager Wrapper
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -715,6 +757,28 @@ class _AsyncFileManagerWrapper:
             bin_count=bin_count,
             show_regression=show_regression,
         )
+
+    def get_tools(self) -> FileTools:
+        """
+        Get FileManager tools as a dictionary for passing to other functions.
+
+        Use this ONLY when calling a function that accepts a `tools: FileTools`
+        parameter. For direct data operations, use method syntax instead:
+            result = await primitives.files.reduce(table=..., metric="count", ...)
+
+        Example
+        -------
+        >>> # When a function signature shows `tools: FileTools`:
+        >>> tools = primitives.files.get_tools()
+        >>> result = await some_function(tools, other_args...)
+
+        Returns
+        -------
+        FileTools
+            Dictionary with keys: tables_overview, list_columns, schema_explain,
+            reduce, filter_files, search_files, visualize
+        """
+        return dict(self._fm.get_tools("ask", include_sub_tools=True))
 
 
 # ────────────────────────────────────────────────────────────────────────────
