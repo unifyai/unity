@@ -40,8 +40,6 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
 
     import unify
 
-    unify.set_trace_context("Traces")
-
     # Only delete Knowledge contexts if explicitly overwriting
     if overwrite:
         for table in unify.get_contexts(prefix="Knowledge").keys():
