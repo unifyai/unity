@@ -12,7 +12,7 @@ Types Defined:
     - PlotConfig: Configuration for a single plot (re-exported from viz_utils)
     - PlotResult: Result of a plot generation attempt (re-exported from viz_utils)
     - MetricResult: Standard result shape for all metrics
-    - ToolsDict: Type alias for file manager tools dictionary
+    - FileTools: Type alias for file manager tools dictionary
 """
 
 from __future__ import annotations
@@ -28,6 +28,9 @@ from unity.file_manager.managers.utils.viz_utils import (
     PlotResult,
     PlotType,
 )
+
+# Import FileTools from primitives (canonical source for tools dict type)
+from unity.function_manager.primitives import FileTools
 
 # Type alias for the visualize tool function signature
 VisualizeTool = Callable[..., Union[PlotResult, List[PlotResult]]]
@@ -45,21 +48,20 @@ class GroupBy(str, Enum):
     Determines how metric results are segmented. Each value corresponds
     to a column in the repairs/telematics data that can be used for grouping.
 
+    When None is passed instead of a GroupBy value, metrics aggregate
+    across all records without grouping (no plots generated).
+
     Values:
         OPERATIVE: Group by individual operative (worker)
         TRADE: Group by trade/skill type (e.g., plumber, electrician)
         PATCH: Group by geographic patch/area
         REGION: Group by broader geographic region
-        TIME_PERIOD: Group by time bucket (day, week, month, etc.)
-        TOTAL: No grouping - aggregate total across all records
     """
 
     OPERATIVE = "operative"
     TRADE = "trade"
     PATCH = "patch"
     REGION = "region"
-    TIME_PERIOD = "time_period"
-    TOTAL = "total"
 
 
 class TimePeriod(str, Enum):
@@ -138,15 +140,6 @@ class MetricResult(BaseModel):
 
 
 # =============================================================================
-# TYPE ALIASES
-# =============================================================================
-
-# Type alias for the tools dictionary passed to metric functions
-# Contains file manager tools like reduce, filter_files, list_columns, visualize
-ToolsDict = Dict[str, Any]
-
-
-# =============================================================================
 # PUBLIC EXPORTS
 # =============================================================================
 
@@ -161,6 +154,6 @@ __all__ = [
     # Models
     "MetricResult",
     # Type aliases
-    "ToolsDict",
+    "FileTools",
     "VisualizeTool",
 ]

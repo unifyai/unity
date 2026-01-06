@@ -65,13 +65,12 @@ def get_registered_metrics() -> Dict[str, Callable]:
     Dict[str, Callable]
         Mapping of query_id -> function object
     """
-    # Import the registry from the ORIGINAL location (metrics.py uses this)
-    # NOTE: Once metrics.py is migrated to the new package, update this import
-    from intranet.core.bespoke_repairs_agent import _REGISTRY
+    # Import the registry from the static agent module
+    from intranet.repairs_agent.static.registry import _REGISTRY
 
     # Trigger registration by importing the metrics module
     # This ensures all @register decorators are run
-    import intranet.repairs.queries  # noqa: F401
+    import intranet.repairs_agent.metrics  # noqa: F401
 
     return {spec.query_id: spec.fn for spec in _REGISTRY.values()}
 
@@ -266,6 +265,26 @@ def prepare_standalone_function(
 
 
 # =============================================================================
+# HELPER FUNCTION DISCOVERY
+# =============================================================================
+
+
+def get_helper_functions() -> Dict[str, Callable]:
+    """
+    Get all helper functions from the helpers module.
+
+    Returns
+    -------
+    Dict[str, Callable]
+        Mapping of function_name -> function object
+    """
+    from intranet.repairs_agent.metrics import helpers
+    from intranet.repairs_agent.metrics.helpers import HELPER_FUNCTIONS
+
+    return {name: getattr(helpers, name) for name in HELPER_FUNCTIONS}
+
+
+# =============================================================================
 # SYNC LOGIC
 # =============================================================================
 
@@ -275,9 +294,10 @@ def sync_metrics_to_function_manager(
     dry_run: bool = False,
     overwrite: bool = False,
     verbose: bool = False,
+    include_helpers: bool = True,
 ) -> Dict[str, str]:
     """
-    Sync all registered metric functions to FunctionManager.
+    Sync all registered metric functions and helpers to FunctionManager.
 
     Parameters
     ----------
@@ -287,6 +307,8 @@ def sync_metrics_to_function_manager(
         If True, overwrite existing functions
     verbose : bool
         If True, print detailed progress
+    include_helpers : bool
+        If True, also sync helper functions (default: True)
 
     Returns
     -------
@@ -297,14 +319,26 @@ def sync_metrics_to_function_manager(
     metrics = get_registered_metrics()
     logger.info(f"Found {len(metrics)} registered metric functions")
 
+    # Get helper functions if requested
+    helpers = {}
+    if include_helpers:
+        helpers = get_helper_functions()
+        logger.info(f"Found {len(helpers)} helper functions")
+
     if verbose:
+        print("\n[Metrics]")
         for name in sorted(metrics.keys()):
             print(f"  - {name}")
+        if include_helpers:
+            print("\n[Helpers]")
+            for name in sorted(helpers.keys()):
+                print(f"  - {name}")
 
     # Prepare function sources
     implementations: List[str] = []
     names: List[str] = []
 
+    # Process metrics
     for name, func in metrics.items():
         try:
             source = prepare_standalone_function(func, name)
@@ -313,7 +347,7 @@ def sync_metrics_to_function_manager(
 
             if verbose:
                 print(f"\n{'='*60}")
-                print(f"Function: {name}")
+                print(f"Metric: {name}")
                 print(f"{'='*60}")
                 # Show first 20 lines
                 preview = "\n".join(source.split("\n")[:20])
@@ -322,8 +356,29 @@ def sync_metrics_to_function_manager(
                     print("... (truncated)")
 
         except Exception as e:
-            logger.error(f"Failed to extract source for {name}: {e}")
+            logger.error(f"Failed to extract source for metric {name}: {e}")
             continue
+
+    # Process helpers
+    if include_helpers:
+        for name, func in helpers.items():
+            try:
+                source = extract_function_source(func)
+                implementations.append(source)
+                names.append(name)
+
+                if verbose:
+                    print(f"\n{'='*60}")
+                    print(f"Helper: {name}")
+                    print(f"{'='*60}")
+                    preview = "\n".join(source.split("\n")[:20])
+                    print(preview)
+                    if len(source.split("\n")) > 20:
+                        print("... (truncated)")
+
+            except Exception as e:
+                logger.error(f"Failed to extract source for helper {name}: {e}")
+                continue
 
     if dry_run:
         print(f"\n[DRY RUN] Would sync {len(implementations)} functions:")
@@ -415,6 +470,11 @@ Examples:
         action="store_true",
         help="Enable debug logging",
     )
+    parser.add_argument(
+        "--no-helpers",
+        action="store_true",
+        help="Skip syncing helper functions (sync only metrics)",
+    )
 
     args = parser.parse_args()
 
@@ -446,6 +506,7 @@ Examples:
             dry_run=args.dry_run,
             overwrite=args.overwrite_functions,
             verbose=args.verbose,
+            include_helpers=not args.no_helpers,
         )
 
         print("\n" + "=" * 60)
