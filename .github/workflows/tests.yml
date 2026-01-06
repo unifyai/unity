@@ -644,6 +644,8 @@ jobs:
         # Each private repo gets its own token-authenticated URL rewrite
         git config --global url."https://x-access-token:${UNIFY_TOKEN}@github.com/unifyai/unify".insteadOf "https://github.com/unifyai/unify"
         git config --global url."https://x-access-token:${UNILLM_TOKEN}@github.com/unifyai/unillm".insteadOf "https://github.com/unifyai/unillm"
+        # Rewrite SSH URLs to HTTPS for public submodules (e.g., global-cursor-rules in unillm)
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
       env:
         UNIFY_TOKEN: ${{ secrets.UNIFY_CLONE_TOKEN }}
         UNILLM_TOKEN: ${{ secrets.UNILLM_CLONE_TOKEN }}
