@@ -109,9 +109,11 @@ def _create_repairs_actor(config_path: Optional[Path] = None) -> CodeActActor:
         LG.warning(f"FunctionManager not available: {e}")
 
     # Create actor with only StateManagerEnvironment (no browser)
+    # Only expose 'files' primitives - this is a data analysis sandbox,
+    # so we don't need contacts, tasks, knowledge, etc.
     actor = CodeActActor(
         function_manager=function_manager,
-        environments=[StateManagerEnvironment(primitives)],
+        environments=[StateManagerEnvironment(primitives, exposed_managers={"files"})],
     )
 
     return actor
