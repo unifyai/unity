@@ -900,8 +900,15 @@ def _build_browser_planning_examples() -> str:
     ).strip()
 
 
-def _build_primitives_planning_examples() -> str:
-    """State manager planning examples using the centralized library."""
+def _build_primitives_planning_examples(
+    *,
+    managers: set[str] | None = None,
+) -> str:
+    """State manager planning examples using the centralized library.
+
+    Args:
+        managers: If provided, only include examples for these managers.
+    """
     from unity.actor.prompt_examples import get_primitives_examples
 
     return textwrap.dedent(
@@ -909,7 +916,7 @@ def _build_primitives_planning_examples() -> str:
         ---
         ### State Manager Examples (`primitives`)
 
-        {get_primitives_examples()}
+        {get_primitives_examples(managers=managers)}
         """,
     ).strip()
 
@@ -1308,29 +1315,30 @@ def _build_generic_execution_rules() -> str:
     ).strip()
 
 
-def _build_state_manager_rules_and_examples() -> str:
-    """Rules/examples for the `primitives` state manager environment."""
-    from unity.actor.prompt_examples import get_primitives_examples
+def _build_state_manager_rules_and_examples(
+    *,
+    managers: set[str] | None = None,
+    include_examples: bool = True,
+) -> str:
+    """Rules (and optionally examples) for the `primitives` state manager environment.
 
+    Args:
+        managers: If provided, only include examples for these managers.
+                  If None, include all managers.
+        include_examples: If False, only return rules without examples.
+                          Use this when examples are provided elsewhere to avoid duplication.
+
+    Note: Routing guidance (manager descriptions) is now provided by
+    StateManagerEnvironment.get_prompt_context() which dynamically generates
+    from MANAGER_METADATA. This avoids duplication.
+    """
     rules = textwrap.dedent(
         """
-        ### 🧩 State Manager Rules & Examples (`primitives`)
+        ### 🧩 State Manager Rules
 
         - **Read vs write**:
           - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
           - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` are **impure** (they mutate state or start work).
-
-        - **Routing (choose the right manager)**:
-          - **External / general knowledge** (public info not stored in our state): `await primitives.web.ask(...)`
-          - **Contacts / people records**: `await primitives.contacts.ask(...)` (read) or `.update(...)` (mutate)
-          - **Tasks**: `await primitives.tasks.ask(...)` (read), `.update(...)` (mutate), `.execute(...)` (run)
-          - **Transcripts / message history**: `await primitives.transcripts.ask(...)`
-          - **Internal knowledge base** (policies/facts we store): `await primitives.knowledge.ask(...)` or `.update(...)`
-          - **Guidance / policies**: `await primitives.guidance.ask(...)` or `.update(...)`
-          - **Files / data**:
-            - Natural language queries: `await primitives.files.ask(...)`
-            - Direct data operations: `await primitives.files.reduce(...)`, `await primitives.files.filter_files(...)`, etc.
-            - Pass tools to functions: `tools = primitives.files.get_tools()` then `await fn(tools, ...)`
 
         - **Prefer return values as evidence**: treat return values from state managers as the primary ground truth.
 
@@ -1342,7 +1350,12 @@ def _build_state_manager_rules_and_examples() -> str:
         """,
     ).strip()
 
-    examples = get_primitives_examples()
+    if not include_examples:
+        return rules
+
+    from unity.actor.prompt_examples import get_primitives_examples
+
+    examples = get_primitives_examples(managers=managers)
 
     return f"{rules}\n\n### Implementation Examples\n\n{examples}"
 
@@ -1370,11 +1383,19 @@ def _build_code_act_rules_and_examples(
 
     # Add core patterns (error handling, clarification) - these complement the
     # primitives examples and are useful regardless of which environments are active.
-    from unity.actor.prompt_examples import get_code_act_pattern_examples
+    from unity.actor.prompt_examples import (
+        get_code_act_pattern_examples,
+        get_code_act_function_first_examples,
+    )
 
     core_patterns = get_code_act_pattern_examples()
     if core_patterns:
         parts.append(f"### Core Patterns\n\n{core_patterns}")
+
+    # Add function-first guidance when FunctionManager is likely available
+    function_first = get_code_act_function_first_examples()
+    if function_first:
+        parts.append(f"### Function-First Workflow (CRITICAL)\n\n{function_first}")
 
     cp = None
     if "computer_primitives" in environments:
@@ -1386,7 +1407,10 @@ def _build_code_act_rules_and_examples(
         parts.append(_build_browser_rules_and_examples(cp))
 
     if "primitives" in environments:
-        parts.append(_build_state_manager_rules_and_examples())
+        # Get exposed managers from the environment if available
+        env = environments["primitives"]
+        managers = getattr(env, "_exposed_managers", None)
+        parts.append(_build_state_manager_rules_and_examples(managers=managers))
 
     return "\n\n---\n\n".join(p for p in parts if p and p.strip()).strip()
 
@@ -1428,6 +1452,12 @@ def _build_initial_plan_rules_and_examples(
             """,
         ).strip()
 
+    # Get exposed managers from environment for filtering
+    managers_filter = None
+    if environments and "primitives" in environments:
+        env = environments["primitives"]
+        managers_filter = getattr(env, "_exposed_managers", None)
+
     # Compose examples based on active environments
     example_sections = []
 
@@ -1444,20 +1474,25 @@ def _build_initial_plan_rules_and_examples(
         example_sections.append(_build_browser_planning_examples())
 
     if has_primitives:
-        example_sections.append(_build_primitives_planning_examples())
+        example_sections.append(
+            _build_primitives_planning_examples(managers=managers_filter),
+        )
 
     if has_browser and has_primitives:
         example_sections.append(_build_mixed_planning_examples())
 
     examples_str = "\n\n".join(example_sections) if example_sections else ""
 
+    # Note: primitives_guidance_str is now minimal - detailed manager descriptions
+    # are provided by StateManagerEnvironment.get_prompt_context() via env_section.
+    # Examples are provided separately via examples_str, so we only include rules here.
     primitives_guidance_str = ""
     if has_primitives:
         primitives_guidance_str = textwrap.dedent(
             f"""
             ---
             ### State Manager Guidance (`primitives`)
-            {_build_state_manager_rules_and_examples()}
+            {_build_state_manager_rules_and_examples(managers=managers_filter, include_examples=False)}
             """,
         ).strip()
 
@@ -1565,7 +1600,7 @@ def _build_dynamic_implement_rules_and_examples(
 
             ---
             ### State Manager Guidance (`primitives`)
-            {_build_state_manager_rules_and_examples()}
+            {_build_state_manager_rules_and_examples(include_examples=False)}
 
             {_build_primitives_implementation_examples()}
             """,
@@ -1597,9 +1632,9 @@ def _build_dynamic_implement_rules_and_examples(
         sections.append(_build_browser_implementation_examples())
 
     if has_primitives:
-        # Add state manager guidance section
+        # Add state manager guidance section (examples provided separately below)
         sections.append(
-            f"### State Manager Guidance (`primitives`)\n{_build_state_manager_rules_and_examples()}",
+            f"### State Manager Guidance (`primitives`)\n{_build_state_manager_rules_and_examples(include_examples=False)}",
         )
         sections.append(_build_primitives_implementation_examples())
 
