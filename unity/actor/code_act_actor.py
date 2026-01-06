@@ -79,52 +79,54 @@ def build_code_act_system_prompt(
         }
         if additional_tools:
             prompt += (
-                f"\n### Additional Tools\n{render_tools_block(additional_tools)}\n"
+                f"\n### Additional Tools (JSON Tool Calls)\n"
+                f"These tools are called via **structured JSON tool calls**, NOT inside Python code.\n\n"
+                f"{render_tools_block(additional_tools)}\n"
             )
 
         # Add FunctionManager guidance if its tools are present
         has_fm_tools = any(k.startswith("FunctionManager_") for k in tools)
         if has_fm_tools:
             prompt += """
-### Function Library (CRITICAL - READ THIS)
+### Function Library (CRITICAL)
 
-You have access to a catalogue of **pre-stored reusable functions** via the FunctionManager tools.
+You have access to a catalogue of **pre-stored reusable functions** via the FunctionManager tools listed above.
 
 **🎯 FUNCTION-FIRST WORKFLOW:**
 
-1. **ALWAYS search first**: Before using primitives directly, search for existing functions:
-   ```python
-   functions = await function_manager.search_functions("your query here")
-   ```
+1. **ALWAYS search first** using FunctionManager tools (structured tool calls, NOT Python code):
+   - `FunctionManager_search_functions_by_similarity` - semantic search for functions
+   - `FunctionManager_search_functions` - filter-based search
+   - `FunctionManager_list_functions` - list all available functions
 
 2. **If found → USE IT**: Pre-saved functions are tested, optimized, and handle edge cases.
    Don't re-explore tables/schemas when a function already does the job.
 
-3. **Read signatures carefully**: Functions often support multiple parameter variations.
-   Check `group_by`, `include_plots`, date filters, etc.
+3. **Read signatures carefully**: Check `argspec` in the search results for parameter options
+   like `group_by`, `include_plots`, date filters, etc.
 
-4. **Only explore with primitives if**: No relevant function exists, or you need to extend/compose.
+4. **Execute found functions** in your Python code:
+   ```python
+   # After finding a function via FunctionManager tools, execute it like this:
+   tools = primitives.files.get_tools()
+   result = await function_name(tools=tools, group_by="operative")
+   ```
 
 **❌ ANTI-PATTERN (AVOID THIS):**
 ```python
-# DON'T do this when functions already exist!
-tables = await primitives.files.tables_overview()  # Unnecessary exploration!
-schema = await primitives.files.schema_explain(...)  # More unnecessary exploration!
-# ... then manually building reduce() calls
+# DON'T explore tables when a function already exists!
+tables = await primitives.files.tables_overview()  # Unnecessary!
+schema = await primitives.files.schema_explain(...)  # Unnecessary!
 ```
 
-**✅ CORRECT PATTERN:**
-```python
-# Search first, use if found
-functions = await function_manager.search_functions("jobs completed by operative")
-if functions:
-    tools = primitives.files.get_tools()
-    result = await functions[0]["fn"](tools, group_by="operative")
-```
+**✅ CORRECT WORKFLOW:**
+1. Call `FunctionManager_search_functions_by_similarity` tool with your query
+2. Review the returned functions and their `argspec`
+3. Execute the function in Python code with appropriate parameters
 
 **When passing tools to functions:**
-- Functions that accept `tools: FileTools` need: `tools = primitives.files.get_tools()`
-- For direct operations, use method syntax: `await primitives.files.reduce(...)`
+- Functions accepting `tools: FileTools` need: `tools = primitives.files.get_tools()`
+- For direct data operations, use: `await primitives.files.reduce(...)`
 """
 
     return prompt
@@ -189,7 +191,12 @@ class CodeExecutionSandbox:
         if environments:
             for namespace, env in environments.items():
                 try:
-                    instance = env.get_instance()
+                    # Use get_sandbox_instance() if available (for filtered primitives),
+                    # otherwise fall back to get_instance()
+                    if hasattr(env, "get_sandbox_instance"):
+                        instance = env.get_sandbox_instance()
+                    else:
+                        instance = env.get_instance()
                     if namespace == "computer_primitives":
                         instance = _UsageTrackingProxy(instance, _mark_browser_used)
                     self.global_state[namespace] = instance
@@ -346,17 +353,17 @@ class CodeActActor(BaseActor):
             except Exception:
                 self._computer_primitives = None
 
+        # Set function_manager BEFORE sandbox/tools creation
+        self.function_manager = (
+            function_manager or ManagerRegistry.get_function_manager()
+        )
+
         self._sandbox = CodeExecutionSandbox(
             computer_primitives=self._computer_primitives,
             environments=self.environments,
         )
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
-
-        # Set function_manager BEFORE _build_tools() since it references self.function_manager
-        self.function_manager = (
-            function_manager or ManagerRegistry.get_function_manager()
-        )
         self._tools = self._build_tools()
 
         self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
