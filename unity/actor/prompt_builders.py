@@ -96,6 +96,7 @@ def _build_dynamic_implement_static_prefix(
         environments,
     )
     env_context_str = _format_environment_contexts(environments)
+    env_section = f"\n\n---\n\n{env_context_str}" if env_context_str else ""
 
     return textwrap.dedent(
         f"""
@@ -109,7 +110,7 @@ def _build_dynamic_implement_static_prefix(
         4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
 
         {rules_and_examples}
-        {f"\n\n---\n\n{env_context_str}" if env_context_str else ""}
+        {env_section}
 
         ---
 
@@ -340,6 +341,7 @@ def _build_primitives_implementation_examples() -> str:
         get_primitives_contact_update_example,
         get_primitives_cross_manager_example,
         get_primitives_files_ask_example,
+        get_primitives_files_get_tools_example,
         get_primitives_files_organize_example,
         get_primitives_guidance_ask_example,
         get_primitives_guidance_update_example,
@@ -362,6 +364,8 @@ def _build_primitives_implementation_examples() -> str:
         {get_primitives_files_ask_example().strip()}
 
         {get_primitives_files_organize_example().strip()}
+
+        {get_primitives_files_get_tools_example().strip()}
 
         {get_primitives_guidance_ask_example().strip()}
 
@@ -420,6 +424,7 @@ def _build_interjection_static_prefix(
     tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
     env_context_str = _format_environment_contexts(environments)
+    env_section = f"\n\n---\n\n{env_context_str}" if env_context_str else ""
 
     return textwrap.dedent(
         f"""
@@ -560,7 +565,7 @@ def _build_interjection_static_prefix(
         **Handle APIs:**
         {handle_apis}
 
-        {f"\n\n---\n\n{env_context_str}" if env_context_str else ""}
+        {env_section}
 
         ---
 
@@ -1305,52 +1310,41 @@ def _build_generic_execution_rules() -> str:
 
 def _build_state_manager_rules_and_examples() -> str:
     """Rules/examples for the `primitives` state manager environment."""
-    return textwrap.dedent(
+    from unity.actor.prompt_examples import get_primitives_examples
+
+    rules = textwrap.dedent(
         """
         ### 🧩 State Manager Rules & Examples (`primitives`)
 
         - **Read vs write**:
           - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
-          - `await primitives.<manager>.update(...)`, `await primitives.<manager>.execute(...)`, `await primitives.<manager>.refactor(...)` are **impure** (they mutate state or start work).
+          - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` are **impure** (they mutate state or start work).
 
         - **Routing (choose the right manager)**:
-          - **External / general knowledge** (public info not stored in our state): use `await primitives.web.ask(...)`.
-          - **Contacts / people records**: use `await primitives.contacts.ask(...)` (read) or `await primitives.contacts.update(...)` (mutate).
-          - **Tasks**: use `await primitives.tasks.ask(...)` (read), `await primitives.tasks.update(...)` (mutate), or `await primitives.tasks.execute(...)` (run).
-          - **Transcripts / message history**: use `await primitives.transcripts.ask(...)`.
-          - **Internal knowledge base** (policies/facts we store): use `await primitives.knowledge.ask(...)` or `await primitives.knowledge.update(...)`.
+          - **External / general knowledge** (public info not stored in our state): `await primitives.web.ask(...)`
+          - **Contacts / people records**: `await primitives.contacts.ask(...)` (read) or `.update(...)` (mutate)
+          - **Tasks**: `await primitives.tasks.ask(...)` (read), `.update(...)` (mutate), `.execute(...)` (run)
+          - **Transcripts / message history**: `await primitives.transcripts.ask(...)`
+          - **Internal knowledge base** (policies/facts we store): `await primitives.knowledge.ask(...)` or `.update(...)`
+          - **Guidance / policies**: `await primitives.guidance.ask(...)` or `.update(...)`
+          - **Files / data**:
+            - Natural language queries: `await primitives.files.ask(...)`
+            - Direct data operations: `await primitives.files.reduce(...)`, `await primitives.files.filter_files(...)`, etc.
+            - Pass tools to functions: `tools = primitives.files.get_tools()` then `await fn(tools, ...)`
 
-        - **Prefer return values as evidence**: treat return values from state managers as the primary ground truth; log/print them and propagate them up to `main_plan` where appropriate.
+        - **Prefer return values as evidence**: treat return values from state managers as the primary ground truth.
 
-        - **Steerable handles**: some calls (notably execution) may return handles. Capture them and await their results.
-
-        Examples:
-        ```python
-        # Pure query
-        contact = await primitives.contacts.ask("Find John Doe and return the best matching contact.")
-
-        # Mutation
-        updated = await primitives.contacts.update("Add a new contact for John Doe with email john@example.com.")
-
-        # Durable execution (first find task_id via ask(response_format=...), then execute(task_id=...))
-        from pydantic import BaseModel
-
-        class TaskLookup(BaseModel):
-            task_id: int
-
-        TaskLookup.model_rebuild()
-
-        task_lookup_handle = await primitives.tasks.ask(
-            "Find the task for drafting an email to John Doe confirming our meeting next week. Return the task_id.",
-            response_format=TaskLookup,
-        )
-        task_info = await task_lookup_handle.result()
-
-        task_handle = await primitives.tasks.execute(task_id=task_info.task_id)
-        task_result = await task_handle.result()
-        ```
+        - **Steerable handles**: some calls return handles. Capture them and await their results:
+          ```python
+          handle = await primitives.tasks.execute(task_id=123)
+          result = await handle.result()
+          ```
         """,
     ).strip()
+
+    examples = get_primitives_examples()
+
+    return f"{rules}\n\n### Implementation Examples\n\n{examples}"
 
 
 def _build_code_act_rules_and_examples(
@@ -1373,6 +1367,14 @@ def _build_code_act_rules_and_examples(
 
     # Always include domain-agnostic execution rules first.
     parts.append(_build_generic_execution_rules())
+
+    # Add core patterns (error handling, clarification) - these complement the
+    # primitives examples and are useful regardless of which environments are active.
+    from unity.actor.prompt_examples import get_code_act_pattern_examples
+
+    core_patterns = get_code_act_pattern_examples()
+    if core_patterns:
+        parts.append(f"### Core Patterns\n\n{core_patterns}")
 
     cp = None
     if "computer_primitives" in environments:
@@ -1623,6 +1625,7 @@ def build_initial_plan_prompt(
     image_context_str = _format_images_for_prompt(images)
 
     env_context_str = _format_environment_contexts(environments)
+    env_section = f"\n\n---\n\n{env_context_str}" if env_context_str else ""
     if environments:
         namespaces = ", ".join(f"`{ns}`" for ns in environments.keys())
         tool_usage_instruction = (
@@ -1696,7 +1699,7 @@ def build_initial_plan_prompt(
 
         **Primary Goal:** "{goal}"
         {rules_and_examples}
-        {f"\n\n---\n\n{env_context_str}" if env_context_str else ""}
+        {env_section}
         ---
         {library_instruction}
         ---

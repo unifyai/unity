@@ -549,6 +549,27 @@ async def organize_project_files() -> str:
 '''
 
 
+def get_primitives_files_get_tools_example() -> str:
+    """Example: passing FileManager tools to functions that accept a tools parameter."""
+
+    return '''
+# primitives.files provides TWO interfaces:
+#
+# 1. DIRECT METHOD CALLS (use for your own data operations):
+#    result = await primitives.files.reduce(table=..., metric="count", ...)
+#    tables = await primitives.files.tables_overview()
+#
+# 2. GET_TOOLS (use ONLY when passing to functions that accept `tools: FileTools`):
+#    tools = primitives.files.get_tools()
+#    result = await some_function(tools, other_args...)
+
+async def call_function_with_tools(target_fn, **kwargs):
+    """When a function signature shows `tools: FileTools`, pass get_tools()."""
+    tools = primitives.files.get_tools()
+    return await target_fn(tools, **kwargs)
+'''
+
+
 def get_primitives_guidance_ask_example() -> str:
     """Example: read-only guidance query."""
 
@@ -930,6 +951,21 @@ def get_core_pattern_examples() -> str:
     return "\n\n".join(examples)
 
 
+def get_code_act_pattern_examples() -> str:
+    """Get core pattern examples relevant to CodeActActor.
+
+    Excludes library function and stubbing patterns (not applicable to CodeAct).
+    Includes patterns for error handling and clarification that complement
+    the primitives examples already provided via _build_state_manager_rules_and_examples().
+    """
+
+    examples = [
+        get_error_handling_example().strip(),
+        get_clarification_example().strip(),
+    ]
+    return "\n\n".join(examples)
+
+
 def get_browser_examples() -> str:
     """Get all browser-specific examples."""
 
@@ -953,6 +989,7 @@ def get_primitives_examples() -> str:
         get_primitives_dynamic_methods_example().strip(),
         get_primitives_files_ask_example().strip(),
         get_primitives_files_organize_example().strip(),
+        get_primitives_files_get_tools_example().strip(),
         get_primitives_guidance_ask_example().strip(),
         get_primitives_guidance_update_example().strip(),
         get_primitives_web_ask_example().strip(),
