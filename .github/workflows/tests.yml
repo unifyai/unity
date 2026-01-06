@@ -529,6 +529,24 @@ jobs:
         token: ${{ secrets.ORCHESTRA_CLONE_TOKEN }}
         fetch-depth: 1
 
+    - name: Clone unify repo
+      uses: actions/checkout@v2
+      with:
+        repository: unifyai/unify
+        ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
+        path: unify
+        token: ${{ secrets.UNIFY_CLONE_TOKEN }}
+        fetch-depth: 1
+
+    - name: Clone unillm repo
+      uses: actions/checkout@v2
+      with:
+        repository: unifyai/unillm
+        ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
+        path: unillm
+        token: ${{ secrets.UNILLM_CLONE_TOKEN }}
+        fetch-depth: 1
+
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
       with:
@@ -638,36 +656,13 @@ jobs:
         restore-keys: |
           uv-${{ runner.os }}-
 
-    - name: Configure git for private repos
+    - name: Configure unify/unillm paths for CI
       run: |
-        # Configure git to use tokens for private GitHub repos
-        # Each private repo gets its own token-authenticated URL rewrite
-        git config --global url."https://x-access-token:${UNIFY_TOKEN}@github.com/unifyai/unify".insteadOf "https://github.com/unifyai/unify"
-        git config --global url."https://x-access-token:${UNILLM_TOKEN}@github.com/unifyai/unillm".insteadOf "https://github.com/unifyai/unillm"
-        # Rewrite SSH URLs to HTTPS for public submodules (e.g., global-cursor-rules in unillm)
-        git config --global url."https://github.com/".insteadOf "git@github.com:"
-      env:
-        UNIFY_TOKEN: ${{ secrets.UNIFY_CLONE_TOKEN }}
-        UNILLM_TOKEN: ${{ secrets.UNILLM_CLONE_TOKEN }}
-
-    - name: Configure unify/unillm for CI
-      run: |
-        # Local development uses editable local paths (../unify, ../unillm).
-        # CI doesn't have these sibling directories, so we replace with git URLs.
-        # Branch selection: main→main, all others→staging
-        if [[ "${{ github.ref_name }}" == "main" ]]; then
-          BRANCH="main"
-        else
-          BRANCH="staging"
-        fi
-        echo "Configuring unify/unillm to use $BRANCH branch"
-
-        # Replace local paths with git URLs
-        sed -i 's|unifyai = { path = "../unify", editable = true }|unifyai = { git = "https://github.com/unifyai/unify.git", branch = "'"$BRANCH"'" }|g' pyproject.toml
-        sed -i 's|unillm = { path = "../unillm", editable = true }|unillm = { git = "https://github.com/unifyai/unillm.git", branch = "'"$BRANCH"'" }|g' pyproject.toml
-
-        # Re-lock to resolve the git dependencies
-        uv lock --upgrade-package unifyai --upgrade-package unillm
+        # Local development uses sibling paths (../unify, ../unillm).
+        # CI clones these repos into the workspace, so update paths accordingly.
+        sed -i 's|path = "../unify"|path = "./unify"|g' pyproject.toml
+        sed -i 's|path = "../unillm"|path = "./unillm"|g' pyproject.toml
+        # unillm's pyproject.toml has path = "../unify" which correctly resolves to ./unify/ from ./unillm/
 
     - name: Sync dependencies with uv
       run: |
