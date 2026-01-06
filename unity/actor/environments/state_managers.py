@@ -10,6 +10,63 @@ from unity.function_manager.primitives import (
 )
 
 
+class _FilteredPrimitivesProxy:
+    """Proxy that restricts access to only allowed managers.
+
+    When `exposed_managers` is set on StateManagerEnvironment, this proxy
+    is returned by `get_instance()` instead of the raw Primitives object.
+    Accessing non-allowed managers raises AttributeError with a helpful message.
+
+    This is transparent to code that only uses allowed managers - all attributes
+    and methods work identically to the underlying Primitives instance.
+    """
+
+    # Managers that exist on Primitives (used for error messages)
+    _ALL_MANAGERS = frozenset(
+        {
+            "contacts",
+            "tasks",
+            "transcripts",
+            "knowledge",
+            "web",
+            "guidance",
+            "files",
+            "secrets",
+            "computer",
+        },
+    )
+
+    def __init__(self, primitives: Primitives, allowed_managers: Set[str]):
+        # Use object.__setattr__ to avoid triggering our __setattr__
+        object.__setattr__(self, "_primitives", primitives)
+        object.__setattr__(self, "_allowed", frozenset(allowed_managers))
+
+    def __getattr__(self, name: str) -> Any:
+        # Allow private/dunder attributes to pass through
+        if name.startswith("_"):
+            return getattr(self._primitives, name)
+
+        # Check if this is a manager access
+        if name in self._ALL_MANAGERS:
+            if name not in self._allowed:
+                raise AttributeError(
+                    f"Manager 'primitives.{name}' is not available in this sandbox. "
+                    f"Available managers: {sorted(self._allowed)}",
+                )
+
+        # Pass through to underlying Primitives
+        return getattr(self._primitives, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._primitives, name, value)
+
+    def __repr__(self) -> str:
+        return f"<FilteredPrimitives allowed={sorted(self._allowed)}>"
+
+
 class StateManagerEnvironment(BaseEnvironment):
     """State manager environment backed by `unity.function_manager.primitives.Primitives`.
 
@@ -39,7 +96,20 @@ class StateManagerEnvironment(BaseEnvironment):
         return "primitives"
 
     def get_instance(self) -> Primitives:
+        """Return the primitives instance (always the full Primitives object)."""
         return self._primitives
+
+    def get_sandbox_instance(self) -> Any:
+        """Return the instance for sandbox injection, filtered if exposed_managers is set.
+
+        This is used by CodeExecutionSandbox in CodeActActor to inject a filtered proxy when
+        exposed_managers is set. For normal use cases (HierarchicalActor, etc.),
+        use get_instance() which always returns the full Primitives. This is a temporary
+        solution to avoid hardcoding the list of exposed managers in the CodeExecutionSandbox.
+        """
+        if self._exposed_managers is None:
+            return self._primitives
+        return _FilteredPrimitivesProxy(self._primitives, self._exposed_managers)
 
     def _infer_primitives_attr_name(self, class_path: str) -> str | None:
         """Infer the attribute name on Primitives from a class path."""
