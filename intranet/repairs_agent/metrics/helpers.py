@@ -513,6 +513,33 @@ def build_metric_result(
 
 
 # =============================================================================
+# PLOT RESULT HELPER
+# =============================================================================
+
+
+def extract_plot_url(result: Any) -> Optional[str]:
+    """Extract URL from visualize result (handles both PlotResult and dict)."""
+    if result is None:
+        return None
+    if hasattr(result, "url"):
+        return result.url
+    if isinstance(result, dict):
+        return result.get("url")
+    return None
+
+
+def extract_plot_succeeded(result: Any) -> bool:
+    """Extract succeeded status from visualize result."""
+    if result is None:
+        return False
+    if hasattr(result, "succeeded"):
+        return result.succeeded
+    if isinstance(result, dict):
+        return result.get("succeeded", True)
+    return True
+
+
+# =============================================================================
 # EXPORTS - List of helpers for FunctionManager sync
 # =============================================================================
 

@@ -48,6 +48,8 @@ from .helpers import (
     discover_repairs_table,
     discover_telematics_tables,
     extract_count,
+    extract_plot_succeeded,
+    extract_plot_url,
     extract_sum,
     normalize_grouped_result,
     resolve_group_by,
@@ -171,16 +173,16 @@ async def jobs_completed_per_day(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=filter_expr,
                     title=f"Jobs Completed by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Jobs Completed by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -366,16 +368,16 @@ async def no_access_rate(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=no_access_filter,
                     title=f"No-Access Rate by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"No-Access Rate by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -557,16 +559,16 @@ async def first_time_fix_rate(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=ftf_filter,
                     title=f"First-Time Fix by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"First-Time Fix by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -738,16 +740,16 @@ async def follow_on_required_rate(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=fo_filter,
                     title=f"Follow-On Required by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Follow-On Required by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -916,16 +918,16 @@ async def follow_on_materials_rate(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=materials_filter,
                     title=f"Follow-On Materials by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Follow-On Materials by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -1098,16 +1100,16 @@ async def job_completed_on_time_rate(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=on_time_filter,
                     title=f"On-Time Completions by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"On-Time Completions by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -1236,15 +1238,15 @@ async def merchant_stops_per_day(
                     x_axis="Driver",
                     y_axis="Trip",
                     group_by="Driver",
-                    aggregate="count",
+                    metric="count",
                     title=f"Merchant Stops by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Merchant Stops by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -1375,22 +1377,22 @@ async def avg_duration_at_merchant(
     if visualize_tool and include_plots and group_by is not None:
         try:
             # Inline plot config - visible to CodeActActor
-            # Telematics uses "Driver" column, y_axis="Trip travel time", aggregate="mean"
+            # Telematics uses "Driver" column, y_axis="Trip travel time", metric="mean"
             result = visualize_tool(
                 tables=telematics_tables,
                 plot_type="bar",
                 x_axis="Driver",
                 y_axis="Trip travel time",
                 group_by="Driver",
-                aggregate="mean",
+                metric="mean",
                 title=f"Avg Duration at Merchant by {group_by_str.title() if group_by_str else 'Group'}",
             )
             if result:
                 plots.append(
                     PlotResult(
-                        url=result.get("url"),
+                        url=extract_plot_url(result),
                         title=f"Avg Duration at Merchant by {group_by_str.title() if group_by_str else 'Group'}",
-                        succeeded=result.get("succeeded", True),
+                        succeeded=extract_plot_succeeded(result),
                     ),
                 )
         except Exception as e:
@@ -1506,23 +1508,23 @@ async def distance_travelled_per_day(
         if visualize_tool:
             try:
                 # Inline plot config - visible to CodeActActor
-                # Telematics: x_axis="Driver", y_axis="Total distance", aggregate="sum"
+                # Telematics: x_axis="Driver", y_axis="Total distance", metric="sum"
                 result = visualize_tool(
                     tables=telematics_tables,
                     plot_type="bar",
                     x_axis="Driver",
                     y_axis="Total distance",
                     group_by="Driver",
-                    aggregate="sum",
+                    metric="sum",
                     filter=base_filter,
                     title=f"Distance Travelled by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Distance Travelled by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -1624,22 +1626,22 @@ async def avg_time_travelling(
         if visualize_tool:
             try:
                 # Inline plot config - visible to CodeActActor
-                # Telematics: x_axis="Driver", y_axis="Trip travel time", aggregate="sum"
+                # Telematics: x_axis="Driver", y_axis="Trip travel time", metric="sum"
                 result = visualize_tool(
                     tables=telematics_tables,
                     plot_type="bar",
                     x_axis="Driver",
                     y_axis="Trip travel time",
                     group_by="Driver",
-                    aggregate="sum",
+                    metric="sum",
                     title=f"Travel Time by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Travel Time by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -1757,16 +1759,16 @@ async def repairs_completed_per_day(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=filter_expr,
                     title=f"Repairs Completed by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Repairs Completed by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -1882,16 +1884,16 @@ async def jobs_issued_per_day(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=filter_expr,
                     title=f"Jobs Issued by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Jobs Issued by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -2062,16 +2064,16 @@ async def jobs_requiring_materials_rate(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=materials_filter,
                     title=f"Jobs Requiring Materials by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Jobs Requiring Materials by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
@@ -2490,16 +2492,16 @@ async def appointment_adherence_rate(
                     x_axis=group_by_field,
                     y_axis="JobTicketReference",
                     group_by=group_by_field,
-                    aggregate="count",
+                    metric="count",
                     filter=base_filter,
                     title=f"Scheduled Jobs by {group_by_str.title()}",
                 )
                 if result:
                     plots.append(
                         PlotResult(
-                            url=result.get("url"),
+                            url=extract_plot_url(result),
                             title=f"Scheduled Jobs by {group_by_str.title()}",
-                            succeeded=result.get("succeeded", True),
+                            succeeded=extract_plot_succeeded(result),
                         ),
                     )
             except Exception as e:
