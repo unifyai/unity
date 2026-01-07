@@ -546,7 +546,7 @@ class InterjectionDecision(_StrictBaseModel):
     )
 
 
-class SandboxMergeDecision(BaseModel):
+class SandboxMergeDecision(_StrictBaseModel):
     """A structured decision on whether to merge sandbox findings."""
 
     modification_needed: bool = Field(
@@ -560,7 +560,7 @@ class SandboxMergeDecision(BaseModel):
     )
 
 
-class RefactorDecision(BaseModel):
+class RefactorDecision(_StrictBaseModel):
     """The structured output from the refactoring LLM call."""
 
     refactored_code: str = Field(
@@ -573,7 +573,7 @@ class RefactorDecision(BaseModel):
     )
 
 
-class PreconditionDecision(BaseModel):
+class PreconditionDecision(_StrictBaseModel):
     """A structured decision on a function's precondition."""
 
     status: typing.Literal["ok", "not_applicable"] = Field(
