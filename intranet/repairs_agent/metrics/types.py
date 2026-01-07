@@ -100,7 +100,7 @@ class MetricResult(BaseModel):
 
     Attributes:
         metric_name: The name of the metric (e.g., "first_time_fix_rate")
-        group_by: The grouping dimension used (e.g., "operative", "total")
+        group_by: The grouping dimension used (e.g., "operative", "patch"), or None for no grouping
         time_period: Time period granularity if time-based grouping was used
         start_date: Start date of the analysis period (ISO format)
         end_date: End date of the analysis period (ISO format)
@@ -123,7 +123,7 @@ class MetricResult(BaseModel):
     """
 
     metric_name: str
-    group_by: str
+    group_by: Optional[str] = None
     time_period: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
