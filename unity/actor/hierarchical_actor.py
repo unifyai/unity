@@ -347,7 +347,21 @@ class FatalVerificationError(Exception):
     """Raised when verification results in a fatal, unrecoverable error."""
 
 
-class VerificationAssessment(BaseModel):
+class _StrictBaseModel(BaseModel):
+    """
+    BaseModel configured for OpenAI Structured Outputs (strict JSON schema).
+
+    OpenAI requires `additionalProperties: false` on all object schemas used for
+    `response_format`. Pydantic defaults allow extras unless configured.
+    """
+
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {"additionalProperties": False},
+    }
+
+
+class VerificationAssessment(_StrictBaseModel):
     """Structured output for the _check_state_against_goal LLM call."""
 
     status: str = Field(
