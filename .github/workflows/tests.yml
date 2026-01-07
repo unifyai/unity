@@ -515,6 +515,9 @@ jobs:
       ORCHESTRA_GCP_ASSISTANT_IMAGES_BUCKET_NAME: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
       ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      # Ensure local unillm/unify packages are found correctly
+      # The repos are cloned to ./unillm/ and ./unify/, with packages inside
+      PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
     steps:
     - uses: actions/checkout@v2
       with:
@@ -674,45 +677,19 @@ jobs:
       run: |
         # Ensure we got the LOCAL unillm/unify, not PyPI packages with the same name
         # The local unillm exports AsyncUnify; the PyPI one exports UniLLM
-        uv run python -c "
+        # PYTHONPATH is set at job level to include ./unillm and ./unify
+        python -c "
         import sys
-        print('=== Python path ===')
-        for p in sys.path:
+        print('Python path (first 5):')
+        for p in sys.path[:5]:
             print(f'  {p}')
-        print()
 
-        # Try importing step by step to see where it fails
-        print('=== Step-by-step import ===')
-        try:
-            import unillm
-            print(f'unillm imported: __file__={unillm.__file__}')
-            print(f'unillm attrs: {sorted(dir(unillm))}')
-        except Exception as e:
-            print(f'Failed to import unillm: {e}')
-            raise
-
-        try:
-            from unillm import AsyncUnify
-            print(f'AsyncUnify imported successfully: {AsyncUnify}')
-        except ImportError as e:
-            print(f'Failed to import AsyncUnify: {e}')
-            # Try the deeper import path
-            print('Trying deeper import...')
-            try:
-                from unillm.clients import uni_llm
-                print(f'uni_llm: {uni_llm.__file__}')
-                print(f'uni_llm attrs: {sorted(dir(uni_llm))}')
-            except Exception as e2:
-                print(f'Failed to import uni_llm: {e2}')
-            raise
-
+        from unillm import AsyncUnify, Unify
         import unify
-        print(f'unify imported: __file__={unify.__file__}')
 
-        # Check unify has expected exports (local version)
-        assert hasattr(unify, 'create_project'), f'Wrong unify package! File: {unify.__file__}'
-
-        print()
+        print(f'✓ unillm: {AsyncUnify.__module__}')
+        print(f'✓ unify: {unify.__file__}')
+        assert hasattr(unify, 'create_project'), f'Wrong unify package!'
         print('✓ Local packages verified successfully')
         "
 
