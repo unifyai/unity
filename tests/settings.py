@@ -8,8 +8,14 @@ TestingSettings inherits all production settings from unity.settings.ProductionS
 and adds test-only configuration. This mirrors the structure of unity/settings.py.
 """
 
+import os
 import random
 import string
+from pathlib import Path
+
+# Set UNILLM_CACHE_DIR to repo root so cache location is consistent regardless of cwd
+_REPO_ROOT = Path(__file__).parent.parent.resolve()
+os.environ.setdefault("UNILLM_CACHE_DIR", str(_REPO_ROOT))
 
 from pydantic import Field
 from pydantic.fields import computed_field
