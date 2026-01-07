@@ -119,6 +119,12 @@ def _setup_scenario(
 
     Creates/reuses a versioned context, seeds contacts if needed,
     and returns the manager + id mapping.
+
+    Note: ContactManager instantiation is inside the file lock because
+    ContactManager.__init__ calls _sync_required_contacts(), which creates
+    system contacts (id=0, id=1). Without the lock, parallel pytest sessions
+    can race and create duplicate contacts due to a TOCTOU vulnerability
+    in the application-level uniqueness check.
     """
     ManagerRegistry.clear()
     ContextRegistry.clear()
@@ -136,12 +142,14 @@ def _setup_scenario(
     unify.create_context(ctx)  # exist_ok=True by default
     unify.set_context(ctx, relative=False)
 
-    # Create manager
-    cm = ContactManager()
-    id_mapping: Dict[str, int] = {}
-
-    # Use file lock to coordinate seeding across parallel processes
+    # Use file lock to coordinate ContactManager creation and seeding.
+    # ContactManager.__init__ creates system contacts (assistant id=0, user id=1)
+    # via _sync_required_contacts(). This must be serialized to prevent duplicate
+    # contact creation when multiple pytest sessions start in parallel.
     with scenario_file_lock(lock_name):
+        cm = ContactManager()
+        id_mapping: Dict[str, int] = {}
+
         if is_scenario_seeded(cm, _CONTACTS_DATA):
             # Scenario exists - just rebuild local state
             print(f"Scenario already seeded ({ctx}), rebuilding local state...")
