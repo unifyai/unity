@@ -688,8 +688,15 @@ async def follow_on_required_rate(
     )
     group_by_field = resolve_group_by(group_by_str)
 
-    # Count follow-on jobs
-    fo_filter = build_filter(["`FollowOn` == 'Yes'"], start_date, end_date)
+    # Count follow-on jobs (among completed jobs only - must match denominator universe)
+    fo_filter = build_filter(
+        [
+            "`FollowOn` == 'Yes'",
+            "`WorksOrderStatusDescription` in ['Complete', 'Closed']",
+        ],
+        start_date,
+        end_date,
+    )
     raw_fo = reduce_tool(
         table=repairs_table,
         metric="count",
@@ -1937,9 +1944,11 @@ async def appointment_adherence_rate(
             pass  # Proceed anyway if column check fails
 
     # Filter for scheduled appointments with arrival times
+    # Also exclude garbage dates like 1900-01-02 from source data
     scheduled_condition = (
         "`ScheduledAppointmentStart` != '' and "
         "`ScheduledAppointmentStart` is not None and "
+        "`ScheduledAppointmentStartDay` not in ['1900-01-02', 'None', ''] and "
         "`ArrivedOnSite` != '' and "
         "`ArrivedOnSite` is not None"
     )
