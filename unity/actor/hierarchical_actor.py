@@ -4060,8 +4060,19 @@ async def main_plan():
                 exc_info=True,
             )
 
-    async def _cancel_all_background_tasks(self):
-        """Gracefully cancels all in-flight verification and recovery tasks."""
+    async def _cancel_all_background_tasks(
+        self,
+        *,
+        cancel_pane_supervisor: bool = True,
+    ):
+        """Gracefully cancels all in-flight verification and recovery tasks.
+
+        Args:
+            cancel_pane_supervisor: If True (default), also cancels the pane supervisor
+                task which reacts to pane events (clarifications/notifications). During
+                `interject(...)` we keep the pane supervisor running so clarifications
+                remain functional for the rest of the run.
+        """
         logger.debug("Cancelling all background verification and recovery tasks.")
         self.action_log.append(
             "Cancelling all background verification and recovery tasks.",
@@ -4168,7 +4179,10 @@ async def main_plan():
         Processes a user interjection by using an LLM to decide on the best course of action.
         """
 
-        await self._cancel_all_background_tasks()
+        # Preserve the pane supervisor during interjection handling to maintain
+        # clarification routing functionality. The supervisor manages clarification
+        # and notification events and must remain active for routing-only interjections.
+        await self._cancel_all_background_tasks(cancel_pane_supervisor=False)
 
         logger.debug(
             f"INTERJECT: Interjection received {message}. Current state: {self._state.name}",
