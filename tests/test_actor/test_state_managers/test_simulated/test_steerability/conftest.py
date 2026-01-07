@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -8,17 +9,70 @@ import pytest
 
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.function_manager.primitives import Primitives
+from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
 
-# ---------------------------------------------------------------------------
-# Shared timeouts (standardize across steerability tests)
-# ---------------------------------------------------------------------------
 
-HANDLE_REGISTRATION_TIMEOUT = 60.0
-STEERING_EVENT_TIMEOUT = 60.0
-CLARIFICATION_TIMEOUT = 60.0
-PLAN_COMPLETION_TIMEOUT = 180.0
+@pytest.fixture
+def create_primitives() -> Callable[..., Primitives]:
+    """Factory to build `Primitives` with plain simulated state managers."""
+
+    def _factory(
+        *,
+        contact_desc: str | None = None,
+        transcript_desc: str | None = None,
+        knowledge_desc: str | None = None,
+        task_desc: str | None = None,
+    ) -> Primitives:
+        primitives = Primitives()
+        if contact_desc is not None:
+            primitives._contacts = SimulatedContactManager(description=contact_desc)  # type: ignore[attr-defined]
+        if transcript_desc is not None:
+            primitives._transcripts = SimulatedTranscriptManager(  # type: ignore[attr-defined]
+                description=transcript_desc,
+            )
+        if knowledge_desc is not None:
+            primitives._knowledge = SimulatedKnowledgeManager(description=knowledge_desc)  # type: ignore[attr-defined]
+        if task_desc is not None:
+            primitives._tasks = SimulatedTaskScheduler(description=task_desc)  # type: ignore[attr-defined]
+        return primitives
+
+    return _factory
+
+
+@pytest.fixture
+def create_canned_handle():
+    """Async factory to create a stopped handle suitable for injecting a canned plan."""
+
+    from unity.actor.hierarchical_actor import HierarchicalActorHandle
+
+    async def _factory(
+        *,
+        actor: Any,
+        with_clarification: bool = False,
+    ) -> Any:
+        kwargs: dict[str, Any] = {}
+        if with_clarification:
+            kwargs["clarification_up_q"] = asyncio.Queue()
+            kwargs["clarification_down_q"] = asyncio.Queue()
+
+        h = HierarchicalActorHandle(
+            actor=actor,
+            goal="canned",
+            persist=False,
+            **kwargs,
+        )
+
+        # `HierarchicalActorHandle.__init__` auto-starts execution; cancel so tests can
+        # inject a deterministic plan and then start it.
+        if getattr(h, "_execution_task", None):
+            h._execution_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await h._execution_task
+        return h
+
+    return _factory
 
 
 class _ClarificationForcingMixin:
@@ -145,14 +199,21 @@ def create_primitives_with_clarification_forcing() -> Callable[..., Primitives]:
 def create_actor_with_primitives():
     """Async factory to create a `HierarchicalActor` wired to a given `Primitives`.
 
-    This keeps test setup consistent and ensures the actor is always closed.
+    This keeps test setup consistent, applies browser mocks immediately, and ensures
+    the actor is always closed.
     """
 
     import contextlib
     from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
 
     from unity.actor.environments import StateManagerEnvironment
     from unity.actor.hierarchical_actor import HierarchicalActor
+    from tests.test_actor.test_state_managers.utils import (
+        NoKeychainBrowser,
+        _mock_observe,
+        _mock_reason,
+    )
 
     @asynccontextmanager
     async def _factory(primitives: Primitives):
@@ -162,6 +223,15 @@ def create_actor_with_primitives():
             connect_now=False,
             environments=[StateManagerEnvironment(primitives)],
         )
+        # Mirror `tests.test_actor.test_state_managers.utils.make_actor`: mock browser
+        # primitives immediately (before any handle creation) to avoid Keychain/network.
+        cp = getattr(actor, "computer_primitives", None)
+        if cp is not None:
+            cp._browser = NoKeychainBrowser()
+            cp.navigate = AsyncMock(return_value=None)
+            cp.act = AsyncMock(return_value="acted")
+            cp.observe = AsyncMock(side_effect=_mock_observe)
+            cp.reason = AsyncMock(side_effect=_mock_reason)
         try:
             yield actor
         finally:
