@@ -140,6 +140,8 @@ class FileManager(BaseFileManager):
         # Root contexts
         # - FileRecords: index of files (lightweight per file row)
         # - File:        per-file content roots (one subcontext per safe filepath)
+        # ToDo: REMOVE THIS AFTER METRICS ARE GENERATED
+        base_ctx = "DefaultUser/Assistant"
         self._ctx = f"{base_ctx}/FileRecords/{self._fs_alias}"
         self._per_file_root = f"{base_ctx}/Files/{self._fs_alias}"
 
@@ -1758,7 +1760,7 @@ class FileManager(BaseFileManager):
         group_by: Optional[str] = None,
         filter: Optional[str] = None,
         title: Optional[str] = None,
-        aggregate: Optional[str] = None,
+        metric: Optional[str] = None,
         scale_x: Optional[str] = None,
         scale_y: Optional[str] = None,
         bin_count: Optional[int] = None,
@@ -1809,8 +1811,8 @@ class FileManager(BaseFileManager):
         title : str | None
             Plot title. Auto-generated if not provided.
 
-        aggregate : str | None
-            Aggregation function when grouping: "sum", "mean", "count", "min", "max".
+        metric : str | None
+            Metric to aggregate: "sum", "mean", "var", "std", "min", "max", "median", "mode", "count".
 
         scale_x, scale_y : str | None
             Axis scale: "linear" (default) or "log".
@@ -1860,7 +1862,7 @@ class FileManager(BaseFileManager):
             plot_type='bar',
             x_axis='Driver',
             y_axis='TotalDistance',
-            aggregate='sum'
+            metric='sum'
         )
         # Returns: [PlotResult(url="...", title="... (July_2025)"), ...]
 
@@ -1926,7 +1928,7 @@ class FileManager(BaseFileManager):
             x_axis=x_axis,
             y_axis=y_axis,
             group_by=group_by,
-            aggregate=aggregate,
+            metric=metric,
             scale_x=scale_x,
             scale_y=scale_y,
             bin_count=bin_count,
