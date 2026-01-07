@@ -1,9 +1,10 @@
 # Use Python 3.12 slim image as base
 FROM python:3.12-slim
 
-# Accept build argument for UNIFY_KEY
+# Accept build arguments
 ARG UNIFY_KEY
 ARG GITHUB_TOKEN
+ARG BRANCH=main
 
 # Set working directory
 WORKDIR /app
@@ -70,14 +71,16 @@ RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "htt
 # Install PyTorch CPU-only first (smaller and faster for containers)
 RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Install Python dependencies using uv (system-wide, no virtual environment)
+# Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
+RUN git clone --depth 1 --branch ${BRANCH} https://github.com/unifyai/unify.git /unify
+RUN git clone --depth 1 --branch ${BRANCH} https://github.com/unifyai/unillm.git /unillm
+
+# Copy source and install unity with all dependencies
+COPY . /app
 RUN uv pip install --system --no-cache .
 
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
-
-# Copy all application files
-COPY . /app
 
 # Ensure desktop scripts are executable
 RUN chmod +x /app/desktop/desktop.sh /app/desktop/display.sh /app/desktop/device.sh /app/desktop/update_vnc_password.sh /app/desktop/startup.sh /app/entrypoint.sh || true
