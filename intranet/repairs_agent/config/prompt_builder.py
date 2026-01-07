@@ -346,27 +346,61 @@ def build_consolidated_analyst_prompt(
         # Show summary stats
         total = result.get("total", "N/A")
         num_groups = len(result.get("results", []))
-        sections.append(f"- **Total**: {total}")
-        sections.append(f"- **Groups**: {num_groups}")
+        sections.append(f"- **Overall Total/Rate**: {total}")
+        sections.append(f"- **Number of Groups**: {num_groups}")
 
-        # Show top/bottom results if grouped
+        # Show results - either full data or top/bottom K
         results_list = result.get("results", [])
         if results_list and len(results_list) > 0:
-            # Show top 5
-            sections.append("- **Top 5**:")
-            for r in results_list[:5]:
-                group = r.get("group", "Unknown")
-                # Get the main value (could be rate, count, value, etc.)
-                value = r.get("rate") or r.get("count") or r.get("value") or "N/A"
-                sections.append(f"  - {group}: {value}")
+            # Helper to extract the primary metric value
+            def get_value(r: dict) -> float:
+                # Try percentage first (rate metrics), then count, then value
+                val = (
+                    r.get("percentage")
+                    or r.get("rate")
+                    or r.get("count")
+                    or r.get("value")
+                )
+                if val is None:
+                    return 0.0
+                return float(val) if isinstance(val, (int, float)) else 0.0
 
-            # Show bottom 5 if enough data
-            if len(results_list) > 10:
-                sections.append("- **Bottom 5**:")
-                for r in results_list[-5:]:
-                    group = r.get("group", "Unknown")
-                    value = r.get("rate") or r.get("count") or r.get("value") or "N/A"
-                    sections.append(f"  - {group}: {value}")
+            def format_item(r: dict) -> str:
+                group = r.get("group", "Unknown")
+                pct = r.get("percentage")
+                count = r.get("count")
+                total_for_group = r.get("total")
+                if (
+                    pct is not None
+                    and count is not None
+                    and total_for_group is not None
+                ):
+                    return f"{group}: {pct}% ({count}/{total_for_group})"
+                elif pct is not None:
+                    return f"{group}: {pct}%"
+                elif count is not None:
+                    return f"{group}: {count}"
+                else:
+                    val = r.get("value", "N/A")
+                    return f"{group}: {val}"
+
+            # Sort by value descending to get actual top/bottom performers
+            sorted_results = sorted(results_list, key=get_value, reverse=True)
+
+            # For small datasets (<= 20 items), show all data verbatim
+            if len(sorted_results) <= 20:
+                sections.append("- **Full Data (sorted by value)**:")
+                for r in sorted_results:
+                    sections.append(f"  - {format_item(r)}")
+            else:
+                # For larger datasets, show top and bottom 10
+                sections.append("- **Top 10 Performers**:")
+                for r in sorted_results[:10]:
+                    sections.append(f"  - {format_item(r)}")
+
+                sections.append("- **Bottom 10 Performers**:")
+                for r in sorted_results[-10:]:
+                    sections.append(f"  - {format_item(r)}")
 
         sections.append("")
 
@@ -379,7 +413,7 @@ def build_consolidated_analyst_prompt(
         "1. **Executive Summary** - Key findings across all groupings (2-3 sentences)",
     )
     sections.append(
-        "2. **Cross-Comparison Analysis** - How do results differ by operative vs patch vs region?",
+        "2. **Cross-Comparison Analysis** - How do results differ by operative vs patch vs region vs day?",
     )
     sections.append(
         "3. **Patterns & Trends** - Common themes, outliers, correlations across groupings",
@@ -391,9 +425,24 @@ def build_consolidated_analyst_prompt(
         "5. **Strategic Recommendations** - Actionable next steps based on combined insights",
     )
     sections.append("")
+    sections.append("### Output Requirements")
+    sections.append("")
     sections.append(
-        "Format as a professional report with clear headings. "
-        "Use tables to compare across groupings where helpful.",
+        "- **Format as a professional report** with clear headings and markdown tables",
+    )
+    sections.append(
+        "- **Include the actual data** in your report - for small datasets (< 20 items), "
+        "present the full data in a table; for larger datasets, show top/bottom performers",
+    )
+    sections.append(
+        "- **Do NOT ask for additional data** - work exclusively with the data provided above. "
+        "Do not include sections like 'if you provide X I can give you Y' - just analyze what's given.",
+    )
+    sections.append(
+        "- **Surface specific names/values** - cite actual operatives, patches, regions, dates by name",
+    )
+    sections.append(
+        "- **Use tables** to present comparisons clearly where helpful",
     )
 
     return "\n".join(sections)
