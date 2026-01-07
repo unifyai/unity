@@ -678,7 +678,7 @@ jobs:
         # Ensure we got the LOCAL unillm/unify, not PyPI packages with the same name
         # The local unillm exports AsyncUnify; the PyPI one exports UniLLM
         # PYTHONPATH is set at job level to include ./unillm and ./unify
-        python -c "
+        uv run python -c "
         import sys
         print('Python path (first 5):')
         for p in sys.path[:5]:
