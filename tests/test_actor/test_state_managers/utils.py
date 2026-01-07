@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import re
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Callable, Literal
 from unittest.mock import AsyncMock
 
+from tests.test_async_tool_loop.async_helpers import _wait_for_condition
 from unity.actor.hierarchical_actor import HierarchicalActor
 
 
@@ -296,3 +297,156 @@ async def make_actor(
             await actor.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Steerability helpers (SteerableToolPane)
+# ---------------------------------------------------------------------------
+
+
+def pick_handle_id_by_origin_tool(
+    handles: list[dict[str, Any]],
+    *,
+    origin_tool_prefix: str,
+) -> str:
+    """Pick a `handle_id` from `pane.list_handles()` output by matching origin_tool prefix."""
+    match = next(
+        (
+            h
+            for h in handles
+            if str(h.get("origin_tool") or "").startswith(origin_tool_prefix)
+        ),
+        None,
+    )
+    if match is None:
+        raise AssertionError(
+            f"No handle found with origin_tool_prefix={origin_tool_prefix!r}. Handles={handles}",
+        )
+    return str(match["handle_id"])
+
+
+def get_pane_events(obj: Any, *, n: int = 500) -> list[dict[str, Any]]:
+    """Get recent pane events from either a pane-like object or a handle with `.pane`."""
+    pane = getattr(obj, "pane", obj)
+    return list(pane.get_recent_events(n=n) or [])
+
+
+def get_pane_steering_events(
+    obj: Any,
+    *,
+    n: int = 500,
+    method: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return pane events of type `steering_applied`, optionally filtered by method."""
+    evs = [e for e in get_pane_events(obj, n=n) if e.get("type") == "steering_applied"]
+    if method is None:
+        return evs
+    return [e for e in evs if (e.get("payload") or {}).get("method") == method]
+
+
+async def wait_for_pane_handle_count(
+    obj: Any,
+    *,
+    expected: int,
+    timeout: float = 30.0,
+    poll: float = 0.05,
+) -> None:
+    """Wait until pane registers at least `expected` handles."""
+    pane = getattr(obj, "pane", obj)
+
+    async def _has_n() -> bool:
+        return len(await pane.list_handles()) >= expected
+
+    await asyncio.wait_for(
+        _wait_for_condition(_has_n, poll=poll, timeout=timeout),
+        timeout=timeout + 10.0,
+    )
+
+
+async def wait_for_pane_event(
+    obj: Any,
+    *,
+    predicate: Callable[[dict[str, Any]], bool],
+    timeout: float = 30.0,
+    poll: float = 0.05,
+) -> dict[str, Any]:
+    """Wait for a pane event matching `predicate` and return it."""
+
+    found: dict[str, Any] | None = None
+
+    async def _seen() -> bool:
+        nonlocal found
+        for e in get_pane_events(obj, n=500):
+            if predicate(e):
+                found = e
+                return True
+        return False
+
+    await asyncio.wait_for(
+        _wait_for_condition(_seen, poll=poll, timeout=timeout),
+        timeout=timeout + 10.0,
+    )
+    assert found is not None
+    return found
+
+
+async def wait_for_pane_steering_event(
+    obj: Any,
+    *,
+    handle_id: str | None = None,
+    method: str | None = None,
+    status: str | None = None,
+    timeout: float = 30.0,
+    poll: float = 0.05,
+) -> dict[str, Any]:
+    """Wait for a `steering_applied` event matching the given filters and return it."""
+
+    def _pred(e: dict[str, Any]) -> bool:
+        if e.get("type") != "steering_applied":
+            return False
+        if handle_id is not None and str(e.get("handle_id")) != str(handle_id):
+            return False
+        payload = e.get("payload") or {}
+        if method is not None and payload.get("method") != method:
+            return False
+        if status is not None and payload.get("status") != status:
+            return False
+        return True
+
+    return await wait_for_pane_event(
+        obj,
+        predicate=_pred,
+        timeout=timeout,
+        poll=poll,
+    )
+
+
+async def wait_for_clarification_event(
+    obj: Any,
+    *,
+    timeout: float = 30.0,
+    poll: float = 0.05,
+) -> dict[str, Any]:
+    """Wait for a `clarification` pane event and return it."""
+    return await wait_for_pane_event(
+        obj,
+        predicate=lambda e: e.get("type") == "clarification",
+        timeout=timeout,
+        poll=poll,
+    )
+
+
+async def get_pending_clarification_count(obj: Any) -> int:
+    """Return the number of pending clarifications currently indexed by the pane."""
+    pane = getattr(obj, "pane", obj)
+    pending = await pane.get_pending_clarifications()
+    return len(pending)
+
+
+def extract_clarification_details(event: dict[str, Any]) -> tuple[str, str, str]:
+    """Extract (handle_id, call_id, question) from a clarification pane event."""
+    handle_id = str(event.get("handle_id") or "")
+    payload = event.get("payload") or {}
+    call_id = str(payload.get("call_id") or "")
+    question = str(payload.get("question") or "")
+    return handle_id, call_id, question
