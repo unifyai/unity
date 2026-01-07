@@ -20,37 +20,35 @@ import argparse
 from typing import Any, Dict, List
 
 # Available queries and their descriptions
+# NOTE: Skipped metrics (merchant_stops, merchant_dwell_time, travel_time, complaints_rate)
+# are NOT included here as they cannot be executed.
 QUERIES = {
-    "jobs_completed_per_day": "Jobs completed per man per day",
+    "jobs_completed": "Jobs completed (groupable by operative/patch/region/day)",
     "no_access_rate": "No Access % / Absolute number",
     "first_time_fix_rate": "First Time Fix % / Absolute number",
     "follow_on_required_rate": "Follow on Required % / Absolute number",
     "follow_on_materials_rate": "Follow on Required for Materials %",
     "job_completed_on_time_rate": "Job completed on time % / Absolute number",
-    "repairs_completed_per_day": "Repairs completed per day (aggregate)",
-    "jobs_issued_per_day": "Jobs issued per day",
+    "jobs_issued": "Jobs issued (groupable by operative/patch/region/day)",
     "jobs_requiring_materials_rate": "% of jobs that require materials",
     "avg_repairs_per_property": "Average repairs per property",
-    "complaints_rate": "Complaints as % of total jobs",
     "appointment_adherence_rate": "Appointment adherence rate",
-    "distance_travelled_per_day": "Distance travelled per day",
-    "avg_time_travelling": "Average time travelling per day",
-    "merchant_stops_per_day": "Number of merchant stops per day",
-    "avg_duration_at_merchant": "Average duration at merchant",
+    "total_distance_travelled": "Total distance travelled (groupable by vehicle/day)",
 }
 
 # Parameter variations for different query types
-GROUP_BY_VALUES = ["operative", "patch", "region", "total"]
+# NOTE: "day" added for temporal grouping; "total" removed (use None for no grouping)
+GROUP_BY_VALUES = ["operative", "patch", "region", "day"]
 
-# Queries that support group_by parameter
+# Queries that support group_by parameter (repairs data)
 GROUPABLE_QUERIES = {
-    "jobs_completed_per_day",
+    "jobs_completed",
     "no_access_rate",
     "first_time_fix_rate",
     "follow_on_required_rate",
     "follow_on_materials_rate",
     "job_completed_on_time_rate",
-    "jobs_issued_per_day",
+    "jobs_issued",
     "jobs_requiring_materials_rate",
     "appointment_adherence_rate",
 }
@@ -64,17 +62,17 @@ RATE_QUERIES = {
     "appointment_adherence_rate",
 }
 
-# Telematics queries (different grouping)
+# Telematics queries (different grouping - vehicle/day only)
 TELEMATICS_QUERIES = {
-    "distance_travelled_per_day",
-    "avg_time_travelling",
-    "merchant_stops_per_day",
-    "avg_duration_at_merchant",
+    "total_distance_travelled",
 }
 
 
 def generate_param_combinations(query_id: str) -> List[Dict[str, Any]]:
-    """Generate all parameter combinations for a query."""
+    """Generate all parameter combinations for a query.
+
+    NOTE: Does NOT expand include_plots - that's controlled by --include-plots flag.
+    """
     combinations = []
 
     if query_id in GROUPABLE_QUERIES:
@@ -89,9 +87,9 @@ def generate_param_combinations(query_id: str) -> List[Dict[str, Any]]:
             else:
                 combinations.append(params)
     elif query_id in TELEMATICS_QUERIES:
-        # Telematics queries with operative grouping
+        # Telematics queries: operative (vehicle) or day grouping
         combinations.append({"group_by": "operative"})
-        combinations.append({"group_by": "total"})
+        combinations.append({"group_by": "day"})
     else:
         # Queries without special parameters
         combinations.append({})

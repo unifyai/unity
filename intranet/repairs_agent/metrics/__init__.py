@@ -39,22 +39,22 @@ from .plots import (
 # Re-export all metric functions from core
 from .core import (
     ALL_METRICS,
+    SKIPPED_METRICS,
     appointment_adherence_rate,
-    avg_duration_at_merchant,
     avg_repairs_per_property,
-    avg_time_travelling,
     complaints_rate,
-    distance_travelled_per_day,
     first_time_fix_rate,
     follow_on_materials_rate,
     follow_on_required_rate,
     job_completed_on_time_rate,
-    jobs_completed_per_day,
-    jobs_issued_per_day,
+    jobs_completed,
+    jobs_issued,
     jobs_requiring_materials_rate,
-    merchant_stops_per_day,
+    merchant_dwell_time,
+    merchant_stops,
     no_access_rate,
-    repairs_completed_per_day,
+    total_distance_travelled,
+    travel_time,
 )
 
 __all__ = [
@@ -71,23 +71,24 @@ __all__ = [
     "get_plot_configs",
     "get_all_metrics_with_plots",
     "get_supported_group_bys",
-    # Metric functions
-    "jobs_completed_per_day",
+    # Metric functions (fully implemented)
+    "jobs_completed",
     "no_access_rate",
     "first_time_fix_rate",
     "follow_on_required_rate",
     "follow_on_materials_rate",
     "job_completed_on_time_rate",
-    "merchant_stops_per_day",
-    "avg_duration_at_merchant",
-    "distance_travelled_per_day",
-    "avg_time_travelling",
-    "repairs_completed_per_day",
-    "jobs_issued_per_day",
+    "total_distance_travelled",
+    "jobs_issued",
     "jobs_requiring_materials_rate",
     "avg_repairs_per_property",
-    "complaints_rate",
     "appointment_adherence_rate",
-    # List of all metrics
+    # Skipped metrics (for reference - raise NotImplementedError when called)
+    "merchant_stops",
+    "merchant_dwell_time",
+    "travel_time",
+    "complaints_rate",
+    # Registries
     "ALL_METRICS",
+    "SKIPPED_METRICS",
 ]
