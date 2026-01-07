@@ -375,7 +375,7 @@ class VerificationAssessment(_StrictBaseModel):
     )
 
 
-class ImplementationDecision(BaseModel):
+class ImplementationDecision(_StrictBaseModel):
     """A structured decision for how to proceed with a function implementation."""
 
     action: typing.Literal[
@@ -401,7 +401,7 @@ class ImplementationDecision(BaseModel):
     )
 
 
-class FunctionPatch(BaseModel):
+class FunctionPatch(_StrictBaseModel):
     """Represents a single function's code to be updated in the plan."""
 
     function_name: str = Field(
@@ -414,7 +414,7 @@ class FunctionPatch(BaseModel):
     )
 
 
-class CacheStepRange(BaseModel):
+class CacheStepRange(_StrictBaseModel):
     """Specifies a range of steps within a function to invalidate."""
 
     function_name: str = Field(..., description="The name of the function to target.")
@@ -424,7 +424,7 @@ class CacheStepRange(BaseModel):
     )
 
 
-class CacheInvalidateSpec(BaseModel):
+class CacheInvalidateSpec(_StrictBaseModel):
     """
     LLM's proposal for selective cache invalidation after a plan modification.
     The runtime will apply these and still enforce safety guardrails (e.g., impure propagation).
