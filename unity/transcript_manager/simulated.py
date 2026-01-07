@@ -169,14 +169,41 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._msgs
         return self._answer
 
-    def interject(self, message: str) -> str:
+    def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> str:
+        """Interject a message into the in-flight handle.
+
+        Args:
+            message: The interjection message to inject.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+            images: Optional image references. Accepted for API parity with real handles
+                but not currently used.
+        """
         if self._cancelled:
             return "Interaction has been stopped."
         self._log_interject(message)
         self._extra_user_msgs.append(message)
         return "Acknowledged."
 
-    def stop(self, reason: Optional[str] = None) -> str:
+    def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> str:
+        """Stop the in-flight handle.
+
+        Args:
+            reason: Optional reason for stopping.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+        """
         self._log_stop(reason)
         self._cancelled = True
         try:
@@ -203,7 +230,22 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
     def done(self) -> bool:
         return self._done.is_set()
 
-    async def ask(self, question: str) -> "SteerableToolHandle":
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> "SteerableToolHandle":
+        """Ask a follow-up question about the current operation.
+
+        Args:
+            question: The question to ask.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+            images: Optional image references. Accepted for API parity with real handles
+                but not currently used.
+        """
         follow_up_prompt = build_followup_prompt(
             question=question,
             initial_instruction=self._initial,
@@ -232,10 +274,23 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
+        """Retrieve the next clarification request, if any.
+
+        Only surfaces clarification events when this handle explicitly requested
+        clarification. This prevents cross-handle consumption of shared clarification
+        queues that may be injected by external processes.
+        """
+        if not getattr(self, "_needs_clar", False):
+            return {}
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
-                return {"message": msg}
+                return {
+                    "type": "clarification",
+                    "call_id": "unknown",
+                    "tool_name": "unknown",
+                    "question": msg,
+                }
         except Exception:
             pass
         return {}

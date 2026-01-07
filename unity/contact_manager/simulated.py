@@ -433,10 +433,23 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
+        """Retrieve the next clarification request, if any.
+
+        Only surfaces clarification events when this handle explicitly requested
+        clarification. This prevents cross-handle consumption of shared clarification
+        queues that may be injected by external processes.
+        """
+        if not getattr(self, "_needs_clar", False):
+            return {}
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
-                return {"message": msg}
+                return {
+                    "type": "clarification",
+                    "call_id": "unknown",
+                    "tool_name": "unknown",
+                    "question": msg,
+                }
         except Exception:
             pass
         return {}
