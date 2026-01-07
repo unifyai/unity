@@ -675,18 +675,44 @@ jobs:
         # Ensure we got the LOCAL unillm/unify, not PyPI packages with the same name
         # The local unillm exports AsyncUnify; the PyPI one exports UniLLM
         uv run python -c "
-        import unillm
-        import unify
+        import sys
+        print('=== Python path ===')
+        for p in sys.path:
+            print(f'  {p}')
+        print()
 
-        # Check unillm has expected exports (local version)
-        assert hasattr(unillm, 'AsyncUnify'), f'Wrong unillm package! File: {unillm.__file__}'
-        assert hasattr(unillm, 'Unify'), f'Wrong unillm package! File: {unillm.__file__}'
+        # Try importing step by step to see where it fails
+        print('=== Step-by-step import ===')
+        try:
+            import unillm
+            print(f'unillm imported: __file__={unillm.__file__}')
+            print(f'unillm attrs: {sorted(dir(unillm))}')
+        except Exception as e:
+            print(f'Failed to import unillm: {e}')
+            raise
+
+        try:
+            from unillm import AsyncUnify
+            print(f'AsyncUnify imported successfully: {AsyncUnify}')
+        except ImportError as e:
+            print(f'Failed to import AsyncUnify: {e}')
+            # Try the deeper import path
+            print('Trying deeper import...')
+            try:
+                from unillm.clients import uni_llm
+                print(f'uni_llm: {uni_llm.__file__}')
+                print(f'uni_llm attrs: {sorted(dir(uni_llm))}')
+            except Exception as e2:
+                print(f'Failed to import uni_llm: {e2}')
+            raise
+
+        import unify
+        print(f'unify imported: __file__={unify.__file__}')
 
         # Check unify has expected exports (local version)
         assert hasattr(unify, 'create_project'), f'Wrong unify package! File: {unify.__file__}'
 
-        print(f'✓ unillm: {unillm.__file__}')
-        print(f'✓ unify: {unify.__file__}')
+        print()
         print('✓ Local packages verified successfully')
         "
 
