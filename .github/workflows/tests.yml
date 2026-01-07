@@ -842,6 +842,19 @@ jobs:
           log_count=$(find logs/pytest -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
         fi
 
+        # Fail if no tests ran - this indicates a problem (path resolution, collection error, etc.)
+        if [ "$log_count" -eq 0 ]; then
+          echo "## ⚠️ No Tests Ran: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**0 tests executed** — this likely indicates a problem with test discovery." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the 'Run tests' step logs for details." >> $GITHUB_STEP_SUMMARY
+          echo ""
+          echo "Error: No tests were executed. This indicates a problem with test discovery." >&2
+          echo "Check the 'Run tests' step output for pytest collection errors." >&2
+          exit 1
+        fi
+
         # Echo to step output (foldable view)
         echo "=== All tests passed ==="
         echo "✅ $log_count passed"

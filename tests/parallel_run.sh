@@ -1162,7 +1162,20 @@ collect_nodes_batch() {
   fi
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   # Redirect stdin from /dev/null to prevent hangs when multiple processes compete for stdin
-  bash -lc "$cmd" < /dev/null 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true
+  # Note: stderr is captured to a temp file so collection errors can be surfaced if no tests found
+  local stderr_file
+  stderr_file=$(mktemp)
+  local result
+  result=$(bash -lc "$cmd" < /dev/null 2>"$stderr_file" | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true)
+
+  # If no tests collected and there was stderr output, show it for debugging
+  if [[ -z "$result" && -s "$stderr_file" ]]; then
+    echo "Warning: pytest collection produced no test nodes. stderr output:" >&2
+    head -50 "$stderr_file" >&2
+  fi
+  rm -f "$stderr_file"
+
+  echo "$result"
 }
 
 # Gather recursive .py files from roots (NUL-delimited, sorted)
@@ -1271,8 +1284,12 @@ while IFS= read -r -d '' f; do
 done < <(tr '\0' '\n' < "$tmp" | LC_ALL=C sort -u | tr '\n' '\0')
 
 if (( ${#files[@]} == 0 )); then
-  echo "No tests found."
-  exit 0
+  echo "Error: No tests found for the given path(s)." >&2
+  echo "This could mean:" >&2
+  echo "  - The path doesn't exist or contains no test_*.py files" >&2
+  echo "  - pytest --collect-only failed (check for import errors)" >&2
+  echo "  - A marker filter (--eval-only/--symbolic-only) excluded all tests" >&2
+  exit 1
 fi
 
 # Expand targets for repeat runs (statistical sampling)
