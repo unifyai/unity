@@ -83,7 +83,7 @@ def generate_param_combinations(query_id: str) -> List[Dict[str, Any]]:
             if query_id in RATE_QUERIES:
                 # For rate queries, test both percentage and absolute
                 combinations.append({**params, "return_absolute": False})
-                combinations.append({**params, "return_absolute": True})
+                # combinations.append({**params, "return_absolute": True})
             else:
                 combinations.append(params)
     elif query_id in TELEMATICS_QUERIES:
