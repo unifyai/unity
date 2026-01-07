@@ -859,7 +859,7 @@ def _build_core_planning_rules() -> str:
         4.  **Decomposition:** Break complex tasks into smaller, focused functions. Each function should have a single, clear purpose.
 
         5.  **Library Function Reuse** (CRITICAL):
-            - **ALWAYS check the Existing Functions Library section below** before writing new code.
+            - **ALWAYS check the "YOUR AVAILABLE FUNCTIONS" section below** before writing new code.
             - If a library function matches your goal, call it directly instead of reimplementing its logic.
             - If multiple library functions together achieve the goal, compose them in your plan.
             - Only write new functions when no library function is semantically related to the task.
@@ -894,6 +894,12 @@ def _build_core_planning_rules() -> str:
         11. **Requesting Clarification:**
             - Call `request_clarification("...")` as a global function when you need user input.
             - Do NOT call it as a method on tool providers.
+            - `request_clarification(...)` returns a **plain string** (the user's answer).
+            - **Avoid brittle parsing** like `"yes" in answer` for decisions.
+              Instead, use a composition pattern:
+              - Ask with clear options (e.g. \"reply 'exclude Q3' or 'include Q3'\")
+              - Then normalize the free-form answer into a canonical choice using a reasoning tool:
+                - `await computer_primitives.reason(request=..., context=answer, response_format=...)`
 
         12. **Return the Final Value**: If the last step returns a value, your `main_plan` MUST capture and return it.
 
