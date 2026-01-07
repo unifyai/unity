@@ -174,14 +174,41 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(self, message: str) -> str:
+    def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> str:
+        """Interject a message into the in-flight handle.
+
+        Args:
+            message: The interjection message to inject.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+            images: Optional image references. Accepted for API parity with real handles
+                but not currently used.
+        """
         if self._cancelled:
             return "Interaction stopped."
         self._log_interject(message)
         self._extra_msgs.append(message)
         return "Acknowledged."
 
-    def stop(self, reason: str | None = None) -> str:
+    def stop(
+        self,
+        reason: str | None = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> str:
+        """Stop the in-flight handle.
+
+        Args:
+            reason: Optional reason for stopping.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+        """
         self._log_stop(reason)
         self._cancelled = True
         try:
@@ -208,7 +235,22 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
     def done(self) -> bool:
         return self._done_event.is_set()
 
-    async def ask(self, question: str) -> "SteerableToolHandle":
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> "SteerableToolHandle":
+        """Ask a follow-up question about the current operation.
+
+        Args:
+            question: The question to ask.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+            images: Optional image references. Accepted for API parity with real handles
+                but not currently used.
+        """
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"
             "However, there is a also ongoing simulated process which had the instructions given below. "
