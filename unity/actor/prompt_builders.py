@@ -421,10 +421,13 @@ def _build_interjection_static_prefix(
     Returns:
         Static prefix string for interjection prompts (≥2,048 tokens)
     """
+    from unity.actor.prompt_examples import get_interjection_routing_only_examples
+
     tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
     env_context_str = _format_environment_contexts(environments)
     env_section = f"\n\n---\n\n{env_context_str}" if env_context_str else ""
+    routing_only_examples = get_interjection_routing_only_examples()
 
     return textwrap.dedent(
         f"""
@@ -436,16 +439,31 @@ def _build_interjection_static_prefix(
         2.  **Surgical Invalidation**: Use `invalidate_functions` to clear the entire cache for a function, or `invalidate_steps` to clear only a portion of it. Be as minimal as possible to ensure an efficient replay.
         3.  **You may omit `cache`** if nothing needs invalidation.
         ---
-        ### Your Task: Analyze, Decide, Patch, and Propose Cache Strategy
+        ### Your Task: Analyze, Decide (Routing vs Patching), and Only Patch When Needed
 
         **1. Analyze Intent:** Choose the best action from the Decision Tree below.
 
-        **2. Generate Patches (if modifying code):**
+        **2. Decide: Routing-only vs Plan Patching (CRITICAL)**
+            - **Routing-only is the default** when the user’s interjection is a *preference update* for what is already running
+              (tone, conciseness, formatting, minor scope constraints like “focus only on Q4” for the summaries currently being produced).
+            - If the user changes scope/selection for an **already in-flight** tool call and the plan has **not yet consumed the result**,
+              prefer **routing-only to that in-flight handle**. Downstream work will
+              naturally use the corrected result; do **not** patch/restart “for consistency”.
+            - Users will **not** say “broadcast this” or “don’t modify main_plan”. You must infer intent from natural language.
+            - **Patches are expensive and disruptive**: they cancel/restart execution and may invalidate caches. Do not patch unless strictly required.
+            - **Never create patches just to restate/echo the user’s preference into tool prompts** when routing to in-flight handles can apply it immediately.
+            - **Do NOT use circular reasoning** like “patch so replay won’t revert to the old instruction.” Adding `patches` is what *causes* a replay/restart.
+              If routing-only is sufficient, avoid patching and avoid the restart entirely.
+            - Prefer **targeted routing** when the interjection clearly applies to only one handle (e.g., “make the outreach email tone more casual”
+              should route to the in-flight `primitives.transcripts.*` handle generating that content, not to an unrelated contact-list handle).
+
+        **3. Generate Patches (ONLY if modifying code is required):**
             - Read entire `plan_source_code`; identify all changes (implementation, call sites, docstrings).
             - Create `FunctionPatch` for each modified function.
             - Omit `patches` for routing-only interjections (set `routing_action` instead).
+            - If you include `patches`, your `reason` must state *why routing-only is insufficient* (e.g., future tool calls must change, plan logic must change, goal changed).
 
-        **3. Devise Cache Strategy (CRITICAL for `modify_task`):**
+        **4. Devise Cache Strategy (CRITICAL for `modify_task` WITH PATCHES):**
 
             **Replay Rule:** The plan restarts from `main_plan` after patches. Invalidate only what's affected to preserve valid caches.
 
@@ -464,6 +482,9 @@ def _build_interjection_static_prefix(
             **Scenario 4: Routing-Only (No Code/Cache)**
             * Plan has concurrent ops. User: "Be concise."
             * Use `routing_action: "broadcast_filtered"` with no `patches` or `cache`.
+
+        ---
+        {routing_only_examples}
 
         ---
         #### 🧠 `modify_task` vs `refactor_and_generalize`
