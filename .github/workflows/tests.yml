@@ -652,7 +652,8 @@ jobs:
         path: |
           ~/.cache/uv
           .venv
-        key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+        # Include unillm and unify pyproject.toml to bust cache when dependencies change
+        key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock', 'unillm/pyproject.toml', 'unify/pyproject.toml') }}
         restore-keys: |
           uv-${{ runner.os }}-
 
@@ -668,6 +669,26 @@ jobs:
       run: |
         # Install project and dev dependencies from pyproject.toml
         uv sync --all-groups
+
+    - name: Verify local packages installed correctly
+      run: |
+        # Ensure we got the LOCAL unillm/unify, not PyPI packages with the same name
+        # The local unillm exports AsyncUnify; the PyPI one exports UniLLM
+        uv run python -c "
+        import unillm
+        import unify
+
+        # Check unillm has expected exports (local version)
+        assert hasattr(unillm, 'AsyncUnify'), f'Wrong unillm package! File: {unillm.__file__}'
+        assert hasattr(unillm, 'Unify'), f'Wrong unillm package! File: {unillm.__file__}'
+
+        # Check unify has expected exports (local version)
+        assert hasattr(unify, 'create_project'), f'Wrong unify package! File: {unify.__file__}'
+
+        print(f'✓ unillm: {unillm.__file__}')
+        print(f'✓ unify: {unify.__file__}')
+        print('✓ Local packages verified successfully')
+        "
 
     # Cache Playwright browsers (~500MB) to avoid re-downloading on every run
     - name: Cache Playwright browsers
