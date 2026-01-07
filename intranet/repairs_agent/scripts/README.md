@@ -31,7 +31,7 @@ intranet/repairs_agent/scripts/
 python intranet/repairs_agent/scripts/run_repairs_query.py --list
 
 # Run a single query
-python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_completed_per_day
+python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_completed
 
 # Run all queries in parallel (tmux sessions)
 ./intranet/repairs_agent/scripts/parallel_queries.sh --all
@@ -64,33 +64,32 @@ python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_complete
 
 ---
 
-## Available Metrics (16 Total)
+## Available Metrics
 
-### Repairs Data Metrics
+### Fully Implemented (11 metrics)
 
 | # | Query ID | Description |
 |---|----------|-------------|
-| 1 | `jobs_completed_per_day` | Jobs completed per man per day |
+| 1 | `jobs_completed` | Jobs completed (groupable by operative/patch/region/day) |
 | 2 | `no_access_rate` | No Access % / Absolute number |
 | 3 | `first_time_fix_rate` | First Time Fix % / Absolute number |
 | 4 | `follow_on_required_rate` | Follow on Required % / Absolute number |
 | 5 | `follow_on_materials_rate` | Follow on Required for Materials % |
 | 6 | `job_completed_on_time_rate` | Job completed on time % / Absolute number |
-| 7 | `repairs_completed_per_day` | Repairs completed per day (aggregate) |
-| 8 | `jobs_issued_per_day` | Jobs issued per day |
-| 9 | `jobs_requiring_materials_rate` | % of jobs that require materials |
-| 10 | `avg_repairs_per_property` | Average repairs per property |
-| 11 | `complaints_rate` | Complaints as % of total jobs (data not available) |
-| 12 | `appointment_adherence_rate` | Percentage of appointments attended within scheduled window |
+| 7 | `jobs_issued` | Jobs issued (groupable by operative/patch/region/day) |
+| 8 | `jobs_requiring_materials_rate` | % of jobs that require materials |
+| 9 | `avg_repairs_per_property` | Average repairs per property |
+| 10 | `appointment_adherence_rate` | Percentage of appointments attended within scheduled window |
+| 11 | `total_distance_travelled` | Total distance travelled (groupable by vehicle/day) |
 
-### Telematics Data Metrics
+### Skipped Metrics (not runnable - blocked by data availability)
 
-| # | Query ID | Description |
-|---|----------|-------------|
-| 13 | `distance_travelled_per_day` | Distance travelled per day |
-| 14 | `avg_time_travelling` | Average time travelling per day |
-| 15 | `merchant_stops_per_day` | Number of merchant stops per day |
-| 16 | `avg_duration_at_merchant` | Average duration at merchant |
+| # | Query ID | Reason |
+|---|----------|--------|
+| 1 | `merchant_stops` | No exhaustive merchant name/address list |
+| 2 | `merchant_dwell_time` | No exhaustive merchant name/address list |
+| 3 | `travel_time` | HH:MM:SS string parsing not supported by backend |
+| 4 | `complaints_rate` | No complaints column in available data |
 
 ---
 
@@ -119,13 +118,13 @@ Most metrics support these parameters:
 python intranet/repairs_agent/scripts/run_repairs_query.py --list
 
 # Get jobs completed (default: grouped by operative)
-python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_completed_per_day
+python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_completed
 
 # Get total repairs completed (no grouping)
-python intranet/repairs_agent/scripts/run_repairs_query.py --query repairs_completed_per_day
+python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_completed
 
 # Get jobs issued per day
-python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_issued_per_day
+python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_issued
 ```
 
 ### Grouping Options
@@ -133,22 +132,22 @@ python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_issued_p
 ```bash
 # Group by operative (default)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --params '{"group_by": "operative"}'
 
 # Group by patch
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --params '{"group_by": "patch"}'
 
 # Group by region
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --params '{"group_by": "region"}'
 
 # No grouping (total only)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --params '{"group_by": "total"}'
 ```
 
@@ -189,20 +188,20 @@ python intranet/repairs_agent/scripts/run_repairs_query.py \
 ```bash
 # Get total distance travelled
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query distance_travelled_per_day
+    --query total_distance_travelled
 
 # Distance by vehicle/operative
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query distance_travelled_per_day \
+    --query total_distance_travelled \
     --params '{"group_by": "operative"}'
 
 # Average time travelling
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query avg_time_travelling
+    --query travel_time
 
 # Merchant stops per day
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query merchant_stops_per_day
+    --query merchant_stops
 ```
 
 ### Property Analysis
@@ -237,17 +236,17 @@ python intranet/repairs_agent/scripts/run_repairs_query.py \
 ```bash
 # Full output to terminal (disable file logging)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --no-log
 
 # Raw JSON output (for piping to other tools)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --raw
 
 # Custom log directory
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --log-dir /tmp/repairs_logs
 ```
 
@@ -287,13 +286,13 @@ python intranet/repairs_agent/scripts/run_repairs_query.py \
 
 # Generate plots for jobs completed grouped by patch
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --params '{"group_by": "patch"}' \
     --include-plots
 
 # Generate trend plots (total over time)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query repairs_completed_per_day \
+    --query jobs_completed \
     --params '{"group_by": "total"}' \
     --include-plots
 ```
@@ -319,17 +318,17 @@ Example output with plots:
 ```bash
 # Verbose output (INFO level)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --verbose
 
 # Debug output (DEBUG level - very detailed)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --debug
 
 # Verbose with file logging disabled
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --verbose --no-log
 ```
 
@@ -338,11 +337,11 @@ python intranet/repairs_agent/scripts/run_repairs_query.py \
 ```bash
 # Use default project (RepairsAgent)
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day
+    --query jobs_completed
 
 # Use different project context
 python intranet/repairs_agent/scripts/run_repairs_query.py \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --project Intranet
 ```
 
@@ -357,7 +356,7 @@ When running queries via `parallel_queries.sh`, results are saved with per-termi
 ```
 .repairs_queries/
 └── 2025-12-18T19-30-45_repairs_dev_pts_0/   # Timestamped + socket name
-    ├── jobs_completed_per_day.log            # Query result log
+    ├── jobs_completed.log            # Query result log
     ├── no_access_rate__return_absolute_true.log  # With params in filename
     ├── first_time_fix_rate__group_by_patch.log
     └── _run_summary.log                      # Summary of all queries in this run
@@ -370,7 +369,7 @@ In full-matrix mode, logs are organized by metric with per-metric summaries:
 ```
 .repairs_queries/
 └── 2025-12-18T19-30-45_repairs_dev_pts_0/
-    ├── jobs_completed_per_day/              # Subdirectory per metric
+    ├── jobs_completed/              # Subdirectory per metric
     │   ├── group_by_operative.log
     │   ├── group_by_patch.log
     │   ├── group_by_region.log
@@ -406,7 +405,7 @@ Each `.log` file contains the LLM analysis (or raw results if `--skip-analysis` 
 BESPOKE REPAIRS QUERY LOG
 ================================================================================
 
-Query ID:    jobs_completed_per_day
+Query ID:    jobs_completed
 Timestamp:   2025-12-18T19:30:45.123456+00:00
 Duration:    8.45s
 Status:      SUCCESS
@@ -460,7 +459,7 @@ VISUALIZATIONS
 RAW DATA (for reference)
 ----------------------------------------
 {
-  "metric_name": "jobs_completed_per_day",
+  "metric_name": "jobs_completed",
   "group_by": "operative",
   "total": 44025.0,
   "results": [
@@ -470,7 +469,7 @@ RAW DATA (for reference)
 }
 
 ================================================================================
-END OF LOG - jobs_completed_per_day
+END OF LOG - jobs_completed
 ================================================================================
 ```
 
@@ -509,7 +508,7 @@ python intranet/repairs_agent/scripts/run_repairs_query.py --list
 **"Failed to activate project context"**
 ```bash
 # Try with verbose to see details
-python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_completed_per_day --verbose
+python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_completed --verbose
 ```
 
 ### Getting Help
@@ -572,7 +571,7 @@ Sessions are named with status prefixes:
 ./intranet/repairs_agent/scripts/parallel_queries.sh --all
 
 # Run all queries × all parameter combinations (flat log structure)
-# (e.g., jobs_completed_per_day with group_by=operative, patch, region, total)
+# (e.g., jobs_completed with group_by=operative, patch, region, total)
 ./intranet/repairs_agent/scripts/parallel_queries.sh --all --expand-params
 
 # Full matrix mode: all queries × all params with nested directories per metric
@@ -581,7 +580,7 @@ Sessions are named with status prefixes:
 
 # Run specific queries
 ./intranet/repairs_agent/scripts/parallel_queries.sh \
-    --query jobs_completed_per_day \
+    --query jobs_completed \
     --query no_access_rate \
     --query first_time_fix_rate
 
@@ -701,7 +700,7 @@ Use `kill_server_queries.sh` to stop all sessions and clean up:
 tmux -L repairs_dev_pts_0 ls
 
 # Attach to a specific session
-tmux -L repairs_dev_pts_0 attach -t 'r ⏳ jobs_completed_per_day'
+tmux -L repairs_dev_pts_0 attach -t 'r ⏳ jobs_completed'
 
 # Kill a specific session
 tmux -L repairs_dev_pts_0 kill-session -t 'f ❌ complaints_rate'
