@@ -4364,24 +4364,62 @@ async def main_plan():
 
                 # Best-effort status summary: use current pane registry snapshot (metadata only).
                 try:
-                    known = {
-                        h["handle_id"]: h.get("status")
-                        for h in await self.pane.list_handles(status=None)
-                    }
+                    _handles_snapshot = await self.pane.list_handles(status=None)
+                    known = {h["handle_id"]: h.get("status") for h in _handles_snapshot}
+                    # Accept both full UUIDs and short prefixes (first UUID segment) from the LLM.
+                    # Prompts often include short IDs for token efficiency.
+                    short_to_full: dict[str, list[str]] = {}
+                    for full_id in known:
+                        short = str(full_id).split("-", 1)[0]
+                        short_to_full.setdefault(short, []).append(str(full_id))
                 except Exception:
                     known = {}
+                    short_to_full = {}
 
                 results: list[str] = []
                 for hid in target_ids:
+                    # Resolve short IDs (or other prefixes) to full handle IDs when possible.
+                    resolved_hid = hid
+                    if hid not in known and known:
+                        candidates = short_to_full.get(str(hid), [])
+                        if not candidates:
+                            # Fallback: allow any prefix match (e.g., caller provides >8 chars).
+                            candidates = [
+                                full_id
+                                for full_id in known
+                                if str(full_id).startswith(str(hid))
+                            ]
+                        if len(candidates) == 1:
+                            resolved_hid = candidates[0]
+                        elif len(candidates) > 1:
+                            # Prefer a unique in-flight candidate if possible; otherwise pick a
+                            # deterministic first entry.
+                            inflight = [
+                                c
+                                for c in candidates
+                                if known.get(c)
+                                in ("running", "paused", "waiting_for_clarification")
+                            ]
+                            if len(inflight) == 1:
+                                resolved_hid = inflight[0]
+                            else:
+                                resolved_hid = sorted(candidates)[0]
+                            logger.warning(
+                                "Ambiguous target_handle_id %r matched %d handles; routing to %r",
+                                hid,
+                                len(candidates),
+                                resolved_hid,
+                            )
+
                     # Always call pane.interject so the pane emits a canonical `steering_applied` event
                     # (even when the handle is not found or already terminal).
                     await self.pane.interject(
-                        hid,
+                        resolved_hid,
                         routed_message,
                         parent_chat_context_cont=self.parent_chat_context,
                         images=images,
                     )
-                    st = known.get(hid)
+                    st = known.get(resolved_hid)
                     if st is None:
                         results.append(
                             f"- {hid}: dispatched (handle not found at snapshot time)",
