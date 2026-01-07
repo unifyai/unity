@@ -864,10 +864,13 @@ def _build_core_planning_rules() -> str:
             - If multiple library functions together achieve the goal, compose them in your plan.
             - Only write new functions when no library function is semantically related to the task.
 
-        6.  **Confidence-Based Stubbing** (ALSO CRITICAL):
-            - **Implement** steps you are confident about (simple, predictable actions).
-            - **Stub** uncertain steps with a pure `raise NotImplementedError("...")`.
-            - **CRITICAL - Purity of Stubs**: A stubbed function MUST contain ONLY a docstring and `raise NotImplementedError(...)`. No `await` calls, no other logic.
+        6.  **Prefer Direct Tool Calls for Simple Goals** (ALSO CRITICAL):
+            - If the user's goal can be completed with **a single state-manager call** (e.g., `primitives.tasks.ask`, `primitives.knowledge.ask`, `primitives.contacts.update`, etc.), write a **minimal plan**:
+              - call the one correct tool
+              - `await handle.result()`
+              - return the answer
+            - Avoid helper functions, avoid stubs, and avoid calling multiple different managers unless the request truly spans domains.
+            - Use stubs (`raise NotImplementedError(...)`) only for genuinely uncertain, non-trivial logic—not for straightforward manager/tool calls.
 
         7.  **Async/Await**: ALL functions must be `async def`. ALWAYS use `await` when calling any async function (tools, state managers, helper functions).
 
