@@ -4966,6 +4966,16 @@ async def main_plan():
                 self.dedicated_computer_primitives = None
 
         await self._cancel_all_background_tasks()
+        # Cancel the main execution task if it's still running to prevent resource leaks.
+        # When stop() is called without awaiting result(), the execution task may continue
+        # running in the background. Explicit cancellation ensures clean shutdown.
+        exec_task = getattr(self, "_execution_task", None)
+        if (
+            exec_task is not None
+            and not exec_task.done()
+            and asyncio.current_task() is not exec_task
+        ):
+            await self._cancel_and_wait_for_task(exec_task, "plan stop() called")
         if self._is_complete:
             return f"Plan already in terminal state: {self._state.name}."
 
