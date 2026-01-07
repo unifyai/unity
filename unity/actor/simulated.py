@@ -279,7 +279,19 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
 
         return raw_result
 
-    def stop(self, reason: Optional[str] = None) -> str:
+    def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> str:
+        """Stop the in-flight handle.
+
+        Args:
+            reason: Optional reason for stopping.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+        """
         if self._done_event.is_set():
             return (
                 self._result_str or "Already stopped."
@@ -304,6 +316,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self,
         message: str,
         *,
+        parent_chat_context_cont: list[dict] | None = None,
         images: object | None = None,
     ) -> None:
         if not self._description:
@@ -536,7 +549,22 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self._log_resume()
         return f"Resumed '{self._description}'."
 
-    async def ask(self, question: str) -> str:
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: object | None = None,
+    ) -> str:
+        """Ask a question about the current state.
+
+        Args:
+            question: The question to ask.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+            images: Optional image references. Accepted for API parity with real handles
+                but not currently used.
+        """
         if not self._description:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
@@ -619,7 +647,12 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         try:
             if self._clarification_up_q is not None:
                 msg = await self._clarification_up_q.get()
-                return {"message": msg}
+                return {
+                    "type": "clarification",
+                    "call_id": "unknown",
+                    "tool_name": "simulated_actor",
+                    "question": msg,
+                }
         except Exception:
             pass
         return {}
