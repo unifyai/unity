@@ -199,8 +199,22 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(self, message: str) -> str:
-        """Append a follow-up message that will be folded into the prompt."""
+    def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> str:
+        """Append a follow-up message that will be folded into the prompt.
+
+        Args:
+            message: The interjection message to inject.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+            images: Optional image references. Accepted for API parity with real handles
+                but not currently used.
+        """
         if self._cancelled:
             return "Interaction already stopped."
         self._log_interject(message)
@@ -241,10 +255,23 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
+        """Retrieve the next clarification request, if any.
+
+        Only surfaces clarification events when this handle explicitly requested
+        clarification. This prevents cross-handle consumption of shared clarification
+        queues that may be injected by external processes.
+        """
+        if not getattr(self, "_needs_clar", False):
+            return {}
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
-                return {"message": msg}
+                return {
+                    "type": "clarification",
+                    "call_id": "unknown",
+                    "tool_name": "unknown",
+                    "question": msg,
+                }
         except Exception:
             pass
         return {}
@@ -263,8 +290,20 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
+        """Ask a follow-up question about the current operation.
+
+        Args:
+            question: The question to ask.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+            images: Optional image references. Accepted for API parity with real handles
+                but not currently used.
+            _return_reasoning_steps: Whether to return reasoning steps.
+        """
         follow_up_prompt = build_followup_prompt(
             question=question,
             initial_instruction=self._initial_text,
@@ -610,14 +649,34 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self._log_label = log_label
 
             # --- steerable surface ---
-            async def interject(self, message: str, *, images: object | None = None) -> None:  # type: ignore[override]
+            async def interject(
+                self,
+                message: str,
+                *,
+                parent_chat_context_cont: list[dict] | None = None,
+                images: object | None = None,
+            ) -> None:  # type: ignore[override]
                 self._log_interject(message)
                 try:
-                    await self._inner.interject(message, images=images)  # type: ignore[arg-type]
+                    # Prefer forwarding full steerable signature when supported.
+                    try:
+                        await self._inner.interject(  # type: ignore[arg-type]
+                            message,
+                            parent_chat_context_cont=parent_chat_context_cont,
+                            images=images,
+                        )
+                    except TypeError:
+                        await self._inner.interject(message, images=images)  # type: ignore[arg-type]
                 except Exception:
                     return None
 
-            def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+            def stop(
+                self,
+                *,
+                cancel: bool = False,
+                reason: Optional[str] = None,
+                parent_chat_context_cont: list[dict] | None = None,
+            ) -> Optional[str]:  # type: ignore[override]
                 self._log_stop(reason)
                 # Prefer actor-style stop(reason) but tolerate both signatures
                 try:
@@ -680,6 +739,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 question: str,
                 *,
+                parent_chat_context_cont: list[dict] | None = None,
+                images: object | None = None,
                 _return_reasoning_steps: bool = False,
             ) -> "SteerableToolHandle":
                 # Actor.ask returns a string; package it as a minimal static handle
