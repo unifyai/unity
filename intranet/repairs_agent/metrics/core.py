@@ -7,33 +7,69 @@ grouping and time filtering. Metrics can be broken down by:
 - trade
 - patch
 - region
+- day (temporal grouping)
 - time_period
 
 Metric Reference (from requirements):
 --------------------------------------
-1.  jobs_completed_per_day - Jobs completed per man per day
+1.  jobs_completed - Jobs completed (groupable by operative/patch/region/day)
 2.  no_access_rate - No Access % / Absolute number
 3.  first_time_fix_rate - First Time Fix % / Absolute Number
 4.  follow_on_required_rate - Follow on Required % / Absolute Number
 5.  follow_on_materials_rate - Follow on Required for Materials %
 6.  job_completed_on_time_rate - Job completed on time % / Absolute Number
-7.  merchant_stops_per_day - No of merchant stops per day
-8.  avg_duration_at_merchant - Average duration at a Merchant per day
-9.  distance_travelled_per_day - Distance Travelled per day
-10. avg_time_travelling - Average time travelling per day
-11. repairs_completed_per_day - Repairs completed per day
-12. jobs_issued_per_day - Jobs issued per day
-13. jobs_requiring_materials_rate - % of jobs completed that require materials
-14. avg_repairs_per_property - Average no of repairs per property completed
-15. complaints_rate - Complaints as % of total jobs completed
-16. appointment_adherence_rate - Appointment adherence rate
+7.  merchant_stops - No of merchant stops (SKIPPED - no merchant list)
+8.  merchant_dwell_time - Average duration at merchant (SKIPPED - no merchant list)
+9.  total_distance_travelled - Total distance travelled
+10. travel_time - Travel time (SKIPPED - HH:MM:SS parsing not supported)
+11. jobs_issued - Jobs issued per day
+12. jobs_requiring_materials_rate - % of jobs completed that require materials
+13. avg_repairs_per_property - Average no of repairs per property completed
+14. complaints_rate - Complaints % (SKIPPED - no data column)
+15. appointment_adherence_rate - Appointment adherence rate
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from functools import wraps
+from typing import Callable, Dict, List, Optional
 
 from intranet.repairs_agent.static.registry import register
+
+
+# =============================================================================
+# @skip Decorator for Placeholder Metrics
+# =============================================================================
+
+# Registry for skipped metrics (for documentation/introspection)
+SKIPPED_METRICS: dict[str, str] = {}
+
+
+def skip(metric_id: str, reason: str):
+    """
+    Mark a metric as skipped (not registered) with a documented reason.
+
+    The function is still defined for reference but won't appear in
+    the query registry or be executable via scripts.
+
+    Usage:
+        @skip("merchant_dwell_time", "Blocked: no exhaustive merchant list available")
+        async def merchant_dwell_time(...): ...
+    """
+
+    def decorator(fn: Callable) -> Callable:
+        SKIPPED_METRICS[metric_id] = reason
+
+        @wraps(fn)
+        async def wrapper(*args, **kwargs):
+            raise NotImplementedError(f"Metric '{metric_id}' is skipped: {reason}")
+
+        wrapper._skipped = True
+        wrapper._skip_reason = reason
+        return wrapper
+
+    return decorator
+
 
 # Import types from local module (canonical source)
 from .types import GroupBy, MetricResult, PlotResult, TimePeriod, FileTools
@@ -57,15 +93,15 @@ from .helpers import (
 
 
 # =============================================================================
-# 1. Jobs Completed Per Day
+# 1. Jobs Completed
 # =============================================================================
 
 
 @register(
-    "jobs_completed_per_day",
-    "Jobs completed per man per day (by operative/trade/patch/region/time)",
+    "jobs_completed",
+    "Total jobs completed (groupable by operative/patch/region/day)",
 )
-async def jobs_completed_per_day(
+async def jobs_completed(
     tools: FileTools,
     group_by: Optional[GroupBy | str] = None,
     start_date: Optional[str] = None,
@@ -74,10 +110,10 @@ async def jobs_completed_per_day(
     include_plots: bool = False,
 ) -> MetricResult:
     """
-    Get jobs completed per man per day.
+    Get total jobs completed.
 
     This metric measures operative productivity by counting the total number
-    of jobs each operative completed, grouped by the specified dimension.
+    of jobs completed, grouped by the specified dimension.
     Used for performance benchmarking and workload analysis.
 
     Discovery Pattern
@@ -102,14 +138,14 @@ async def jobs_completed_per_day(
     - "operative" → "OperativeWhoCompletedJob"
     - "patch" → "RepairsPatch"
     - "region" → "RepairsRegion"
-    - "total" → None (no grouping)
+    - "day" → "WorksOrderReportedCompletedDateDay"
 
     Parameters
     ----------
     tools : FileTools
         Tools from FileManager (reduce, filter_files, visualize, tables_overview, schema_explain)
     group_by : GroupBy | str
-        "operative", "patch", "region", or "total"
+        "operative", "patch", "region", "day", or None for total
     start_date : str, optional
         Start date filter (YYYY-MM-DD format)
     end_date : str, optional
@@ -124,7 +160,7 @@ async def jobs_completed_per_day(
     MetricResult
         Aggregated results with grouping metadata and optional plots
     """
-    metric_name = "jobs_completed_per_day"
+    metric_name = "jobs_completed"
 
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
@@ -846,9 +882,9 @@ async def follow_on_materials_rate(
         total_fo = extract_count(raw_total_fo)
 
     # Count materials-related follow-on jobs
-    # Filter: follow-on jobs with description (proxy for materials)
+    # Filter: follow-on jobs where description contains 'MATERIALS REQUIRED'
     materials_filter = build_filter(
-        ["(`FollowOn` == 'Yes') and (FollowOnDescription != 'None')"],
+        ["`FollowOn` == 'Yes' and 'MATERIALS REQUIRED' in `FollowOnDescription`"],
         start_date,
         end_date,
     )
@@ -949,7 +985,7 @@ async def follow_on_materials_rate(
         total=float(total),
         metadata={
             "return_absolute": return_absolute,
-            "note": "Approximation based on FollowOnDescription presence",
+            "note": "Filters for 'MATERIALS REQUIRED' in FollowOnDescription",
         },
         plots=plots,
     )
@@ -1135,15 +1171,12 @@ async def job_completed_on_time_rate(
 
 
 # =============================================================================
-# 7. Merchant Stops Per Day
+# 7. Merchant Stops (SKIPPED)
 # =============================================================================
 
 
-@register(
-    "merchant_stops_per_day",
-    "Number of merchant stops per day (by operative/trade/patch/region/time)",
-)
-async def merchant_stops_per_day(
+@skip("merchant_stops", "Blocked: requires exhaustive merchant name/address list")
+async def merchant_stops(
     tools: FileTools,
     group_by: Optional[GroupBy | str] = None,
     start_date: Optional[str] = None,
@@ -1152,7 +1185,9 @@ async def merchant_stops_per_day(
     include_plots: bool = False,
 ) -> MetricResult:
     """
-    Get number of merchant stops per day.
+    Get number of merchant stops.
+
+    STATUS: SKIPPED - requires exhaustive merchant name/address list.
 
     Uses telematics data to count trips ending at merchant locations.
 
@@ -1166,124 +1201,16 @@ async def merchant_stops_per_day(
     1. filter_files(..., filter="'MerchantName' in `EndLocation`")
     2. Python: Aggregate counts by Vehicle
     """
-    metric_name = "merchant_stops_per_day"
-
-    filter_files_tool = tools.get("filter_files")
-    if not filter_files_tool:
-        raise ValueError("Required 'filter_files' tool not available")
-
-    # Discovery with fallback
-    telematics_tables = [t["table"] for t in discover_telematics_tables(tools)]
-
-    # Resolve group_by
-    group_by_str = (
-        group_by.value
-        if hasattr(group_by, "value")
-        else str(group_by) if group_by else None
-    )
-
-    # Merchant names to search for
-    merchant_names = [
-        "Travis Perkins",
-        "Screwfix",
-        "Toolstation",
-        "Plumb Center",
-        "City Plumbing",
-        "Jewson",
-        "Selco",
-        "Wickes",
-    ]
-
-    total_stops = 0
-    results_by_group: Dict[str, int] = {}
-
-    for table in telematics_tables:
-        for merchant in merchant_names:
-            try:
-                rows = filter_files_tool(
-                    filter=f"'{merchant}' in `EndLocation`",
-                    tables=[table],
-                    limit=1000,
-                )
-                if rows:
-                    total_stops += len(rows)
-                    for row in rows:
-                        vehicle = row.get("Vehicle", "Unknown")
-                        results_by_group[vehicle] = results_by_group.get(vehicle, 0) + 1
-            except Exception:
-                pass
-
-    if results_by_group:
-        results = [{"group": k, "stops": v} for k, v in results_by_group.items()]
-    else:
-        results = [
-            {
-                "group": "total",
-                "stops": total_stops,
-                "note": "Merchant detection requires location string matching",
-            },
-        ]
-
-    # Generate plots if requested (skip if no grouping)
-    plots: List[PlotResult] = []
-    if include_plots and group_by is not None:
-        visualize_tool = tools.get("visualize")
-        if visualize_tool:
-            try:
-                # Inline plot config - visible to CodeActActor
-                # Telematics uses "Driver" column for operative grouping
-                result = visualize_tool(
-                    tables=telematics_tables,
-                    plot_type="bar",
-                    x_axis="Driver",
-                    y_axis="Trip",
-                    group_by="Driver",
-                    metric="count",
-                    title=f"Merchant Stops by {group_by_str.title()}",
-                )
-                if result:
-                    plots.append(
-                        PlotResult(
-                            url=extract_plot_url(result),
-                            title=f"Merchant Stops by {group_by_str.title()}",
-                            succeeded=extract_plot_succeeded(result),
-                        ),
-                    )
-            except Exception as e:
-                plots.append(
-                    PlotResult(
-                        title=f"Merchant Stops by {group_by_str.title()}",
-                        error=str(e),
-                        succeeded=False,
-                    ),
-                )
-
-    return build_metric_result(
-        metric_name=metric_name,
-        group_by=group_by,
-        time_period=time_period,
-        start_date=start_date,
-        end_date=end_date,
-        results=results,
-        total=float(total_stops),
-        metadata={
-            "merchants_searched": merchant_names,
-            "note": "Approximate - based on EndLocation text matching",
-        },
-        plots=plots,
-    )
+    # This metric is skipped - decorator will raise NotImplementedError
 
 
 # =============================================================================
-# 8. Average Duration at Merchant
+# 8. Merchant Dwell Time (SKIPPED)
 # =============================================================================
 
 
-@register(
-    "avg_duration_at_merchant",
-    "Average duration at a Merchant per day (by operative/trade/patch/region/time)",
-)
-async def avg_duration_at_merchant(
+@skip("merchant_dwell_time", "Blocked: requires exhaustive merchant name/address list")
+async def merchant_dwell_time(
     tools: FileTools,
     group_by: GroupBy = GroupBy.OPERATIVE,
     start_date: Optional[str] = None,
@@ -1292,149 +1219,28 @@ async def avg_duration_at_merchant(
     include_plots: bool = False,
 ) -> MetricResult:
     """
-    Get average duration at a merchant per day.
+    Get average duration at a merchant.
+
+    STATUS: SKIPPED - requires exhaustive merchant name/address list.
+    Timestamp subtraction (Departure - Arrival) IS supported once merchant
+    locations are identified.
 
     Calculates time spent at merchant locations from telematics data.
     Requires parsing arrival/departure timestamps for dwell time calculation.
-    NOTE: Currently returns placeholder - needs advanced timestamp parsing.
-
-    FOR CODEACT COMPOSITION - Discovery Pattern:
-    --------------------------------------------
-        tables = primitives.files.tables_overview()
-        telematics_tables = [t["path"] for t in tables if "Telematics" in t.get("name", "")]
-        columns = primitives.files.list_columns(table=telematics_tables[0])
-        # Required: EndLocation, Arrival time, Departure time, Driver
-
-    Tool Chain (conceptual - requires timestamp handling):
-    -----------------------------------------------------
-    1. filter_files(filter="'MerchantName' in `EndLocation`",
-                    tables=[TELEMATICS_TABLE])
-       → Returns rows at merchant locations
-
-    2. Python: Parse Arrival/Departure timestamps
-       duration_minutes = (departure - arrival).total_seconds() / 60
-
-    3. reduce(table=..., metric="mean", keys="dwell_time", group_by="Driver")
-       → Would need computed column for dwell time
-
-    Merchant Names Searched:
-    ------------------------
-    Travis Perkins, Screwfix, Toolstation, Plumb Center,
-    City Plumbing, Jewson, Selco, Wickes
-
-    Column Mappings for group_by:
-    -----------------------------
-    - GroupBy.OPERATIVE → "Driver"
-
-    Parameters
-    ----------
-    tools : FileTools
-        Tools from FileManager (filter_files, reduce, visualize)
-    group_by : GroupBy
-        Dimension to group results by
-    start_date : str, optional
-        Start date filter (YYYY-MM-DD)
-    end_date : str, optional
-        End date filter (YYYY-MM-DD)
-    time_period : TimePeriod
-        Time granularity for aggregation
-    include_plots : bool
-        If True, generate visualization URLs for the results
-
-    Returns
-    -------
-    MetricResult
-        Average duration (in minutes) at merchant stops with optional plots
     """
-    metric_name = "avg_duration_at_merchant"
-
-    # Merchant names to search for
-    merchant_names = [
-        "Travis Perkins",
-        "Screwfix",
-        "Toolstation",
-        "Plumb Center",
-        "City Plumbing",
-        "Jewson",
-        "Selco",
-        "Wickes",
-    ]
-
-    # Note: Duration at merchant would require:
-    # 1. Identifying merchant stops via EndLocation
-    # 2. Calculating dwell time from arrival/departure timestamps
-    # This is complex due to telematics data structure
-
-    # Generate plots if requested - for each month's telematics table (skip if no grouping)
-    telematics_tables = [t["table"] for t in discover_telematics_tables(tools)]
-    group_by_str = (
-        group_by.value
-        if hasattr(group_by, "value")
-        else str(group_by) if group_by else None
-    )
-    visualize_tool = tools.get("visualize")
-    plots: List[PlotResult] = []
-    if visualize_tool and include_plots and group_by is not None:
-        try:
-            # Inline plot config - visible to CodeActActor
-            # Telematics uses "Driver" column, y_axis="Trip travel time", metric="mean"
-            result = visualize_tool(
-                tables=telematics_tables,
-                plot_type="bar",
-                x_axis="Driver",
-                y_axis="Trip travel time",
-                group_by="Driver",
-                metric="mean",
-                title=f"Avg Duration at Merchant by {group_by_str.title() if group_by_str else 'Group'}",
-            )
-            if result:
-                plots.append(
-                    PlotResult(
-                        url=extract_plot_url(result),
-                        title=f"Avg Duration at Merchant by {group_by_str.title() if group_by_str else 'Group'}",
-                        succeeded=extract_plot_succeeded(result),
-                    ),
-                )
-        except Exception as e:
-            plots.append(
-                PlotResult(
-                    title=f"Avg Duration at Merchant by {group_by_str.title() if group_by_str else 'Group'}",
-                    error=str(e),
-                    succeeded=False,
-                ),
-            )
-
-    return build_metric_result(
-        metric_name=metric_name,
-        group_by=group_by,
-        time_period=time_period,
-        start_date=start_date,
-        end_date=end_date,
-        results=[
-            {
-                "note": "Duration calculation requires timestamp parsing from telematics Arrival/Departure fields",
-                "merchants_list": merchant_names,
-            },
-        ],
-        total=0.0,
-        metadata={
-            "status": "requires_advanced_implementation",
-            "reason": "Needs timestamp parsing and location matching logic",
-        },
-        plots=plots,
-    )
+    # This metric is skipped - decorator will raise NotImplementedError
 
 
 # =============================================================================
-# 9. Distance Travelled Per Day
+# 9. Total Distance Travelled
 # =============================================================================
 
 
 @register(
-    "distance_travelled_per_day",
-    "Distance travelled per day (by operative/trade/patch/region/time)",
+    "total_distance_travelled",
+    "Total distance travelled (groupable by vehicle/day)",
 )
-async def distance_travelled_per_day(
+async def total_distance_travelled(
     tools: FileTools,
     group_by: Optional[GroupBy | str] = None,
     start_date: Optional[str] = None,
@@ -1443,7 +1249,7 @@ async def distance_travelled_per_day(
     include_plots: bool = False,
 ) -> MetricResult:
     """
-    Get distance travelled per day.
+    Get total distance travelled.
 
     Aggregates business miles from telematics data.
 
@@ -1456,8 +1262,13 @@ async def distance_travelled_per_day(
     ----------
     1. reduce(table=telematics_table, metric="sum", keys="Business distance", group_by="Vehicle")
     2. Python: Aggregate across monthly tables
+
+    Column Mappings
+    ---------------
+    - "operative" → "Vehicle"
+    - "day" → "ArrivalDay"
     """
-    metric_name = "distance_travelled_per_day"
+    metric_name = "total_distance_travelled"
 
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
@@ -1550,15 +1361,12 @@ async def distance_travelled_per_day(
 
 
 # =============================================================================
-# 10. Average Time Travelling Per Day
+# 10. Travel Time (SKIPPED)
 # =============================================================================
 
 
-@register(
-    "avg_time_travelling",
-    "Average time travelling per day (by operative/trade/patch/region/time)",
-)
-async def avg_time_travelling(
+@skip("travel_time", "Blocked: HH:MM:SS string parsing not supported by backend")
+async def travel_time(
     tools: FileTools,
     group_by: Optional[GroupBy | str] = None,
     start_date: Optional[str] = None,
@@ -1567,118 +1375,31 @@ async def avg_time_travelling(
     include_plots: bool = False,
 ) -> MetricResult:
     """
-    Get average time spent travelling per day.
+    Get travel time.
 
-    Returns trip counts as proxy (HH:MM:SS parsing not implemented).
+    STATUS: SKIPPED - Trip travel time column is HH:MM:SS string format
+    which cannot be aggregated by the backend.
 
-    Discovery Pattern
-    -----------------
-    telematics_tables = discover_telematics_tables(tools)
-    # Required: Trip travel time, Vehicle
-
-    Tool Chain
-    ----------
-    1. reduce(..., metric="count", keys="Trip travel time", filter="!= 'None'")
-    2. Python: Aggregate across monthly tables
+    Would calculate average time spent travelling from telematics data.
     """
-    metric_name = "avg_time_travelling"
-
-    reduce_tool = tools.get("reduce")
-    if not reduce_tool:
-        raise ValueError("Required 'reduce' tool not available")
-
-    # Discovery with fallback
-    telematics_tables = [t["table"] for t in discover_telematics_tables(tools)]
-
-    # For telematics, group by Vehicle column
-    group_by_str = group_by.value if hasattr(group_by, "value") else str(group_by)
-    group_by_field = resolve_group_by(group_by_str, telematics=True)
-
-    total_trips: Dict[str, int] = {}
-    grand_total = 0
-
-    for table in telematics_tables:
-        raw_result = reduce_tool(
-            table=table,
-            metric="count",
-            keys="Trip travel time",
-            filter="`Trip travel time` != 'None'",
-            group_by=group_by_field,
-        )
-
-        if isinstance(raw_result, dict):
-            result = normalize_grouped_result(raw_result)
-            for k, v in result.items():
-                total_trips[k] = total_trips.get(k, 0) + v
-        else:
-            grand_total += extract_count(raw_result)
-
-    if total_trips:
-        results = [{"group": k, "trip_count": v} for k, v in total_trips.items()]
-        grand_total = sum(total_trips.values())
-    else:
-        results = [{"group": "total", "trip_count": grand_total}]
-
-    # Generate plots if requested (skip if no grouping)
-    plots: List[PlotResult] = []
-    if include_plots and group_by is not None:
-        visualize_tool = tools.get("visualize")
-        if visualize_tool:
-            try:
-                # Inline plot config - visible to CodeActActor
-                # Telematics: x_axis="Driver", y_axis="Trip travel time", metric="sum"
-                result = visualize_tool(
-                    tables=telematics_tables,
-                    plot_type="bar",
-                    x_axis="Driver",
-                    y_axis="Trip travel time",
-                    group_by="Driver",
-                    metric="sum",
-                    title=f"Travel Time by {group_by_str.title()}",
-                )
-                if result:
-                    plots.append(
-                        PlotResult(
-                            url=extract_plot_url(result),
-                            title=f"Travel Time by {group_by_str.title()}",
-                            succeeded=extract_plot_succeeded(result),
-                        ),
-                    )
-            except Exception as e:
-                plots.append(
-                    PlotResult(
-                        title=f"Travel Time by {group_by_str.title()}",
-                        error=str(e),
-                        succeeded=False,
-                    ),
-                )
-
-    return build_metric_result(
-        metric_name=metric_name,
-        group_by=group_by,
-        time_period=time_period,
-        start_date=start_date,
-        end_date=end_date,
-        results=results,
-        total=float(grand_total),
-        metadata={
-            "note": "Returns trip count - actual time averaging requires HH:MM:SS parsing",
-            "unit": "trip_events",
-        },
-        plots=plots,
-    )
+    # This metric is skipped - decorator will raise NotImplementedError
 
 
 # =============================================================================
-# 11. Repairs Completed Per Day
+# 11. (DELETED - repairs_completed_per_day was duplicate of jobs_completed)
+# =============================================================================
+
+
+# =============================================================================
+# 12. Jobs Issued
 # =============================================================================
 
 
 @register(
-    "repairs_completed_per_day",
-    "Repairs completed per day (total/by trade/patch/region/time)",
+    "jobs_issued",
+    "Jobs issued (groupable by operative/patch/region/day)",
 )
-async def repairs_completed_per_day(
+async def jobs_issued(
     tools: FileTools,
     group_by: Optional[GroupBy | str] = None,
     start_date: Optional[str] = None,
@@ -1687,130 +1408,7 @@ async def repairs_completed_per_day(
     include_plots: bool = False,
 ) -> MetricResult:
     """
-    Get total repairs completed per day.
-
-    Service throughput metric (default group_by=TOTAL).
-
-    Discovery Pattern
-    -----------------
-    repairs_table = discover_repairs_table(tools)
-    # Required: JobTicketReference, WorksOrderStatusDescription
-
-    Tool Chain
-    ----------
-    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
-              filter=COMPLETED_FILTER, group_by=...)
-
-    Filter Expressions
-    ------------------
-    - Completed: `WorksOrderStatusDescription` in ['Complete', 'Closed']
-    """
-    metric_name = "repairs_completed_per_day"
-
-    reduce_tool = tools.get("reduce")
-    if not reduce_tool:
-        raise ValueError("Required 'reduce' tool not available")
-
-    # Discovery with fallback
-    repairs_table = discover_repairs_table(tools)["table"]
-
-    # Resolve group_by
-    group_by_str = (
-        group_by.value
-        if hasattr(group_by, "value")
-        else str(group_by) if group_by else None
-    )
-    group_by_field = resolve_group_by(group_by_str)
-
-    filter_expr = build_filter(
-        ["`WorksOrderStatusDescription` in ['Complete', 'Closed']"],
-        start_date,
-        end_date,
-    )
-
-    raw_result = reduce_tool(
-        table=repairs_table,
-        metric="count",
-        keys="JobTicketReference",
-        filter=filter_expr,
-        group_by=group_by_field,
-    )
-
-    # Normalize results
-    if isinstance(raw_result, dict):
-        counts = normalize_grouped_result(raw_result)
-        results = [{"group": k, "count": v} for k, v in counts.items()]
-        total = sum(counts.values())
-    else:
-        count_val = extract_count(raw_result)
-        results = [{"group": "total", "count": count_val}]
-        total = count_val
-
-    # Generate plots if requested (skip if no grouping)
-    plots: List[PlotResult] = []
-    if include_plots and group_by is not None:
-        visualize_tool = tools.get("visualize")
-        if visualize_tool and group_by_field:
-            try:
-                # Inline plot config - visible to CodeActActor
-                result = visualize_tool(
-                    tables=repairs_table,
-                    plot_type="bar",
-                    x_axis=group_by_field,
-                    y_axis="JobTicketReference",
-                    group_by=group_by_field,
-                    metric="count",
-                    filter=filter_expr,
-                    title=f"Repairs Completed by {group_by_str.title()}",
-                )
-                if result:
-                    plots.append(
-                        PlotResult(
-                            url=extract_plot_url(result),
-                            title=f"Repairs Completed by {group_by_str.title()}",
-                            succeeded=extract_plot_succeeded(result),
-                        ),
-                    )
-            except Exception as e:
-                plots.append(
-                    PlotResult(
-                        title=f"Repairs Completed by {group_by_str.title()}",
-                        error=str(e),
-                        succeeded=False,
-                    ),
-                )
-
-    return build_metric_result(
-        metric_name=metric_name,
-        group_by=group_by,
-        time_period=time_period,
-        start_date=start_date,
-        end_date=end_date,
-        results=results,
-        total=float(total),
-        plots=plots,
-    )
-
-
-# =============================================================================
-# 12. Jobs Issued Per Day
-# =============================================================================
-
-
-@register(
-    "jobs_issued_per_day",
-    "Jobs issued per day (total/by trade/patch/region/time)",
-)
-async def jobs_issued_per_day(
-    tools: FileTools,
-    group_by: Optional[GroupBy | str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    time_period: TimePeriod = TimePeriod.DAY,
-    include_plots: bool = False,
-) -> MetricResult:
-    """
-    Get jobs issued per day.
+    Get jobs issued.
 
     Incoming demand metric for workload analysis.
 
@@ -1827,8 +1425,12 @@ async def jobs_issued_per_day(
     Filter Expressions
     ------------------
     - Issued: `WorksOrderStatusDescription` == 'Issued'
+
+    Column Mappings
+    ---------------
+    - "day" → "WorksOrderIssuedDateDay" (via date_context="issued")
     """
-    metric_name = "jobs_issued_per_day"
+    metric_name = "jobs_issued"
 
     reduce_tool = tools.get("reduce")
     if not reduce_tool:
@@ -1837,13 +1439,13 @@ async def jobs_issued_per_day(
     # Discovery with fallback
     repairs_table = discover_repairs_table(tools)["table"]
 
-    # Resolve group_by
+    # Resolve group_by (use date_context="issued" for day grouping)
     group_by_str = (
         group_by.value
         if hasattr(group_by, "value")
         else str(group_by) if group_by else None
     )
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by_str, date_context="issued")
 
     # Filter by WorksOrderIssuedDate
     filter_expr = build_filter(
@@ -2215,14 +1817,11 @@ async def avg_repairs_per_property(
 
 
 # =============================================================================
-# 15. Complaints Rate
+# 15. Complaints Rate (SKIPPED)
 # =============================================================================
 
 
-@register(
-    "complaints_rate",
-    "Complaints as % of total jobs completed (by operative/trade/patch/region/time)",
-)
+@skip("complaints_rate", "Blocked: no complaints column in available data")
 async def complaints_rate(
     tools: FileTools,
     group_by: Optional[GroupBy | str] = None,
@@ -2235,49 +1834,11 @@ async def complaints_rate(
     """
     Get complaints as percentage of total jobs completed.
 
-    NOTE: Complaints data not currently available in repairs dataset.
+    STATUS: SKIPPED - Complaints data not currently available in repairs dataset.
 
-    Discovery Pattern
-    -----------------
-    repairs_table = discover_repairs_table(tools)
-    columns = tools["list_columns"](table=repairs_table)
-    # Check for: Complaint column (not present in current dataset)
-
-    Tool Chain (if available)
-    -------------------------
-    1. reduce(..., filter="`Complaint` == 'Yes'", ...)
-    2. reduce(..., filter=COMPLETED_FILTER, ...) for percentage
-    3. Python: percentage = (complaints / total) * 100
+    Would calculate complaints as percentage of completed jobs if data available.
     """
-    metric_name = "complaints_rate"
-
-    # Discovery with fallback
-    repairs_table = discover_repairs_table(tools)["table"]
-
-    # Generate plots if requested (skip if no grouping)
-    # Note: No complaints data available - plots not supported
-    plots: List[PlotResult] = []
-
-    # Note: No complaints column exists in the repairs data
-    return build_metric_result(
-        metric_name=metric_name,
-        group_by=group_by,
-        time_period=time_period,
-        start_date=start_date,
-        end_date=end_date,
-        results=[
-            {
-                "error": "Complaints data not available in current dataset",
-                "note": "Repairs data does not include a complaints column",
-            },
-        ],
-        total=0.0,
-        metadata={
-            "status": "data_not_available",
-            "required_column": "Complaints or similar",
-        },
-        plots=plots,
-    )
+    # This metric is skipped - decorator will raise NotImplementedError
 
 
 # =============================================================================
@@ -2530,21 +2091,23 @@ async def appointment_adherence_rate(
 # Utility: List all registered metrics
 # =============================================================================
 
+# Fully implemented metrics (registered via @register)
 ALL_METRICS = [
-    "jobs_completed_per_day",
+    "jobs_completed",
     "no_access_rate",
     "first_time_fix_rate",
     "follow_on_required_rate",
     "follow_on_materials_rate",
     "job_completed_on_time_rate",
-    "merchant_stops_per_day",
-    "avg_duration_at_merchant",
-    "distance_travelled_per_day",
-    "avg_time_travelling",
-    "repairs_completed_per_day",
-    "jobs_issued_per_day",
+    "total_distance_travelled",
+    "jobs_issued",
     "jobs_requiring_materials_rate",
     "avg_repairs_per_property",
-    "complaints_rate",
     "appointment_adherence_rate",
 ]
+
+# Skipped metrics are tracked in SKIPPED_METRICS dict (populated by @skip decorator):
+# - merchant_stops: No exhaustive merchant name/address list
+# - merchant_dwell_time: No exhaustive merchant name/address list
+# - travel_time: HH:MM:SS string parsing not supported by backend
+# - complaints_rate: No complaints column in available data

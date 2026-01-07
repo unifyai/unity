@@ -237,6 +237,7 @@ def discover_telematics_tables(tools: Dict[str, Any]) -> List[Dict[str, Any]]:
 def resolve_group_by(
     group_by: Optional[str],
     telematics: bool = False,
+    date_context: str = "completion",
 ) -> Optional[str]:
     """
     Resolve group_by string to actual column name.
@@ -247,10 +248,16 @@ def resolve_group_by(
     Parameters
     ----------
     group_by : str or None
-        Group dimension: "operative", "patch", "region", "trade".
+        Group dimension: "operative", "patch", "region", "trade", "day".
         Pass None for no grouping (aggregate total).
     telematics : bool
         If True, use telematics column mappings (Vehicle instead of Operative)
+    date_context : str
+        Context for temporal grouping to select appropriate date column:
+        - "completion": WorksOrderReportedCompletedDateDay (default)
+        - "issued": WorksOrderIssuedDateDay
+        - "arrival": ArrivedOnSiteDay
+        - "scheduled": ScheduledAppointmentStartDay
 
     Returns
     -------
@@ -263,12 +270,30 @@ def resolve_group_by(
     'OperativeWhoCompletedJob'
     >>> resolve_group_by("operative", telematics=True)
     'Vehicle'
+    >>> resolve_group_by("day", date_context="completion")
+    'WorksOrderReportedCompletedDateDay'
     >>> resolve_group_by(None)
     None
     """
     # Return None early if no grouping requested
     if group_by is None:
         return None
+
+    key = group_by.lower()
+
+    # Temporal column selection based on context
+    date_columns = {
+        "completion": "WorksOrderReportedCompletedDateDay",
+        "issued": "WorksOrderIssuedDateDay",
+        "arrival": "ArrivedOnSiteDay",
+        "scheduled": "ScheduledAppointmentStartDay",
+    }
+
+    # Telematics data column mappings:
+    telematics_mapping = {
+        "operative": "Vehicle",  # Vehicle contains operative name in telematics
+        "day": "ArrivalDay",
+    }
 
     # INLINE mapping - no hidden globals
     # Repairs data column mappings:
@@ -277,15 +302,11 @@ def resolve_group_by(
         "patch": "RepairsPatch",
         "region": "RepairsRegion",
         "trade": "Trade",
-    }
-
-    # Telematics data column mappings:
-    telematics_mapping = {
-        "operative": "Vehicle",  # Vehicle contains operative name in telematics
+        # Temporal mappings - context-dependent
+        "day": date_columns.get(date_context, "WorksOrderReportedCompletedDateDay"),
     }
 
     mapping = telematics_mapping if telematics else repairs_mapping
-    key = group_by.lower()
     return mapping.get(key)
 
 

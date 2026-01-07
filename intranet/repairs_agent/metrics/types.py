@@ -56,12 +56,21 @@ class GroupBy(str, Enum):
         TRADE: Group by trade/skill type (e.g., plumber, electrician)
         PATCH: Group by geographic patch/area
         REGION: Group by broader geographic region
+        DAY: Group by day (temporal grouping using *Day columns)
+        WEEK: Group by week (temporal grouping - future)
+        MONTH: Group by month (temporal grouping - future)
     """
 
+    # Dimensional grouping
     OPERATIVE = "operative"
     TRADE = "trade"
     PATCH = "patch"
     REGION = "region"
+
+    # Temporal grouping
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
 
 
 class TimePeriod(str, Enum):
