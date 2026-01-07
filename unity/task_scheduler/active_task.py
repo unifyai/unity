@@ -220,7 +220,13 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         return _AnswerHandle()
 
     @functools.wraps(BaseActiveTask.interject, updated=())
-    async def interject(self, message: str, *, images: object | None = None) -> None:
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: object | None = None,
+    ) -> None:
         # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
         intent: Optional[str] = None
         reason: Optional[str] = None
@@ -245,14 +251,14 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             else:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=None,
+                    parent_chat_context=parent_chat_context_cont,
                 )
         except Exception as e:
             # Robust fallback: use built-in classifier to avoid losing the steering signal entirely
             try:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=None,
+                    parent_chat_context=parent_chat_context_cont,
                 )
             except Exception as _e:
                 intent, reason = None, None
