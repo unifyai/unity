@@ -84,11 +84,11 @@ PlotConfigRegistry = Dict[str, Dict[GroupBy, List[PlotConfig]]]
 
 METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     # =========================================================================
-    # 1. JOBS COMPLETED PER DAY (Productivity)
+    # 1. JOBS COMPLETED (Productivity)
     # =========================================================================
     # PDF: "Ranked bar chart showing each operative's average jobs per day"
     # PDF: "Time series line chart could show trends over months"
-    "jobs_completed_per_day": {
+    "jobs_completed": {
         GroupBy.OPERATIVE: [
             PlotConfig(
                 plot_type="bar",
@@ -124,46 +124,10 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
         ],
     },
     # =========================================================================
-    # 2. REPAIRS COMPLETED PER DAY (Service Throughput)
-    # =========================================================================
-    # PDF: "Line chart across the time period showing daily completed jobs"
-    "repairs_completed_per_day": {
-        GroupBy.OPERATIVE: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="OperativeWhoCompletedJob",
-                y_axis="JobTicketReference",
-                group_by="OperativeWhoCompletedJob",
-                metric="count",
-                title="Repairs Completed per Operative",
-            ),
-        ],
-        GroupBy.PATCH: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="RepairsPatch",
-                y_axis="JobTicketReference",
-                group_by="RepairsPatch",
-                metric="count",
-                title="Repairs Completed per Patch",
-            ),
-        ],
-        GroupBy.REGION: [
-            PlotConfig(
-                plot_type="bar",
-                x_axis="RepairsRegion",
-                y_axis="JobTicketReference",
-                group_by="RepairsRegion",
-                metric="count",
-                title="Repairs Completed per Region",
-            ),
-        ],
-    },
-    # =========================================================================
-    # 3. JOBS ISSUED PER DAY (Incoming Demand)
+    # 2. JOBS ISSUED (Incoming Demand)
     # =========================================================================
     # PDF: "Time series line chart for jobs issued per day"
-    "jobs_issued_per_day": {
+    "jobs_issued": {
         GroupBy.OPERATIVE: [
             PlotConfig(
                 plot_type="bar",
@@ -384,7 +348,7 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     # =========================================================================
     # PDF: "Bar chart of average merchant stops per day by operative"
     # Note: Uses telematics data - columns prefixed with table label at runtime
-    "merchant_stops_per_day": {
+    "merchant_stops": {
         GroupBy.OPERATIVE: [
             PlotConfig(
                 plot_type="bar",
@@ -401,7 +365,7 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     # 10. AVERAGE DURATION AT MERCHANT (Telematics)
     # =========================================================================
     # PDF: "Bar chart by patch or by trade"
-    "avg_duration_at_merchant": {
+    "merchant_dwell_time": {
         GroupBy.OPERATIVE: [
             PlotConfig(
                 plot_type="bar",
@@ -417,7 +381,7 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     # 11. DISTANCE TRAVELLED PER DAY (Telematics)
     # =========================================================================
     # PDF: "Comparative bar chart by region showing average daily miles"
-    "distance_travelled_per_day": {
+    "total_distance_travelled": {
         GroupBy.OPERATIVE: [
             PlotConfig(
                 plot_type="bar",
@@ -433,7 +397,7 @@ METRIC_PLOT_CONFIGS: PlotConfigRegistry = {
     # 12. AVERAGE TIME TRAVELLING (Telematics)
     # =========================================================================
     # PDF: "Bar chart showing average travel hours per day for each region"
-    "avg_time_travelling": {
+    "travel_time": {
         GroupBy.OPERATIVE: [
             PlotConfig(
                 plot_type="bar",

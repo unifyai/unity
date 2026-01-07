@@ -9,8 +9,8 @@ Usage:
     from query_logger import QueryLogger
 
     with QueryLogger() as logger:
-        result = await agent.ask("jobs_completed_per_day", group_by="patch")
-        logger.log_query("jobs_completed_per_day", {"group_by": "patch"}, result, elapsed=1.23)
+        result = await agent.ask("jobs_completed", group_by="patch")
+        logger.log_query("jobs_completed", {"group_by": "patch"}, result, elapsed=1.23)
 
     # Or manual lifecycle:
     logger = QueryLogger()

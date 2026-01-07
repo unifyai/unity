@@ -10,7 +10,7 @@ set -euo pipefail
 #   ./parallel_queries.sh --all                    # All queries, default params
 #   ./parallel_queries.sh --all --expand-params    # All queries × all param combos
 #   ./parallel_queries.sh --all --full-matrix      # Full matrix: all queries × all params, nested dirs
-#   ./parallel_queries.sh --query jobs_completed_per_day
+#   ./parallel_queries.sh --query jobs_completed
 #   ./parallel_queries.sh --query first_time_fix_rate --query no_access_rate
 #   ./parallel_queries.sh --all -j 5               # Limit to 5 concurrent sessions
 #   ./parallel_queries.sh --all -w                 # Wait for completion
@@ -260,7 +260,7 @@ Examples:
   ./parallel_queries.sh --all --full-matrix -j 8 -w
 
   # Run specific queries
-  ./parallel_queries.sh --query jobs_completed_per_day --query no_access_rate
+  ./parallel_queries.sh --query jobs_completed --query no_access_rate
 
   # Limit concurrency and wait for completion
   ./parallel_queries.sh --all -j 5 -w
