@@ -4421,7 +4421,17 @@ async def main_plan():
                     # Best-effort; if introspection fails, proceed with broadcast.
                     pass
 
-                filter_dict = getattr(decision, "broadcast_filter", None) or {}
+                filter_obj = getattr(decision, "broadcast_filter", None)
+                if filter_obj is None:
+                    filter_dict: dict[str, Any] = {}
+                elif isinstance(filter_obj, dict):
+                    filter_dict = filter_obj
+                else:
+                    # Pydantic model (strict broadcast filter)
+                    try:
+                        filter_dict = dict(filter_obj.model_dump(exclude_none=True))
+                    except Exception:
+                        filter_dict = {}
                 statuses = filter_dict.get(
                     "statuses",
                     ["running", "paused", "waiting_for_clarification"],
@@ -6315,9 +6325,16 @@ class HierarchicalActor(BaseActor):
                                         )
 
                                     else:
-                                        raise KeyError(
-                                            f"Function '{func_name}' not found in local or global scope.",
-                                        )
+                                        # Fallback for nested/local functions that aren't in module-level namespace.
+                                        #
+                                        # Nested functions defined inside `main_plan` are not present in
+                                        # `plan.execution_namespace`. When such functions are executed asynchronously
+                                        # (e.g., scheduled via `asyncio.gather(...)`), the frame's local scope may
+                                        # not contain the defining symbol.
+                                        #
+                                        # In these cases, execute the originally-decorated callable rather than
+                                        # triggering an unnecessary dynamic-implementation loop.
+                                        current_fn_for_execution = fn
                                 finally:
                                     del frame
 
