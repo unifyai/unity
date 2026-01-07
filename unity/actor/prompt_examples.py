@@ -541,7 +541,7 @@ def get_primitives_files_organize_example() -> str:
 # Example: File organization (rename/move)
 async def organize_project_files() -> str:
     """Rename/move files using the File manager."""
-    # NOTE: File-manager paths are typically root-relative to the active filesystem adapter.
+    # File-manager paths are typically root-relative to the active filesystem adapter.
     # Avoid leading "/" unless you truly intend an absolute host path.
     instruction = "Rename docs/notes.txt to docs/notes-2024.txt and move reports/q1.pdf to archive/q1.pdf."
     handle = await primitives.files.organize(instruction)
@@ -714,6 +714,110 @@ async def search_multiple_sources_with_correction(query: str) -> dict:
         "transcripts": transcript_result
     }
 """
+
+
+# ---------------------------------------------------------------------------
+# 5b. Interjection Examples (Routing vs Patching)
+# ---------------------------------------------------------------------------
+
+
+def get_interjection_routing_only_examples() -> str:
+    """Examples: routing-only interjections (no patches / no cache invalidation).
+
+    These examples are intentionally written with *natural user language* (no "broadcast",
+    no internal references like "main_plan"), and demonstrate the preferred output shape
+    when the interjection can be satisfied by steering *already in-flight* handles.
+    """
+
+    return """
+### Interjection Examples: Routing-Only (NO PATCHES)
+
+**Rule of thumb:** If the user’s interjection can be satisfied by *steering what’s already running*
+(tone/formatting/scope preferences for current outputs), prefer **routing-only**:
+- Do **NOT** emit `patches`
+- Do **NOT** emit `cache`
+- Use `routing_action="broadcast_filtered"` (or `"targeted"` if the user singled out a specific handle)
+
+#### Example A — Targeted tone adjustment (only the relevant handle)
+- **Context**: There is an in-flight `primitives.contacts.ask(...)` that is just listing contacts, and an in-flight
+  `primitives.transcripts.ask(...)` that is generating outreach tone/greeting guidance.
+- **User**: “Actually—let’s make the outreach much more casual and friendly. Use ‘Hey <FirstName>,’ and don’t use last names or ‘Dear’.”
+- **Correct JSON** (route only to the *relevant* in-flight handle):
+```json
+{
+  "action": "modify_task",
+  "reason": "This is a preference update for what is currently being produced by an in-flight handle. Routing is sufficient; patching would be unnecessarily disruptive.",
+  "routing_action": "targeted",
+  "target_handle_ids": ["<transcripts_handle_id_from_pane_snapshot>"],
+  "routed_message": "Make the outreach much more casual and friendly. Use greeting 'Hey <FirstName>,' (first name only). Avoid last names and do not use 'Dear'."
+}
+```
+
+#### Example D — Targeted refinement of an in-flight lookup (ranking / tie-breaker)
+- **Context**: There is an in-flight `primitives.tasks.update(...)` creating a task, and an in-flight
+  `primitives.contacts.ask(...)` identifying an assignee. The user adds a *selection preference* for the in-flight lookup.
+- **User**: “For the Berlin contact lookup, prioritize anyone who has ‘manager’ or ‘lead’ in their role.”
+- **Correct JSON** (route only; do NOT patch/restart):
+```json
+{
+  "action": "modify_task",
+  "reason": "This is a refinement for how the in-flight contact lookup should choose/format its answer. Steering the running contacts handle is sufficient; patching would unnecessarily cancel/restart execution.",
+  "routing_action": "targeted",
+  "target_handle_ids": ["<contacts_handle_id_from_pane_snapshot>"],
+  "routed_message": "For the Berlin contact lookup: prioritize anyone whose role/title contains 'manager' or 'lead'. If multiple match, pick the most senior."
+}
+```
+
+#### Example E — Upstream scope correction BEFORE downstream steps consume the result (staged workflow)
+- **Context**: There is an in-flight `primitives.contacts.ask(...)` producing a contact set. The plan has *not yet awaited* that handle’s `.result()`,
+  and downstream steps (e.g., transcripts/knowledge) will be spawned *based on* the returned contacts.
+- **User**: “Actually, for this quarterly sync, let’s focus only on the Berlin office. When you list the active contacts, include only Berlin contacts.”
+- **Correct JSON** (route only to the upstream handle; downstream will naturally use the corrected `contacts_result`):
+```json
+{
+  "action": "modify_task",
+  "reason": "The correction applies to an already in-flight upstream lookup whose result will feed downstream steps. Steering the in-flight contacts handle is sufficient; patching/restarting is unnecessarily disruptive.",
+  "routing_action": "targeted",
+  "target_handle_ids": ["<contacts_handle_id_from_pane_snapshot>"],
+  "routed_message": "Scope update for the contact list currently in progress: include ONLY Berlin office contacts (names + office + email)."
+}
+```
+
+#### Example B — Scope filter (“focus only on Q4”)
+- **User**: “One change: for the summaries you’re producing right now, focus only on Q4 2024 and ignore Q3.”
+- **Correct JSON**:
+```json
+{
+  "action": "modify_task",
+  "reason": "This is a scope constraint for the current in-flight summaries; route it to the running handles instead of patching plan code.",
+  "routing_action": "broadcast_filtered",
+  "broadcast_filter": {
+    "capabilities": ["interjectable"],
+    "origin_tool_prefixes": ["primitives.contacts", "primitives.transcripts", "primitives.knowledge"]
+  },
+  "routed_message": "For the summaries currently in progress: focus ONLY on Q4 2024 (Oct/Nov/Dec). Ignore Q3 entirely and do not mention it."
+}
+```
+
+#### Example C — Conciseness (“keep it short”)
+- **User**: “Keep everything you’re working on right now concise. Only the essentials—no quotes, no extra detail.”
+- **Correct JSON**:
+```json
+{
+  "action": "modify_task",
+  "reason": "This is a formatting preference for outputs of in-flight handles; routing-only is the correct and least disruptive approach.",
+  "routing_action": "broadcast_filtered",
+  "broadcast_filter": { "capabilities": ["interjectable"] },
+  "routed_message": "Be concise and to the point. Only include essential info. No quotes. No extra detail."
+}
+```
+
+#### Anti-pattern (avoid circular “patch so replay is consistent”)
+- **User**: “Keep the summaries you’re producing right now concise.”
+- **Wrong reasoning**: “I should patch the plan prompts so that if we replay, it stays concise.”
+- **Why wrong**: Adding `patches` triggers cancellation/restart and cache invalidation. If routing is sufficient,
+  don’t force a restart “for replay consistency”.
+""".strip()
 
 
 # ---------------------------------------------------------------------------
