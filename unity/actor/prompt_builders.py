@@ -874,12 +874,13 @@ def _build_core_planning_rules() -> str:
 
         7.  **Async/Await**: ALL functions must be `async def`. ALWAYS use `await` when calling any async function (tools, state managers, helper functions).
 
-        8.  **Structured Output with Pydantic**:
+        8.  **Structured Output with Pydantic (Only When Needed)**:
             - Import Pydantic inside the function.
             - Define models inside the function.
             - Use `Optional` for fields that might be missing.
             - **CRITICAL**: Call `model_rebuild()` on the outermost model before use.
             - Pass the model to `response_format` parameter.
+            - Prefer plain strings / simple return values unless the user explicitly requests structured output or it's necessary to safely parse tool results.
 
         9.  **Error Handling - NEVER SILENCE ERRORS**:
             - Log exceptions and re-raise them. Never catch and ignore.
