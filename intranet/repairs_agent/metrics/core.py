@@ -1892,13 +1892,14 @@ async def appointment_adherence_rate(
     # Discovery with fallback
     repairs_table = discover_repairs_table(tools)["table"]
 
-    # Resolve group_by
+    # Resolve group_by (use date_context="scheduled" for day grouping since
+    # this metric is about scheduled appointments, not completion dates)
     group_by_str = (
         group_by.value
         if hasattr(group_by, "value")
         else str(group_by) if group_by else None
     )
-    group_by_field = resolve_group_by(group_by_str)
+    group_by_field = resolve_group_by(group_by_str, date_context="scheduled")
 
     # Check if required columns exist
     list_columns_tool = tools.get("list_columns")
