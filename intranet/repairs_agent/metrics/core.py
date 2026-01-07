@@ -1802,11 +1802,13 @@ async def avg_repairs_per_property(
             results=results,
             total=avg_repairs,
             metadata={
-                "top_repeat_properties": sorted(
+                # Full list of properties with multiple repairs (sorted by count desc)
+                # Analysis agent will handle top/bottom K selection
+                "repeat_properties": sorted(
                     multi_repair_properties.items(),
                     key=lambda x: x[1],
                     reverse=True,
-                )[:10],
+                ),
             },
             plots=plots,
         )

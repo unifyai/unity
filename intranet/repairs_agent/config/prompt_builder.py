@@ -354,10 +354,11 @@ def build_consolidated_analyst_prompt(
         if results_list and len(results_list) > 0:
             # Helper to extract the primary metric value
             def get_value(r: dict) -> float:
-                # Try percentage first (rate metrics), then count, then value
+                # Try percentage first (rate metrics), then distance, count, value
                 val = (
                     r.get("percentage")
                     or r.get("rate")
+                    or r.get("distance_miles")
                     or r.get("count")
                     or r.get("value")
                 )
@@ -370,6 +371,7 @@ def build_consolidated_analyst_prompt(
                 pct = r.get("percentage")
                 count = r.get("count")
                 total_for_group = r.get("total")
+                distance = r.get("distance_miles")
                 if (
                     pct is not None
                     and count is not None
@@ -378,6 +380,8 @@ def build_consolidated_analyst_prompt(
                     return f"{group}: {pct}% ({count}/{total_for_group})"
                 elif pct is not None:
                     return f"{group}: {pct}%"
+                elif distance is not None:
+                    return f"{group}: {distance} miles"
                 elif count is not None:
                     return f"{group}: {count}"
                 else:
