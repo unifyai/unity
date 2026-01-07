@@ -4180,6 +4180,11 @@ async def main_plan():
             return "Cannot interject: plan not running."
 
         async with self._interject_lock:
+            # Preserve explicit user pause state across interjection handling.
+            # If the user paused before interjecting, do not auto-resume after handling
+            # to maintain user control flow.
+            was_user_paused = self._state == _HierarchicalHandleState.PAUSED
+
             # Conditionally interrupt browser if a browser environment is active.
             if "computer_primitives" in (self.actor.environments or {}):
                 try:
@@ -4281,7 +4286,11 @@ async def main_plan():
                     decision.action not in ("replace_task", "clarify")
                     and not (decision.action == "modify_task" and decision.patches)
                 )
-                if self._state == _HierarchicalHandleState.PAUSED and should_resume:
+                if (
+                    self._state == _HierarchicalHandleState.PAUSED
+                    and should_resume
+                    and not was_user_paused
+                ):
                     await self.resume()
 
     async def _apply_interjection_routing(
