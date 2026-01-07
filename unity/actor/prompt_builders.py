@@ -1472,7 +1472,9 @@ def _build_initial_plan_rules_and_examples(
             """
             **Routing & Tool Choice (IMPORTANT)**
             - When the user's goal is primarily an information request (a question), prefer calling the appropriate state manager via `primitives.*` rather than generating the answer purely from scratch.
-            - **External / general knowledge** (public info not stored in our state): default to `await primitives.web.ask(...)` even for stable concepts.
+            - **Default to internal state first** for questions about our org/products/policies/processes (e.g., office hours, onboarding policy, internal return/warranty policies we maintain): use `await primitives.knowledge.ask(...)`.
+            - For **how-to / execution instructions** (runbooks, “how to use function X”, “how do we execute Y safely”), use `await primitives.guidance.ask(...)` (or `.update(...)` to create/update those runbooks).
+            - **External / public info** (general concepts/definitions; news, weather, “this week/today/latest”, real-time facts): default to `await primitives.web.ask(...)` (even for stable concepts).
             - Do NOT use `computer_primitives.reason(...)` as a substitute for `primitives.web.ask(...)`. Use `reason` only to structure/summarize after you've gathered evidence (e.g., from web search).
             """,
         ).strip()
