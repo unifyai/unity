@@ -1734,7 +1734,10 @@ def build_initial_plan_prompt(
         **CRITICAL RULES - READ CAREFULLY:**
         1. **CALL, DON'T REDEFINE**: These functions ALREADY EXIST in the runtime. Call them directly by name.
         2. **CHECK THE LIBRARY FIRST**: Before writing ANY new function, scan the available functions below. If one matches your goal, USE IT.
-        3. **DIRECT PRIMITIVE CALLS ARE USUALLY WRONG**: If you find yourself writing `await primitives.tasks.ask(...)` or `await primitives.web.ask(...)`, check if a library function already wraps it (like `ask_tasks`, `ask_web`, etc). Use the library function instead.
+        3. **DIRECT PRIMITIVE CALLS (WHEN APPROPRIATE)**:
+           - Prefer a library wrapper **only when it targets the same manager** you need (e.g., `ask_tasks` → `primitives.tasks.ask`).
+           - If **no appropriate wrapper exists** for the manager you need, call the correct `primitives.<manager>.*` method directly.
+           - **Never** use a wrapper for a different manager as a “fallback” (e.g., don’t use `ask_knowledge` to answer a tasks question).
         4. **COMPOSE IF NEEDED**: If your goal requires multiple steps, orchestrate the existing functions in main_plan().
         5. **ONLY CREATE NEW FUNCTIONS WHEN**: No existing function is semantically related to your goal, OR you need helper logic that doesn't exist in the library.
 
