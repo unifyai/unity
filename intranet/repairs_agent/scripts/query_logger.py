@@ -260,6 +260,9 @@ class QueryLogEntry:
                 lines.append("VISUALIZATIONS")
                 lines.append("-" * 40)
                 for plot in plots:
+                    # Handle both dict and Pydantic model
+                    if hasattr(plot, "model_dump"):
+                        plot = plot.model_dump()
                     title = plot.get("title", "Untitled")
                     url = plot.get("url")
                     if url:

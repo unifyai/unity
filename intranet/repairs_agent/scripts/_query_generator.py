@@ -32,6 +32,7 @@ QUERIES = {
     "jobs_requiring_materials_rate": "% of jobs that require materials",
     "avg_repairs_per_property": "Average repairs per property",
     "complaints_rate": "Complaints as % of total jobs",
+    "appointment_adherence_rate": "Appointment adherence rate",
     "distance_travelled_per_day": "Distance travelled per day",
     "avg_time_travelling": "Average time travelling per day",
     "merchant_stops_per_day": "Number of merchant stops per day",
@@ -51,6 +52,7 @@ GROUPABLE_QUERIES = {
     "job_completed_on_time_rate",
     "jobs_issued_per_day",
     "jobs_requiring_materials_rate",
+    "appointment_adherence_rate",
 }
 
 # Queries that support return_absolute parameter
@@ -59,6 +61,7 @@ RATE_QUERIES = {
     "first_time_fix_rate",
     "follow_on_required_rate",
     "job_completed_on_time_rate",
+    "appointment_adherence_rate",
 }
 
 # Telematics queries (different grouping)
