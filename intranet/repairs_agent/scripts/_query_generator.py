@@ -10,8 +10,8 @@ Usage:
     python _query_generator.py --all                   # All queries with default params
     python _query_generator.py --all --expand-params   # All queries × all param combinations
     python _query_generator.py --all --full-matrix     # Full matrix: all queries × all params, nested dirs
-    python _query_generator.py --query jobs_completed_per_day
-    python _query_generator.py --query jobs_completed_per_day --expand-params
+    python _query_generator.py --query jobs_completed
+    python _query_generator.py --query jobs_completed --expand-params
 """
 
 import json

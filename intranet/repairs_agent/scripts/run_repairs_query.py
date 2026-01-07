@@ -7,7 +7,7 @@ Terminal output shows only summary; full results are in log files.
 
 Usage:
     python -m intranet.repairs_agent.scripts.run_repairs_query --list
-    python -m intranet.repairs_agent.scripts.run_repairs_query --query jobs_completed_per_day
+    python -m intranet.repairs_agent.scripts.run_repairs_query --query jobs_completed
     python -m intranet.repairs_agent.scripts.run_repairs_query --query no_access_rate --params '{"return_absolute": true}'
 
 See README.md in this directory for comprehensive usage examples.
@@ -209,11 +209,11 @@ async def main() -> int:
         epilog="""
 Examples:
   %(prog)s --list
-  %(prog)s --query jobs_completed_per_day
+  %(prog)s --query jobs_completed
   %(prog)s --query first_time_fix_rate --params '{"group_by": "patch"}'
   %(prog)s --query no_access_rate --params '{"return_absolute": true}'
-  %(prog)s --query distance_travelled_per_day --verbose
-  %(prog)s --query jobs_completed_per_day --project Intranet
+  %(prog)s --query total_distance_travelled --verbose
+  %(prog)s --query jobs_completed --project Intranet
   %(prog)s --query first_time_fix_rate --include-plots
 
 See README.md for comprehensive usage documentation.
@@ -279,7 +279,7 @@ See README.md for comprehensive usage documentation.
         "--metric-subdir",
         type=str,
         default=None,
-        help="Metric subdirectory for nested structure (e.g., 'jobs_completed_per_day' in full-matrix mode)",
+        help="Metric subdirectory for nested structure (e.g., 'jobs_completed' in full-matrix mode)",
     )
     parser.add_argument(
         "--no-summary",
