@@ -216,21 +216,48 @@ async def generate_consolidated_analysis(
 
 async def main() -> int:
     """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: _generate_consolidated_analyses.py <run_log_dir>")
-        print()
-        print("Example:")
-        print(
-            "  python _generate_consolidated_analyses.py .repairs_queries/2026-01-07T13-29-54_repairs_dev_pts_30/",
-        )
-        return 1
+    import argparse
 
-    run_dir = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(
+        description="Generate consolidated analyses for full-matrix runs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Generate analyses for all metrics in a run
+  python _generate_consolidated_analyses.py .repairs_queries/2026-01-07T13-29-54_repairs_dev_pts_30/
+
+  # Generate analysis for specific metrics only
+  python _generate_consolidated_analyses.py .repairs_queries/2026-01-07T13-29-54_repairs_dev_pts_30/ \\
+    --metrics total_distance_travelled avg_repairs_per_property
+""",
+    )
+    parser.add_argument(
+        "run_log_dir",
+        type=Path,
+        help="Path to the run log directory containing metric subdirectories",
+    )
+    parser.add_argument(
+        "--metrics",
+        "-m",
+        nargs="+",
+        help="Only generate analyses for these specific metrics (by name)",
+    )
+
+    args = parser.parse_args()
+
+    run_dir = args.run_log_dir
+    filter_metrics = set(args.metrics) if args.metrics else None
+
     if not run_dir.exists():
         print(f"❌ Directory not found: {run_dir}")
         return 1
 
-    print(f"📊 Generating consolidated analyses for: {run_dir.name}")
+    if filter_metrics:
+        print(
+            f"📊 Generating analyses for {len(filter_metrics)} metric(s) in: {run_dir.name}",
+        )
+    else:
+        print(f"📊 Generating consolidated analyses for: {run_dir.name}")
     print()
 
     # Trigger metric registration
@@ -247,6 +274,11 @@ async def main() -> int:
             continue
 
         metric_name = metric_dir.name
+
+        # Skip if filtering and metric not in filter list
+        if filter_metrics and metric_name not in filter_metrics:
+            continue
+
         spec = get_query(metric_name)
 
         if not spec:
