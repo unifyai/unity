@@ -32,6 +32,7 @@ These tests are **infrastructure-first**: they primarily assert on pane events (
 | `test_complex_scenarios.py` | Multi-stage workflows: staged correction + sequential interjections across stages |
 | `test_pause_resume.py` | Pause/resume propagation across in-flight handles + interjection while paused |
 | `test_edge_cases.py` | Boundary conditions: late interjection, rapid successive interjections, interject while clarification pending, empty/vague interjections |
+| `test_on_the_fly_planning.py` | On-the-fly plan generation (no canned plan injection) + steerability using `request_clarification` as a deterministic gate |
 
 ## Clarification forcing (test-only)
 
