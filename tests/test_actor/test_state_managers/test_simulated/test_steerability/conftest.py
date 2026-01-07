@@ -212,7 +212,6 @@ def create_actor_with_primitives():
     from tests.test_actor.test_state_managers.utils import (
         NoKeychainBrowser,
         _mock_observe,
-        _mock_reason,
     )
 
     @asynccontextmanager
@@ -221,7 +220,6 @@ def create_actor_with_primitives():
             headless=True,
             browser_mode="legacy",
             connect_now=False,
-            environments=[StateManagerEnvironment(primitives)],
         )
         # Mirror `tests.test_actor.test_state_managers.utils.make_actor`: mock browser
         # primitives immediately (before any handle creation) to avoid Keychain/network.
@@ -231,7 +229,19 @@ def create_actor_with_primitives():
             cp.navigate = AsyncMock(return_value=None)
             cp.act = AsyncMock(return_value="acted")
             cp.observe = AsyncMock(side_effect=_mock_observe)
-            cp.reason = AsyncMock(side_effect=_mock_reason)
+            # cp.reason = AsyncMock(side_effect=_mock_reason)
+
+        # ensure the StateManagerEnvironment uses the *test-provided* primitives
+        # (including clarification-forcing simulated managers).
+        try:
+            sm_env = actor.environments.get("primitives")
+            if isinstance(sm_env, StateManagerEnvironment):
+                sm_env._primitives = primitives  # type: ignore[attr-defined]
+            else:
+                actor.environments["primitives"] = StateManagerEnvironment(primitives)
+        except Exception:
+            # Best-effort; tests will fail loudly if primitives aren't wired.
+            pass
         try:
             yield actor
         finally:
