@@ -124,6 +124,7 @@ NO_LOG=0
 LOG_DIR=""
 INCLUDE_PLOTS=0
 SKIP_ANALYSIS=0
+CONSOLIDATED_ANALYSIS=0
 
 declare -a QUERY_IDS=()
 
@@ -213,6 +214,10 @@ while (( "$#" )); do
       SKIP_ANALYSIS=1
       shift
       ;;
+    --consolidated-analysis)
+      CONSOLIDATED_ANALYSIS=1
+      shift
+      ;;
     -h|--help)
       cat << EOF
 Usage: parallel_queries.sh [options]
@@ -238,6 +243,8 @@ Script Options:
   --log-dir PATH        Custom log directory for queries
   --include-plots       Generate visualization URLs for query results
   --skip-analysis       Skip LLM analysis and return raw metric results only
+  --consolidated-analysis  Generate ONE consolidated analysis per metric instead of
+                        individual analyses per combination (requires --full-matrix)
 
 General:
   -h, --help            Show this help
@@ -511,10 +518,18 @@ elif (( EXPAND_PARAMS )); then
 else
   info "Mode: Default parameters"
 fi
-if (( SKIP_ANALYSIS )); then
+if (( CONSOLIDATED_ANALYSIS )); then
+  if (( ! FULL_MATRIX )); then
+    error "--consolidated-analysis requires --full-matrix mode"
+    exit 1
+  fi
+  # Consolidated analysis means: skip individual analysis, generate consolidated after
+  SKIP_ANALYSIS=1
+  info "Analysis: Consolidated (one analysis per metric)"
+elif (( SKIP_ANALYSIS )); then
   info "Analysis: Disabled (raw data only)"
 else
-  info "Analysis: LLM analysis enabled"
+  info "Analysis: Individual (per combination)"
 fi
 echo ""
 
@@ -638,6 +653,13 @@ if (( WAIT_FOR_COMPLETION )); then
       done
       # Then generate global summary
       "$VENV_PY" "$SCRIPT_DIR/query_logger.py" "$RUN_LOG_DIR" --full-matrix 2>/dev/null || true
+
+      # Generate consolidated analyses if requested
+      if (( CONSOLIDATED_ANALYSIS )); then
+        echo ""
+        echo "Generating consolidated analyses..."
+        "$VENV_PY" "$SCRIPT_DIR/_generate_consolidated_analyses.py" "$RUN_LOG_DIR" || true
+      fi
     else
       "$VENV_PY" "$SCRIPT_DIR/query_logger.py" "$RUN_LOG_DIR" 2>/dev/null || true
     fi

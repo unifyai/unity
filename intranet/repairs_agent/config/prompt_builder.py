@@ -257,6 +257,9 @@ def build_analyst_user_prompt(
         sections.append("### Visualizations Generated")
         sections.append("")
         for plot in plots:
+            # Handle both dict and Pydantic model
+            if hasattr(plot, "model_dump"):
+                plot = plot.model_dump()
             title = plot.get("title", "Untitled")
             url = plot.get("url")
             if url:
@@ -279,6 +282,118 @@ def build_analyst_user_prompt(
     sections.append("")
     sections.append(
         "Format your response with clear headings and use tables where helpful.",
+    )
+
+    return "\n".join(sections)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Consolidated Analysis Prompt (across all parameter combinations)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_consolidated_analyst_prompt(
+    metric_name: str,
+    metric_description: str,
+    metric_docstring: Optional[str],
+    all_results: List[Dict[str, Any]],
+) -> str:
+    """
+    Build user prompt for consolidated analysis across all parameter combinations.
+
+    Parameters
+    ----------
+    metric_name : str
+        Name of the metric (e.g., "first_time_fix_rate")
+    metric_description : str
+        Short description from the registry
+    metric_docstring : str, optional
+        Full docstring explaining how the metric is calculated
+    all_results : list
+        List of result dicts, each with 'params' and 'raw_results' keys
+
+    Returns
+    -------
+    str
+        User prompt for consolidated analysis
+    """
+    sections = []
+
+    sections.append(f"## Consolidated Analysis: {metric_name}")
+    sections.append("")
+    sections.append(f"**Description**: {metric_description}")
+    sections.append("")
+
+    if metric_docstring:
+        # Extract just the first few paragraphs of the docstring
+        docstring_lines = metric_docstring.strip().split("\n\n")[:3]
+        sections.append("### How This Metric Is Calculated")
+        sections.append("")
+        sections.append("\n\n".join(docstring_lines))
+        sections.append("")
+
+    sections.append(f"### Results Across {len(all_results)} Parameter Combinations")
+    sections.append("")
+
+    for i, item in enumerate(all_results, 1):
+        params = item.get("params", {})
+        result = item.get("raw_results", {})
+        param_str = ", ".join(f"{k}={v}" for k, v in params.items()) or "(defaults)"
+
+        sections.append(f"#### Combination {i}: {param_str}")
+        sections.append("")
+
+        # Show summary stats
+        total = result.get("total", "N/A")
+        num_groups = len(result.get("results", []))
+        sections.append(f"- **Total**: {total}")
+        sections.append(f"- **Groups**: {num_groups}")
+
+        # Show top/bottom results if grouped
+        results_list = result.get("results", [])
+        if results_list and len(results_list) > 0:
+            # Show top 5
+            sections.append("- **Top 5**:")
+            for r in results_list[:5]:
+                group = r.get("group", "Unknown")
+                # Get the main value (could be rate, count, value, etc.)
+                value = r.get("rate") or r.get("count") or r.get("value") or "N/A"
+                sections.append(f"  - {group}: {value}")
+
+            # Show bottom 5 if enough data
+            if len(results_list) > 10:
+                sections.append("- **Bottom 5**:")
+                for r in results_list[-5:]:
+                    group = r.get("group", "Unknown")
+                    value = r.get("rate") or r.get("count") or r.get("value") or "N/A"
+                    sections.append(f"  - {group}: {value}")
+
+        sections.append("")
+
+    sections.append("### Your Task")
+    sections.append("")
+    sections.append(
+        "Provide a **consolidated analysis** across ALL parameter combinations above. Include:",
+    )
+    sections.append(
+        "1. **Executive Summary** - Key findings across all groupings (2-3 sentences)",
+    )
+    sections.append(
+        "2. **Cross-Comparison Analysis** - How do results differ by operative vs patch vs region?",
+    )
+    sections.append(
+        "3. **Patterns & Trends** - Common themes, outliers, correlations across groupings",
+    )
+    sections.append(
+        "4. **Performance Insights** - Best/worst performers, areas of concern",
+    )
+    sections.append(
+        "5. **Strategic Recommendations** - Actionable next steps based on combined insights",
+    )
+    sections.append("")
+    sections.append(
+        "Format as a professional report with clear headings. "
+        "Use tables to compare across groupings where helpful.",
     )
 
     return "\n".join(sections)

@@ -563,6 +563,7 @@ Sessions are named with status prefixes:
 | `--log-dir PATH` | Custom log directory |
 | `--include-plots` | Generate visualization URLs for all query results |
 | `--skip-analysis` | Skip LLM analysis and return raw metric results only |
+| `--consolidated-analysis` | Generate ONE consolidated analysis per metric instead of individual analyses (requires `--full-matrix`) |
 
 ### Parallel Runner Examples
 
@@ -611,8 +612,11 @@ Sessions are named with status prefixes:
 # Run all queries with plots but skip LLM analysis (raw data only)
 ./intranet/repairs_agent/scripts/parallel_queries.sh --all --include-plots --skip-analysis -w
 
-# Full matrix with LLM analysis for comprehensive business insights
+# Full matrix with individual LLM analysis per combination
 ./intranet/repairs_agent/scripts/parallel_queries.sh --all --full-matrix --include-plots -w
+
+# Full matrix with CONSOLIDATED analysis (one analysis per metric, not per combination)
+./intranet/repairs_agent/scripts/parallel_queries.sh --all --full-matrix --include-plots --consolidated-analysis -w
 ```
 
 ### Watching Queries
