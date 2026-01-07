@@ -164,7 +164,7 @@ class TestPlotConfig:
             x_axis="X",
             y_axis="Y",
             group_by="Group",
-            aggregate="sum",
+            metric="sum",
             scale_x="log",
             scale_y="linear",
             bin_count=20,
@@ -175,7 +175,7 @@ class TestPlotConfig:
         assert config.x_axis == "X"
         assert config.y_axis == "Y"
         assert config.group_by == "Group"
-        assert config.aggregate == "sum"
+        assert config.metric == "sum"
         assert config.show_regression is True
 
 
@@ -234,7 +234,7 @@ class TestBuildPlotConfigDict:
             x_axis="X",
             y_axis="Y",
             group_by="Group",
-            aggregate="mean",
+            metric="mean",
             show_regression=True,
         )
         d = build_plot_config_dict(config)
@@ -242,7 +242,7 @@ class TestBuildPlotConfigDict:
         assert d["x_axis"] == "X"
         assert d["y_axis"] == "Y"
         assert d["group_by"] == "Group"
-        assert d["aggregate"] == "mean"
+        assert d["metric"] == "mean"
         assert d["show_regression"] is True
 
 
@@ -390,7 +390,7 @@ class TestSimulatedVisualize:
             plot_type="bar",
             x_axis="Driver",
             y_axis="TotalDistance",
-            aggregate="sum",
+            metric="sum",
             title="Distance by Driver",
         )
         assert isinstance(result, list)
@@ -447,7 +447,7 @@ class TestSimulatedVisualize:
             plot_type="bar",
             x_axis="Region",
             y_axis="Revenue",
-            aggregate="sum",
+            metric="sum",
         )
         assert result.url is not None
         assert result.succeeded is True
