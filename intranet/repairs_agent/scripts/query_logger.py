@@ -9,8 +9,8 @@ Usage:
     from bespoke_query_logger import QueryLogger
 
     with QueryLogger() as logger:
-        result = await agent.ask("jobs_completed_per_day", group_by="patch")
-        logger.log_query("jobs_completed_per_day", {"group_by": "patch"}, result, elapsed=1.23)
+        result = await agent.ask("jobs_completed", group_by="patch")
+        logger.log_query("jobs_completed", {"group_by": "patch"}, result, elapsed=1.23)
 
     # Or manual lifecycle:
     logger = QueryLogger()
@@ -338,7 +338,7 @@ class QueryLogger:
     In full-matrix mode (with metric_subdir):
         .repairs_queries/
             {log_subdir}/
-                {metric_name}/             # e.g., jobs_completed_per_day
+                {metric_name}/             # e.g., jobs_completed
                     {params}.log
                     _metric_summary.log
                 _run_summary.log           # Global summary across all metrics
@@ -855,7 +855,7 @@ def _generate_metric_summary(metric_dir: Path) -> Optional[Path]:
     Generate a summary for a single metric's logs (per-metric summary in full-matrix mode).
 
     Args:
-        metric_dir: Path to the metric directory (e.g., .../jobs_completed_per_day/)
+        metric_dir: Path to the metric directory (e.g., .../jobs_completed/)
 
     Returns:
         Path to the _metric_summary.log file, or None if failed.
