@@ -23,12 +23,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-# Add parent intranet/scripts directory to path for utils import
+# Add repo root to path for intranet imports
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPAIRS_AGENT_DIR = SCRIPT_DIR.parent
 INTRANET_DIR = REPAIRS_AGENT_DIR.parent
-SCRIPTS_DIR = INTRANET_DIR / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
+REPO_ROOT = INTRANET_DIR.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from intranet.scripts.utils import initialize_script_environment, activate_project
 
@@ -153,13 +153,21 @@ def print_summary(result: Dict[str, Any], elapsed: float) -> None:
     if isinstance(result, dict):
         metric_name = result.get("metric_name", "Unknown")
         total = result.get("total", "N/A")
-        num_results = len(result.get("results", []))
         group_by = result.get("group_by", "N/A")
 
         print(f"   • Metric: {metric_name}")
         print(f"   • Total: {total}")
-        print(f"   • Groups: {num_results}")
         print(f"   • Grouped by: {group_by}")
+
+        # Handle new analysis format
+        if "analysis" in result:
+            timings = result.get("timings", {})
+            print(f"   • Query time: {timings.get('query_ms', 'N/A')}ms")
+            print(f"   • Analysis time: {timings.get('analysis_ms', 'N/A')}ms")
+        else:
+            # Legacy format
+            num_results = len(result.get("results", []))
+            print(f"   • Groups: {num_results}")
 
         # Show plot information if present
         plots = result.get("plots", [])
@@ -177,7 +185,7 @@ def print_summary(result: Dict[str, Any], elapsed: float) -> None:
                 elif error:
                     print(f"      ✗ {title}: FAILED - {error}")
 
-        # Show any warnings from metadata
+        # Show any warnings from metadata (legacy format)
         metadata = result.get("metadata") or {}
         if metadata.get("status") == "data_not_available":
             print(f"   ⚠️  Warning: {metadata.get('reason', 'Data not available')}")
@@ -295,6 +303,12 @@ See README.md for comprehensive usage documentation.
         default=False,
         help="Explicitly disable plot generation (default behavior)",
     )
+    parser.add_argument(
+        "--skip-analysis",
+        action="store_true",
+        default=False,
+        help="Skip LLM analysis and return raw metric results only",
+    )
     args = parser.parse_args()
 
     # Setup logging
@@ -322,10 +336,13 @@ See README.md for comprehensive usage documentation.
     try:
         logger.info("Initializing BespokeRepairsAgent...")
         init_start = time.perf_counter()
-        agent = BespokeRepairsAgent()
+        agent = BespokeRepairsAgent(skip_analysis=args.skip_analysis)
         init_elapsed = time.perf_counter() - init_start
         logger.info(f"Agent initialized in {_format_duration(init_elapsed)}")
-        print(f"✓ Agent initialized ({get_registered_count()} queries registered)")
+        analysis_mode = "raw data only" if args.skip_analysis else "with LLM analysis"
+        print(
+            f"✓ Agent initialized ({get_registered_count()} queries registered, {analysis_mode})",
+        )
     except Exception as e:
         logger.exception("Failed to initialize agent")
         print(f"❌ Failed to initialize agent: {e}")
