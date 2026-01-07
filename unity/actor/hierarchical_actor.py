@@ -5055,6 +5055,16 @@ async def main_plan():
 
             self.runtime.pause()
             self._set_state(_HierarchicalHandleState.PAUSED)
+            # Best-effort: also pause any in-flight steerable handles registered in the
+            # SteerableToolPane. This makes user-level pause apply across the whole plan
+            # (plan control flow + in-flight manager tool loops), not just Python execution.
+            try:
+                await self._pause_inflight_pane_handles()
+            except Exception as e:
+                logger.debug(
+                    f"Failed to pause in-flight pane handles: {e}",
+                    exc_info=True,
+                )
             pause_type = "immediately" if immediate else "by user"
             self.action_log.append(f"Plan paused {pause_type}.")
             return "Plan paused."
@@ -5079,9 +5089,60 @@ async def main_plan():
         if self._state == _HierarchicalHandleState.PAUSED:
             self.runtime.resume()
             self._set_state(_HierarchicalHandleState.RUNNING)
+            # Best-effort: resume any paused in-flight pane handles.
+            try:
+                await self._resume_inflight_pane_handles()
+            except Exception as e:
+                logger.debug(
+                    f"Failed to resume in-flight pane handles: {e}",
+                    exc_info=True,
+                )
             self.action_log.append("Plan resumed by user.")
             return "Plan resumed."
         return f"Cannot resume from state {self._state.name}."
+
+    async def _pause_inflight_pane_handles(self) -> None:
+        """Pause all in-flight pane handles that declare the `pausable` capability (best-effort)."""
+        pane = getattr(self, "pane", None)
+        if pane is None:
+            return
+        try:
+            handles = await pane.list_handles(status=None)
+        except Exception:
+            return
+        for meta in handles:
+            try:
+                if "pausable" not in (meta.get("capabilities") or []):
+                    continue
+                if meta.get("status") not in ("running", "waiting_for_clarification"):
+                    continue
+                hid = str(meta.get("handle_id") or "")
+                if hid:
+                    await pane.pause(hid)
+            except Exception:
+                # Pane.pause emits its own steering_applied error/no-op events; keep going.
+                continue
+
+    async def _resume_inflight_pane_handles(self) -> None:
+        """Resume all paused pane handles that declare the `pausable` capability (best-effort)."""
+        pane = getattr(self, "pane", None)
+        if pane is None:
+            return
+        try:
+            handles = await pane.list_handles(status=None)
+        except Exception:
+            return
+        for meta in handles:
+            try:
+                if "pausable" not in (meta.get("capabilities") or []):
+                    continue
+                if meta.get("status") != "paused":
+                    continue
+                hid = str(meta.get("handle_id") or "")
+                if hid:
+                    await pane.resume(hid)
+            except Exception:
+                continue
 
     async def ask(self, question: str) -> SteerableToolHandle:
         """
