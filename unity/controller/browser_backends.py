@@ -1,3 +1,4 @@
+import os
 import inspect
 import subprocess
 import time
@@ -615,7 +616,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         dl_endpoint,
                         params={
                             "user_id": user_id,
-                            "project": project,
+                            "project_name": project,
                             "path": f"{assistant_name}/{prefix_folder}",
                             "staging": "staging" in orchestra_url,
                             "expires_in": 5 * 60,
@@ -761,7 +762,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         # 1) Request upload URL for this file
                         req = {
                             "user_id": user_id,
-                            "project": project,
+                            "project_name": project,
                             "path": key,
                             "staging": "staging" in orchestra_url,
                             "content_type": "application/octet-stream",

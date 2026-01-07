@@ -71,10 +71,10 @@ def test_ensure_creates_and_idempotent(monkeypatch):
 def test_get_columns_transforms(monkeypatch):
     # Arrange stable project and capture parameters
     monkeypatch.setattr(unify, "active_project", lambda: "proj-Z")
-    seen = {"project": None, "context": None}
+    seen = {"project_name": None, "context": None}
 
     def _get_fields(*, project, context):
-        seen["project"] = project
+        seen["project_name"] = project
         seen["context"] = context
         return {
             "first_name": {"data_type": "str"},
@@ -91,4 +91,4 @@ def test_get_columns_transforms(monkeypatch):
 
     # Assert mapping and the exact call arguments
     assert cols == {"first_name": "str", "contact_id": "int", "_internal": "dict"}
-    assert seen == {"project": "proj-Z", "context": "Org/Contacts"}
+    assert seen == {"project_name": "proj-Z", "context": "Org/Contacts"}
