@@ -176,11 +176,32 @@ while (( $# > 0 )); do
   esac
 done
 
-# Build test_path from remaining arguments (default to "." for full suite)
-if (( ${#TEST_PATHS[@]} == 0 )); then
+# ============================================================================
+# Normalize test paths (resolve shorthand like "test_foo" -> "tests/test_foo")
+# ============================================================================
+# This runs after cd "$REPO_ROOT", so all paths are relative to repo root.
+
+declare -a RESOLVED_PATHS=()
+for path in "${TEST_PATHS[@]}"; do
+  if [[ -e "$path" ]]; then
+    # Path exists as-is (e.g., "tests/test_contact_manager" or ".")
+    RESOLVED_PATHS+=("$path")
+  elif [[ -e "tests/$path" ]]; then
+    # Path exists with tests/ prefix (e.g., "test_contact_manager" -> "tests/test_contact_manager")
+    RESOLVED_PATHS+=("tests/$path")
+  else
+    echo "Error: Path not found: $path" >&2
+    echo "  Also tried: tests/$path" >&2
+    echo "  (paths are relative to repo root: $REPO_ROOT)" >&2
+    exit 1
+  fi
+done
+
+# Build test_path from resolved arguments (default to "." for full suite)
+if (( ${#RESOLVED_PATHS[@]} == 0 )); then
   TEST_PATH="."
 else
-  TEST_PATH="${TEST_PATHS[*]}"
+  TEST_PATH="${RESOLVED_PATHS[*]}"
 fi
 
 # ============================================================================
