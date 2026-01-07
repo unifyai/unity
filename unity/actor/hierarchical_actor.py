@@ -4082,14 +4082,30 @@ async def main_plan():
             self._recovery_task.cancel()
 
         # Cancel pane supervisor (independent of verification/recovery task presence).
-        if (
-            self._pane_supervisor_task is not None
-            and not self._pane_supervisor_task.done()
-        ):
-            self._pane_supervisor_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._pane_supervisor_task
-        self._pane_supervisor_task = None
+        if cancel_pane_supervisor and self._pane_supervisor_task is not None:
+            pane_task = self._pane_supervisor_task
+            if not pane_task.done():
+                pane_task.cancel()
+            # Never block indefinitely on cancellation; failing to tear down background
+            # tasks must not prevent the plan from completing (and .result() from returning).
+            try:
+                await asyncio.wait_for(pane_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Pane supervisor did not cancel within timeout; detaching task to avoid blocking completion.",
+                )
+            except asyncio.CancelledError:
+                # Normal cancellation path.
+                pass
+            except Exception as e:
+                logger.debug(
+                    "Pane supervisor raised during cancellation: %s",
+                    e,
+                    exc_info=True,
+                )
+            finally:
+                self._child_tasks.discard(pane_task)
+                self._pane_supervisor_task = None
 
         verifications_to_cancel = [
             handle
@@ -4111,7 +4127,15 @@ async def main_plan():
         all_tasks = [handle.task for handle in verifications_to_cancel] + (
             [self._recovery_task] if self._recovery_task else []
         )
-        await asyncio.gather(*all_tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*all_tasks, return_exceptions=True),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out waiting for background tasks to cancel; continuing cleanup to avoid blocking completion.",
+            )
 
         if self._recovery_task:
             self._child_tasks.discard(self._recovery_task)
