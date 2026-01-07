@@ -678,7 +678,13 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             # active_task_done() awaits on the completions queue
 
     # ----- Steerable surface proxies -----
-    async def interject(self, message: str, *, images: object | None = None) -> None:  # type: ignore[override]
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: object | None = None,
+    ) -> None:  # type: ignore[override]
         """Route interjections to specific tasks in the queue using an LLM router.
 
         The router receives the full queue snapshot and the user's instruction and
@@ -696,9 +702,16 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             if not (message or "").strip():
                 return
             if images is None:
-                await self._current_handle.interject(message)
+                await self._current_handle.interject(
+                    message,
+                    parent_chat_context_cont=parent_chat_context_cont,
+                )
             else:
-                await self._current_handle.interject(message, images=images)
+                await self._current_handle.interject(
+                    message,
+                    parent_chat_context_cont=parent_chat_context_cont,
+                    images=images,
+                )
             return
 
         # Fast path: empty/whitespace → no-op
