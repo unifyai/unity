@@ -221,11 +221,24 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._interjections.append(message)
         return "Acknowledged."
 
-    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> str:
+    def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        cancel: bool = False,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> str:
         """Cancel further processing so `.result()` raises.
 
-        The `cancel` flag is required but ignored; the interaction is always
+        The `cancel` flag is accepted for compatibility with TaskScheduler-style
+        stop(cancel=..., reason=...), but is ignored here; the interaction is always
         cancelled.
+
+        Args:
+            reason: Optional reason for stopping.
+            cancel: Ignored; interaction is always cancelled.
+            parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
         self._cancelled = True
