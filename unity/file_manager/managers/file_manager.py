@@ -1761,6 +1761,7 @@ class FileManager(BaseFileManager):
         filter: Optional[str] = None,
         title: Optional[str] = None,
         metric: Optional[str] = None,
+        aggregate: Optional[str] = None,
         scale_x: Optional[str] = None,
         scale_y: Optional[str] = None,
         bin_count: Optional[int] = None,
@@ -1813,6 +1814,11 @@ class FileManager(BaseFileManager):
 
         metric : str | None
             Metric to aggregate: "sum", "mean", "var", "std", "min", "max", "median", "mode", "count".
+
+        aggregate : str | None
+            Aggregation function for grouped data: "sum", "mean", "count", "min", "max",
+            "median", "mode", "var", "std". Use when comparing aggregated values across
+            groups (e.g., mean completion rate by region).
 
         scale_x, scale_y : str | None
             Axis scale: "linear" (default) or "log".
@@ -1929,6 +1935,7 @@ class FileManager(BaseFileManager):
             y_axis=y_axis,
             group_by=group_by,
             metric=metric,
+            aggregate=aggregate,
             scale_x=scale_x,
             scale_y=scale_y,
             bin_count=bin_count,

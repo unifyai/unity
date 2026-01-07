@@ -73,6 +73,7 @@ class PlotConfig(BaseModel):
     y_axis: Optional[str] = None
     group_by: Optional[str] = None
     metric: Optional[str] = None
+    aggregate: Optional[str] = None
     scale_x: Optional[str] = None
     scale_y: Optional[str] = None
     bin_count: Optional[int] = None
@@ -179,6 +180,8 @@ def build_plot_config_dict(config: PlotConfig) -> Dict[str, Any]:
         result["group_by"] = config.group_by
     if config.metric is not None:
         result["metric"] = config.metric
+    if config.aggregate is not None:
+        result["aggregate"] = config.aggregate
     if config.scale_x is not None:
         result["scale_x"] = config.scale_x
     if config.scale_y is not None:
