@@ -123,6 +123,7 @@ DEBUG=0
 NO_LOG=0
 LOG_DIR=""
 INCLUDE_PLOTS=0
+SKIP_ANALYSIS=0
 
 declare -a QUERY_IDS=()
 
@@ -208,6 +209,10 @@ while (( "$#" )); do
       INCLUDE_PLOTS=1
       shift
       ;;
+    --skip-analysis)
+      SKIP_ANALYSIS=1
+      shift
+      ;;
     -h|--help)
       cat << EOF
 Usage: parallel_queries.sh [options]
@@ -232,6 +237,7 @@ Script Options:
   --no-log              Disable file logging in queries
   --log-dir PATH        Custom log directory for queries
   --include-plots       Generate visualization URLs for query results
+  --skip-analysis       Skip LLM analysis and return raw metric results only
 
 General:
   -h, --help            Show this help
@@ -434,6 +440,9 @@ build_run_cmd() {
   if (( INCLUDE_PLOTS )); then
     py_cmd="$py_cmd --include-plots"
   fi
+  if (( SKIP_ANALYSIS )); then
+    py_cmd="$py_cmd --skip-analysis"
+  fi
 
   # Build the inner script with status detection
   # Note: Use C.UTF-8 as fallback if en_US.UTF-8 not available
@@ -501,6 +510,11 @@ elif (( EXPAND_PARAMS )); then
   info "Mode: Expanded parameters (all combinations, flat structure)"
 else
   info "Mode: Default parameters"
+fi
+if (( SKIP_ANALYSIS )); then
+  info "Analysis: Disabled (raw data only)"
+else
+  info "Analysis: LLM analysis enabled"
 fi
 echo ""
 

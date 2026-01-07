@@ -4,7 +4,7 @@ This directory contains the LLM-free bespoke query runner for Midland Heart repa
 
 ## Overview
 
-The `run_repairs_query.py` script executes pre-defined performance metrics queries against the repairs and telematics datasets without requiring LLM orchestration. Results are automatically logged to timestamped directories for audit trails.
+The `run_repairs_query.py` script executes pre-defined performance metrics queries against the repairs and telematics datasets. By default, an LLM analyst transforms raw metric results into qualitative business insights. Results are automatically logged to timestamped directories for audit trails.
 
 ## Directory Structure
 
@@ -60,6 +60,7 @@ python intranet/repairs_agent/scripts/run_repairs_query.py --query jobs_complete
 | `--debug` | flag | - | Enable debug logging (DEBUG level) |
 | `--include-plots` | flag | - | Generate visualization URLs for query results |
 | `--no-plots` | flag | - | Explicitly disable plot generation (default behavior) |
+| `--skip-analysis` | flag | - | Skip LLM analysis and return raw metric results only |
 
 ---
 
@@ -250,6 +251,29 @@ python intranet/repairs_agent/scripts/run_repairs_query.py \
     --log-dir /tmp/repairs_logs
 ```
 
+### LLM Analysis (Default)
+
+By default, raw metric results are passed to an LLM analyst that generates business insights:
+
+```bash
+# Run with LLM analysis (default behavior)
+python intranet/repairs_agent/scripts/run_repairs_query.py \
+    --query first_time_fix_rate \
+    --params '{"group_by": "operative"}'
+
+# Skip LLM analysis - return raw data only
+python intranet/repairs_agent/scripts/run_repairs_query.py \
+    --query first_time_fix_rate \
+    --params '{"group_by": "operative"}' \
+    --skip-analysis
+```
+
+The LLM analyst provides:
+- **Executive Summary** - Key findings in 2-3 sentences
+- **Detailed Analysis** - What the numbers tell us
+- **Performance Insights** - Trends, outliers, comparisons
+- **Recommendations** - Actionable next steps
+
 ### Plot Visualization
 
 Generate visualization URLs with your query results using the `--include-plots` flag:
@@ -375,7 +399,7 @@ When running single queries directly (not via `parallel_queries.sh`):
 
 ### Log File Contents
 
-Each `.log` file contains:
+Each `.log` file contains the LLM analysis (or raw results if `--skip-analysis` is used):
 
 ```
 ================================================================================
@@ -384,7 +408,7 @@ BESPOKE REPAIRS QUERY LOG
 
 Query ID:    jobs_completed_per_day
 Timestamp:   2025-12-18T19:30:45.123456+00:00
-Duration:    2.49s
+Duration:    8.45s
 Status:      SUCCESS
 
 ----------------------------------------
@@ -393,7 +417,47 @@ PARAMETERS
   group_by: operative
 
 ----------------------------------------
-RESULT
+ANALYSIS
+----------------------------------------
+
+## Executive Summary
+
+The jobs completed analysis reveals strong overall productivity with 44,025 total
+jobs completed across 150 operatives. However, there is significant variation in
+individual performance...
+
+## Detailed Analysis
+
+| Rank | Operative | Jobs Completed | % of Total |
+|------|-----------|----------------|------------|
+| 1 | John Smith | 520 | 1.2% |
+| 2 | Sarah Jones | 498 | 1.1% |
+| ... | ... | ... | ... |
+
+## Performance Insights
+
+- **Top Performers**: The top 10% of operatives completed 28% of all jobs
+- **Potential Concerns**: 12 operatives completed fewer than 100 jobs...
+
+## Recommendations
+
+1. Review workload distribution to balance assignments more evenly
+2. Investigate operatives with significantly below-average completion rates...
+
+----------------------------------------
+TIMINGS
+----------------------------------------
+  Query:    2490ms
+  Analysis: 5960ms
+  Total:    8450ms
+
+----------------------------------------
+VISUALIZATIONS
+----------------------------------------
+  ✓ Jobs Completed by Operative: https://console.unify.ai/plot/view/abc123
+
+----------------------------------------
+RAW DATA (for reference)
 ----------------------------------------
 {
   "metric_name": "jobs_completed_per_day",
@@ -404,14 +468,6 @@ RESULT
     ...
   ]
 }
-
-----------------------------------------
-SUMMARY
-----------------------------------------
-  Metric:     jobs_completed_per_day
-  Total:      44025.0
-  Groups:     150
-  Group By:   operative
 
 ================================================================================
 END OF LOG - jobs_completed_per_day
@@ -506,6 +562,7 @@ Sessions are named with status prefixes:
 | `--no-log` | Disable file logging in queries |
 | `--log-dir PATH` | Custom log directory |
 | `--include-plots` | Generate visualization URLs for all query results |
+| `--skip-analysis` | Skip LLM analysis and return raw metric results only |
 
 ### Parallel Runner Examples
 
@@ -548,8 +605,14 @@ Sessions are named with status prefixes:
 # Full combination: all queries, all params, limited concurrency, wait for completion
 ./intranet/repairs_agent/scripts/parallel_queries.sh --all --expand-params -j 8 -w
 
-# Run all queries with plot generation
+# Run all queries with plot generation and LLM analysis (default)
 ./intranet/repairs_agent/scripts/parallel_queries.sh --all --include-plots -w
+
+# Run all queries with plots but skip LLM analysis (raw data only)
+./intranet/repairs_agent/scripts/parallel_queries.sh --all --include-plots --skip-analysis -w
+
+# Full matrix with LLM analysis for comprehensive business insights
+./intranet/repairs_agent/scripts/parallel_queries.sh --all --full-matrix --include-plots -w
 ```
 
 ### Watching Queries
@@ -666,8 +729,9 @@ tmux -L repairs_dev_pts_0 kill-server
 
 ## Related Files
 
-- `intranet/repairs/queries/metrics.py` - Metric function implementations (16 metrics)
-- `intranet/repairs/queries/_types.py` - Pydantic models and enums (GroupBy, TimePeriod, MetricResult, PlotConfig, PlotResult)
-- `intranet/repairs/queries/_plots.py` - Plot configurations per metric × group_by combination
-- `intranet/repairs/queries/plot_utils.py` - Plot API client for generating visualizations
-- `intranet/core/bespoke_repairs_agent.py` - Agent and query registry
+- `intranet/repairs_agent/metrics/core.py` - Metric function implementations (16 metrics)
+- `intranet/repairs_agent/metrics/types.py` - Pydantic models and enums (GroupBy, TimePeriod, MetricResult, PlotResult)
+- `intranet/repairs_agent/metrics/helpers.py` - Helper functions for metric calculations
+- `intranet/repairs_agent/static/agent.py` - BespokeRepairsAgent with LLM analysis
+- `intranet/repairs_agent/static/registry.py` - Query registry
+- `intranet/repairs_agent/config/prompt_builder.py` - Analyst prompt builders
