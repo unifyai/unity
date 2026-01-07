@@ -1393,7 +1393,7 @@ class _SteerableToolHandleProxy:
                     isinstance(cached_result_value, dict)
                     and "handle_id" in cached_result_value
                 ):
-                    handle_id = cached_result_value["handle_id"]
+                    handle_id = str(cached_result_value.get("handle_id"))
                     real_handle = self._plan.live_handles.get(handle_id)
                     if not real_handle:
                         logger.error(
@@ -1401,16 +1401,23 @@ class _SteerableToolHandleProxy:
                             f"during cache hit for {call_repr}. Forcing cache miss.",
                         )
                         return None
+                    # Reconstruct a steerable proxy to support multi-level handle nesting.
+                    # This enables nested handles to themselves return further nested handles.
+                    #
+                    # Prefer stored name from cache; fall back to deriving from the producing method.
+                    handle_name = cached_result_value.get("handle_name")
+                    if not isinstance(handle_name, str) or not handle_name:
+                        try:
+                            producing_method = str(tool_name).rsplit(".", 1)[-1]
+                            handle_name = f"{producing_method}_handle"
+                        except Exception:
+                            handle_name = "nested_handle"
 
-                    meta = cached_data.get("meta", {})
-
-                    return _HistoryCapturingHandleProxy(
+                    return _SteerableToolHandleProxy(
                         real_handle,
                         self._plan,
+                        str(handle_name),
                         handle_id,
-                        call_repr,
-                        original_cache_key,
-                        meta,
                     )
                 else:
                     return cached_result_value
@@ -1492,7 +1499,10 @@ class _SteerableToolHandleProxy:
                 except Exception as e:
                     logger.debug(f"Pane nested registration failed: {e}")
 
-                result_to_cache = {"handle_id": sub_handle_id}
+                result_to_cache = {
+                    "handle_id": sub_handle_id,
+                    "handle_name": sub_handle_name,
+                }
 
                 initial_interaction = (
                     "handle_method_call",
@@ -1523,13 +1533,13 @@ class _SteerableToolHandleProxy:
                     "meta": meta,
                 }
 
-                return _HistoryCapturingHandleProxy(
+                # Return a steerable proxy so nested handles are also instrumented
+                # (enables multi-level nested handle registration + steering).
+                return _SteerableToolHandleProxy(
                     output,
                     self._plan,
+                    sub_handle_name,
                     sub_handle_id,
-                    call_repr,
-                    cache_key,
-                    meta,
                 )
             else:
                 # Special-case `.result()`: capture sub-loop history (when available) as a 4th tuple element.
