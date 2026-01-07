@@ -5195,6 +5195,7 @@ async def main_plan():
         if name == "interject":
             return self._state in (
                 _HierarchicalHandleState.RUNNING,
+                _HierarchicalHandleState.PAUSED,
                 _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
             )
         return False
