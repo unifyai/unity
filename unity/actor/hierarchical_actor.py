@@ -440,7 +440,43 @@ class CacheInvalidateSpec(_StrictBaseModel):
     )
 
 
-class InterjectionDecision(BaseModel):
+class _InterjectionBroadcastFilter(_StrictBaseModel):
+    """Strict schema for broadcast routing filters in `InterjectionDecision`."""
+
+    statuses: list[
+        typing.Literal[
+            "running",
+            "paused",
+            "waiting_for_clarification",
+            "completed",
+            "failed",
+            "stopped",
+        ]
+    ] = Field(
+        default_factory=lambda: ["running", "paused", "waiting_for_clarification"],
+        description=(
+            "Handle statuses to include in broadcast routing. Defaults to in-flight statuses."
+        ),
+    )
+    origin_tool_prefixes: Optional[List[str]] = Field(
+        None,
+        description="Only target handles whose origin_tool starts with any of these prefixes.",
+    )
+    capabilities: Optional[List[str]] = Field(
+        None,
+        description="Only target handles that declare ALL of these capabilities.",
+    )
+    created_after_step: Optional[int] = Field(
+        None,
+        description="Only target handles created at or after this origin_step.",
+    )
+    created_before_step: Optional[int] = Field(
+        None,
+        description="Only target handles created at or before this origin_step.",
+    )
+
+
+class InterjectionDecision(_StrictBaseModel):
     """A structured decision for how to proceed with a user interjection."""
 
     action: typing.Literal[
@@ -494,12 +530,10 @@ class InterjectionDecision(BaseModel):
             "Use this when the interjection is relevant to specific in-flight operations."
         ),
     )
-    broadcast_filter: Optional[dict[str, Any]] = Field(
+    broadcast_filter: Optional[_InterjectionBroadcastFilter] = Field(
         None,
         description=(
             "Filter criteria for broadcast routing when routing_action='broadcast_filtered'. "
-            "Supported keys: 'origin_tool_prefixes' (list[str]), 'statuses' (list[str]), "
-            "'capabilities' (list[str]), 'created_after_step' (int), 'created_before_step' (int). "
             "All filters are inclusive-only (whitelist). If omitted, defaults to all in-flight interjectable handles."
         ),
     )
