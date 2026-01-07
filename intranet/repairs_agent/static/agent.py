@@ -19,12 +19,18 @@ Usage:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from unity.common.llm_client import new_llm_client
 from unity.file_manager.managers.local import LocalFileManager
 
+from ..config.prompt_builder import (
+    build_analyst_system_prompt,
+    build_analyst_user_prompt,
+)
 from .registry import get_query, get_registered_count, list_queries
 
 logger = logging.getLogger(__name__)
@@ -56,7 +62,16 @@ class BespokeRepairsAgent:
         result = await agent.ask("repairs_per_day_per_operative", start_date="2025-07-01")
     """
 
-    def __init__(self) -> None:
+    def __init__(self, skip_analysis: bool = False) -> None:
+        """
+        Initialize the BespokeRepairsAgent.
+
+        Parameters
+        ----------
+        skip_analysis : bool
+            If True, return raw metric results without LLM analysis.
+            Useful for debugging or when only raw data is needed.
+        """
         logger.info("[BespokeRepairsAgent] Initializing agent...")
         init_start = time.perf_counter()
 
@@ -71,6 +86,8 @@ class BespokeRepairsAgent:
 
         self._tools: Optional[Dict[str, Any]] = None
         self._tools_initialized = False
+        self._skip_analysis = skip_analysis
+        self._llm_client = None if skip_analysis else new_llm_client()
 
         init_elapsed = time.perf_counter() - init_start
         logger.info(
@@ -168,32 +185,92 @@ class BespokeRepairsAgent:
             logger.info("[BespokeRepairsAgent] Executing query function...")
             exec_start = time.perf_counter()
 
-            result = await spec.fn(tools, **params)
+            raw_result = await spec.fn(tools, **params)
 
             exec_elapsed = time.perf_counter() - exec_start
-            total_elapsed = time.perf_counter() - ask_start
+
+            # Convert to dict if Pydantic model
+            if hasattr(raw_result, "model_dump"):
+                result_dict = raw_result.model_dump()
+            else:
+                result_dict = raw_result
 
             # Log result summary
-            if isinstance(result, dict):
-                result_count = len(result.get("results", []))
-                total_val = result.get("total", "N/A")
+            if isinstance(result_dict, dict):
+                result_count = len(result_dict.get("results", []))
+                total_val = result_dict.get("total", "N/A")
                 logger.info(
                     f"[BespokeRepairsAgent] ✓ Query '{query_id}' completed | "
                     f"Exec: {_format_duration(exec_elapsed)} | "
-                    f"Total: {_format_duration(total_elapsed)} | "
                     f"Results: {result_count} groups | Total value: {total_val}",
                 )
-            else:
+
+            # If skip_analysis, return raw results
+            if self._skip_analysis:
+                total_elapsed = time.perf_counter() - ask_start
                 logger.info(
-                    f"[BespokeRepairsAgent] ✓ Query '{query_id}' completed | "
-                    f"Exec: {_format_duration(exec_elapsed)} | "
-                    f"Total: {_format_duration(total_elapsed)}",
+                    "[BespokeRepairsAgent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 )
+                return result_dict
+
+            # Run LLM analysis
+            logger.info("[BespokeRepairsAgent] Running LLM analysis...")
+            analysis_start = time.perf_counter()
+
+            # Get metric docstring for context
+            metric_docstring = inspect.getdoc(spec.fn)
+
+            # Extract plots from result
+            plots = result_dict.get("plots", [])
+            plots_list = [
+                p.model_dump() if hasattr(p, "model_dump") else p for p in plots
+            ]
+
+            # Build prompts
+            system_prompt = build_analyst_system_prompt()
+            user_prompt = build_analyst_user_prompt(
+                metric_name=query_id,
+                metric_description=spec.description,
+                metric_docstring=metric_docstring,
+                params=params,
+                results=result_dict,
+                plots=plots_list,
+            )
+
+            # Call LLM
+            response = await self._llm_client.generate(
+                user_message=user_prompt,
+                system_message=system_prompt,
+            )
+
+            analysis_elapsed = time.perf_counter() - analysis_start
+            total_elapsed = time.perf_counter() - ask_start
+
+            logger.info(
+                f"[BespokeRepairsAgent] ✓ Analysis complete | "
+                f"Analysis: {_format_duration(analysis_elapsed)} | "
+                f"Total: {_format_duration(total_elapsed)}",
+            )
 
             logger.info(
                 "[BespokeRepairsAgent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             )
-            return result
+
+            # Return analysis with metadata
+            return {
+                "analysis": response,
+                "metric_name": query_id,
+                "metric_description": spec.description,
+                "group_by": result_dict.get("group_by"),
+                "total": result_dict.get("total"),
+                "plots": plots_list,
+                "raw_results": result_dict,
+                "timings": {
+                    "query_ms": round(exec_elapsed * 1000),
+                    "analysis_ms": round(analysis_elapsed * 1000),
+                    "total_ms": round(total_elapsed * 1000),
+                },
+            }
 
         except ValueError as e:
             elapsed = time.perf_counter() - ask_start

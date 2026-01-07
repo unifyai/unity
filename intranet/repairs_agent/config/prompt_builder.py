@@ -1,8 +1,11 @@
 """
-Build business context for CodeActActor from FilePipelineConfig.
+Prompt builders for the Repairs Agent.
 
-This module transforms the JSON configuration (used for ingestion and static demo)
-into a structured prompt section for the dynamic CodeActActor agent.
+This module provides:
+1. Business context extraction from FilePipelineConfig
+2. System prompt for CodeActActor (dynamic agent)
+3. Analyst prompts for BespokeRepairsAgent (static agent) - generates qualitative
+   insights from raw metric results using an LLM
 """
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -154,3 +157,128 @@ def build_repairs_system_prompt(config_path: Optional[Path] = None) -> str:
     """
     business_context = build_repairs_business_context(config_path)
     return _REPAIRS_SYSTEM_PROMPT_TEMPLATE.format(business_context=business_context)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Analyst Prompt for BespokeRepairsAgent (Static Agent)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ANALYST_SYSTEM_PROMPT = """You are a senior data analyst at Midland Heart, one of the UK's largest housing associations managing over 33,000 homes across the Midlands.
+
+Your role is to translate raw metric data into actionable business insights for the Repairs & Maintenance leadership team. You have deep expertise in:
+- Housing association operations and KPIs
+- Repairs and maintenance industry benchmarks
+- Telematics and fleet management
+- Operative performance analysis
+
+When analyzing data, you should:
+1. Interpret numbers in business context (what do they mean for operations?)
+2. Identify trends, patterns, and outliers worth investigating
+3. Compare against industry standards where relevant
+4. Highlight actionable insights and potential improvements
+5. Present findings clearly with tables where appropriate
+
+Write in a professional but accessible tone. Use markdown formatting for clarity."""
+
+
+def build_analyst_system_prompt(config_path: Optional[Path] = None) -> str:
+    """Build system prompt for the analyst LLM."""
+    business_context = build_repairs_business_context(config_path)
+    return f"{_ANALYST_SYSTEM_PROMPT}\n\n### Business Context\n\n{business_context}"
+
+
+def build_analyst_user_prompt(
+    metric_name: str,
+    metric_description: str,
+    metric_docstring: Optional[str],
+    params: Dict[str, Any],
+    results: Dict[str, Any],
+    plots: List[Dict[str, Any]],
+) -> str:
+    """
+    Build user prompt for analyst LLM with metric context and raw results.
+
+    Parameters
+    ----------
+    metric_name : str
+        Name of the metric (e.g., "first_time_fix_rate")
+    metric_description : str
+        Short description from the registry
+    metric_docstring : str, optional
+        Full docstring explaining how the metric is calculated
+    params : dict
+        Parameters used for this query
+    results : dict
+        Raw MetricResult as a dictionary
+    plots : list
+        List of plot results with URLs
+
+    Returns
+    -------
+    str
+        User prompt for the analyst LLM
+    """
+    sections = []
+
+    # Header
+    sections.append(f"## Metric Analysis Request: {metric_name}")
+    sections.append("")
+
+    # Description
+    sections.append(f"**Description**: {metric_description}")
+    sections.append("")
+
+    # Parameters used
+    if params:
+        param_str = ", ".join(f"{k}={v}" for k, v in params.items())
+        sections.append(f"**Parameters**: {param_str}")
+    else:
+        sections.append("**Parameters**: (defaults)")
+    sections.append("")
+
+    # How metric was calculated (from docstring)
+    if metric_docstring:
+        # Extract the meaningful parts of the docstring
+        sections.append("### How This Metric Is Calculated")
+        sections.append("")
+        sections.append(metric_docstring.strip())
+        sections.append("")
+
+    # Raw results
+    sections.append("### Raw Results")
+    sections.append("")
+    sections.append("```json")
+    sections.append(json.dumps(results, indent=2, default=str))
+    sections.append("```")
+    sections.append("")
+
+    # Visualizations
+    if plots:
+        sections.append("### Visualizations Generated")
+        sections.append("")
+        for plot in plots:
+            title = plot.get("title", "Untitled")
+            url = plot.get("url")
+            if url:
+                sections.append(f"- **{title}**: {url}")
+            else:
+                error = plot.get("error", "Unknown error")
+                sections.append(f"- **{title}**: ⚠️ Failed - {error}")
+        sections.append("")
+
+    # Request
+    sections.append("### Your Task")
+    sections.append("")
+    sections.append(
+        "Analyze the above results and provide a comprehensive business analysis including:",
+    )
+    sections.append("1. **Executive Summary** - Key findings in 2-3 sentences")
+    sections.append("2. **Detailed Analysis** - What the numbers tell us")
+    sections.append("3. **Performance Insights** - Trends, outliers, comparisons")
+    sections.append("4. **Recommendations** - Actionable next steps if any")
+    sections.append("")
+    sections.append(
+        "Format your response with clear headings and use tables where helpful.",
+    )
+
+    return "\n".join(sections)
