@@ -301,6 +301,8 @@ def build_consolidated_analyst_prompt(
     """
     Build user prompt for consolidated analysis across all parameter combinations.
 
+    Generates a concise template targeting 800-1200 words (3-4 pages) output.
+
     Parameters
     ----------
     metric_name : str
@@ -317,136 +319,167 @@ def build_consolidated_analyst_prompt(
     str
         User prompt for consolidated analysis
     """
+
+    # Helper functions for value extraction and formatting
+    def get_value(r: dict) -> float:
+        """Extract primary metric value for sorting."""
+        val = (
+            r.get("percentage")
+            or r.get("rate")
+            or r.get("distance_miles")
+            or r.get("count")
+            or r.get("value")
+        )
+        if val is None:
+            return 0.0
+        return float(val) if isinstance(val, (int, float)) else 0.0
+
+    def format_val(r: dict) -> str:
+        """Format value for display."""
+        pct = r.get("percentage")
+        distance = r.get("distance_miles")
+        count = r.get("count")
+        if pct is not None:
+            return f"{pct}%"
+        elif distance is not None:
+            return f"{distance} mi"
+        elif count is not None:
+            return str(count)
+        return str(r.get("value", "N/A"))
+
     sections = []
 
-    sections.append(f"## Consolidated Analysis: {metric_name}")
-    sections.append("")
-    sections.append(f"**Description**: {metric_description}")
-    sections.append("")
+    # Collect all plots for placeholder generation
+    all_plots = []
 
-    if metric_docstring:
-        # Extract just the first few paragraphs of the docstring
-        docstring_lines = metric_docstring.strip().split("\n\n")[:3]
-        sections.append("### How This Metric Is Calculated")
-        sections.append("")
-        sections.append("\n\n".join(docstring_lines))
-        sections.append("")
-
-    sections.append(f"### Results Across {len(all_results)} Parameter Combinations")
+    # Title - use human-readable name
+    readable_name = metric_name.replace("_", " ").title()
+    sections.append(f"# {readable_name}")
+    sections.append("")
+    sections.append(f"**Definition**: {metric_description}")
     sections.append("")
 
-    for i, item in enumerate(all_results, 1):
+    # Compact data section
+    sections.append("---")
+    sections.append("## Data Summary")
+    sections.append("")
+
+    for item in all_results:
         params = item.get("params", {})
         result = item.get("raw_results", {})
-        param_str = ", ".join(f"{k}={v}" for k, v in params.items()) or "(defaults)"
+        group_by = params.get("group_by", "total")
 
-        sections.append(f"#### Combination {i}: {param_str}")
-        sections.append("")
-
-        # Show summary stats
-        total = result.get("total", "N/A")
-        num_groups = len(result.get("results", []))
-        sections.append(f"- **Overall Total/Rate**: {total}")
-        sections.append(f"- **Number of Groups**: {num_groups}")
-
-        # Show results - either full data or top/bottom K
-        results_list = result.get("results", [])
-        if results_list and len(results_list) > 0:
-            # Helper to extract the primary metric value
-            def get_value(r: dict) -> float:
-                # Try percentage first (rate metrics), then distance, count, value
-                val = (
-                    r.get("percentage")
-                    or r.get("rate")
-                    or r.get("distance_miles")
-                    or r.get("count")
-                    or r.get("value")
+        # Extract plots if available
+        plots = result.get("plots", [])
+        for plot in plots:
+            if plot.get("url"):
+                all_plots.append(
+                    {
+                        "group_by": group_by,
+                        "title": plot.get("title", f"Chart by {group_by}"),
+                    },
                 )
-                if val is None:
-                    return 0.0
-                return float(val) if isinstance(val, (int, float)) else 0.0
 
-            def format_item(r: dict) -> str:
+        total = result.get("total", "N/A")
+        results_list = result.get("results", [])
+
+        sections.append(f"### By {group_by.title()}")
+        sections.append("")
+
+        if not results_list:
+            sections.append(f"Overall: **{total}**")
+            sections.append("")
+            continue
+
+        # Sort results
+        sorted_results = sorted(results_list, key=get_value, reverse=True)
+        num_groups = len(sorted_results)
+
+        sections.append(f"Overall: **{total}** ({num_groups} groups)")
+        sections.append("")
+
+        # Compact table - top 5 and bottom 5 for large, all for small
+        if num_groups <= 12:
+            sections.append(f"| {group_by.title()} | Value |")
+            sections.append("|---|---|")
+            for r in sorted_results:
                 group = r.get("group", "Unknown")
-                pct = r.get("percentage")
-                count = r.get("count")
-                total_for_group = r.get("total")
-                distance = r.get("distance_miles")
-                if (
-                    pct is not None
-                    and count is not None
-                    and total_for_group is not None
-                ):
-                    return f"{group}: {pct}% ({count}/{total_for_group})"
-                elif pct is not None:
-                    return f"{group}: {pct}%"
-                elif distance is not None:
-                    return f"{group}: {distance} miles"
-                elif count is not None:
-                    return f"{group}: {count}"
-                else:
-                    val = r.get("value", "N/A")
-                    return f"{group}: {val}"
-
-            # Sort by value descending to get actual top/bottom performers
-            sorted_results = sorted(results_list, key=get_value, reverse=True)
-
-            # For small datasets (<= 20 items), show all data verbatim
-            if len(sorted_results) <= 20:
-                sections.append("- **Full Data (sorted by value)**:")
-                for r in sorted_results:
-                    sections.append(f"  - {format_item(r)}")
-            else:
-                # For larger datasets, show top and bottom 10
-                sections.append("- **Top 10 Performers**:")
-                for r in sorted_results[:10]:
-                    sections.append(f"  - {format_item(r)}")
-
-                sections.append("- **Bottom 10 Performers**:")
-                for r in sorted_results[-10:]:
-                    sections.append(f"  - {format_item(r)}")
+                sections.append(f"| {group} | {format_val(r)} |")
+        else:
+            sections.append("**Top 5:**")
+            sections.append("")
+            sections.append(f"| {group_by.title()} | Value |")
+            sections.append("|---|---|")
+            for r in sorted_results[:5]:
+                group = r.get("group", "Unknown")
+                sections.append(f"| {group} | {format_val(r)} |")
+            sections.append("")
+            sections.append("**Bottom 5:**")
+            sections.append("")
+            sections.append(f"| {group_by.title()} | Value |")
+            sections.append("|---|---|")
+            for r in sorted_results[-5:]:
+                group = r.get("group", "Unknown")
+                sections.append(f"| {group} | {format_val(r)} |")
 
         sections.append("")
 
-    sections.append("### Your Task")
+    # Analysis template - structured and concise
+    sections.append("---")
+    sections.append("## Required Analysis Output")
     sections.append("")
     sections.append(
-        "Provide a **consolidated analysis** across ALL parameter combinations above. Include:",
-    )
-    sections.append(
-        "1. **Executive Summary** - Key findings across all groupings (2-3 sentences)",
-    )
-    sections.append(
-        "2. **Cross-Comparison Analysis** - How do results differ by operative vs patch vs region vs day?",
-    )
-    sections.append(
-        "3. **Patterns & Trends** - Common themes, outliers, correlations across groupings",
-    )
-    sections.append(
-        "4. **Performance Insights** - Best/worst performers, areas of concern",
-    )
-    sections.append(
-        "5. **Strategic Recommendations** - Actionable next steps based on combined insights",
+        "Generate a **concise analysis** (800-1200 words max) using this EXACT structure:",
     )
     sections.append("")
-    sections.append("### Output Requirements")
+    sections.append("---")
+    sections.append("")
+    sections.append("### 1. Executive Summary")
+    sections.append("_2-3 sentences: Key finding + overall assessment._")
+    sections.append("")
+    sections.append("### 2. Performance Overview")
+    sections.append(
+        "_1 paragraph: Overall rate/value, what it means, benchmark context if known._",
+    )
+    sections.append("")
+    sections.append("### 3. Analysis by Grouping")
     sections.append("")
     sections.append(
-        "- **Format as a professional report** with clear headings and markdown tables",
+        "For EACH grouping present in the data, write ONE focused paragraph:",
     )
+    sections.append("")
+    sections.append("**By [Grouping Name]**")
+    sections.append("- Top/bottom performers (cite specific names and values)")
+    sections.append("- Key pattern or insight")
+    sections.append("- Any outliers or data quality notes")
+    sections.append("")
+
+    # Plot placeholders
+    if all_plots:
+        sections.append("### 4. Visualizations")
+        sections.append("")
+        for i, plot in enumerate(all_plots, 1):
+            sections.append(f"**[PLOT {i}: {plot['title']}]**")
+            sections.append("")
+            sections.append("_[Screenshot to be inserted]_")
+            sections.append("")
+
+    sections.append("### 5. Recommendations")
+    sections.append("_3-5 bullet points of actionable next steps._")
+    sections.append("")
+    sections.append("---")
+    sections.append("")
+
+    # Constraints
+    sections.append("## CONSTRAINTS (must follow)")
+    sections.append("")
+    sections.append("- **MAX 1200 words** - be concise, no filler")
+    sections.append("- **NO 'Data Sources' section** - omit internal references")
+    sections.append("- **NO requests for more data** - work with what's given")
+    sections.append("- **CITE SPECIFIC VALUES** - name operatives, patches, dates")
+    sections.append("- **USE COMPACT TABLES** where comparing values")
     sections.append(
-        "- **Include the actual data** in your report - for small datasets (< 20 items), "
-        "present the full data in a table; for larger datasets, show top/bottom performers",
-    )
-    sections.append(
-        "- **Do NOT ask for additional data** - work exclusively with the data provided above. "
-        "Do not include sections like 'if you provide X I can give you Y' - just analyze what's given.",
-    )
-    sections.append(
-        "- **Surface specific names/values** - cite actual operatives, patches, regions, dates by name",
-    )
-    sections.append(
-        "- **Use tables** to present comparisons clearly where helpful",
+        "- **SKIP sections** if no relevant data (e.g., skip 'By Region' if not present)",
     )
 
     return "\n".join(sections)
