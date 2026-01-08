@@ -239,7 +239,7 @@ class TestUnityOnlyHierarchy:
 
         exporter = reset_otel["exporter"]
 
-        with logger.unity_span("Conductor.request") as outer:
+        with logger.unity_span("Actor.act") as outer:
             outer_ctx = outer.get_span_context()
             with logger.unity_span("ContactManager.update") as inner:
                 inner_ctx = inner.get_span_context()
@@ -251,11 +251,11 @@ class TestUnityOnlyHierarchy:
         spans = exporter.get_finished_spans()
         assert len(spans) == 2
 
-        conductor_span = next(s for s in spans if "Conductor" in s.name)
+        actor_span = next(s for s in spans if "Actor" in s.name)
         cm_span = next(s for s in spans if "ContactManager" in s.name)
 
-        # CM is child of Conductor
-        assert cm_span.parent.span_id == conductor_span.context.span_id
+        # CM is child of Actor
+        assert cm_span.parent.span_id == actor_span.context.span_id
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +364,7 @@ class TestFullStackHierarchy:
         unify_tracer = trace.get_tracer("unify")
 
         # Unity -> Unillm -> Unify
-        with logger.unity_span("Conductor.request") as unity_span:
+        with logger.unity_span("Actor.act") as unity_span:
             with unillm_tracer.start_as_current_span("LLM gpt-4@openai") as llm_span:
                 with unify_tracer.start_as_current_span("GET projects") as http_span:
                     pass
@@ -372,7 +372,7 @@ class TestFullStackHierarchy:
         spans = exporter.get_finished_spans()
         assert len(spans) == 3
 
-        unity_s = next(s for s in spans if "Conductor" in s.name)
+        unity_s = next(s for s in spans if "Actor" in s.name)
         llm_s = next(s for s in spans if "LLM" in s.name)
         http_s = next(s for s in spans if "GET" in s.name)
 
@@ -495,7 +495,7 @@ class TestCrossPackageIntegration:
         unillm_tracer = trace.get_tracer("unillm")
         unify_tracer = trace.get_tracer("unify")
 
-        with logger.unity_span("Conductor.request", method="ask") as unity_span:
+        with logger.unity_span("Actor.act", method="ask") as unity_span:
             unity_span.set_attribute("unity.query", "find contacts")
 
             with unillm_tracer.start_as_current_span("LLM call") as llm_span:
@@ -509,7 +509,7 @@ class TestCrossPackageIntegration:
         spans = exporter.get_finished_spans()
 
         # Verify each package's attributes are preserved
-        unity_s = next(s for s in spans if "Conductor" in s.name)
+        unity_s = next(s for s in spans if "Actor" in s.name)
         llm_s = next(s for s in spans if "LLM" in s.name)
         http_s = next(s for s in spans if "HTTP" in s.name)
 
@@ -774,7 +774,7 @@ class TestFileSpanExporterIntegration:
         unillm_tracer = trace.get_tracer("unillm")
         unify_tracer = trace.get_tracer("unify")
 
-        with logger.unity_span("Conductor.request"):
+        with logger.unity_span("Actor.act"):
             with unillm_tracer.start_as_current_span("LLM gpt-4"):
                 with unify_tracer.start_as_current_span("POST contacts"):
                     pass
@@ -791,7 +791,7 @@ class TestFileSpanExporterIntegration:
         spans = [json.loads(line) for line in lines]
         span_names = {s["name"] for s in spans}
 
-        assert "Conductor.request" in span_names
+        assert "Actor.act" in span_names
         assert "LLM gpt-4" in span_names
         assert "POST contacts" in span_names
 

@@ -16,7 +16,7 @@ set -euo pipefail
 #
 # Usage:
 #   parallel_cloud_run.sh tests/test_contact_manager
-#   parallel_cloud_run.sh tests/test_actor tests/test_conductor
+#   parallel_cloud_run.sh tests/test_actor tests/test_contact_manager
 #   parallel_cloud_run.sh .                    # All tests
 #   parallel_cloud_run.sh -s                   # All tests, serial mode (implicit ".")
 #   parallel_cloud_run.sh -s tests/            # Specific path, serial mode

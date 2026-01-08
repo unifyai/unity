@@ -35,7 +35,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
     The concrete implementation for steering a live ConversationManager instance.
 
     This handle communicates with the ConversationManager over the event broker,
-    allowing components like the Actor or Conductor to steer the conversation
+    allowing components like the Actor to steer the conversation
     by publishing and subscribing to specific event channels.
     """
 

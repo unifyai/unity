@@ -228,15 +228,15 @@ async def _(
 
 @EventHandler.register(
     (
-        ConductorResponse,
-        ConductorHandleResponse,
-        ConductorResult,
-        ConductorClarificationRequest,
+        ActorResponse,
+        ActorHandleResponse,
+        ActorResult,
+        ActorClarificationRequest,
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     # Track clarification requests in the task's handle_actions and notify
-    if isinstance(event, ConductorClarificationRequest):
+    if isinstance(event, ActorClarificationRequest):
         if event.handle_id in cm.active_tasks:
             cm.active_tasks[event.handle_id]["handle_actions"].append(
                 {
@@ -381,8 +381,8 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
     cm.chat_history = event.chat_history + cm.chat_history
 
 
-@EventHandler.register(ConductorHandleStarted)
-async def _(event: ConductorHandleStarted, cm: "ConversationManager", *args, **kwargs):
+@EventHandler.register(ActorHandleStarted)
+async def _(event: ActorHandleStarted, cm: "ConversationManager", *args, **kwargs):
     # Notify that a new task has started
     cm.notifications_bar.push_notif(
         "Task",
@@ -430,8 +430,8 @@ async def _(
     cm.notifications_bar.remove_notif(event.interjection_id)
 
 
-@EventHandler.register(ConductorResult)
-async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
+@EventHandler.register(ActorResult)
+async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     # Get task description for notification
     task_data = cm.active_tasks.get(event.handle_id, {})
     task_query = task_data.get("query", f"Task {event.handle_id}")
@@ -446,15 +446,15 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
     await cm.request_llm_run()
 
 
-@EventHandler.register((ConductorPauseActor, ConductorResumeActor))
+@EventHandler.register((ActorPause, ActorResume))
 async def _(
-    event: ConductorPauseActor | ConductorResumeActor,
+    event: ActorPause | ActorResume,
     cm: "ConversationManager",
     *args,
     **kwargs,
 ):
     print("Received task pause/resume event", event.to_dict())
-    action = "pause" if isinstance(event, ConductorPauseActor) else "resume"
+    action = "pause" if isinstance(event, ActorPause) else "resume"
     reason = getattr(event, "reason", "")
     affected: list[int] = []
     for hid, data in list(cm.active_tasks.items()):
@@ -465,13 +465,18 @@ async def _(
 
         # pause or resume handle
         try:
-            if action == "pause" and hasattr(handle, "pause_actor"):
-                await handle.pause_actor(reason)
-            elif action == "resume" and hasattr(handle, "resume_actor"):
-                await handle.resume_actor(reason)
+            # Standard steerable surface: pause/resume are preferred; no actor-specific convenience methods.
+            if action == "pause":
+                pause_r = handle.pause()
+                if asyncio.iscoroutine(pause_r) or isinstance(pause_r, asyncio.Future):
+                    await pause_r
             else:
-                print(f"Task {hid} does not have {action} method")
-                continue
+                resume_r = handle.resume()
+                if asyncio.iscoroutine(resume_r) or isinstance(
+                    resume_r,
+                    asyncio.Future,
+                ):
+                    await resume_r
             affected.append(int(hid))
         except Exception as e:
             print(f"Failed to {action} task {hid}: {e}")
@@ -480,8 +485,8 @@ async def _(
     for hid in affected:
         try:
             await cm.event_broker.publish(
-                "app:conductor:notification",
-                ConductorNotification(
+                "app:actor:notification",
+                ActorNotification(
                     handle_id=int(hid),
                     response=f"Task {action}d: {reason}",
                 ).to_json(),

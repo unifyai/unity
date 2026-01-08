@@ -129,7 +129,7 @@ def test_cm_icons_have_expected_categories():
         "llm_response",
         "session_start",
         "notification_injected",
-        "conductor_request",
+        "actor_request",
     ]
 
     for key in expected_keys:

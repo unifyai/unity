@@ -1,8 +1,7 @@
 """
 Actor tests for TranscriptManager.ask operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_transcripts/test_ask.py`
-to verify that HierarchicalActor correctly generates plans calling `primitives.transcripts.ask`
+Tests that HierarchicalActor correctly generates plans calling `primitives.transcripts.ask`
 for read-only transcript queries.
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)

@@ -10,7 +10,7 @@ The Actor state manager tests ensure that `HierarchicalActor` can:
 - Select and reuse memoized functions from `FunctionManager` via semantic search
 - Execute plans that interact with both simulated and real state managers
 
-Unlike Conductor tests which verify message-based orchestration, Actor tests verify code-first plan generation and execution, reflecting the Actor's role as the future central intelligence of the Unity system.
+Actor tests verify code-first plan generation and execution, reflecting the Actor's role as the central intelligence of the Unity system.
 
 ## Test Structure
 
@@ -148,31 +148,9 @@ async with make_actor(impl="simulated", can_compose=True) as actor:
 
 **Test counts**: Each operation typically has both on-the-fly and memoized variants, plus combined operations (e.g., `ask_and_update`).
 
-## Tests Intentionally Not Ported
+## Test Organization Notes
 
-The following Conductor tests were intentionally not ported to Actor tests:
-
-### `test_conductor/test_general/test_nested_structure.py`
-
-**Reason**: Conductor-specific nesting behavior. Actor uses a different execution model (code-first plans) and doesn't have the same nested tool loop structure.
-
-### `test_conductor/test_general/test_semantic.py`
-
-**Reason**: Semantic tool cache is Conductor-specific infrastructure. Actor uses `FunctionManager` for function discovery, which is tested separately.
-
-### `test_conductor/test_general/test_start_task.py`
-
-**Reason**: `start_task(task_id)` API is Conductor-specific. Actor doesn't have an equivalent—tasks are started via `TaskScheduler.execute()` which is tested in `test_tasks/`.
-
-### Other `test_general/` Tests
-
-**Reason**: Infrastructure tests specific to Conductor's implementation:
-- `test_serialization.py` - Conductor handle serialization
-- `test_pause_resume.py` - Conductor-level pause/resume behavior
-- `test_nested_steer.py` - Conductor steering passthrough
-- `test_basics.py` - Conductor entry point behavior
-
-These tests remain in `test_conductor/` for backward compatibility but are considered legacy.
+Actor tests focus on code-first plan generation and execution. Some infrastructure-level tests (like handle serialization, pause/resume behavior, and steering passthrough) are tested at the Actor level rather than state manager level, reflecting Actor's role as the central orchestrator.
 
 ## Running the Tests
 
@@ -231,9 +209,8 @@ assert "Generating plan from goal..." in log_text
 
 Remember that verification is bypassed via `mock_verification` fixture. Failures indicate plan generation or execution issues, not verification problems. If you need to test verification, see `test_verification_bypass.py`.
 
-## Migration Notes
+## Test Design Notes
 
-- **Original Conductor tests**: `tests/test_conductor/test_simulated/` and `tests/test_conductor/test_real/`
-- **Migration preserved test intent** while adapting to Actor's execution model
-- **Conductor used message-based assertions**; Actor tests use idempotency cache and action log
 - **All tests marked with `pytestmark = pytest.mark.eval`** as they involve real LLM calls for plan generation
+- Tests use idempotency cache and action log for verification, reflecting Actor's code-first execution model
+- Both simulated and real manager implementations are tested to ensure Actor works correctly across different environments

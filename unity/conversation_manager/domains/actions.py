@@ -540,7 +540,7 @@ async def start_task_action(
     await managers_utils.wait_for_initialization(cm)
     query = kwargs["query"]
 
-    handle = await cm.conductor.request(
+    handle = await cm.actor.act(
         query,
         _parent_chat_context=cm.chat_history,
     )
@@ -556,8 +556,8 @@ async def start_task_action(
 
     # publish started
     await event_broker.publish(
-        f"app:conductor:conductor_started_handle_{handle_id}",
-        ConductorHandleStarted(
+        f"app:actor:actor_started_handle_{handle_id}",
+        ActorHandleStarted(
             handle_id=handle_id,
             action_name=action_name,
             query=query,
@@ -565,10 +565,10 @@ async def start_task_action(
     )
 
     # spawn watchers
-    asyncio.create_task(managers_utils.conductor_watch_result(handle_id, handle))
-    asyncio.create_task(managers_utils.conductor_watch_notifications(handle_id, handle))
+    asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+    asyncio.create_task(managers_utils.actor_watch_notifications(handle_id, handle))
     asyncio.create_task(
-        managers_utils.conductor_watch_clarifications(handle_id, handle),
+        managers_utils.actor_watch_clarifications(handle_id, handle),
     )
 
 
@@ -621,26 +621,26 @@ class DynamicTaskActionHandler:
         try:
             match operation:
                 case "ask":
-                    ask_handle = await handle.ask(
-                        param_value,
-                        parent_chat_context_cont=cm.chat_history,
-                    )
+                    ask_handle = await handle.ask(param_value)
                     result = await ask_handle.result()
                 case "interject":
-                    await handle.interject(
-                        param_value,
-                        parent_chat_context_cont=cm.chat_history,
-                    )
+                    await handle.interject(param_value)
                     result = "Interjected"
                 case "stop":
-                    handle.stop(reason=param_value or None)
+                    stop_r = handle.stop(reason=param_value or None)
+                    if inspect.isawaitable(stop_r):
+                        await stop_r
                     result = "Stopped"
                     cm.active_tasks.pop(handle_id, None)
                 case "pause":
-                    handle.pause()
+                    pause_r = handle.pause()
+                    if inspect.isawaitable(pause_r):
+                        await pause_r
                     result = "Paused"
                 case "resume":
-                    handle.resume()
+                    resume_r = handle.resume()
+                    if inspect.isawaitable(resume_r):
+                        await resume_r
                     result = "Resumed"
                 case "answer_clarification":
                     # Find the full call_id from pending clarifications
@@ -674,8 +674,8 @@ class DynamicTaskActionHandler:
 
         # publish response
         await event_broker.publish(
-            f"app:conductor:handle_{handle_id}_{operation}_issued",
-            ConductorHandleResponse(
+            f"app:actor:handle_{handle_id}_{operation}_issued",
+            ActorHandleResponse(
                 handle_id=handle_id,
                 action_name=action_name,
                 query=param_value,

@@ -63,11 +63,11 @@ CM_ICONS = {
     "notification_injected": "📨",
     "notification_unpinned": "🗑️",
     "direct_message": "💭",
-    # Conductor integration
-    "conductor_request": "🎯",
-    "conductor_response": "📥",
-    "conductor_result": "🏆",
-    "conductor_clarification": "❔",
+    # Actor integration
+    "actor_request": "🎯",
+    "actor_response": "📥",
+    "actor_result": "🏆",
+    "actor_clarification": "❔",
     # Generic
     "event": "📣",
     "ping": "💓",
@@ -99,7 +99,7 @@ class SessionLogger:
         # Output: 📞 [ConversationManager(a1b2)] Incoming call from +1234567890
 
     When nested inside a tool loop:
-        # Output: 📞 [Conductor.request->ConversationManager(a1b2)] Incoming call...
+        # Output: 📞 [Actor.act->ConversationManager(a1b2)] Incoming call...
     """
 
     def __init__(
@@ -243,14 +243,14 @@ class SessionLogger:
             msg += f": {details}"
         self.info("event", msg)
 
-    def log_conductor_started(self, handle_id: int, query: str) -> None:
-        """Log a Conductor request being started."""
+    def log_actor_started(self, handle_id: int, query: str) -> None:
+        """Log an Actor run being started."""
         preview = query[:80] + "..." if len(query) > 80 else query
-        self.info("conductor_request", f"Conductor request #{handle_id}: {preview}")
+        self.info("actor_request", f"Actor run #{handle_id}: {preview}")
 
-    def log_conductor_result(self, handle_id: int, result_preview: str = "") -> None:
-        """Log a Conductor request completing."""
-        msg = f"Conductor result #{handle_id}"
+    def log_actor_result(self, handle_id: int, result_preview: str = "") -> None:
+        """Log an Actor run completing."""
+        msg = f"Actor result #{handle_id}"
         if result_preview:
             preview = (
                 result_preview[:80] + "..."
@@ -258,7 +258,7 @@ class SessionLogger:
                 else result_preview
             )
             msg += f": {preview}"
-        self.info("conductor_result", msg)
+        self.info("actor_result", msg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -46,8 +46,8 @@ async def publish_bus_events(event):
         print(f"[ManagersWorker] Error publishing bus event: {e}")
 
 
-# CONDUCTOR
-async def conductor_watch_result(
+# ACTOR
+async def actor_watch_result(
     handle_id: int,
     handle: SteerableToolHandle,
 ) -> None:
@@ -56,11 +56,11 @@ async def conductor_watch_result(
     try:
         result = await handle.result()
     except Exception as e:
-        result = f"Error getting conductor result: {e}"
+        result = f"Error getting actor result: {e}"
         print(f"[ManagersWorker] {result}")
     await event_broker.publish(
-        "app:conductor:result",
-        ConductorResult(
+        "app:actor:result",
+        ActorResult(
             handle_id=handle_id,
             success=False if "Error" in result else True,
             result=result,
@@ -68,7 +68,7 @@ async def conductor_watch_result(
     )
 
 
-async def conductor_watch_notifications(
+async def actor_watch_notifications(
     handle_id: int,
     handle: SteerableToolHandle,
 ) -> None:
@@ -85,15 +85,15 @@ async def conductor_watch_notifications(
 
         # publish response
         await event_broker.publish(
-            "app:conductor:notification",
-            ConductorNotification(
+            "app:actor:notification",
+            ActorNotification(
                 handle_id=handle_id,
                 response=msg,
             ).to_json(),
         )
 
 
-async def conductor_watch_clarifications(
+async def actor_watch_clarifications(
     handle_id: int,
     handle: SteerableToolHandle,
 ) -> None:
@@ -111,8 +111,8 @@ async def conductor_watch_clarifications(
 
         # publish clarification request
         await event_broker.publish(
-            "app:conductor:clarification_request",
-            ConductorClarificationRequest(
+            "app:actor:clarification_request",
+            ActorClarificationRequest(
                 handle_id=handle_id,
                 query=q,
                 call_id=call_id,
@@ -443,23 +443,20 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 7. Initialize Conductor (respects SETTINGS.conductor.IMPL)
-    print("[ManagersWorker] Initializing Conductor...")
+    # 7. Initialize Actor (respects SETTINGS.actor.IMPL)
+    print("[ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
-        cm.conductor = ManagerRegistry.get_conductor(
+        cm.actor = ManagerRegistry.get_actor(
             description="production deployment",
-            contact_manager=cm.contact_manager,
-            transcript_manager=cm.transcript_manager,
-            conversation_manager=cm._conversation_manager_handle,
         )
-        conductor_cls = type(cm.conductor).__name__
+        actor_cls = type(cm.actor).__name__
         print(
-            f"[ManagersWorker] Conductor ({conductor_cls}) initialized in "
+            f"[ManagersWorker] Actor ({actor_cls}) initialized in "
             f"{perf_counter() - local_start_time:.2f} seconds",
         )
     except Exception as e:
-        print(f"[ManagersWorker] Error initializing Conductor: {e}")
+        print(f"[ManagersWorker] Error initializing Actor: {e}")
 
     print(
         "[ManagersWorker] All managers initialized in "

@@ -25,10 +25,10 @@ Unity's architecture resembles a "back office" where specialized managers handle
                                 │
                                 ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                            Conductor                                  │
-│              (Top-level cross-domain orchestrator)                    │
+│                              Actor                                    │
+│              (Top-level code-first orchestrator)                      │
 │                                                                       │
-│                      request (unified read/write)                     │
+│                           act (live execution)                        │
 └───────────────────────────────┬───────────────────────────────────────┘
                                 │
                                 ▼
@@ -56,14 +56,14 @@ Unity's architecture resembles a "back office" where specialized managers handle
 
 ## State Managers
 
-Each manager owns a specific domain. The Conductor routes requests to the appropriate manager based on the user's intent.
+Each manager owns a specific domain. The Actor plans and calls the appropriate manager primitives based on the user's intent.
 
 ### Core Orchestration
 
 | Manager | Role |
 |---------|------|
-| **ConversationManager** | Live chat orchestrator. Wires steering (pause/resume/interject/stop) during conversations via the Conductor. |
-| **Conductor** | Top-level orchestrator unifying all managers. Single entry point: `request` (unified read/write). |
+| **ConversationManager** | Live chat orchestrator. Wires steering (pause/resume/interject/stop) during conversations via the Actor. |
+| **Actor** | Top-level orchestrator unifying all managers. Entry point: `act` (live code-first execution). |
 
 ### Data & Knowledge
 
@@ -344,8 +344,7 @@ See [INFRA.md](INFRA.md) for detailed infrastructure documentation including:
 ```
 unity/
 ├── unity/                    # Main package
-│   ├── actor/               # Browser/UI automation
-│   ├── conductor/           # Top-level orchestrator
+│   ├── actor/               # Top Level orchestrator
 │   ├── contact_manager/     # Contact records
 │   ├── conversation_manager/ # Live chat orchestration
 │   ├── controller/          # Browser control layer

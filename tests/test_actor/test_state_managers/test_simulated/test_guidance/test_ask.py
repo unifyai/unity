@@ -1,8 +1,7 @@
 """
 Actor tests for GuidanceManager.ask operations.
 
-Ports tests from `tests/test_conductor/test_simulated/test_guidance/test_ask.py` to verify
-that HierarchicalActor correctly generates plans calling `primitives.guidance.ask`.
+Tests that HierarchicalActor correctly generates plans calling `primitives.guidance.ask`.
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)
 """

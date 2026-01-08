@@ -301,7 +301,7 @@ async def test_execute_handle_introspection():
 @_handle_project
 async def test_async_tool_loop_calls_append_helper():
     """
-    End-to-end: An outer async tool loop (proxying the Conductor) should be able to:
+    End-to-end: An outer async tool loop (proxying a higher-level orchestrator) should be able to:
       1) call TaskScheduler.execute to start a task, and then
       2) call the dynamically exposed helper whose name starts with `append_to_queue_`
          to append another task while the first is running.

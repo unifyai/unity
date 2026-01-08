@@ -40,7 +40,7 @@ from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.conductor.conductor import Conductor
+from unity.actor.base import BaseActor
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 
@@ -140,7 +140,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.transcript_manager: TranscriptManager = None
         self.contact_manager: ContactManager = None
         self.memory_manager: MemoryManager = None
-        self.conductor: Conductor = None
+        self.actor: BaseActor | None = None
 
         # llm - uses system default model for careful orchestration decisions
         self.llm = LLM(SETTINGS.UNIFY_MODEL, event_broker)
@@ -463,7 +463,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
                 "app:comms:*",
-                "app:conductor:*",
+                "app:actor:*",
                 "app:logging:message_logged",
                 "app:managers:output",
             )

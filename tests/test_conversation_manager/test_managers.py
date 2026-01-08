@@ -10,7 +10,7 @@ from tests.test_conversation_manager.helpers import (
     capture_outgoing_sms,
     capture_task_started,
     capture_task_action_response,
-    send_conductor_clarification_request,
+    send_actor_clarification_request,
     send_incoming_sms,
 )
 
@@ -210,7 +210,7 @@ async def test_task_completion_notification(event_broker, event_capture):
     """
     Test that task completion triggers an LLM response to notify the user.
 
-    When a task completes (handle.result() returns), a ConductorResult event
+    When a task completes (handle.result() returns), an ActorResult event
     is published which triggers cm.run_llm(), allowing the assistant to
     inform the user that the task is done.
 
@@ -261,7 +261,7 @@ async def test_task_completion_notification(event_broker, event_capture):
     )
 
     # After 3 steps (result + 2 asks), task auto-completes
-    # ConductorResult triggers cm.run_llm() - LLM should notify the user
+    # ActorResult triggers cm.run_llm() - LLM should notify the user
     await capture_outgoing_sms(event_capture, contact)
 
 
@@ -452,10 +452,10 @@ async def test_task_answer_clarification(event_broker, event_capture):
         "start_task",
     )
 
-    # Manually send a ConductorClarificationRequest
+    # Manually send an ActorClarificationRequest
     # (simulating what the inner task would send if it needed clarification)
     call_id = "test_clarification_123"
-    await send_conductor_clarification_request(
+    await send_actor_clarification_request(
         event_broker,
         handle_id=task_started.handle_id,
         query="Should I include the assistant's name in the contact?",
@@ -497,7 +497,7 @@ async def test_llm_asks_clarification_for_ambiguous_request(
     When a user's request is vague or could be interpreted multiple ways,
     the LLM should ask for clarification rather than immediately starting a task.
     """
-    from unity.conversation_manager.events import SMSSent, ConductorHandleStarted
+    from unity.conversation_manager.events import SMSSent, ActorHandleStarted
 
     # Clear any events from initialization
     event_capture.clear()
@@ -527,7 +527,7 @@ async def test_llm_asks_clarification_for_ambiguous_request(
     print(f"✅ LLM asked for clarification: {response.content[:100]}...")
 
     # Verify no task was started (LLM should wait for clarification)
-    task_events = event_capture.get_events(ConductorHandleStarted)
+    task_events = event_capture.get_events(ActorHandleStarted)
     assert (
         len(task_events) == 0
     ), f"Expected no task to be started before clarification, but found {len(task_events)} task(s)"

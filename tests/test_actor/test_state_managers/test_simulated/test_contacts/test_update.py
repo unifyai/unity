@@ -1,8 +1,7 @@
 """
 Actor tests for ContactManager.update operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_contacts/test_update.py`
-to verify that HierarchicalActor correctly generates plans calling `primitives.contacts.update`
+Tests that HierarchicalActor correctly generates plans calling `primitives.contacts.update`
 for contact mutations (with optional read-before-write via `primitives.contacts.ask`).
 """
 

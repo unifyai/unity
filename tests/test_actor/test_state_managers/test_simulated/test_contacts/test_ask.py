@@ -1,8 +1,7 @@
 """
 Actor tests for ContactManager.ask operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_contacts/test_ask.py`
-to verify that HierarchicalActor correctly generates plans calling `primitives.contacts.ask`
+Tests that HierarchicalActor correctly generates plans calling `primitives.contacts.ask`
 for read-only contact queries.
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)

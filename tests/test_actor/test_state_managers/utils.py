@@ -104,7 +104,7 @@ async def wait_for_tool_call(handle: Any, tool_name: str, timeout: int = 60) -> 
 
 
 # ---------------------------------------------------------------------------
-# Actor construction helpers (mirror Conductor tests: construct in test body)
+# Actor construction helpers (mirror legacy orchestrator-style tests: construct in test body)
 # ---------------------------------------------------------------------------
 
 

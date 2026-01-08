@@ -1,8 +1,7 @@
 """
 Actor tests for KnowledgeManager.update operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_knowledge/test_update.py`
-to verify that HierarchicalActor correctly generates plans calling `primitives.knowledge.update`
+Tests that HierarchicalActor correctly generates plans calling `primitives.knowledge.update`
 for knowledge mutations (and no reads via `primitives.knowledge.ask`).
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)

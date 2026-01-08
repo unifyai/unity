@@ -188,7 +188,7 @@ class CommsManager:
                 system_message = event.get("message")
                 if system_event_type in ["pause_actor", "resume_actor"]:
                     evt = (
-                        ConductorPauseActor(
+                        ActorPause(
                             reason=(
                                 str(system_message)
                                 if system_message is not None
@@ -196,7 +196,7 @@ class CommsManager:
                             ),
                         )
                         if system_event_type == "pause_actor"
-                        else ConductorResumeActor(
+                        else ActorResume(
                             reason=(
                                 str(system_message)
                                 if system_message is not None
@@ -205,7 +205,7 @@ class CommsManager:
                         )
                     )
                     self._publish_from_callback(
-                        f"app:conductor:{system_event_type}",
+                        f"app:actor:{system_event_type}",
                         evt.to_json(),
                     )
                 elif system_event_type == "sync_contacts":

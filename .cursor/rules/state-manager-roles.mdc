@@ -7,43 +7,43 @@ alwaysApply: true
 Use this to decide which manager to call, what each owns, and where its jurisdiction ends. Keep manager docstrings implementation‑agnostic; this guide is only for high‑level routing and composition.
 
 ### ConversationManager
-- **Role**: Live chat orchestrator. Chooses which manager/tool to invoke and wires steering (pause/resume/interject/stop) during a conversation through via the `Conductor`, which acts as the "brains".
+- **Role**: Live chat orchestrator. Routes user requests to `Actor` for code-first execution and wires steering (pause/resume/interject/stop) during conversations.
 - **Scope**: Conversation‑level control and message flow; returns/relays steerable handles from inner tools.
 - **Connections**:
-  - **Steered by**: `Conductor` (via conversation handle tools: `ask`, `interject`, `get_full_transcript`) when higher-level orchestration needs to surface clarifications/interjections; top-level UI/controller (outside managers).
-  - **Steers**: `Conductor` (`ask`/`request` entry points); relays in‑flight handles from `Actor.act` and `TaskScheduler.execute` (passthrough steering of pause/resume/interject/stop).
+  - **Steered by**: Top-level UI/controller (outside managers).
+  - **Steers**: `Actor.act` (central intelligence); relays in‑flight handles from `Actor.act` and `TaskScheduler.execute` (passthrough steering of pause/resume/interject/stop).
 
-### Conductor
-- **Role**: Top‑level cross‑domain orchestrator that unifies **all** other public-facing state managers `tasks`, `contacts`, `transcripts`, `knowledge` etc. with two entry points: `ask` and `request`.
-- **Scope**: `ask` (read‑only across managers), `request` (mutations via the appropriate managers). Wires in‑flight handles (e.g., `Actor.act`) to `ConversationManager` for real‑time steering passthrough.
+### Actor
+- **Role**: Central intelligence that orchestrates all state managers through code-first plans. Generates and executes Python plans that call primitives directly.
+- **Scope**: Code-first execution via `act()` method. Generates Python plans that orchestrate `primitives.contacts.*`, `primitives.knowledge.*`, `primitives.tasks.*`, etc. Wires in‑flight handles to `ConversationManager` for real‑time steering passthrough.
 - **Connections**:
-  - **Steered by**: `ConversationManager` (primary caller of `ask`/`request`).
-  - **Steers**: `ContactManager`, `TranscriptManager`, `KnowledgeManager`, `GuidanceManager`, `SecretManager`, `TaskScheduler`, `WebSearcher`, `Actor` and the `ConversationManager` handle (`ask`/`interject`/`get_full_transcript`). Does not call `FunctionManager` or `FileManager` directly.
+  - **Steered by**: `ConversationManager` (primary caller of `act()`).
+  - **Steers**: All state manager primitives (`primitives.contacts.*`, `primitives.knowledge.*`, `primitives.tasks.*`, etc.), `TaskScheduler`, and the `ConversationManager` handle (`ask`/`interject`/`get_full_transcript`). Uses `FunctionManager` for function discovery and execution.
 
-### Conductor routing playbook
+### Actor routing playbook
 - **Read‑only questions**
-  - Tasks → `TaskScheduler.ask`
-  - Contacts → `ContactManager.ask`
-  - Transcripts → `TranscriptManager.ask` (may call `ContactManager.ask` for participants)
-  - Knowledge → `KnowledgeManager.ask`
-  - Secrets (metadata/placeholders only) → `SecretManager.ask`
-  - Time‑sensitive/web (“today/latest/now”) → `WebSearcher.ask`
-  - About a specific received file (filename known) → `FileManager.ask`
+  - Tasks → `primitives.tasks.ask` or `TaskScheduler.ask`
+  - Contacts → `primitives.contacts.ask`
+  - Transcripts → `primitives.transcripts.ask` (may call `primitives.contacts.ask` for participants)
+  - Knowledge → `primitives.knowledge.ask`
+  - Secrets (metadata/placeholders only) → `primitives.secrets.ask`
+  - Time‑sensitive/web ("today/latest/now") → `primitives.web_search.ask`
+  - About a specific received file (filename known) → `primitives.files.ask`
 - **Mutations (create/edit/delete/merge)**
-  - Tasks/queues/ordering → `TaskScheduler.update`
-  - Contacts → `ContactManager.update`
-  - Knowledge/schema changes or ingestion → `KnowledgeManager.update` / `KnowledgeManager.refactor`
-  - Guidance → `GuidanceManager.update`
-  - Secrets → `SecretManager.update`
+  - Tasks/queues/ordering → `primitives.tasks.update` or `TaskScheduler.update`
+  - Contacts → `primitives.contacts.update`
+  - Knowledge/schema changes or ingestion → `primitives.knowledge.update` / `primitives.knowledge.refactor`
+  - Guidance → `primitives.guidance.update`
+  - Secrets → `primitives.secrets.update`
 - **Execution vs. interaction**
-  - Ephemeral live action (UI control/one‑off interaction) → `Actor.act`
-  - Durable, tracked work → `TaskScheduler.execute`
+  - Ephemeral live action (UI control/one‑off interaction) → `Actor.act` (called via ConversationManager)
+  - Durable, tracked work → `TaskScheduler.execute` (via `primitives.tasks.execute`)
   - Never use `TaskScheduler.update` to start work; always use `execute`.
 - **File ingestion pipeline**
-  - `FileManager.parse` → `KnowledgeManager.update` (to persist structured facts)
+  - `primitives.files.parse` → `primitives.knowledge.update` (to persist structured facts)
 - **Images**
   - Use `ImageManager` only through managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`). Pass image_ids and helpful annotations.
-  - `ScreenShareManager` is a producer of live images. When screen sharing is active, it emits curated, annotated screenshots that `ConversationManager` forwards through `Conductor` via the `images` argument on downstream calls.
+  - `ScreenShareManager` is a producer of live images. When screen sharing is active, it emits curated, annotated screenshots that `ConversationManager` forwards to `Actor` via the `images` argument on downstream calls.
 
 ### ImageManager
 - **Role**: Low‑level image store/retrieval and the cross‑cutting "visual communication" surface used by managers.
@@ -78,42 +78,35 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - Emits batches of `AnnotatedImageRef` entries (with stable `image_id`s) for the current conversation turn.
   - Images are persisted via `ImageManager` and delivered to orchestration as `images` for downstream tools.
 - **Integration pattern**:
-  - `ConversationManager` ingests screen‑share updates and forwards them as `images` to `Conductor`.
-  - `Conductor` passes these `images` to whichever manager it routes the request to; managers that support images will expose helpers (e.g., `ask_image`, attach helpers) and inject an overview at the start of their tool‑loops.
+  - `ConversationManager` ingests screen‑share updates and forwards them as `images` to `Actor`.
+  - `Actor` passes these `images` to whichever primitives it calls; managers that support images will expose helpers (e.g., `ask_image`, attach helpers) and inject an overview at the start of their tool‑loops.
   - Images do not implicitly propagate into nested tool‑loops; callers must pass `images` explicitly when delegating.
 - **Connections**:
   - **Steered by**: Top‑level UI/controller toggling screen share; `ConversationManager` subscribes to its updates during live conversations.
-  - **Steers**: `ImageManager` (for storage); provides annotated image refs to the rest of the system via `ConversationManager` → `Conductor`.
+  - **Steers**: `ImageManager` (for storage); provides annotated image refs to the rest of the system via `ConversationManager` → `Actor`.
 
-### Actor
-- **Role**: Ephemeral, real‑time action (e.g., browser/UI control) within the current chat; always returns a live steerable handle.
-- **Scope**: Short, interactive sessions; step‑by‑step control; no durable task records.
-- **Edge**: If the user wants a tracked/durable run, use `TaskScheduler.execute` instead of `Actor`.
-- **Connections**:
-  - **Steered by**: `Conductor.request`; `TaskScheduler.execute` (uses an injected `Actor` for execution); passthrough‑steered by `ConversationManager` during live sessions.
-  - **Steers**: `FunctionManager` (loads/searches/executes user functions to implement actions).
 
 ### TaskScheduler
 - **Role**: Owner of durable tasks and their execution.
 - **Scope**: ask (read‑only about tasks), update (create/edit/delete/reorder tasks), execute (start tasks; returns live handle).
 - **Edge**: Never use `update` to “start” work; always start via `execute` (after any needed updates).
 - **Connections**:
-  - **Steered by**: `Conductor.ask`/`Conductor.request`.
-  - **Steers**: `Actor` (to run tasks via `execute`); exposes a live `ActiveTask` handle that is wired back through `Conductor` to the `ConversationManager` for passthrough steering.
+  - **Steered by**: `Actor` (via `primitives.tasks.*`); `ConversationManager` (for direct task management).
+  - **Steers**: `Actor` (to run tasks via `execute`); exposes a live `ActiveTask` handle that is wired back through `ConversationManager` for passthrough steering.
 
 ### KnowledgeManager
 - **Role**: Source of truth for domain knowledge.
 - **Scope**: ask (read‑only facts), update (create/change facts), refactor (schema restructuring across knowledge tables).
 - **Edge**: Parse with `FileManager`, then persist extracted facts with `KnowledgeManager.update`.
 - **Connections**:
-  - **Steered by**: `Conductor.ask`/`Conductor.request`.
+  - **Steered by**: `Actor` (via `primitives.knowledge.*`).
   - **Steers**: `FileManager` (for document parsing/ingestion in update/refactor flows); may read from the root `Contacts` table for joins (no direct `ContactManager` calls).
 
 ### ContactManager
 - **Role**: Source of truth for people/contact records.
 - **Scope**: ask (read‑only), update (create/edit/delete/merge contacts). Supports image references when helpful.
 - **Connections**:
-  - **Steered by**: `Conductor.ask`/`Conductor.request`; read‑only usage by `TranscriptManager.ask` (to resolve/compare contacts during transcript queries).
+  - **Steered by**: `Actor` (via `primitives.contacts.*`); read‑only usage by `TranscriptManager.ask` (to resolve/compare contacts during transcript queries).
   - **Steers**: —
 
 ### TranscriptManager
@@ -121,7 +114,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Scope**: ask (read‑only retrieval, filtering, analysis); may expose summarization in implementations.
 - **Edge**: Summarize conversations here; write long‑term distilled facts to `KnowledgeManager` if needed.
 - **Connections**:
-  - **Steered by**: `Conductor.ask` (read‑only queries).
+  - **Steered by**: `Actor` (via `primitives.transcripts.*`).
   - **Steers**: `ContactManager.ask` (for participant lookup/attributes in transcript answers); `ImageManager` (image query/attachment helpers for messages).
 
 ### FileManager
@@ -135,14 +128,14 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Role**: External/web research orchestration.
 - **Scope**: ask (source selection, search, extraction, aggregation); returns live handle.
 - **Connections**:
-  - **Steered by**: `Conductor.ask` (and available under `request`).
+  - **Steered by**: `Actor` (via `primitives.web_search.*`).
   - **Steers**: — (results may subsequently be persisted via `KnowledgeManager.update` when requested).
 
 ### SecretManager
 - **Role**: Owner of secrets.
 - **Scope**: ask (metadata/placeholder answers only), update (create/edit/delete secrets).
 - **Connections**:
-  - **Steered by**: `Conductor.ask`/`Conductor.request`.
+  - **Steered by**: `Actor` (via `primitives.secrets.*`).
   - **Steers**: —
 
 ### FunctionManager
@@ -157,7 +150,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Role**: Owner of internal guidance/policies/instructions.
 - **Scope**: ask (read‑only queries over guidance), update (create/edit/delete guidance entries).
 - **Connections**:
-  - **Steered by**: `Conductor.ask`/`Conductor.request`.
+  - **Steered by**: `Actor` (via `primitives.guidance.*`).
   - **Steers**: `ImageManager` (image attach/ask for guidance rows); reads functions from the shared "Functions" context to surface linked functions.
 
 ### MemoryManager

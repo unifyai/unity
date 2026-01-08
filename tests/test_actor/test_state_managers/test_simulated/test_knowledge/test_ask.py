@@ -1,8 +1,7 @@
 """
 Actor tests for KnowledgeManager.ask operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_knowledge/test_ask.py`
-to verify that HierarchicalActor correctly generates plans calling `primitives.knowledge.ask`
+Tests that HierarchicalActor correctly generates plans calling `primitives.knowledge.ask`
 for read-only knowledge queries.
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)

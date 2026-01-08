@@ -12,7 +12,7 @@ parallel_cloud_run.sh tests/test_contact_manager
 parallel_cloud_run.sh .
 
 # Run multiple folders
-parallel_cloud_run.sh tests/test_actor tests/test_conductor
+parallel_cloud_run.sh tests/test_actor tests/test_contact_manager
 
 # Override a .env setting
 parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
@@ -120,7 +120,7 @@ parallel_cloud_run.sh [--env KEY=VALUE ...] [test_paths...]
 parallel_cloud_run.sh tests/test_contact_manager
 
 # Multiple folders (run concurrently in single CI job)
-parallel_cloud_run.sh tests/test_actor tests/test_conductor
+parallel_cloud_run.sh tests/test_actor tests/test_contact_manager
 
 # Specific test file
 parallel_cloud_run.sh tests/test_actor/test_code_act.py

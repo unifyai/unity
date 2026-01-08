@@ -1,8 +1,7 @@
 """
 Actor tests for GuidanceManager.update operations.
 
-Ports tests from `tests/test_conductor/test_simulated/test_guidance/test_update.py` to verify
-that HierarchicalActor correctly generates plans calling `primitives.guidance.update`.
+Tests that HierarchicalActor correctly generates plans calling `primitives.guidance.update`.
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)
 """

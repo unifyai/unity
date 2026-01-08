@@ -1,8 +1,7 @@
 """
 Actor tests for TaskScheduler.update operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_tasks/test_update.py`
-to verify that HierarchicalActor correctly generates plans calling `primitives.tasks.update`
+Tests that HierarchicalActor correctly generates plans calling `primitives.tasks.update`
 for task mutations (and no task reads via `primitives.tasks.ask`).
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)

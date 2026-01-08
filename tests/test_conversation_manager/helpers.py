@@ -1,9 +1,9 @@
 import asyncio
 
 from unity.conversation_manager.events import (
-    ConductorClarificationRequest,
-    ConductorHandleResponse,
-    ConductorHandleStarted,
+    ActorClarificationRequest,
+    ActorHandleResponse,
+    ActorHandleStarted,
     EmailReceived,
     EmailSent,
     PhoneCallReceived,
@@ -224,15 +224,15 @@ async def capture_task_started(
     action_name: str,
     timeout: float = 300.0,
 ):
-    """Wait for and capture a ConductorHandleStarted event (task started)"""
+    """Wait for and capture an ActorHandleStarted event (task started)."""
     print(f"⏳ Waiting for task {action_name} request (timeout: 60s)...")
     handle_started = await event_capture.wait_for_event(
-        ConductorHandleStarted,
+        ActorHandleStarted,
         timeout=timeout,
         action_name=action_name,
     )
 
-    assert isinstance(handle_started, ConductorHandleStarted)
+    assert isinstance(handle_started, ActorHandleStarted)
     assert handle_started.action_name == action_name
     assert len(handle_started.query) > 0
 
@@ -248,7 +248,7 @@ async def capture_task_action_response(
     call_id: str = "",
     timeout: float = 300.0,
 ):
-    """Wait for and capture a ConductorHandleResponse event for a task action.
+    """Wait for and capture an ActorHandleResponse event for a task action.
 
     Args:
         event_capture: The event capture fixture
@@ -264,7 +264,7 @@ async def capture_task_action_response(
     )
 
     def match_action(event):
-        if not isinstance(event, ConductorHandleResponse):
+        if not isinstance(event, ActorHandleResponse):
             return False
         if event.handle_id != handle_id:
             return False
@@ -272,12 +272,12 @@ async def capture_task_action_response(
         return parsed.operation == operation and parsed.handle_id == handle_id
 
     response = await event_capture.wait_for_event_with_matcher(
-        ConductorHandleResponse,
+        ActorHandleResponse,
         match_action,
         timeout=timeout,
     )
 
-    assert isinstance(response, ConductorHandleResponse)
+    assert isinstance(response, ActorHandleResponse)
     assert response.handle_id == handle_id
 
     op = OPERATION_MAP.get(operation)
@@ -294,23 +294,23 @@ async def capture_task_action_response(
     return response
 
 
-async def send_conductor_clarification_request(
+async def send_actor_clarification_request(
     event_broker,
     handle_id: int,
     query: str,
     call_id: str,
 ):
-    """Manually send a ConductorClarificationRequest event"""
-    clarification_request = ConductorClarificationRequest(
+    """Manually send an ActorClarificationRequest event."""
+    clarification_request = ActorClarificationRequest(
         handle_id=handle_id,
         query=query,
         call_id=call_id,
     )
     print(
-        f"\n❓ Sending ConductorClarificationRequest: handle_id={handle_id}, call_id={call_id}",
+        f"\n❓ Sending ActorClarificationRequest: handle_id={handle_id}, call_id={call_id}",
     )
     print(f"   Query: {query}")
     await event_broker.publish(
-        "app:conductor:output_events",
+        "app:actor:clarification_request",
         clarification_request.to_json(),
     )

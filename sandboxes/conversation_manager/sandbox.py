@@ -4,7 +4,7 @@ Starts the conversation manager.
 This script can be run as a CLI with the following arguments:
     --local         Enable local GUI mode (default).
     --full          Disable local GUI mode (real comms and no GUI).
-    --enabled_tools Comma-separated list of enabled tools (choices: conductor, contact, transcript, knowledge, scheduler, comms). Default: None
+    --enabled_tools Comma-separated list of enabled tools (choices: actor, contact, transcript, knowledge, scheduler, comms). Default: None
 """
 
 import asyncio
@@ -163,7 +163,7 @@ async def main():
         dest="enabled_tools",
         type=lambda s: [t.strip() for t in s.split(",")],
         default=None,
-        help="Comma-separated list of enabled tools: conductor, contact, transcript, knowledge, scheduler, comms",
+        help="Comma-separated list of enabled tools: actor, contact, transcript, knowledge, scheduler, comms",
     )
     args = parser.parse_args()
 

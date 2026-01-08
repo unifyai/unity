@@ -427,13 +427,13 @@ class NotificationUnpinnedEvent(Event):
 
 
 # --------------------------------------------------------------------------- #
-# Conductor Events
+# Actor Events
 # --------------------------------------------------------------------------- #
 
 
 @dataclass
-class ConductorRequest(Event):
-    """Event to ask or request the Conductor to perform a task."""
+class ActorRequest(Event):
+    """Event to ask or request the Actor to perform a task."""
 
     action_name: str
     query: str
@@ -454,8 +454,8 @@ class ConductorRequest(Event):
 
 
 @dataclass
-class ConductorResponse(Event):
-    """Event to respond to a Conductor request."""
+class ActorResponse(Event):
+    """Event to respond to an Actor request."""
 
     handle_id: int
     action_name: str
@@ -464,8 +464,8 @@ class ConductorResponse(Event):
 
 
 @dataclass
-class ConductorHandleRequest(Event):
-    """Event to any action on an existing Conductor handle."""
+class ActorHandleRequest(Event):
+    """Event to any action on an existing Actor handle."""
 
     handle_id: int
     action_name: str
@@ -488,8 +488,8 @@ class ConductorHandleRequest(Event):
 
 
 @dataclass
-class ConductorHandleResponse(Event):
-    """Event to respond to a Conductor handle request."""
+class ActorHandleResponse(Event):
+    """Event to respond to an Actor handle request."""
 
     handle_id: int
     action_name: str
@@ -499,8 +499,8 @@ class ConductorHandleResponse(Event):
 
 
 @dataclass
-class ConductorResult(Event):
-    """Event to the result of a Conductor task."""
+class ActorResult(Event):
+    """Event to the result of an Actor task."""
 
     handle_id: int
     success: bool
@@ -509,8 +509,8 @@ class ConductorResult(Event):
 
 
 @dataclass
-class ConductorClarificationRequest(Event):
-    """Event to request clarification from the Conductor."""
+class ActorClarificationRequest(Event):
+    """Event to request clarification from the Actor."""
 
     handle_id: int
     query: str
@@ -518,8 +518,8 @@ class ConductorClarificationRequest(Event):
 
 
 @dataclass
-class ConductorClarificationResponse(Event):
-    """Event to respond to a Conductor clarification request."""
+class ActorClarificationResponse(Event):
+    """Event to respond to an Actor clarification request."""
 
     handle_id: int
     response: str
@@ -527,29 +527,29 @@ class ConductorClarificationResponse(Event):
 
 
 @dataclass
-class ConductorNotification(Event):
-    """Event to forward a notification from a Conductor handle."""
+class ActorNotification(Event):
+    """Event to forward a notification from an Actor handle."""
 
     handle_id: int
     response: str
 
 
 @dataclass
-class ConductorHandleStarted(Event):
+class ActorHandleStarted(Event):
     action_name: str
     handle_id: id
     query: str
 
 
 @dataclass
-class ConductorPauseActor(Event):
+class ActorPause(Event):
     """Signal to pause any in-flight Actor/TaskScheduler execution for the session."""
 
     reason: str = ""
 
 
 @dataclass
-class ConductorResumeActor(Event):
+class ActorResume(Event):
     """Signal to resume any previously paused Actor/TaskScheduler execution for the session."""
 
     reason: str = ""
