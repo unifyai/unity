@@ -445,8 +445,7 @@ ON CONFLICT (id) DO NOTHING;
 
 if _is_local_url "${UNIFY_BASE_URL:-}"; then
   if [[ -x "$_local_orchestra_script" ]]; then
-    # Set up Unity-specific orchestra configuration
-    export ORCHESTRA_PREFIX="${ORCHESTRA_PREFIX:-unity}"
+    # Set up orchestra configuration for tests
     export ORCHESTRA_SEED_USER=1
     export ORCHESTRA_TEST_USER_ID="${ORCHESTRA_TEST_USER_ID:-unity-test-user-001}"
     export ORCHESTRA_TEST_EMAIL="${ORCHESTRA_TEST_EMAIL:-unity-test@debug.local}"
@@ -460,7 +459,7 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
     # Check if local orchestra is already running
     if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
       # Orchestra is running - check if logging config matches what we need
-      _config_file="/tmp/${ORCHESTRA_PREFIX}-local-server.config"
+      _config_file="/tmp/orchestra-local-server.config"
       _needs_restart=false
 
       if [[ -f "$_config_file" ]]; then
