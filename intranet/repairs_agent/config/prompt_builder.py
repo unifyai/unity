@@ -382,6 +382,7 @@ def build_consolidated_analyst_prompt(
 
         total = result.get("total", "N/A")
         results_list = result.get("results", [])
+        metadata = result.get("metadata", {})
 
         sections.append(f"### By {group_by.title()}")
         sections.append("")
@@ -391,32 +392,99 @@ def build_consolidated_analyst_prompt(
             sections.append("")
             continue
 
-        # Sort results
-        sorted_results = sorted(results_list, key=get_value, reverse=True)
-        num_groups = len(sorted_results)
+        # Check if this is aggregate stats (e.g., avg_repairs_per_property)
+        # vs grouped data (e.g., first_time_fix_rate by operative)
+        first_result = results_list[0] if results_list else {}
+        is_aggregate_stats = "group" not in first_result and any(
+            k in first_result
+            for k in [
+                "total_repairs",
+                "unique_properties",
+                "average_repairs_per_property",
+            ]
+        )
 
-        sections.append(f"Overall: **{total}** ({num_groups} groups)")
-        sections.append("")
-
-        # Compact table - top 5 and bottom 5 for large, all for small
-        if num_groups <= 12:
-            sections.append(f"| {group_by.title()} | Value |")
+        if is_aggregate_stats:
+            # Handle aggregate metrics (e.g., avg_repairs_per_property)
+            stats = first_result
+            sections.append("| Metric | Value |")
             sections.append("|---|---|")
-            for r in sorted_results:
-                group = r.get("group", "Unknown")
-                sections.append(f"| {group} | {format_val(r)} |")
+            if "total_repairs" in stats:
+                sections.append(f"| Total Repairs | {stats['total_repairs']:,} |")
+            if "unique_properties" in stats:
+                sections.append(
+                    f"| Unique Properties | {stats['unique_properties']:,} |",
+                )
+            if "average_repairs_per_property" in stats:
+                sections.append(
+                    f"| Avg Repairs/Property | {stats['average_repairs_per_property']} |",
+                )
+            if "properties_with_multiple_repairs" in stats:
+                sections.append(
+                    f"| Properties with 2+ Repairs | {stats['properties_with_multiple_repairs']:,} |",
+                )
+            sections.append("")
+
+            # Check for repeat_properties in metadata
+            repeat_props = metadata.get("repeat_properties", [])
+            if repeat_props:
+                sections.append(
+                    f"**Top 10 Repeat Properties** ({len(repeat_props):,} total with 2+ repairs):",
+                )
+                sections.append("")
+                sections.append("| Property Address | Repair Count |")
+                sections.append("|---|---|")
+                for addr, count in repeat_props[:10]:
+                    # Truncate long addresses
+                    addr_short = (
+                        addr.strip()[:60] + "..."
+                        if len(addr.strip()) > 60
+                        else addr.strip()
+                    )
+                    sections.append(f"| {addr_short} | {count} |")
+                sections.append("")
+
+                # Bottom 10 (properties with fewest repeats, still 2+)
+                if len(repeat_props) > 20:
+                    sections.append("**Bottom 10 Repeat Properties:**")
+                    sections.append("")
+                    sections.append("| Property Address | Repair Count |")
+                    sections.append("|---|---|")
+                    for addr, count in repeat_props[-10:]:
+                        addr_short = (
+                            addr.strip()[:60] + "..."
+                            if len(addr.strip()) > 60
+                            else addr.strip()
+                        )
+                        sections.append(f"| {addr_short} | {count} |")
+                    sections.append("")
         else:
-            sections.append("**Top 5:**")
+            # Handle grouped data (standard case)
+            sorted_results = sorted(results_list, key=get_value, reverse=True)
+            num_groups = len(sorted_results)
+
+            sections.append(f"Overall: **{total}** ({num_groups} groups)")
             sections.append("")
-            sections.append(f"| {group_by.title()} | Value |")
-            sections.append("|---|---|")
-            for r in sorted_results[:5]:
-                group = r.get("group", "Unknown")
-                sections.append(f"| {group} | {format_val(r)} |")
-            sections.append("")
-            sections.append("**Bottom 5:**")
-            sections.append("")
-            sections.append(f"| {group_by.title()} | Value |")
+
+            # Compact table - top 5 and bottom 5 for large, all for small
+            if num_groups <= 12:
+                sections.append(f"| {group_by.title()} | Value |")
+                sections.append("|---|---|")
+                for r in sorted_results:
+                    group = r.get("group", "Unknown")
+                    sections.append(f"| {group} | {format_val(r)} |")
+            else:
+                sections.append("**Top 5:**")
+                sections.append("")
+                sections.append(f"| {group_by.title()} | Value |")
+                sections.append("|---|---|")
+                for r in sorted_results[:5]:
+                    group = r.get("group", "Unknown")
+                    sections.append(f"| {group} | {format_val(r)} |")
+                sections.append("")
+                sections.append("**Bottom 5:**")
+                sections.append("")
+                sections.append(f"| {group_by.title()} | Value |")
             sections.append("|---|---|")
             for r in sorted_results[-5:]:
                 group = r.get("group", "Unknown")
