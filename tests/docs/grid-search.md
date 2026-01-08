@@ -116,7 +116,7 @@ This generates 3 runs (one per model), each with fresh LLM calls.
 grid_search.sh \
   --env FIRST_ASK_TOOL_IS_SEARCH="true|false" \
   --env FIRST_MUTATION_TOOL_IS_ASK="true|false" \
-  tests/test_conductor/
+  tests/test_actor/
 ```
 
 This generates 4 runs (2×2 grid) testing all combinations of these two feature flags.

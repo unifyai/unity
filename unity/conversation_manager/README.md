@@ -1,6 +1,6 @@
 # ConversationManager
 
-The `ConversationManager` is the live orchestration layer that handles real-time conversations with users across multiple mediums (phone calls, emails, SMS, web chat). It acts as the "front office" that interfaces with users while delegating complex reasoning to the `Conductor` (the "brain").
+The `ConversationManager` is the live orchestration layer that handles real-time conversations with users across multiple mediums (phone calls, emails, SMS, web chat). It acts as the "front office" that interfaces with users while delegating complex reasoning to the `Actor` (the "brain").
 
 ## Prerequisites
 
@@ -67,10 +67,10 @@ tests/parallel_run.sh -t tests/test_conversation_manager/
 │  └─────────────────────────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────────────────┘
                                     │
-                                    ▼ (via Actions / Conductor tools)
+                                    ▼ (via Actions / Actor tools)
 ┌───────────────────────────────────────────────────────────────────────────┐
-│                               Conductor                                   │
-│  The "brain" — orchestrates all state managers (contacts, tasks, knowledge)│
+│                                 Actor                                     │
+│   The "brain" — runs code-first plans and orchestrates across primitives   │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -93,7 +93,7 @@ Key methods:
 
 ### `ConversationManagerHandle` (`handle.py`)
 
-A steerable handle that external components (Conductor, Actor) use to interact with the live conversation:
+A steerable handle that external components (e.g., the Actor) use to interact with the live conversation:
 - `ask(question, response_format)` — Ask the user a question and wait for their answer
 - `interject(message)` — Inject a message into the conversation
 - `send_notification(content)` — Send a notification to the Main CM Brain
@@ -110,7 +110,7 @@ Registry-based event dispatcher that routes events to handlers:
 
 Dataclass-based event definitions:
 - **Comms Events**: `SMSReceived`, `EmailReceived`, `InboundPhoneUtterance`, `OutboundPhoneUtterance`, etc.
-- **Conductor Events**: `ConductorRequest`, `ConductorResponse`, etc.
+- **Actor Events**: `ActorRequest`, `ActorResponse`, etc.
 - **Control Events**: `DirectMessageEvent`, `NotificationInjectedEvent`, etc.
 
 ### `CallManager` (`domains/call_manager.py`)
@@ -149,7 +149,7 @@ Uses OpenAI's Realtime API for native audio-to-audio processing with ultra-low l
 
 ## The `ConversationManagerHandle.ask` Flow
 
-When the Conductor or another manager needs to ask the user a question:
+When the Actor or another manager needs to ask the user a question:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
@@ -186,7 +186,7 @@ Key insight: While `active_ask_handle` is set, user input is routed to the neste
 | Channel Pattern | Purpose |
 |-----------------|---------|
 | `app:comms:*` | Communication events (SMS, email, phone, etc.) |
-| `app:conductor:*` | Conductor request/response events |
+| `app:actor:*` | Actor request/response events |
 | `app:call:*` | Voice call control events |
 | `app:logging:*` | Transcript logging events |
 | `app:managers:*` | State manager operations |
@@ -199,7 +199,7 @@ Key insight: While `active_ask_handle` is set, user input is routed to the neste
 | `NotificationInjectedEvent` | Inject notification into Main CM Brain's context |
 | `InboundPhoneUtterance` / `InboundUnifyMeetUtterance` | User spoke during a call |
 | `OutboundPhoneUtterance` / `OutboundUnifyMeetUtterance` | Assistant response during a call |
-| `ConductorRequest` | Request the Conductor to perform an action |
+| `ActorRequest` | Request the Actor to perform an action |
 
 ---
 
@@ -252,7 +252,7 @@ Tests are located in `tests/test_conversation_manager/`:
 | `conftest.py` | Fixtures including Redis server setup |
 | `helpers.py` | Test utilities and mock event publishers |
 | `test_comms.py` | Integration tests for cross-medium communication (eval tests) |
-| `test_managers.py` | Tests for Conductor integration |
+| `test_managers.py` | Tests for Actor integration |
 | `test_simulated.py` | Tests using simulated implementation |
 
 ### Prerequisites

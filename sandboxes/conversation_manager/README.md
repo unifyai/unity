@@ -22,8 +22,8 @@ python -m sandboxes.conversation_manager.sandbox
 # Full non-GUI mode (real comms only)
 python -m sandboxes.conversation_manager.sandbox --full
 
-# Specify which tools to enable (choices: conductor, contact, transcript, knowledge, scheduler, comms)
-python -m sandboxes.conversation_manager.sandbox --enabled_tools comms,conductor
+# Specify which tools to enable (choices: actor, contact, transcript, knowledge, scheduler, comms)
+python -m sandboxes.conversation_manager.sandbox --enabled_tools comms,actor
 ```
 
 CLI flags
@@ -31,7 +31,7 @@ CLI flags
 Run `python -m sandboxes.conversation_manager.sandbox --help` to see additional flags:
 * `--local` (default): Enable local GUI mode.
 * `--full`         : Disable local GUI mode (real comms and no GUI).
-* `--enabled_tools`: Comma-separated list of enabled tools (choices: conductor, contact, transcript, knowledge, scheduler, comms). Default: None (all tools enabled).
+* `--enabled_tools`: Comma-separated list of enabled tools (choices: actor, contact, transcript, knowledge, scheduler, comms). Default: None (all tools enabled).
 
 Standard flags:
 * `--voice` / `-v`            – enable voice input/output (scenario seeding and TTS)

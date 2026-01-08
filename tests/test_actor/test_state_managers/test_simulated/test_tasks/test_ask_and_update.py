@@ -1,8 +1,7 @@
 """
 Actor tests for TaskScheduler combined ask+update operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_tasks/test_ask_and_update.py`
-to verify that HierarchicalActor correctly generates plans calling both
+Tests that HierarchicalActor correctly generates plans calling both
 `primitives.tasks.ask` and `primitives.tasks.update`, with an optional single
 `primitives.contacts.ask` for resolving assignees.
 

@@ -66,7 +66,6 @@ def pytest_configure(config):
     os.environ["UNITY_TRANSCRIPT_IMPL"] = "simulated"
     os.environ["UNITY_TASK_IMPL"] = "simulated"
     os.environ["UNITY_CONVERSATION_IMPL"] = "simulated"
-    os.environ["UNITY_CONDUCTOR_IMPL"] = "simulated"
 
     # Steps for SimulatedActor - 3 allows for pause+resume interactions
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
@@ -241,7 +240,7 @@ async def event_capture(initialized_cm: "ConversationManager") -> EventCapture:
     Uses the in-memory event broker directly - no Redis needed.
     """
     capture = EventCapture(initialized_cm.event_broker)
-    await capture.start_capturing(["app:comms:*", "app:conductor:*", "app:managers:*"])
+    await capture.start_capturing(["app:comms:*", "app:actor:*", "app:managers:*"])
     yield capture
     await capture.stop()
 

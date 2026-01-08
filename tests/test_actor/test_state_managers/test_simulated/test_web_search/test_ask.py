@@ -1,8 +1,7 @@
 """
 Actor tests for WebSearcher.ask operations.
 
-Ports tests from `tests/test_conductor/test_simulated/test_web_search/test_ask.py` to verify
-that HierarchicalActor correctly generates plans calling `primitives.web.ask`.
+Tests that HierarchicalActor correctly generates plans calling `primitives.web_search.ask`.
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)
 """

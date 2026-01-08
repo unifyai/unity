@@ -14,7 +14,6 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from unity.actor.settings import ActorSettings
-from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.conversation_manager.settings import ConversationSettings
 from unity.file_manager.settings import FileSettings
@@ -143,7 +142,7 @@ class ProductionSettings(BaseSettings):
     STAGING: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Conductor Manager Configuration
+    # Manager Configuration
     # ─────────────────────────────────────────────────────────────────────────
     # Foundational managers (cannot be disabled, only implementation switched):
     #   - Actor, ContactManager, TranscriptManager, TaskScheduler, ConversationManager
@@ -157,7 +156,6 @@ class ProductionSettings(BaseSettings):
     # Each manager owns its settings in its own settings.py file.
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
     actor: ActorSettings = Field(default_factory=ActorSettings)
-    conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
     file: FileSettings = Field(default_factory=FileSettings)

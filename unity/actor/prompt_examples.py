@@ -24,12 +24,7 @@ class Example:
 
 
 def get_confidence_based_stubbing_example() -> str:
-    """Example: stub uncertain steps with clear TODO markers.
-
-    Source: `unity/actor/prompt_builders.py` (planning rules/examples),
-    plus the same stub→JIT-implement pattern used in
-    `tests/test_conductor/test_real/test_actor.py`.
-    """
+    """Example: stub uncertain steps with clear TODO markers."""
 
     return """
 # Example: Confidence-based stubbing
@@ -49,10 +44,7 @@ async def main_plan():
 
 
 def get_structured_output_example() -> str:
-    """Example: use Pydantic for structured extraction.
-
-    Source: `tests/test_contact_manager/test_ask.py` (ask scenarios + structured judgement)
-    """
+    """Example: use Pydantic for structured extraction."""
 
     return """
 # Example: Structured output with Pydantic
@@ -71,10 +63,7 @@ async def extract_structured(query: str) -> ContactInfo:
 
 
 def get_error_handling_example() -> str:
-    """Example: graceful error handling with fallbacks.
-
-    Source: `tests/test_contact_manager/test_ask.py` (semantic retrieval + negative cases)
-    """
+    """Example: graceful error handling with fallbacks."""
 
     return """
 # Example: Error handling with fallbacks
@@ -93,10 +82,7 @@ async def find_with_fallback(query: str) -> str:
 
 
 def get_handle_steering_example() -> str:
-    """Example: steering in-flight handles.
-
-    Source: `tests/test_task_scheduler/test_execute.py` (execute handle forwards ask/interject/pause/resume)
-    """
+    """Example: steering in-flight handles."""
 
     return """
 # Example: Handle steering (pause/resume/interject)
@@ -124,11 +110,7 @@ async def run_with_steering() -> str:
 
 
 def get_clarification_example() -> str:
-    """Example: handling clarification requests from tools.
-
-    Source: `tests/test_contact_manager/test_ask.py` (clarification queues),
-    and `tests/test_task_scheduler/test_execute.py` (steering surface on returned handles).
-    """
+    """Example: handling clarification requests from tools."""
 
     return """
 # Example: Clarification requests
@@ -245,10 +227,7 @@ async def main_plan():
 
 
 def get_browser_navigation_example() -> str:
-    """Example: navigate and extract data from a webpage.
-
-    Source: `tests/test_conductor/test_real/test_actor.py` (real actor uses navigate/observe/act)
-    """
+    """Example: navigate and extract data from a webpage."""
 
     return '''
 # Example: Browser navigation and extraction
@@ -274,10 +253,7 @@ async def fetch_product_price(product_url: str) -> float:
 
 
 def get_browser_multistep_example() -> str:
-    """Example: multi-step browser workflow with verification.
-
-    Source: `tests/test_conductor/test_real/test_actor.py` (navigate/act/observe + verification loop)
-    """
+    """Example: multi-step browser workflow with verification."""
 
     return '''
 # Example: Multi-step browser workflow
@@ -308,8 +284,7 @@ async def complete_checkout(cart_items: list) -> str:
 def get_browser_screenshot_driven_example() -> str:
     """Example: screenshot-driven implementation (within a browser loop).
 
-    Source: `tests/test_conductor/test_real/test_actor.py` (real actor uses navigate/act/observe),
-    where UI actions are guided by the current page state (captured as screenshots/evidence).
+    UI actions are guided by the current page state (captured as screenshots/evidence).
     """
 
     return """
@@ -333,11 +308,7 @@ async def proceed_using_screenshot() -> str:
 
 
 def get_primitives_contact_ask_example() -> str:
-    """Example: read-only contact query.
-
-    Source: `tests/test_conductor/test_real/test_contacts.py::test_ask_calls_manager`,
-    `tests/test_contact_manager/test_ask.py` (semantic ask cases).
-    """
+    """Example: read-only contact query."""
 
     return '''
 # Example: Read-only contact query
@@ -356,10 +327,7 @@ async def find_contact_email(name: str) -> str:
 
 
 def get_primitives_contact_update_example() -> str:
-    """Example: contact mutation.
-
-    Source: `tests/test_conductor/test_real/test_contacts.py::test_update_calls_manager`
-    """
+    """Example: contact mutation."""
 
     return '''
 # Example: Contact mutation
@@ -376,10 +344,7 @@ async def update_contact_phone(email: str, phone: str) -> str:
 
 
 def get_primitives_cross_manager_example() -> str:
-    """Example: cross-manager workflow (KnowledgeManager → ContactManager).
-
-    Source: `tests/test_knowledge_manager/test_cross_manager_integration.py::test_ask_joins_contact_and_company`
-    """
+    """Example: cross-manager workflow (KnowledgeManager → ContactManager)."""
 
     return '''
 # Example: Cross-manager workflow
@@ -406,10 +371,7 @@ async def find_employee_count_for_contact(contact_name: str) -> int:
 
 
 def get_primitives_task_execute_example() -> str:
-    """Example: task execution with steering.
-
-    Source: `tests/test_task_scheduler/test_execute.py` (execute + handle forwarding)
-    """
+    """Example: task execution with steering."""
 
     return '''
 # Example: Task execution with steering
@@ -454,7 +416,7 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
 def get_primitives_task_lookup_and_execute_example() -> str:
     """Example: Task lookup via ask(response_format=...) then execute(task_id=...).
 
-    Source: Correct pattern for TaskScheduler.execute which requires task_id: int
+    TaskScheduler.execute requires task_id: int.
     """
 
     return '''
@@ -487,10 +449,7 @@ async def find_and_execute_task(search_query: str) -> str:
 
 
 def get_primitives_dynamic_methods_example() -> str:
-    """Example: using dynamic handle methods.
-
-    Source: `tests/test_task_scheduler/test_execute.py` (introspection + append_to_queue exposure)
-    """
+    """Example: using dynamic handle methods."""
 
     return '''
 # Example: Dynamic handle methods (append_to_queue)
@@ -616,11 +575,7 @@ async def research_latest_news() -> str:
 
 
 def get_mixed_browse_persist_example() -> str:
-    """Example: browse for data and persist via state managers.
-
-    Source: browser interaction patterns in `tests/test_conductor/test_real/test_actor.py`,
-    and contact mutation patterns in `tests/test_conductor/test_real/test_contacts.py`.
-    """
+    """Example: browse for data and persist via state managers."""
 
     return '''
 # Example: Browse and persist workflow
@@ -653,12 +608,7 @@ async def scrape_and_save_contact(linkedin_url: str) -> str:
 
 
 def get_mixed_concurrent_example() -> str:
-    """Example: concurrent browser and state manager operations.
-
-    Source: concurrency patterns used throughout eval tests, and conceptually aligned with
-    multi-handle scenarios in `tests/test_contact_manager/test_ask.py` (interject) and
-    `tests/test_task_scheduler/test_execute.py` (handle lifecycle).
-    """
+    """Example: concurrent browser and state manager operations."""
 
     return '''
 # Example: Concurrent browser + state manager operations
@@ -688,11 +638,7 @@ async def gather_contact_info_concurrently(name: str, company_url: str) -> dict:
 
 
 def get_mixed_interjection_routing_example() -> str:
-    """Example: routing interjections to in-flight handles.
-
-    Source: `tests/test_contact_manager/test_ask.py::test_ask_interject` (interject mid-flight),
-    and `tests/test_task_scheduler/test_execute.py` (steerable handles support interject/ask/result).
-    """
+    """Example: routing interjections to in-flight handles."""
 
     return """
 # Example: Interjection routing to in-flight handles

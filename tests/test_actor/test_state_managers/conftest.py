@@ -83,7 +83,7 @@ def configure_real_managers(
     if not _in_tree(request, os.path.join("test_state_managers", "test_real")):
         return
 
-    # Prevent network access during manager initialization (mirrors Conductor real tests).
+    # Prevent network access during manager initialization.
     import unity
 
     monkeypatch.setattr(unity, "ASSISTANT", None, raising=False)

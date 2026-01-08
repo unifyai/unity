@@ -99,17 +99,17 @@ class TestBasicPublishSubscribe:
     async def test_multiple_patterns(self, broker):
         """Test subscribing to multiple patterns."""
         async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:comms:*", "app:conductor:*")
+            await pubsub.psubscribe("app:comms:*", "app:actor:*")
 
             await broker.publish("app:comms:event", "comms")
-            await broker.publish("app:conductor:event", "conductor")
+            await broker.publish("app:actor:event", "actor")
             await broker.publish("app:other:event", "other")  # Not matched
 
             msg1 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg1["channel"] == "app:comms:event"
 
             msg2 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg2["channel"] == "app:conductor:event"
+            assert msg2["channel"] == "app:actor:event"
 
             msg3 = await pubsub.get_message(timeout=0.1, ignore_subscribe_messages=True)
             assert msg3 is None
@@ -321,14 +321,14 @@ class TestRealWorldPatterns:
             # This is the actual subscription from conversation_manager.py
             await pubsub.psubscribe(
                 "app:comms:*",
-                "app:conductor:*",
+                "app:actor:*",
                 "app:logging:message_logged",
                 "app:managers:output",
             )
 
             # Publish various events
             await broker.publish("app:comms:startup", '{"type": "startup"}')
-            await broker.publish("app:conductor:result", '{"handle_id": 1}')
+            await broker.publish("app:actor:result", '{"handle_id": 1}')
             await broker.publish("app:logging:message_logged", '{"medium": "email"}')
             await broker.publish("app:managers:output", '{"output": "test"}')
             await broker.publish("app:unrelated:event", '{"should": "not match"}')
@@ -347,7 +347,7 @@ class TestRealWorldPatterns:
 
             assert len(received) == 4
             assert "app:comms:startup" in received
-            assert "app:conductor:result" in received
+            assert "app:actor:result" in received
             assert "app:logging:message_logged" in received
             assert "app:managers:output" in received
 

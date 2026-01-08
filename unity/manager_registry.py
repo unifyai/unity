@@ -14,7 +14,6 @@ Usage:
     # Get a manager via typed method (auto-resolves IMPL, returns singleton):
     contact_manager = ManagerRegistry.get_contact_manager()
     task_scheduler = ManagerRegistry.get_task_scheduler()
-    conductor = ManagerRegistry.get_conductor()
 
     # For simulated managers, pass description:
     ManagerRegistry.get_contact_manager(description="test scenario")
@@ -24,7 +23,6 @@ Usage:
 
 Available typed methods:
     - get_actor()
-    - get_conductor()
     - get_contact_manager()
     - get_conversation_manager_handle()
     - get_file_manager()
@@ -47,7 +45,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Type
 
 if TYPE_CHECKING:
     from .actor.base import BaseActor
-    from .conductor.base import BaseConductor
     from .contact_manager.base import BaseContactManager
     from .conversation_manager.base import BaseConversationManagerHandle
     from .file_manager.managers.base import BaseFileManager
@@ -332,24 +329,6 @@ class ManagerRegistry:
         )
 
     @classmethod
-    def get_conductor(
-        cls,
-        *,
-        description: str | None = None,
-        simulation_guidance: str | None = None,
-        _force_new: bool = False,
-        **kwargs: Any,
-    ) -> "BaseConductor":
-        """Get the Conductor singleton (respects IMPL settings)."""
-        return cls.get(
-            "conductor",
-            description=description,
-            simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
-            **kwargs,
-        )
-
-    @classmethod
     def get_contact_manager(
         cls,
         *,
@@ -618,7 +597,6 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
     ManagerRegistry.register_settings("images", lambda: SETTINGS.image)
     ManagerRegistry.register_settings("memory", lambda: SETTINGS.memory)
-    ManagerRegistry.register_settings("conductor", lambda: SETTINGS.conductor)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Actor implementations
@@ -731,16 +709,6 @@ def _populate_registry() -> None:
     ManagerRegistry.register_class("memory", "real", MemoryManager)
     ManagerRegistry.register_class("memory", "simulated", SimulatedMemoryManager)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Conductor implementations
-    # ─────────────────────────────────────────────────────────────────────────
-    from .conductor.conductor import Conductor
-    from .conductor.simulated import SimulatedConductor
-
-    ManagerRegistry.register_class("conductor", "real", Conductor)
-    ManagerRegistry.register_class("conductor", "simulated", SimulatedConductor)
-
-    # ─────────────────────────────────────────────────────────────────────────
     # FunctionManager implementations
     # ─────────────────────────────────────────────────────────────────────────
     from .function_manager.function_manager import FunctionManager

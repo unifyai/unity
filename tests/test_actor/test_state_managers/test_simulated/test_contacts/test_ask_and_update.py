@@ -1,8 +1,7 @@
 """
 Actor tests for ContactManager combined ask+update operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_contacts/test_ask_and_update.py`
-to verify that HierarchicalActor correctly generates plans calling both
+Tests that HierarchicalActor correctly generates plans calling both
 `primitives.contacts.ask` and `primitives.contacts.update` (and no other state manager tools).
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)

@@ -7,7 +7,7 @@ class BaseConversationManagerHandle(SteerableToolHandle):
     """
     Abstract interface for steering a live ConversationManager instance.
 
-    This handle enables external processes (like the Conductor or Actor)
+    This handle enables external processes (like the Actor)
     to inject information into the conversation flow in real-time. The primary
     methods for bidirectional communication are:
 

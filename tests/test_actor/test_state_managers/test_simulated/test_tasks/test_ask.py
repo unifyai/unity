@@ -1,8 +1,7 @@
 """
 Actor tests for TaskScheduler.ask operations.
 
-This module ports tests from `tests/test_conductor/test_simulated/test_tasks/test_ask.py`
-to verify that HierarchicalActor correctly generates plans calling `primitives.tasks.ask`
+Tests that HierarchicalActor correctly generates plans calling `primitives.tasks.ask`
 for read-only task queries.
 
 Pattern: On-the-fly planning (Actor generates plans dynamically)

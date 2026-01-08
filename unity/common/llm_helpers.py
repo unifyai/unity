@@ -89,7 +89,7 @@ def _canonical_tool_owner_name(cls: type) -> str:
     - Walk the MRO; if any ancestor's name starts with "Base", strip "Base"
       and use the remainder (e.g., BaseActor → Actor).
     - If any ancestor's name starts with "Simulated", strip "Simulated" and use the remainder
-      (e.g., SimulatedConductor → Conductor).
+      (e.g., SimulatedActor → Actor).
     - Fallback to the class' own __name__ unchanged.
     """
     try:
