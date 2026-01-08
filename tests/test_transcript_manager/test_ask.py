@@ -91,7 +91,12 @@ def _answer_semantic(
             for m in messages
             if m.sender_id == cid("carlos") and "buy" in m.content.lower()
         )
-        quote = msg.content.splitlines()[0]
+        # Find the line containing the actual quote (with "buy" or "interested"), not the subject line
+        quote = next(
+            line
+            for line in msg.content.splitlines()
+            if "buy" in line.lower() or "interested" in line.lower()
+        )
         return f"Yes – {quote}"
 
     if "when did dan last speak with julia" in q:
