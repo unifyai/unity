@@ -376,9 +376,9 @@ When tests run from a worktree (via any method - `parallel_run`, direct `pytest`
 ├── worktree-xyz/  →  ~/.cursor/worktrees/unity/xyz/logs/pytest/
 └── ...
 
-/Users/you/unity/logs/llm/
+/Users/you/unity/logs/unillm/
 ├── 2025-12-05T14-30-45_unity_dev_ttys042/    # main repo's logs (terminal A)
-├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/logs/llm/
+├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/logs/unillm/
 └── ...
 ```
 

@@ -1,24 +1,37 @@
 ---
-description: How to navigate gitignored log directories (logs/pytest/, logs/llm/, logs/orchestra/)
+description: How to navigate and read log files (logs/pytest/, logs/unity/, logs/unillm/, logs/unify/, logs/orchestra/, logs/all/)
 globs: ["**/*"]
 alwaysApply: true
 ---
 
-# Navigating Gitignored Directories (logs/)
+# Log Directory Navigation
 
-## Tool Behavior Summary
+## Tool Behavior for Logs
 
-| Tool | Gitignored Dirs | Hidden Dirs (`.xxx`) |
-|------|-----------------|----------------------|
-| **Read** | ✅ Always works | ✅ Always works |
-| **Shell** | ✅ Always works | ✅ Always works |
-| **LS** | ⚠️ May work with direct path | ❌ "no children found" |
-| **Glob** | ❌ Won't find files | ❌ Won't find files |
-| **Grep** | ❌ Won't find matches | ❌ Won't find matches |
+The `logs/` directory is gitignored, which affects tool availability:
+
+| Tool | Works? | Notes |
+|------|--------|-------|
+| **Read** | ✅ Yes | Preferred for reading log file contents |
+| **Shell** | ✅ Yes | Use `ls` to explore directory structure |
+| **LS** | ⚠️ Unreliable | May work with direct paths |
+| **Glob** | ❌ No | Git-aware index excludes gitignored paths |
+| **Grep** | ❌ No | Git-aware index excludes gitignored paths |
+
+## Log Directories
+
+| Directory | Purpose |
+|-----------|---------|
+| `logs/pytest/` | Test output logs (datetime-prefixed subdirs per run) |
+| `logs/unity/` | Unity LOGGER output (async tool loop, managers) |
+| `logs/unillm/` | Raw LLM request/response traces |
+| `logs/unify/` | Unify SDK HTTP traces |
+| `logs/orchestra/` | Orchestra session logs with per-request API traces |
+| `logs/all/` | Cross-repo OTEL traces |
 
 ## Practical Workflow
 
-**Step 1: Explore directories with Shell**
+**Step 1: Explore with Shell**
 ```bash
 # List log directories (sorted by time, newest last)
 ls logs/pytest/
@@ -27,29 +40,12 @@ ls logs/pytest/
 ls logs/pytest/2025-12-05T14-30-45_unity_dev_ttys042/
 ```
 
-**Step 2: Read files with Read tool**
+**Step 2: Read with Read tool**
 ```
 Read: logs/pytest/2025-12-05T14-30-45_unity_dev_ttys042/test_contact_manager-test_ask.txt
 ```
 
-The `Read` tool works perfectly for gitignored files - use it directly once you know the path.
-
-## Key Points
-
-1. **Read always works** - Don't use `cat`; prefer the `Read` tool for file contents
-2. **Shell for exploration** - Use `ls` to discover directory structure and file names
-3. **Glob/Grep are blind** - They use a git-aware index that excludes gitignored paths
-4. **LS is unreliable** - Works sometimes but not consistently for gitignored dirs
-
-## Common Directories
-
-| Directory | Purpose |
-|-----------|---------|
-| `logs/pytest/` | Test output logs (datetime-prefixed subdirs per run) |
-| `logs/llm/` | Raw LLM request/response traces |
-| `logs/orchestra/` | Orchestra session logs with per-request API traces |
-
-### Orchestra Trace Files
+## Orchestra Trace Files
 
 Orchestra logs are organized by session with granular per-request traces:
 
@@ -76,7 +72,7 @@ logs/orchestra/<session>/requests/*_7be454fc.json
 
 ## Worktree Symlinks
 
-In worktrees, the log directories contain a `_root` symlink pointing to the main repository's corresponding log folder. Use this when looking for logs from tests run in the main repo rather than the worktree.
+In worktrees, log directories contain a `_root` symlink pointing to the main repository's logs. Use this when looking for logs from tests run in the main repo.
 
 ```bash
 # List main repo's logs from a worktree
