@@ -34,9 +34,6 @@ from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
 )
-from unity.conversation_manager.prompt_builders import (
-    _build_active_tasks_action_descriptions,
-)
 
 
 # =============================================================================
@@ -533,46 +530,6 @@ class TestRenderer:
         assert 'surname="Doe"' in result
         assert 'is_boss="True"' in result
         assert "<bio>Test bio</bio>" in result
-
-
-# =============================================================================
-# prompt_builders.py tests
-# =============================================================================
-
-
-class TestBuildActiveTasksActionDescriptions:
-    """Tests for _build_active_tasks_action_descriptions function."""
-
-    def test_empty_tasks(self):
-        """Empty tasks returns empty string."""
-        result = _build_active_tasks_action_descriptions({})
-        assert result == ""
-
-    def test_single_task(self):
-        """Single task generates action descriptions."""
-        tasks = {
-            0: {
-                "query": "Search the web",
-                "handle_actions": [],
-            },
-        }
-        result = _build_active_tasks_action_descriptions(tasks)
-        assert "Search the web" in result
-        assert "ask_" in result
-        assert "stop_" in result
-        assert "interject_" in result
-
-    def test_multiple_tasks(self):
-        """Multiple tasks generate separate sections."""
-        tasks = {
-            0: {"query": "Task one", "handle_actions": []},
-            1: {"query": "Task two", "handle_actions": []},
-        }
-        result = _build_active_tasks_action_descriptions(tasks)
-        assert "Task one" in result
-        assert "Task two" in result
-        assert "id=0" in result
-        assert "id=1" in result
 
 
 # =============================================================================

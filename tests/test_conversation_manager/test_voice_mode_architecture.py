@@ -118,12 +118,10 @@ class TestResponseModelConstruction:
     """Tests for dynamic response model construction."""
 
     def test_text_mode_response_model_structure(self):
-        """Text mode response model has thoughts and actions."""
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        """Text mode response model has thoughts only (actions are tool calls)."""
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
         text_model = models["text"]
 
         # Get the schema
@@ -131,7 +129,8 @@ class TestResponseModelConstruction:
         props = schema.get("properties", {})
 
         assert "thoughts" in props
-        assert "actions" in props
+        # Actions are now tool calls, not part of the response model
+        assert "actions" not in props
         # Text mode should NOT have voice_utterance or call_guidance
         assert "voice_utterance" not in props
         assert "call_guidance" not in props
@@ -143,47 +142,43 @@ class TestResponseModelConstruction:
         Both TTS and Realtime modes use the unified guidance-based architecture
         where the Main CM Brain provides guidance to the Voice Agent.
         """
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
         voice_model = models["call"]
 
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
 
         assert "thoughts" in props
-        assert "actions" in props
+        # Actions are now tool calls, not part of the response model
+        assert "actions" not in props
         # Stage 2: TTS mode now uses call_guidance
         assert "call_guidance" in props
         assert "voice_utterance" not in props
 
     def test_voice_model_realtime_mode_uses_guidance(self):
         """Realtime mode uses call_guidance instead of voice_utterance."""
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
         voice_model = models["call"]
 
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
 
         assert "thoughts" in props
-        assert "actions" in props
+        # Actions are now tool calls, not part of the response model
+        assert "actions" not in props
         # Realtime mode uses call_guidance
         assert "call_guidance" in props
         assert "voice_utterance" not in props
 
     def test_unify_meet_model_matches_call_model(self):
         """unify_meet mode uses the same model as call mode."""
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
 
         call_schema = models["call"].model_json_schema()
         meet_schema = models["unify_meet"].model_json_schema()
@@ -203,11 +198,9 @@ class TestResponseModelConstruction:
 
         Stage 2 is complete - TTS mode now uses the same guidance pattern as Realtime.
         """
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
         voice_model = models["call"]
 
         schema = voice_model.model_json_schema()
@@ -706,11 +699,9 @@ class TestRegressionBaseline:
 
     def test_text_mode_does_not_include_voice_fields(self):
         """Text mode response model excludes voice-specific fields."""
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
         text_model = models["text"]
         schema = text_model.model_json_schema()
         props = schema.get("properties", {})
@@ -718,25 +709,29 @@ class TestRegressionBaseline:
         assert "voice_utterance" not in props
         assert "call_guidance" not in props
 
-    def test_actions_union_includes_core_actions(self):
-        """Response model includes all core action types."""
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
+    def test_action_tools_are_available(self):
+        """Action tools are available via ConversationManagerBrainActionTools."""
+        from unittest.mock import MagicMock
+
+        from unity.conversation_manager.domains.brain_action_tools import (
+            ConversationManagerBrainActionTools,
         )
 
-        models = build_dynamic_response_models(active_tasks={})
-        text_model = models["text"]
-        schema = text_model.model_json_schema()
+        # Create mock ConversationManager
+        mock_cm = MagicMock()
+        mock_cm.active_tasks = {}
+        action_tools = ConversationManagerBrainActionTools(mock_cm)
 
-        # Check that actions field exists
-        actions_schema = schema.get("properties", {}).get("actions", {})
-        assert actions_schema is not None
+        # Get the tools
+        tools = action_tools.as_tools()
 
-        # The schema should reference action types
-        schema_str = json.dumps(schema)
-        assert "send_sms" in schema_str.lower() or "SendSMS" in schema_str
-        assert "send_email" in schema_str.lower() or "SendEmail" in schema_str
-        assert "start_task" in schema_str.lower() or "StartTask" in schema_str
+        # Check that core communication and task tools are available
+        assert "send_sms" in tools
+        assert "send_email" in tools
+        assert "make_call" in tools
+        assert "send_unify_message" in tools
+        assert "start_task" in tools
+        assert "wait" in tools
 
     def test_call_manager_cleanup_method_exists(self):
         """LivekitCallManager has cleanup method for call processes."""
@@ -796,11 +791,9 @@ class TestStage2UnifiedVoiceResponse:
 
     def test_tts_mode_response_model_has_guidance(self):
         """TTS mode response model uses call_guidance field."""
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
         voice_model = models["call"]
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
@@ -810,15 +803,12 @@ class TestStage2UnifiedVoiceResponse:
 
     def test_tts_and_realtime_models_match(self):
         """TTS and Realtime modes use identical response model structure."""
-        from unity.conversation_manager.domains.actions import (
-            build_dynamic_response_models,
-        )
+        from unity.conversation_manager.domains.actions import build_response_models
 
-        tts_models = build_dynamic_response_models(active_tasks={})
-        sts_models = build_dynamic_response_models(active_tasks={})
+        models = build_response_models()
 
-        tts_schema = tts_models["call"].model_json_schema()
-        sts_schema = sts_models["call"].model_json_schema()
+        tts_schema = models["call"].model_json_schema()
+        sts_schema = models["call"].model_json_schema()
 
         # Stage 2 complete: TTS and STS models are identical
         assert (

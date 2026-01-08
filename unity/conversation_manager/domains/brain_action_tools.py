@@ -3,6 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from unity.conversation_manager.domains import actions as cm_actions
+from unity.conversation_manager.task_actions import (
+    STEERING_OPERATIONS,
+    derive_short_name,
+    build_action_name,
+    safe_call_id_suffix,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -12,11 +18,10 @@ if TYPE_CHECKING:
 
 class ConversationManagerBrainActionTools:
     """
-    Side-effecting tools for the Main CM Brain (rolled out incrementally).
+    Side-effecting tools for the Main CM Brain.
 
-    These tools execute a subset of ConversationManager "actions" directly as
-    tool calls, so we can migrate one path at a time from JSON action emission
-    to tool-driven execution.
+    All communication and task management actions are exposed as tool calls,
+    following the async tool loop pattern.
     """
 
     def __init__(self, cm: "ConversationManager"):
@@ -30,11 +35,10 @@ class ConversationManagerBrainActionTools:
         content: str,
     ) -> dict[str, Any]:
         """
-        Send an SMS message.
+        Send an SMS message to a contact.
 
-        Use this tool to send an SMS rather than emitting a `send_sms` entry in the
-        final JSON `actions` list. This is part of a gradual migration of comms
-        actions into direct tool calls.
+        Use this when the boss or context indicates SMS is the appropriate channel.
+        For active conversations, use contact_id. For new contacts, provide details.
 
         Args:
             contact_id: Target contact_id when known (preferred).
@@ -85,7 +89,9 @@ class ConversationManagerBrainActionTools:
         email_id_to_reply_to: str | None = None,
     ) -> dict[str, Any]:
         """
-        Send an email.
+        Send an email to a contact.
+
+        Use this when the boss or context indicates email is the appropriate channel.
 
         Args:
             contact_id: Target contact_id when known (preferred).
@@ -112,7 +118,10 @@ class ConversationManagerBrainActionTools:
         contact_details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Start an outbound phone call.
+        Start an outbound phone call to a contact.
+
+        Use this when the boss explicitly requests to communicate via phone call,
+        or when voice communication is clearly the appropriate channel.
 
         Args:
             contact_id: Target contact_id when known (preferred).
@@ -126,12 +135,172 @@ class ConversationManagerBrainActionTools:
         )
         return {"status": "ok"}
 
+    async def start_task(self, *, query: str) -> dict[str, Any]:
+        """
+        Start a new background task for work not related to direct communication.
+
+        Use this for tasks like searching the web, doing research, answering
+        questions, managing contacts, scheduling, or any work that requires
+        the Conductor to orchestrate.
+
+        Args:
+            query: The task description or question to work on.
+        """
+        await cm_actions.start_task_action(
+            self._cm,
+            "start_task",
+            query=query,
+        )
+        return {"status": "task_started", "query": query}
+
+    async def wait(self) -> dict[str, Any]:
+        """
+        Wait for more input without taking any action.
+
+        Use this when there is nothing to do at the moment - for example,
+        when waiting for a contact to respond or for a task to complete.
+        """
+        return {"status": "waiting"}
+
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
-        """Return the tools dict for start_async_tool_loop."""
+        """Return the static tools dict for start_async_tool_loop."""
         return {
-            # Keep the name aligned with existing action nomenclature for a smooth transition.
             "send_sms": self.send_sms,
             "send_unify_message": self.send_unify_message,
             "send_email": self.send_email,
             "make_call": self.make_call,
+            "start_task": self.start_task,
+            "wait": self.wait,
         }
+
+    def build_task_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
+        """
+        Build dynamic tools for steering active tasks.
+
+        These tools are generated based on the current active_tasks and allow
+        the LLM to ask, interject, stop, pause, resume, or answer clarifications
+        for running tasks.
+        """
+        tools: dict[str, Callable[..., Any]] = {}
+
+        for handle_id, handle_data in (self._cm.active_tasks or {}).items():
+            query = handle_data.get("query", "")
+            short_name = derive_short_name(query)
+            handle = handle_data.get("handle")
+            handle_actions = handle_data.get("handle_actions", [])
+
+            # Get pending clarifications for this handle
+            pending_clarifications = [
+                a
+                for a in handle_actions
+                if a.get("action_name") == "clarification_request"
+                and not a.get("response")
+            ]
+
+            for op in STEERING_OPERATIONS:
+                if op.requires_clarification:
+                    # Only generate answer_clarification if there are pending ones
+                    for clar in pending_clarifications:
+                        call_id = clar.get("call_id", "")
+                        suffix = safe_call_id_suffix(call_id)
+                        tool_name = build_action_name(
+                            op.name,
+                            short_name,
+                            handle_id,
+                            suffix,
+                        )
+                        tool_fn = self._make_steering_tool(
+                            handle_id,
+                            handle,
+                            op.name,
+                            op.param_name,
+                            op.get_docstring(),
+                            query,
+                            call_id,
+                        )
+                        tools[tool_name] = tool_fn
+                else:
+                    tool_name = build_action_name(op.name, short_name, handle_id)
+                    tool_fn = self._make_steering_tool(
+                        handle_id,
+                        handle,
+                        op.name,
+                        op.param_name,
+                        op.get_docstring(),
+                        query,
+                    )
+                    tools[tool_name] = tool_fn
+
+        return tools
+
+    def _make_steering_tool(
+        self,
+        handle_id: int,
+        handle: Any,
+        operation: str,
+        param_name: str,
+        docstring: str,
+        query: str,
+        call_id: str | None = None,
+    ) -> "Callable[..., Any]":
+        """Create a closure for a task steering operation."""
+        cm = self._cm
+
+        async def steering_tool(
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            # Extract parameter value
+            param_value = kwargs.get(param_name, "") if param_name else ""
+
+            # Record intervention
+            handle_data = cm.active_tasks.get(handle_id)
+            if handle_data:
+                handle_data["handle_actions"].append(
+                    {"action_name": f"{operation}_{handle_id}", "query": param_value},
+                )
+
+            # Perform the steering operation
+            result = ""
+            try:
+                match operation:
+                    case "ask":
+                        ask_handle = await handle.ask(
+                            param_value,
+                            parent_chat_context_cont=cm.chat_history,
+                        )
+                        result = await ask_handle.result()
+                    case "interject":
+                        await handle.interject(
+                            param_value,
+                            parent_chat_context_cont=cm.chat_history,
+                        )
+                        result = "Interjected successfully"
+                    case "stop":
+                        handle.stop(reason=param_value or None)
+                        result = "Task stopped"
+                        cm.active_tasks.pop(handle_id, None)
+                    case "pause":
+                        await handle.pause()
+                        result = "Task paused"
+                    case "resume":
+                        await handle.resume()
+                        result = "Task resumed"
+                    case "answer_clarification":
+                        if call_id:
+                            await handle.answer_clarification(call_id, param_value)
+                            result = "Clarification answered"
+                        else:
+                            result = "No clarification call_id available"
+                    case _:
+                        result = f"Unknown operation: {operation}"
+            except Exception as e:
+                result = f"Error: {e}"
+
+            return {"status": "ok", "operation": operation, "result": result}
+
+        # Set the docstring for the tool
+        steering_tool.__doc__ = f"{docstring}\n\nFor task: {query}"
+        if param_name:
+            steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
+
+        return steering_tool

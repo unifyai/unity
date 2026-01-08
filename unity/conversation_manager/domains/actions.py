@@ -1,6 +1,5 @@
 import asyncio
-import inspect
-from typing import Literal, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, create_model
 
@@ -8,16 +7,7 @@ from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
-from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.domains.contact_index import Contact
-from unity.conversation_manager.task_actions import (
-    STEERING_OPERATIONS,
-    derive_short_name,
-    build_action_name,
-    safe_call_id_suffix,
-    parse_action_name,
-    is_dynamic_action,
-)
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -25,247 +15,59 @@ if TYPE_CHECKING:
 event_broker = get_event_broker()
 
 
-# Starting a new task
-class StartTaskAction(BaseModel):
-    """Start a new task for the assistant to work on."""
-
-    action_name: Literal["start_task"] = Field(default="start_task")
-    query: str = Field(..., description="The task description or question")
-
-
-# wait
-class WaitForNextEvent(BaseModel):
-    action_name: Literal["wait"]
-
-
-# comms actions (main user)
-
-
-class ContactDetails(BaseModel):
-    first_name: Optional[str]
-    surname: Optional[str]
-
-
-class ContactDetailsPhone(ContactDetails):
-    phone_number: Optional[str]
-
-
-class ContactDetailsEmail(ContactDetails):
-    email_address: Optional[str]
-
-
-class SendEmail(BaseModel):
-    """Comms method to send emails"""
-
-    action_name: Literal["send_email"]
-    contact_id: Optional[int] = Field(
-        ...,
-        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
-    )
-    contact_details: Optional[ContactDetailsEmail]
-    subject: str = Field(
-        ...,
-        description="the subject of the email, should be the same as the subject of the received email without any prefix.",
-    )
-    body: str
-    email_id_to_reply_to: Optional[str] = Field(
-        ...,
-        description=(
-            "the email identifier of the received email that you are replying to "
-            "(shown as `Email ID` in active conversations). "
-            "This is used for threading (In-Reply-To / References)."
-        ),
-    )
-
-
-class SendSMS(BaseModel):
-    """Comms method to send sms"""
-
-    action_name: Literal["send_sms"]
-    contact_id: Optional[int] = Field(
-        ...,
-        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
-    )
-    contact_details: Optional[ContactDetailsPhone] = Field(
-        ...,
-        description="contact details if you can not infer the contact_id (because it is not in the active conversations), contact details will be used to retrieve the contact if it exists or create a new one",
-    )
-    content: str
-
-
-class MakeCall(BaseModel):
-    """Comms method to make outbound calls"""
-
-    action_name: Literal["make_call"]
-    contact_id: Optional[int] = Field(
-        ...,
-        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
-    )
-    contact_details: Optional[ContactDetailsPhone]
-
-
-class SendUnifyMessage(BaseModel):
-    """Send a Unify message to a contact via the Unify platform (in-app messaging)."""
-
-    action_name: Literal["send_unify_message"]
-    content: str
-    contact_id: int = Field(
-        ...,
-        description="Target contact_id as shown in active conversations.",
-    )
-
-
-def _generate_dynamic_task_actions(active_tasks: dict) -> list[type[BaseModel]]:
-    """Generate dynamic Pydantic action models for each active task.
-
-    Uses STEERING_OPERATIONS from task_actions module to programmatically
-    generate actions based on SteerableToolHandle's methods.
+def build_response_models():
     """
-    dynamic_actions = []
+    Create response models for ConversationManager's main brain.
 
-    for handle_id, handle_data in (active_tasks or {}).items():
-        query = handle_data.get("query", "")
-        short_name = derive_short_name(query)
-        handle_actions = handle_data.get("handle_actions", [])
-
-        # Get pending clarifications for this handle
-        pending_clarifications = [
-            a
-            for a in handle_actions
-            if a.get("action_name") == "clarification_request" and not a.get("response")
-        ]
-
-        for op in STEERING_OPERATIONS:
-            docstring = op.get_docstring()
-
-            if op.requires_clarification:
-                # Only generate if there are pending clarifications
-                for clar in pending_clarifications:
-                    call_id = clar.get("call_id", "")
-                    suffix = safe_call_id_suffix(call_id)
-                    action_name = build_action_name(
-                        op.name,
-                        short_name,
-                        handle_id,
-                        suffix,
-                    )
-                    model_name = f"{op.name.title().replace('_', '')}{short_name.title().replace('_', '')}{handle_id}_{suffix}"
-
-                    # Build fields based on operation's param_name
-                    fields = {
-                        "action_name": (
-                            Literal[action_name],
-                            Field(default=action_name),
-                        ),
-                    }
-                    if op.param_name:
-                        fields[op.param_name] = (str, Field(..., description=docstring))
-
-                    dynamic_actions.append(
-                        create_model(model_name, __base__=BaseModel, **fields),
-                    )
-            else:
-                action_name = build_action_name(op.name, short_name, handle_id)
-                model_name = f"{op.name.title().replace('_', '')}{short_name.title().replace('_', '')}{handle_id}"
-
-                # Build fields based on operation's param_name
-                fields = {
-                    "action_name": (Literal[action_name], Field(default=action_name)),
-                }
-                if op.param_name:
-                    # Some params are optional (like "reason" for stop)
-                    if op.name == "stop":
-                        fields[op.param_name] = (
-                            Optional[str],
-                            Field(default=None, description=docstring),
-                        )
-                    else:
-                        fields[op.param_name] = (str, Field(..., description=docstring))
-
-                dynamic_actions.append(
-                    create_model(model_name, __base__=BaseModel, **fields),
-                )
-
-    return dynamic_actions
-
-
-def build_dynamic_response_models(active_tasks: dict = None):
-    """
-    Create response models with dynamic per-task actions.
-
-    Args:
-        active_tasks: Dict of active task handles {handle_id: {"query": str, "handle": ..., ...}}
+    All actions (comms, task steering, etc.) are now tool calls.
+    The response model only captures the LLM's reasoning.
 
     Returns:
         dict: Response models for different modes (call, unify_meet, text)
     """
-    # Build list of always available action types
-    available_actions = [
-        StartTaskAction,
-        WaitForNextEvent,
-    ]
-
-    # Add dynamic per-task actions
-    available_actions.extend(_generate_dynamic_task_actions(active_tasks))
-
-    # Create dynamic Union of available actions
-    ActionsUnion = Union[tuple(available_actions)]
-
-    # Dynamically create Response model for text mode
-    DynamicResponse = create_model(
-        "DynamicResponse",
-        thoughts=(str, ...),
-        actions=(Optional[list[ActionsUnion]], ...),
+    # Text mode: just thoughts
+    TextResponse = create_model(
+        "TextResponse",
+        thoughts=(
+            str,
+            Field(..., description="Your concise reasoning before taking actions"),
+        ),
         __base__=BaseModel,
     )
 
-    # Dynamically create ResponseVoice model for call/unify_meet modes
+    # Voice mode: thoughts + guidance for the Voice Agent
     # Both TTS and Realtime modes use call_guidance - the Main CM Brain
     # provides guidance/data to the voice agent (fast brain) which handles
-    # the actual conversation. This enables careful orchestration decisions
-    # without blocking the voice stream.
-    DynamicResponseVoice = create_model(
-        "DynamicResponseVoice",
-        thoughts=(str, ...),
-        call_guidance=(str, ...),
-        actions=(Optional[list[ActionsUnion]], ...),
+    # the actual conversation.
+    VoiceResponse = create_model(
+        "VoiceResponse",
+        thoughts=(
+            str,
+            Field(..., description="Your concise reasoning before taking actions"),
+        ),
+        call_guidance=(
+            str,
+            Field(..., description="Guidance for the Voice Agent handling the call"),
+        ),
         __base__=BaseModel,
     )
 
     return {
-        "call": DynamicResponseVoice,
-        "unify_meet": DynamicResponseVoice,
-        "text": DynamicResponse,
+        "call": VoiceResponse,
+        "unify_meet": VoiceResponse,
+        "text": TextResponse,
     }
 
 
 class Action:
+    """Registry for action handlers used by tool implementations."""
+
     action_handlers = {}
 
     @classmethod
-    def take_action(cls, cm, action_name, _as_task=True, *args, **kwargs):
-        # Check static handlers first
-        f = cls.action_handlers.get(action_name)
-
-        # If not found, check if it's a dynamic task action
-        if not f and is_dynamic_action(action_name):
-            f = DynamicTaskActionHandler.handle
-
-        if not f:
-            raise Exception(
-                f"unregistered action: {action_name}, make sure to register action",
-            )
-        result = f(cm, action_name, *args, **kwargs)
-        if inspect.isawaitable(result):
-            if _as_task:
-                t = asyncio.create_task(result)
-                t.add_done_callback(log_task_exc)
-                return t
-            return result
-        return result
-
-    @classmethod
     def register(cls, action_name: str | list[str] = None):
+        """Register an action handler function."""
+
         def wrapper(func):
             names = (
                 [action_name or func.__name__]
@@ -570,116 +372,3 @@ async def start_task_action(
     asyncio.create_task(
         managers_utils.actor_watch_clarifications(handle_id, handle),
     )
-
-
-class DynamicTaskActionHandler:
-    """Handler for dynamic per-task actions derived from SteerableToolHandle methods."""
-
-    @staticmethod
-    async def handle(
-        cm: "ConversationManager",
-        action_name: str,
-        *args,
-        **kwargs,
-    ):
-        await managers_utils.wait_for_initialization(cm)
-
-        parsed = parse_action_name(action_name)
-        operation = parsed.operation
-        handle_id = parsed.handle_id
-        call_id_suffix = parsed.call_id_suffix
-
-        handle_data = cm.active_tasks.get(handle_id)
-        if not handle_data:
-            print(
-                f"[TaskHandler] Unknown handle_id={handle_id} for action {action_name}",
-            )
-            return
-
-        handle = handle_data["handle"]
-        steering_op = parsed.steering_operation
-
-        # Extract the appropriate parameter based on operation's param_name
-        param_value = ""
-        if steering_op and steering_op.param_name:
-            param_value = kwargs.get(steering_op.param_name, "")
-        # Fallback: check common parameter names
-        if not param_value:
-            param_value = kwargs.get(
-                "query",
-                kwargs.get("message", kwargs.get("answer", kwargs.get("reason", ""))),
-            )
-
-        # Record intervention
-        handle_data["handle_actions"].append(
-            {"action_name": action_name, "query": param_value},
-        )
-
-        # Perform intervention by calling the corresponding method on handle
-        result = ""
-        full_call_id = ""
-        try:
-            match operation:
-                case "ask":
-                    ask_handle = await handle.ask(param_value)
-                    result = await ask_handle.result()
-                case "interject":
-                    await handle.interject(param_value)
-                    result = "Interjected"
-                case "stop":
-                    stop_r = handle.stop(reason=param_value or None)
-                    if inspect.isawaitable(stop_r):
-                        await stop_r
-                    result = "Stopped"
-                    cm.active_tasks.pop(handle_id, None)
-                case "pause":
-                    pause_r = handle.pause()
-                    if inspect.isawaitable(pause_r):
-                        await pause_r
-                    result = "Paused"
-                case "resume":
-                    resume_r = handle.resume()
-                    if inspect.isawaitable(resume_r):
-                        await resume_r
-                    result = "Resumed"
-                case "answer_clarification":
-                    # Find the full call_id from pending clarifications
-                    pending_clars = [
-                        a
-                        for a in handle_data.get("handle_actions", [])
-                        if a.get("action_name") == "clarification_request"
-                        and not a.get("response")
-                    ]
-                    for clar in pending_clars:
-                        cid = clar.get("call_id", "")
-                        if call_id_suffix and cid.endswith(call_id_suffix):
-                            full_call_id = cid
-                            break
-                    if not full_call_id and pending_clars:
-                        full_call_id = pending_clars[0].get("call_id", "")
-
-                    if full_call_id:
-                        await handle.answer_clarification(full_call_id, param_value)
-                        result = "Clarification Answered"
-                    else:
-                        result = "No pending clarification found"
-                case _:
-                    print(
-                        f"[TaskHandler] Unknown operation={operation} for {action_name}",
-                    )
-                    return
-        except Exception as e:
-            result = f"Error: {e}"
-            print(f"[TaskHandler] {result}")
-
-        # publish response
-        await event_broker.publish(
-            f"app:actor:handle_{handle_id}_{operation}_issued",
-            ActorHandleResponse(
-                handle_id=handle_id,
-                action_name=action_name,
-                query=param_value,
-                response=f"{operation.title()}: {result}",
-                call_id=full_call_id,
-            ).to_json(),
-        )

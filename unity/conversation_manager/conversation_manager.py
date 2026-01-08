@@ -3,7 +3,6 @@ import logging
 
 import json
 from dataclasses import dataclass
-import traceback
 from typing import Optional
 import contextlib
 import contextvars
@@ -30,10 +29,6 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.events import _get_now
 
 from unity.conversation_manager.domains.llm import LLM
-from unity.conversation_manager.domains.actions import (
-    Action,
-    build_dynamic_response_models,
-)
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 
@@ -354,7 +349,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         brain_tools = ConversationManagerBrainTools(self)
         action_tools = ConversationManagerBrainActionTools(self)
-        tools = {**brain_tools.as_tools(), **action_tools.as_tools()}
+        # Combine static tools with dynamic task steering tools
+        tools = {
+            **brain_tools.as_tools(),
+            **action_tools.as_tools(),
+            **action_tools.build_task_steering_tools(),
+        }
 
         def _brain_tool_policy(step_index: int, tools: dict) -> tuple[str, dict]:
             # Keep the tool surface conservative: allow inspection tools on the first turn
@@ -408,37 +408,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     event.to_json(),
                 )
 
-        # Log LLM response
-        actions = parsed_out.get("actions") or []  # sometimes actions exist but is None
-        action_names = (
-            [a.get("action_name", "unknown") for a in actions] if actions else []
-        )
+        # Log LLM response (actions are now tool calls, handled by the async tool loop)
+        thoughts = parsed_out.get("thoughts", "")
         self._session_logger.log_llm_response(
-            f"{len(actions)} action(s): {action_names}" if actions else "no actions",
+            (
+                f"thoughts: {thoughts[:100]}..."
+                if len(thoughts) > 100
+                else f"thoughts: {thoughts}"
+            ),
         )
-
-        print(f"parsed_out {parsed_out}")
-        action_coros = []
-        for action in actions:
-            print("taking actions...")
-            coro = Action.take_action(
-                self,
-                action.pop("action_name"),
-                _as_task=False,
-                **action,
-                is_voice_call=self.call_manager.uses_realtime_api,
-            )
-            if coro is not None:
-                action_coros.append(coro)
-            print("done taking actions...")
-
-        if action_coros:
-            results = await asyncio.gather(*action_coros, return_exceptions=True)
-            for r in results:
-                if isinstance(r, asyncio.CancelledError):
-                    continue
-                if isinstance(r, Exception):
-                    traceback.print_exception(type(r), r, r.__traceback__)
 
         self.commit()
         print("commiting...")
@@ -573,10 +551,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
     def build_response_model(self):
-        # Initial build without active tasks - actual models are rebuilt per LLM call
-        self.dynamic_response_models = build_dynamic_response_models(
-            active_tasks={},
-        )
+        # Response models are now static (cached in brain.py) since all actions are tools
+        pass
 
     async def store_chat_history(self):
         if len(self.chat_history) >= 2:
