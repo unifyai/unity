@@ -950,12 +950,12 @@ jobs:
           echo "○ pytest logs: directory not found (skipping)"
         fi
 
-        # --- LLM logs ---
-        if [ -d logs/llm ]; then
-          file_count=$(find logs/llm -type f 2>/dev/null | wc -l | tr -d ' ')
-          echo "✓ llm logs: $file_count files"
+        # --- Unillm logs ---
+        if [ -d logs/unillm ]; then
+          file_count=$(find logs/unillm -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "✓ unillm logs: $file_count files"
         else
-          echo "○ llm logs: directory not found (skipping)"
+          echo "○ unillm logs: directory not found (skipping)"
         fi
 
         # --- Orchestra logs (requires filename sanitization) ---
