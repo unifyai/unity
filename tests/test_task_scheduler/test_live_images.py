@@ -4,6 +4,7 @@ import base64
 import os
 import pytest
 
+from tests.assertion_helpers import find_tool_calls_and_results
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.image_manager.image_manager import ImageManager
@@ -106,29 +107,19 @@ async def test_ask_live_images_queue_order(first_head: str, static_now) -> None:
     handle = await ts.ask(question, images=images, _return_reasoning_steps=True)
     answer, messages = await handle.result()
 
-    # Expect image-aware behaviour via ask_image or attach_image_raw
-    image_calls = []
-    for m in messages:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = (tc.get("function") or {}).get("name")
-            if fn in ("ask_image", "attach_image_raw"):
-                image_calls.append(tc)
+    # 1) Verify the model used ask_image or attach_image_raw to process the images
+    ask_image_calls, _ = find_tool_calls_and_results(messages, "ask_image")
+    attach_image_calls, _ = find_tool_calls_and_results(messages, "attach_image_raw")
     assert (
-        image_calls
-    ), "Expected ask_image or attach_image_raw to be used with live images"
+        ask_image_calls or attach_image_calls
+    ), "Expected the model to use ask_image or attach_image_raw with live images"
 
-    # Verify a tasks lookup occurred (search_tasks or filter_tasks)
-    lookup_calls = []
-    for m in messages:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = (tc.get("function") or {}).get("name")
-            if fn in ("search_tasks", "filter_tasks"):
-                lookup_calls.append(tc)
-    assert lookup_calls, "Expected a tasks lookup (search_tasks or filter_tasks)"
+    # 2) Verify a tasks lookup occurred (search_tasks or filter_tasks)
+    search_calls, _ = find_tool_calls_and_results(messages, "search_tasks")
+    filter_calls, _ = find_tool_calls_and_results(messages, "filter_tasks")
+    assert (
+        search_calls or filter_calls
+    ), "Expected a tasks lookup (search_tasks or filter_tasks)"
 
     # The answer (or the tool outputs) should indicate which of the two comes first
     expected_first = first_head.lower()
@@ -243,29 +234,19 @@ async def test_update_live_images_reorder_three_tasks(static_now) -> None:
     handle = await ts.update(command, images=images, _return_reasoning_steps=True)
     _, messages = await handle.result()
 
-    # Expect image-aware behaviour via ask_image or attach_image_raw
-    image_calls = []
-    for m in messages:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = (tc.get("function") or {}).get("name")
-            if fn in ("ask_image", "attach_image_raw"):
-                image_calls.append(tc)
+    # 1) Verify the model used ask_image or attach_image_raw to process the images
+    ask_image_calls, _ = find_tool_calls_and_results(messages, "ask_image")
+    attach_image_calls, _ = find_tool_calls_and_results(messages, "attach_image_raw")
     assert (
-        image_calls
-    ), "Expected ask_image or attach_image_raw to be used with live images"
+        ask_image_calls or attach_image_calls
+    ), "Expected the model to use ask_image or attach_image_raw with live images"
 
-    # Verify a tasks lookup occurred (search_tasks or filter_tasks)
-    lookup_calls = []
-    for m in messages:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = (tc.get("function") or {}).get("name")
-            if fn in ("search_tasks", "filter_tasks"):
-                lookup_calls.append(tc)
-    assert lookup_calls, "Expected a tasks lookup (search_tasks or filter_tasks)"
+    # 2) Verify a tasks lookup occurred (search_tasks or filter_tasks)
+    search_calls, _ = find_tool_calls_and_results(messages, "search_tasks")
+    filter_calls, _ = find_tool_calls_and_results(messages, "filter_tasks")
+    assert (
+        search_calls or filter_calls
+    ), "Expected a tasks lookup (search_tasks or filter_tasks)"
 
     # After update, verify the queue order is Invitation → Organize → Image Edits
     row0 = ts._filter_tasks(filter="task_id == 0")[0]
