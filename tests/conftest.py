@@ -388,6 +388,20 @@ def pytest_sessionstart(session):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    # Write cache stats to a temp file for parallel_run.sh to consume
+    # The file is keyed by UNITY_TMUX_SESSION_ID env var (set by parallel_run.sh)
+    try:
+        import unillm
+
+        stats = unillm.get_cache_stats()
+        session_id = os.environ.get("UNITY_TMUX_SESSION_ID", "")
+        if session_id:
+            stats_file = f"/tmp/parallel_run_cache_{session_id}.txt"
+            with open(stats_file, "w") as f:
+                f.write(f"{stats.hits}|{stats.misses}\n")
+    except Exception:
+        pass  # Don't fail the test run if cache stats writing fails
+
     if SETTINGS.UNIFY_TESTS_DELETE_PROJ_ON_EXIT:
         unify.delete_project(unify.active_project())
 
