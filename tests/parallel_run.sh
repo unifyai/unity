@@ -1168,6 +1168,10 @@ collect_nodes_batch() {
   else
     cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$quoted_targets")
   fi
+
+  # Debug: show the collection command (first 500 chars)
+  echo "[DEBUG] Collection command (truncated): ${cmd:0:500}" >&2
+
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   # Redirect stdin from /dev/null to prevent hangs when multiple processes compete for stdin
   # Note: stderr is captured to a temp file so collection errors can be surfaced if no tests found
@@ -1175,6 +1179,12 @@ collect_nodes_batch() {
   stderr_file=$(mktemp)
   local result
   result=$(bash -lc "$cmd" < /dev/null 2>"$stderr_file" | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true)
+
+  # Debug: always show stderr if present (not just when result is empty)
+  if [[ -s "$stderr_file" ]]; then
+    echo "[DEBUG] pytest collection stderr:" >&2
+    head -100 "$stderr_file" >&2
+  fi
 
   # If no tests collected and there was stderr output, show it for debugging
   if [[ -z "$result" && -s "$stderr_file" ]]; then
