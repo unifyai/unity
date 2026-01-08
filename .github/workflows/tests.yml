@@ -764,26 +764,25 @@ jobs:
     - name: Dump orchestra logs on failure
       if: failure()
       run: |
-        # Orchestra with ORCHESTRA_PREFIX=unity writes to /tmp/unity-local-server.*
         echo "=== Orchestra Server Logs ==="
-        if [ -f /tmp/unity-local-server.log ]; then
-          cat /tmp/unity-local-server.log
+        if [ -f /tmp/orchestra-local-server.log ]; then
+          cat /tmp/orchestra-local-server.log
           # Also copy to logs/orchestra/ so it gets uploaded with artifacts
           if [ -d logs/orchestra ]; then
             # Find the session directory (most recent timestamp)
             session_dir=$(ls -td logs/orchestra/*/ 2>/dev/null | head -1)
             if [ -n "$session_dir" ]; then
-              cp /tmp/unity-local-server.log "$session_dir/server.log"
+              cp /tmp/orchestra-local-server.log "$session_dir/server.log"
               echo "(Copied to $session_dir/server.log for artifact upload)"
             fi
           fi
         else
-          echo "No orchestra log file found at /tmp/unity-local-server.log"
+          echo "No orchestra log file found at /tmp/orchestra-local-server.log"
         fi
         echo ""
         echo "=== Orchestra Server Process Status ==="
-        if [ -f /tmp/unity-local-server.pid ]; then
-          PID=$(cat /tmp/unity-local-server.pid)
+        if [ -f /tmp/orchestra-local-server.pid ]; then
+          PID=$(cat /tmp/orchestra-local-server.pid)
           echo "Expected PID: $PID"
           if ps -p "$PID" > /dev/null 2>&1; then
             echo "Process is still running"
@@ -928,7 +927,7 @@ jobs:
       continue-on-error: true  # Cleanup failures shouldn't affect job status
       run: |
         trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
-        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
+        orchestra/scripts/local.sh stop || true
 
     - name: Prepare logs for upload
       if: always()
@@ -1004,7 +1003,7 @@ jobs:
         # Kill all unity tmux servers and purge orphaned test processes
         tests/kill_server.sh --all || true
         # Orchestra already stopped before log upload, but ensure it's down
-        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
+        orchestra/scripts/local.sh stop || true
         echo "Cleanup complete."
 
   # Cleanup job: runs ONCE after all pytest jobs complete or are cancelled

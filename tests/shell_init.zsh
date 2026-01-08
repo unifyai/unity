@@ -86,8 +86,7 @@ orchestra() {
     local orchestra_repo="${ORCHESTRA_REPO_PATH:-${git_root:-$UNITY_TESTS_DIR/..}/../orchestra}"
 
     if [[ -x "$orchestra_repo/scripts/local.sh" ]]; then
-        # Set Unity-specific defaults if not already set
-        export ORCHESTRA_PREFIX="${ORCHESTRA_PREFIX:-unity}"
+        # Set defaults if not already set
         export ORCHESTRA_SEED_USER="${ORCHESTRA_SEED_USER:-1}"
         export ORCHESTRA_TEST_USER_ID="${ORCHESTRA_TEST_USER_ID:-unity-test-user-001}"
         export ORCHESTRA_TEST_EMAIL="${ORCHESTRA_TEST_EMAIL:-unity-test@debug.local}"
