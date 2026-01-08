@@ -184,30 +184,16 @@ async def generate_consolidated_analysis(
         system_message=system_prompt,
     )
 
-    # Write analysis file
+    # Write analysis file (no Data Sources section - internal terminology)
     analysis_path = metric_dir / "_analysis.md"
     analysis_content = f"""# {metric_name.replace('_', ' ').title()} - Consolidated Analysis
 
-> Generated from {len(all_results)} parameter combinations
-> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
+> Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
 
 ---
 
 {response}
-
----
-
-## Data Sources
-
-| # | Parameters | Log File |
-|---|------------|----------|
 """
-
-    for i, item in enumerate(all_results, 1):
-        params_str = (
-            ", ".join(f"{k}={v}" for k, v in item["params"].items()) or "(defaults)"
-        )
-        analysis_content += f"| {i} | {params_str} | `{item['log_file']}` |\n"
 
     analysis_path.write_text(analysis_content)
 
