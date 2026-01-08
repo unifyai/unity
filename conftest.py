@@ -1,6 +1,5 @@
 import sys
 import os
-import json
 import re
 import pytest
 from pathlib import Path
@@ -617,32 +616,6 @@ def pytest_unconfigure(config):
             setattr(tr._tw, _TEE_STREAM_ATTR, _TEE_ORIG_STREAM)
         _TEE_ORIG_STREAM = None
         _TEE_STREAM_ATTR = None
-
-    # Write cache stats to JSON for CI aggregation
-    if _TEE_LOG_PATH is not None:
-        try:
-            from unity.common.llm_io_hooks import get_cache_stats
-
-            stats = get_cache_stats()
-            # Determine llm log directory path (same subdir as pytest logs)
-            log_subdir = _get_log_subdir()
-            log_root = _get_log_root(config.rootpath)
-            llm_log_dir = log_root / "logs" / "llm" / log_subdir
-
-            cache_stats_file = _TEE_LOG_PATH.with_suffix(".cache_stats.json")
-            cache_stats_file.write_text(
-                json.dumps(
-                    {
-                        "hits": stats["hits"],
-                        "misses": stats["misses"],
-                        "hit_rate": stats["hit_rate"],
-                        "llm_log_dir": str(llm_log_dir),
-                    },
-                    indent=2,
-                ),
-            )
-        except Exception:
-            pass  # Best effort - don't fail tests if cache stats can't be written
 
     _TEE_LOG_PATH = None
     # No sys.stdout/sys.stderr monkeypatch remains; nothing to restore here.
