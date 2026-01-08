@@ -2432,6 +2432,21 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self._completion_event = asyncio.Event()
         self.skipped_functions: set = set()
 
+        # ------------------------------------------------------------------ #
+        #                   Bottom-up event APIs
+        # ------------------------------------------------------------------ #
+        # These queues provide a stable, tool-loop-friendly surface for
+        # external supervisors (e.g. ConversationManager) to consume
+        # notifications/clarifications via SteerableToolHandle.
+        #
+        # NOTE: We keep the legacy `clarification_up_q` / `clarification_down_q`
+        # channels for existing tests and integrations, but new code should
+        # prefer `next_clarification()` + `answer_clarification(call_id, ...)`.
+        self._notification_q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._clarification_q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._clarification_waiters: dict[str, asyncio.Future[str]] = {}
+        self._clarification_waiters_lock = asyncio.Lock()
+
         if self.persist:
             self._done_events = asyncio.Queue()
             self.cumulative_interactions: List[Tuple] = []
@@ -2784,6 +2799,27 @@ async def main_plan():
                         )
                     except Exception:
                         pass
+                    try:
+                        payload = event.get("payload") or {}
+                        if not isinstance(payload, dict):
+                            payload = {"raw": payload}
+                        msg = (
+                            payload.get("message")
+                            or payload.get("response")
+                            or payload.get("content")
+                            or str(payload)
+                        )
+                        await self._notification_q.put(
+                            {
+                                "message": str(msg),
+                                "payload": payload,
+                                "handle_id": str(event.get("handle_id", "")),
+                                "origin": event.get("origin") or {},
+                            },
+                        )
+                    except Exception:
+                        # Notifications must be best-effort; never crash supervisor.
+                        pass
         except asyncio.CancelledError:
             return
         except Exception as e:
@@ -2794,7 +2830,7 @@ async def main_plan():
 
         handle_id = str(event.get("handle_id", ""))
         payload = event.get("payload") or {}
-        call_id = str(payload.get("call_id", ""))
+        pane_call_id = str(payload.get("call_id", ""))
         question = str(payload.get("question", ""))
         origin_tool = ""
         try:
@@ -2807,20 +2843,73 @@ async def main_plan():
             f"PANE clarification from {origin_tool or '<unknown>'}: {question}",
         )
 
-        if self.clarification_enabled:
+        # ------------------------------------------------------------------ #
+        # Surface clarification to outer supervisors + wait for routed answer.
+        # ------------------------------------------------------------------ #
+        # We generate a *handle-scoped* call_id for outer routing. The pane uses
+        # `(handle_id, pane_call_id)` internally; outer systems only see this
+        # `external_call_id` and answer via `answer_clarification(external_call_id, ...)`.
+        external_call_id = f"clar_{uuid.uuid4().hex[:12]}"
+
+        waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        async with self._clarification_waiters_lock:
+            self._clarification_waiters[external_call_id] = waiter
+
+        # Publish clarification event for `next_clarification()` consumers.
+        await self._clarification_q.put(
+            {
+                "question": question,
+                "call_id": external_call_id,
+                # Diagnostic fields (safe to ignore):
+                "pane_call_id": pane_call_id,
+                "origin_handle_id": handle_id,
+                "origin_tool": origin_tool,
+            },
+        )
+
+        # Legacy bridge: also surface the question via the string queue when configured.
+        if self.clarification_up_q is not None:
+            with contextlib.suppress(Exception):
+                await self.clarification_up_q.put(question)
+
             # Pause the plan (non-immediate: avoids browser interrupt assumptions).
             with contextlib.suppress(Exception):
                 await self.pause(immediate=False)
 
-            # Ask user via queues, then answer the clarification.
-            await self.clarification_up_q.put(question)
-            user_answer = await self.clarification_down_q.get()
+        down_task: asyncio.Task[str] | None = None
+        try:
+            # Compatibility: allow legacy `clarification_down_q` answers to satisfy the waiter.
+            if self.clarification_down_q is not None:
+                down_task = asyncio.create_task(
+                    self.clarification_down_q.get(),
+                    name=f"PaneClarDown-{external_call_id}",
+                )
+
+            wait_set: set[asyncio.Future] = {waiter}
+            if down_task is not None:
+                wait_set.add(down_task)
+
+            done, pending = await asyncio.wait(
+                wait_set,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            user_answer: str
+            if waiter in done:
+                user_answer = str(waiter.result())
+            else:
+                assert down_task is not None
+                user_answer = str(down_task.result())
+                # Best-effort: also fulfill the waiter for call_id-based consumers.
+                with contextlib.suppress(Exception):
+                    waiter.set_result(user_answer)
+
             self.action_log.append(
                 f"PANE clarification answered by user: {user_answer}",
             )
 
-            # Forward into the specific in-flight handle via the pane.
-            await self.pane.answer_clarification(handle_id, call_id, user_answer)
+            # Forward into the specific in-flight handle via the pane (pane_call_id routing).
+            await self.pane.answer_clarification(handle_id, pane_call_id, user_answer)
 
             # Also record as an interaction for verification traces (best-effort).
             interactions_log = current_interaction_sink_var.get()
@@ -2829,19 +2918,22 @@ async def main_plan():
                     (
                         "pane_steering",
                         "answer_clarification",
-                        f"handle_id={handle_id} call_id={call_id}",
+                        f"handle_id={handle_id} pane_call_id={pane_call_id}",
                     ),
                 )
+        finally:
+            if down_task is not None and not down_task.done():
+                down_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await down_task
+
+            async with self._clarification_waiters_lock:
+                fut = self._clarification_waiters.pop(external_call_id, None)
+                if fut is not None and not fut.done():
+                    fut.cancel()
 
             with contextlib.suppress(Exception):
                 await self.resume()
-        else:
-            # No user clarification channel available: best-effort forward a neutral response.
-            await self.pane.answer_clarification(
-                handle_id,
-                call_id,
-                "No user clarification channel is available. Please proceed with your best judgment.",
-            )
 
     async def _start_main_execution_loop(self):
         """
@@ -2996,29 +3088,66 @@ async def main_plan():
                 f"Decision: Requesting user clarification for '{function_name}'. Reason: {decision.reason}",
             )
 
-            if not self.clarification_enabled:
-                self.action_log.append(
-                    "Clarification requested but no clarification channel available. Attempting to implement with best guess.",
-                )
-                await self._handle_dynamic_implementation(
-                    function_name,
-                    replan_reason="Clarification channel not available. Please proceed with your best guess.",
-                    call_stack_snapshot=kwargs.get(
-                        "call_stack_snapshot",
-                    ),
-                    scoped_context_snapshot=kwargs.get(
-                        "scoped_context_snapshot",
-                    ),
-                )
-            else:
-                question = (
-                    decision.clarification_question
-                    or "I need help understanding how to implement this function."
-                )
-                self.action_log.append(f"Asking user: {question}")
+            question = (
+                decision.clarification_question
+                or "I need help understanding how to implement this function."
+            )
+            self.action_log.append(f"Asking user: {question}")
 
-                await self.clarification_up_q.put(question)
-                answer = await self.clarification_down_q.get()
+            # Surface via `next_clarification()` and block until answered.
+            external_call_id = f"clar_{uuid.uuid4().hex[:12]}"
+            waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            async with self._clarification_waiters_lock:
+                self._clarification_waiters[external_call_id] = waiter
+
+            await self._clarification_q.put(
+                {
+                    "question": question,
+                    "call_id": external_call_id,
+                    "origin_tool": f"dynamic_implementation:{function_name}",
+                },
+            )
+
+            if self.clarification_up_q is not None:
+                with contextlib.suppress(Exception):
+                    await self.clarification_up_q.put(question)
+
+            down_task: asyncio.Task[str] | None = None
+            try:
+                if self.clarification_down_q is not None:
+                    down_task = asyncio.create_task(
+                        self.clarification_down_q.get(),
+                        name=f"ImplClarDown-{external_call_id}",
+                    )
+
+                wait_set: set[asyncio.Future] = {waiter}
+                if down_task is not None:
+                    wait_set.add(down_task)
+
+                done, pending = await asyncio.wait(
+                    wait_set,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if waiter in done:
+                    answer = str(waiter.result())
+                else:
+                    assert down_task is not None
+                    answer = str(down_task.result())
+                    with contextlib.suppress(Exception):
+                        waiter.set_result(answer)
+
+            finally:
+                if down_task is not None and not down_task.done():
+                    down_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await down_task
+
+                async with self._clarification_waiters_lock:
+                    fut = self._clarification_waiters.pop(external_call_id, None)
+                    if fut is not None and not fut.done():
+                        fut.cancel()
+
                 self.action_log.append(f"User answered: {answer}")
 
                 await self._handle_dynamic_implementation(
@@ -5267,28 +5396,25 @@ async def main_plan():
         return handle
 
     async def next_clarification(self) -> dict:
-        """Awaits the next clarification question from the running plan."""
-        if not self.clarification_enabled:
-            await asyncio.Event().wait()
-            return {}
-        question = await self.clarification_up_q.get()
-        return {"question": question}
+        """Await the next clarification question from the running plan."""
+        return await self._clarification_q.get()
 
     async def next_notification(self) -> dict:
-        """
-        Awaits the next notification from the running plan.
-        NOTE: This is not implemented for HierarchicalActorHandle and will wait indefinitely.
-        """
-        await asyncio.Event().wait()
-        return {}
+        """Await the next notification from the running plan."""
+        return await self._notification_q.get()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
-        """
-        Provides an answer to a pending clarification question.
-        The call_id is ignored as this handle only manages one clarification channel.
-        """
-        if self.clarification_enabled:
-            await self.clarification_down_q.put(answer)
+        """Provide an answer to a pending clarification question."""
+        cid = str(call_id or "")
+        async with self._clarification_waiters_lock:
+            fut = self._clarification_waiters.get(cid)
+            if fut is not None and not fut.done():
+                fut.set_result(str(answer))
+                return
+
+        # Fallback for legacy integrations/tests that only use the down-channel queue.
+        if self.clarification_down_q is not None:
+            await self.clarification_down_q.put(str(answer))
 
     def _is_valid_method(self, name: str) -> bool:
         """
@@ -5923,23 +6049,72 @@ class HierarchicalActor(BaseActor):
 
         async def request_clarification_primitive(question: str) -> str:
             """Allows the plan to ask for clarification during execution."""
-            if not plan.clarification_enabled:
-                raise RuntimeError("Clarification is not supported in this context.")
             plan.action_log.append(f"Asking clarification: {question}")
             call_repr = f"request_clarification('{question}')"
+            external_call_id = f"clar_{uuid.uuid4().hex[:12]}"
+            waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            async with plan._clarification_waiters_lock:
+                plan._clarification_waiters[external_call_id] = waiter
+
+            down_task: asyncio.Task[str] | None = None
             try:
-                await asyncio.wait_for(
-                    plan.clarification_up_q.put(question),
-                    timeout=5,
+                await plan._clarification_q.put(
+                    {
+                        "question": question,
+                        "call_id": external_call_id,
+                        "origin_tool": "request_clarification",
+                    },
                 )
-                answer = await asyncio.wait_for(
-                    plan.clarification_down_q.get(),
-                    timeout=120,
+
+                # Legacy bridge for tests/integrations that consume the up/down queues.
+                if plan.clarification_up_q is not None:
+                    await asyncio.wait_for(
+                        plan.clarification_up_q.put(question),
+                        timeout=5,
+                    )
+
+                if plan.clarification_down_q is not None:
+                    down_task = asyncio.create_task(
+                        plan.clarification_down_q.get(),
+                        name=f"PlanClarDown-{external_call_id}",
+                    )
+
+                wait_set: set[asyncio.Future] = {waiter}
+                if down_task is not None:
+                    wait_set.add(down_task)
+
+                done, pending = await asyncio.wait(
+                    wait_set,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                if waiter in done:
+                    answer = str(waiter.result())
+                else:
+                    assert down_task is not None
+                    answer = str(down_task.result())
+                    with contextlib.suppress(Exception):
+                        waiter.set_result(answer)
+
+                for t in pending:
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await t
+
             except asyncio.TimeoutError:
                 raise FatalVerificationError(
                     "Timed out waiting for user clarification.",
                 )
+            finally:
+                if down_task is not None and not down_task.done():
+                    down_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await down_task
+
+                async with plan._clarification_waiters_lock:
+                    fut = plan._clarification_waiters.pop(external_call_id, None)
+                    if fut is not None and not fut.done():
+                        fut.cancel()
             plan.action_log.append(f"Received clarification: {answer}")
             interaction_to_log = ("tool_call", call_repr, answer)
             interactions_log = current_interaction_sink_var.get()
