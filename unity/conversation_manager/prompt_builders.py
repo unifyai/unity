@@ -2,47 +2,12 @@
 Prompt builders for ConversationManager.
 
 Follows the same pattern as other managers (ContactManager, TranscriptManager, etc.)
-by programmatically building prompts from docstrings and action models rather than
-using static markdown files.
+by programmatically building prompts from docstrings rather than using static markdown files.
 """
 
 from __future__ import annotations
 
 import textwrap
-from typing import TYPE_CHECKING
-
-from unity.conversation_manager.task_actions import iter_available_actions_for_task
-
-if TYPE_CHECKING:
-    pass
-
-
-def _build_active_tasks_action_descriptions(active_tasks: dict) -> str:
-    """Build descriptions for dynamic per-task actions based on active tasks."""
-    if not active_tasks:
-        return ""
-
-    lines = []
-    for handle_id, handle_data in active_tasks.items():
-        query = handle_data.get("query", "")
-        handle_actions = handle_data.get("handle_actions", [])
-
-        # Get pending clarifications
-        pending_clarifications = [
-            a
-            for a in handle_actions
-            if a.get("action_name") == "clarification_request" and not a.get("response")
-        ]
-
-        lines.append(f"\n                For task '{query}' (id={handle_id}):")
-        for action_name, description in iter_available_actions_for_task(
-            handle_id,
-            query,
-            pending_clarifications,
-        ):
-            lines.append(f"                - `{action_name}`: {description}")
-
-    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +24,6 @@ def build_system_prompt(
     phone_number: str | None = None,
     email_address: str | None = None,
     is_voice_call: bool = False,
-    active_tasks: dict | None = None,
 ) -> str:
     """
     Build the system prompt for the ConversationManager LLM.
@@ -75,13 +39,11 @@ def build_system_prompt(
     surname : str
         The boss contact's surname.
     phone_number : str | None
-        The boss contact's phone number (enables SMS/call actions).
+        The boss contact's phone number (enables SMS/call tools).
     email_address : str | None
-        The boss contact's email address (enables email actions).
+        The boss contact's email address (enables email tools).
     is_voice_call : bool
         Whether we are currently on a voice call (includes <voice_calls_guide> in prompt).
-    active_tasks : dict | None
-        Currently active tasks with their handles and state.
 
     Returns
     -------
@@ -100,16 +62,6 @@ def build_system_prompt(
         boss_details_parts.append(f"Email Address: {email_address}")
     boss_details = "\n    ".join(boss_details_parts)
 
-    # Build available comms actions list
-    comms_actions = []
-    # Comms are gradually migrating from JSON `actions` to tool calls.
-    comms_actions_list = "\n        ".join(f"- {a}" for a in comms_actions)
-
-    # Build dynamic task action descriptions
-    active_tasks_descriptions = _build_active_tasks_action_descriptions(
-        active_tasks or {},
-    )
-
     # Voice-specific output format - Main CM Brain always provides guidance to the
     # Voice Agent (fast brain), which handles all speech articulation. This is the
     # same for both TTS and Realtime modes.
@@ -117,9 +69,8 @@ def build_system_prompt(
         """
         If you are on a voice call with a contact, your output format will have an additional field, "call_guidance".
         {
-            "thoughts": [your concise thoughts before talking or taking actions],
-            "call_guidance": [your guidance to the voice agent handling the call on your behalf],
-            "actions": [list of actions in the format {"action_name": ..., **action_args}]
+            "thoughts": [your concise thoughts before taking actions],
+            "call_guidance": [your guidance to the voice agent handling the call on your behalf]
         }
     """,
     ).strip()
@@ -228,43 +179,45 @@ def build_system_prompt(
         <output_format>
         Your output will be in the following format:
         {{
-            "thoughts": [your concise thoughts before taking actions],
-            "actions": [list of actions in the format {{"action_name": ..., **action_args}}]
+            "thoughts": [your concise thoughts before taking actions]
         }}
 
         {voice_output_block}
 
-        These are actions you can perform:
-            <actions>
-                {comms_actions_list}
-                - send_sms (tool call; do NOT include as an entry in `actions`)
-                - send_unify_message (tool call; do NOT include as an entry in `actions`)
-                - send_email (tool call; do NOT include as an entry in `actions`)
-                - make_call (tool call; do NOT include as an entry in `actions`)
-                - start_task
-                - wait
+        All actions are performed by calling the available tools. The tools you have access to include:
 
-                For comms tool calls and actions, you will have to provide the available contact data (infer them from the active conversation or <contact> tags available). Actions like sending SMS can be done while on a call but you shouldn't attempt making a call while on a call.
+        **Communication tools:**
+        - `send_sms`: Send an SMS message to a contact
+        - `send_email`: Send an email to a contact
+        - `send_unify_message`: Send a Unify platform message to a contact
+        - `make_call`: Start an outbound phone call to a contact
 
-                Use `start_task` for any task that is not related to comms, such as searching the web, doing research, answering questions, managing contacts, scheduling tasks, etc.
+        **Task management tools:**
+        - `start_task`: Start a new background task for work like research, web searches, contact management, scheduling, etc.
+        - `wait`: Wait for more input without taking action (use when nothing needs to be done)
 
-                {active_tasks_descriptions}
+        **Task steering tools** (available when tasks are running):
+        - `ask_*`: Query the status or progress of a running task
+        - `interject_*`: Provide new information or instructions to a running task
+        - `stop_*`: Cancel a task entirely
+        - `pause_*`: Temporarily halt a task
+        - `resume_*`: Continue a paused task
+        - `answer_clarification_*`: Respond to a question from a task
 
-                You can use the `wait` action when there is nothing else to do at the moment (waiting for more input from the contacts for example).
-            </actions>
+        For communication tools, provide the contact_id when the contact is in the active conversations. You can send SMS while on a call, but you cannot make a new call while already on one.
         </output_format>
 
         <task_steering_guidelines>
-            When tasks are running (shown in <active_tasks>), you have steering actions available for each task. These actions are the ONLY way to interact with running tasks - verbal acknowledgment to the boss confirms intent, but only the action actually affects the task.
+            When tasks are running (shown in <active_tasks>), you have steering tools available for each task. These tools are the ONLY way to interact with running tasks - verbal acknowledgment to the boss confirms intent, but only calling the tool actually affects the task.
 
             **Querying task state (ask_*):**
             Use when the boss asks about progress, status, intermediate results, or internal state. Only the running task knows this information - you cannot answer these questions yourself.
 
             **Stopping tasks (stop_*):**
-            Use when the boss wants to cancel or abandon a task entirely. The task continues running until you explicitly call this action.
+            Use when the boss wants to cancel or abandon a task entirely. The task continues running until you explicitly call this tool.
 
             **Pausing tasks (pause_*):**
-            Use when the boss wants to temporarily halt a task but keep its state so it can be resumed later. Unlike stop, paused tasks can continue from where they left off.
+            Use when the boss wants to temporarily halt a task but keep its state so it can be resumed later.
 
             **Resuming tasks (resume_*):**
             Use to continue a previously paused task from where it stopped.
