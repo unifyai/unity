@@ -324,7 +324,9 @@ def pytest_sessionstart(session):
     # ------------------------------------------------------------------
 
     if os.environ.get("CI"):
-        unify.set_cache_backend("local_separate")
+        import unillm
+
+        unillm.set_cache_backend("local_separate")
 
     if SETTINGS.UNIFY_SKIP_SESSION_SETUP:
         # Project and shared contexts already prepared externally (e.g., by
