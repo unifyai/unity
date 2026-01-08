@@ -641,6 +641,13 @@ is_var_in_env_overrides() {
 build_env_exports() {
   local exports=""
 
+  # Debug: show PYTHONPATH if set (for CI debugging)
+  if [[ -n "${PYTHONPATH:-}" ]]; then
+    echo "[DEBUG] PYTHONPATH is set: $PYTHONPATH" >&2
+  else
+    echo "[DEBUG] PYTHONPATH is NOT set" >&2
+  fi
+
   # Always export the socket name for tmux isolation
   exports="$exports UNITY_TEST_SOCKET=$TMUX_SOCKET"
 
@@ -694,7 +701,8 @@ build_env_exports() {
   local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH"
   for var_name in $propagate_vars; do
     if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
-      exports="$exports ${var_name}=${!var_name}"
+      # Quote values containing special characters (paths, URLs with colons/slashes)
+      exports="$exports ${var_name}='${!var_name}'"
     fi
   done
 
