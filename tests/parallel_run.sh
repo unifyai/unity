@@ -68,7 +68,7 @@ _mark_reported() {
 
 # Report any sessions that have completed since last check
 # Prints pass/fail status inline during the drip-feed phase
-# Also records duration for end-of-run sorted output
+# Also records duration and cache stats for end-of-run sorted output
 report_completed_sessions() {
   # Guard against empty array (set -u treats empty array expansion as unbound)
   (( ${#CREATED_SESSION_IDS[@]} == 0 )) && return 0
@@ -88,14 +88,22 @@ report_completed_sessions() {
         local base="${current_name#p ✅ }"
         echo "  - p ✅ $base"
         _mark_reported "$sid"
-        # Record duration for sorted output
+        # Record duration and cache stats for sorted output
         if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
-          local start_time end_time duration
+          local start_time end_time duration hits misses
           start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
           if [[ -n "$start_time" ]]; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            echo "$duration|pass|$base" >> "$RESULTS_FILE"
+            # Read cache stats from temp file (written by inner script)
+            hits=0
+            misses=0
+            local stats_file="/tmp/parallel_run_cache_${sid}.txt"
+            if [[ -f "$stats_file" ]]; then
+              IFS='|' read -r hits misses < "$stats_file" 2>/dev/null || true
+              rm -f "$stats_file"
+            fi
+            echo "$duration|pass|$hits|$misses|$base" >> "$RESULTS_FILE"
           fi
         fi
         ;;
@@ -103,14 +111,22 @@ report_completed_sessions() {
         local base="${current_name#f ❌ }"
         echo "  - f ❌ $base"
         _mark_reported "$sid"
-        # Record duration for sorted output
+        # Record duration and cache stats for sorted output
         if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
-          local start_time end_time duration
+          local start_time end_time duration hits misses
           start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
           if [[ -n "$start_time" ]]; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            echo "$duration|fail|$base" >> "$RESULTS_FILE"
+            # Read cache stats from temp file (written by inner script)
+            hits=0
+            misses=0
+            local stats_file="/tmp/parallel_run_cache_${sid}.txt"
+            if [[ -f "$stats_file" ]]; then
+              IFS='|' read -r hits misses < "$stats_file" 2>/dev/null || true
+              rm -f "$stats_file"
+            fi
+            echo "$duration|fail|$hits|$misses|$base" >> "$RESULTS_FILE"
           fi
         fi
         ;;
@@ -828,7 +844,8 @@ run_cmd() {
   local inner
   local env_exports
   # Always export UTF-8 locale for proper emoji handling in session names
-  env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8'
+  # Enable cache stats tracking (UNILLM_CACHE_STATS must be set before importing unillm)
+  env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 UNILLM_CACHE_STATS=true'
   if is_random_projects_mode; then
     # Random projects mode: each session gets its own isolated project.
     # Per-session deletion is safe here since projects don't overlap.
@@ -874,7 +891,9 @@ run_cmd() {
   # Inner command runs inside tmux session after pytest completes.
   # The rename-session uses "|| true" to gracefully handle race conditions
   # where multiple sessions complete simultaneously or external agents interfere.
-  inner=$(printf '%s; cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base" 2>/dev/null || true; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
+  # The session ID is captured BEFORE pytest runs and exported as UNITY_TMUX_SESSION_ID
+  # so pytest's conftest.py can write cache stats to a known temp file location.
+  inner=$(printf '%s; export UNITY_TMUX_SESSION_ID=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base" 2>/dev/null || true; if [ $status -eq 0 ]; then (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$UNITY_TMUX_SESSION_ID" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$TMUX_SOCKET" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -1458,10 +1477,10 @@ if ! is_random_projects_mode && is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_EXIT";
   delete_shared_project "exit"
 fi
 
-# Print duration-sorted results
+# Print duration-sorted results with cache stats
 echo ""
 echo "========================================================================"
-echo "RESULTS SORTED BY DURATION (fastest → slowest)"
+echo "RESULTS: DURATION & CACHE STATS (fastest → slowest)"
 echo "========================================================================"
 
 # Count passed and failed (use { grep || true; } to handle no-match case with pipefail)
@@ -1478,15 +1497,32 @@ print_duration_line() {
   echo "$1" >> "$DURATION_SUMMARY_FILE"
 }
 
+# Helper to format cache hit rate as percentage string
+format_cache_rate() {
+  local hits="$1"
+  local misses="$2"
+  local total=$((hits + misses))
+  if (( total == 0 )); then
+    echo "  --%"
+  else
+    local pct=$((hits * 100 / total))
+    printf "%3d%%" "$pct"
+  fi
+}
+
 # Clear/create the summary file
 > "$DURATION_SUMMARY_FILE"
 
 # Print passed tests sorted by duration (fastest first, slowest last)
+# Format: duration|status|hits|misses|name
 if (( pass_count > 0 )); then
   echo ""
   print_duration_line "✅ PASSED ($pass_count tests):"
-  { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
-    print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
+  print_duration_line "$(printf "  %6s  %6s  %s" "time" "cache" "test")"
+  print_duration_line "$(printf "  %6s  %6s  %s" "----" "-----" "----")"
+  { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses name; do
+    cache_rate=$(format_cache_rate "$hits" "$misses")
+    print_duration_line "$(printf "  %5ds  %6s  %s" "$dur" "$cache_rate" "$name")"
   done
 fi
 
@@ -1494,8 +1530,11 @@ fi
 if (( fail_count > 0 )); then
   print_duration_line ""
   print_duration_line "❌ FAILED ($fail_count tests):"
-  { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
-    print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
+  print_duration_line "$(printf "  %6s  %6s  %s" "time" "cache" "test")"
+  print_duration_line "$(printf "  %6s  %6s  %s" "----" "-----" "----")"
+  { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses name; do
+    cache_rate=$(format_cache_rate "$hits" "$misses")
+    print_duration_line "$(printf "  %5ds  %6s  %s" "$dur" "$cache_rate" "$name")"
   done
 fi
 
