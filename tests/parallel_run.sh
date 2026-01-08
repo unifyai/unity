@@ -1330,10 +1330,9 @@ declare -a session_ids=()
 # Helper function to print log directory info (used at start and end)
 print_log_directories() {
   echo "========================================================================"
-  echo "📁 Test logs for THIS run: logs/pytest/$LOG_SUBDIR/"
-  echo "🔗 OTEL traces (cross-repo): logs/all/"
-  echo "📂 All log directories:      logs/*/"
-  echo "📖 Logging docs:             tests/docs/logging.md"
+  echo "📁 pytest logs:  logs/pytest/$LOG_SUBDIR/"
+  echo "🔗 OTel traces:  logs/{unity|unify|unillm|orchestra}/ (per-repo), logs/all/ (cross-repo)"
+  echo "📖 Logging docs: logs/README.md"
   echo "========================================================================"
 }
 
