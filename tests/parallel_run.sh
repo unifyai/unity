@@ -1476,10 +1476,10 @@ if ! is_random_projects_mode && is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_EXIT";
   delete_shared_project "exit"
 fi
 
-# Print duration-sorted results with cache stats
+# Print test stats (duration and cache) sorted fastest to slowest
 echo ""
 echo "========================================================================"
-echo "RESULTS: DURATION & CACHE STATS (fastest → slowest)"
+echo "TEST STATS: DURATION & CACHE (fastest → slowest)"
 echo "========================================================================"
 
 # Count passed and failed (use { grep || true; } to handle no-match case with pipefail)
@@ -1535,6 +1535,36 @@ if (( fail_count > 0 )); then
     cache_rate=$(format_cache_rate "$hits" "$misses")
     print_duration_line "$(printf "  %5ds  %6s  %s" "$dur" "$cache_rate" "$name")"
   done
+fi
+
+# Calculate and print aggregated totals
+total_duration=0
+total_hits=0
+total_misses=0
+while IFS='|' read -r dur status hits misses name; do
+  total_duration=$((total_duration + dur))
+  total_hits=$((total_hits + hits))
+  total_misses=$((total_misses + misses))
+done < "$RESULTS_FILE"
+
+total_tests=$((pass_count + fail_count))
+if (( total_tests > 0 )); then
+  print_duration_line ""
+  print_duration_line "========================================================================"
+  print_duration_line "TOTALS ($total_tests tests)"
+  print_duration_line "========================================================================"
+  # Format duration as minutes:seconds if > 60s
+  if (( total_duration >= 60 )); then
+    mins=$((total_duration / 60))
+    secs=$((total_duration % 60))
+    duration_str="${mins}m ${secs}s"
+  else
+    duration_str="${total_duration}s"
+  fi
+  total_cache_rate=$(format_cache_rate "$total_hits" "$total_misses")
+  total_calls=$((total_hits + total_misses))
+  print_duration_line "  Serial duration: $duration_str"
+  print_duration_line "  LLM cache: $total_cache_rate ($total_hits hits, $total_misses misses, $total_calls total)"
 fi
 
 echo ""
