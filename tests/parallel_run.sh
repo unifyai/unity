@@ -641,13 +641,6 @@ is_var_in_env_overrides() {
 build_env_exports() {
   local exports=""
 
-  # Debug: show PYTHONPATH if set (for CI debugging)
-  if [[ -n "${PYTHONPATH:-}" ]]; then
-    echo "[DEBUG] PYTHONPATH is set: $PYTHONPATH" >&2
-  else
-    echo "[DEBUG] PYTHONPATH is NOT set" >&2
-  fi
-
   # Always export the socket name for tmux isolation
   exports="$exports UNITY_TEST_SOCKET=$TMUX_SOCKET"
 
@@ -1168,40 +1161,20 @@ collect_nodes_batch() {
   else
     cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$quoted_targets")
   fi
-
-  # Debug: show the full env_exports
-  echo "[DEBUG] env_exports: $env_exports" >&2
-
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   # Redirect stdin from /dev/null to prevent hangs when multiple processes compete for stdin
-  # Note: stderr AND stdout are captured to temp files for debugging
-  local stderr_file stdout_file
+  # Note: stderr is captured to a temp file so collection errors can be surfaced if no tests found
+  local stderr_file
   stderr_file=$(mktemp)
-  stdout_file=$(mktemp)
-
-  # Run collection and capture everything
-  bash -lc "$cmd" < /dev/null >"$stdout_file" 2>"$stderr_file" || true
-
-  # Debug: show raw stdout/stderr
-  echo "[DEBUG] pytest collection stdout (first 100 lines):" >&2
-  head -100 "$stdout_file" >&2
-  if [[ -s "$stderr_file" ]]; then
-    echo "[DEBUG] pytest collection stderr:" >&2
-    head -100 "$stderr_file" >&2
-  else
-    echo "[DEBUG] pytest collection stderr: (empty)" >&2
-  fi
-
-  # Extract node IDs from stdout
   local result
-  result=$(sed -E 's/\x1B\[[0-9;]*[mK]//g' "$stdout_file" | grep -E '::' || true)
+  result=$(bash -lc "$cmd" < /dev/null 2>"$stderr_file" | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true)
 
   # If no tests collected and there was stderr output, show it for debugging
   if [[ -z "$result" && -s "$stderr_file" ]]; then
     echo "Warning: pytest collection produced no test nodes. stderr output:" >&2
     head -50 "$stderr_file" >&2
   fi
-  rm -f "$stderr_file" "$stdout_file"
+  rm -f "$stderr_file"
 
   echo "$result"
 }
