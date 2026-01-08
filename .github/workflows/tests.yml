@@ -917,6 +917,19 @@ jobs:
         include-hidden-files: true
         retention-days: 1
 
+    # =========================================================================
+    # Stop orchestra BEFORE log upload to ensure all PENDING trace files are
+    # finalized. Orchestra writes in-flight requests as *_PENDING_*.json and
+    # renames them on completion. If orchestra is still running during upload,
+    # the glob may find PENDING files that get renamed before upload reads them.
+    # =========================================================================
+    - name: Stop local orchestra (before log upload)
+      if: always()
+      continue-on-error: true  # Cleanup failures shouldn't affect job status
+      run: |
+        trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
+        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
+
     - name: Prepare logs for upload
       if: always()
       run: |
@@ -981,7 +994,8 @@ jobs:
 
     # =========================================================================
     # Cleanup steps - run AFTER artifact uploads
-    # These are housekeeping; failures here shouldn't affect job status
+    # Note: Orchestra is stopped BEFORE log upload (see above) to ensure
+    # PENDING trace files are finalized. This section handles tmux cleanup.
     # =========================================================================
     - name: Cleanup on cancellation
       if: cancelled()
@@ -989,17 +1003,9 @@ jobs:
         echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
         # Kill all unity tmux servers and purge orphaned test processes
         tests/kill_server.sh --all || true
-        # Stop local orchestra (using orchestra repo's script)
+        # Orchestra already stopped before log upload, but ensure it's down
         ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
         echo "Cleanup complete."
-
-    - name: Stop local orchestra
-      if: always()
-      continue-on-error: true  # Cleanup failures shouldn't affect job status
-      run: |
-        # Trap SIGTERM to exit gracefully (exit 143 can cause GHA to skip steps)
-        trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
-        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
 
   # Cleanup job: runs ONCE after all pytest jobs complete or are cancelled
   # Handles project deletion at workflow level to avoid race conditions
