@@ -19,7 +19,7 @@ import asyncio
 import functools
 import inspect
 import logging
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,9 @@ from unity.function_manager.primitives import ComputerPrimitives
 from .base import BaseActor, BaseActorHandle
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from unity.function_manager.function_manager import FunctionManager
 
 
 class SingleFunctionVerificationResult(BaseModel):
@@ -267,7 +270,7 @@ class SingleFunctionActor(BaseActor):
     def __init__(
         self,
         computer_primitives: Optional[ComputerPrimitives] = None,
-        function_manager: Optional[FunctionManager] = None,
+        function_manager: Optional["FunctionManager"] = None,
         headless: bool = True,
         browser_mode: str = "magnitude",
         agent_mode: str = "browser",
@@ -532,6 +535,7 @@ class SingleFunctionActor(BaseActor):
         self,
         description: Optional[str] = None,
         *,
+        clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         function_id: Optional[int] = None,
         primitive_name: Optional[str] = None,

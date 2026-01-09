@@ -65,12 +65,10 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._custom_system_prompt = custom_system_prompt
         self._images = images
 
-        self._clar_up_q_internal: asyncio.Queue[str] = (
-            clarification_up_q or asyncio.Queue()
-        )
-        self._clar_down_q_internal: asyncio.Queue[str] = (
-            clarification_down_q or asyncio.Queue()
-        )
+        # Clarification queues are optional. When missing, the internal tool loop must not
+        # attempt to request clarification (the `request_clarification` tool will not be added).
+        self._clar_up_q_internal: Optional[asyncio.Queue[str]] = clarification_up_q
+        self._clar_down_q_internal: Optional[asyncio.Queue[str]] = clarification_down_q
 
         self._state: _HandleState = _HandleState.IDLE
         self._loop_handle: Optional[SteerableToolHandle] = None
@@ -129,23 +127,31 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
     def _get_internal_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         current_tools = self._tools.copy()
 
-        async def request_clarification(question: str) -> str:
-            """
-            This tool is used to request clarification from the caller.
-            """
-            logger.info(
-                f"Handle {self._task_id}: LLM requesting clarification: '{question}'",
-            )
-            await self._clar_up_q_internal.put(question)
-            answer = await self._clar_down_q_internal.get()
-            logger.info(
-                f"Handle {self._task_id}: Received clarification: '{answer}'",
-            )
-            return answer
+        # Only add the `request_clarification` tool when queues are supplied.
+        if (
+            self._clar_up_q_internal is not None
+            and self._clar_down_q_internal is not None
+        ):
 
-        request_clarification.__name__ = "request_clarification"
-        request_clarification.__qualname__ = "request_clarification"
-        current_tools["request_clarification"] = request_clarification
+            async def request_clarification(question: str) -> str:
+                """
+                This tool is used to request clarification from the caller.
+                """
+                logger.info(
+                    f"Handle {self._task_id}: LLM requesting clarification: '{question}'",
+                )
+                assert self._clar_up_q_internal is not None
+                assert self._clar_down_q_internal is not None
+                await self._clar_up_q_internal.put(question)
+                answer = await self._clar_down_q_internal.get()
+                logger.info(
+                    f"Handle {self._task_id}: Received clarification: '{answer}'",
+                )
+                return answer
+
+            request_clarification.__name__ = "request_clarification"
+            request_clarification.__qualname__ = "request_clarification"
+            current_tools["request_clarification"] = request_clarification
         return current_tools
 
     async def _manage_execution(self):
@@ -294,6 +300,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     async def next_clarification(self) -> dict:
         """Await the next clarification question from the running internal loop."""
+        if self._clar_up_q_internal is None:
+            raise RuntimeError("Clarification is disabled for this handle.")
         question = await self._clar_up_q_internal.get()
         return {"question": question}
 
@@ -304,6 +312,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         """Provide an answer to the pending clarification (call_id is ignored)."""
+        if self._clar_down_q_internal is None:
+            raise RuntimeError("Clarification is disabled for this handle.")
         await self._clar_down_q_internal.put(answer)
 
     def get_history(self) -> list[dict]:
@@ -311,12 +321,12 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         return list(self.chat_history)
 
     @property
-    def clarification_up_q(self) -> asyncio.Queue[str]:
+    def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
         """Queue for sending clarification questions upwards."""
         return self._clar_up_q_internal
 
     @property
-    def clarification_down_q(self) -> asyncio.Queue[str]:
+    def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
         return self._clar_down_q_internal
 
     def _is_valid_method(self, name: str) -> bool:
