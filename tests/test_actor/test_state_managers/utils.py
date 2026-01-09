@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Literal
+from typing import Any, AsyncIterator, Callable, Literal, Optional
 from unittest.mock import AsyncMock
 
 from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+from unity.actor.code_act_actor import CodeActActor
 from unity.actor.hierarchical_actor import HierarchicalActor
+from unity.actor.environments import StateManagerEnvironment
+from unity.function_manager.primitives import Primitives
+
+try:
+    from unity.function_manager.function_manager import FunctionManager
+except Exception:  # pragma: no cover
+    FunctionManager = Any  # type: ignore[misc,assignment]
 
 
 def get_state_manager_tools(handle: Any) -> list[str]:
@@ -18,6 +27,200 @@ def get_state_manager_tools(handle: Any) -> list[str]:
         for entry in cache.values()
         if entry.get("meta", {}).get("tool", "").startswith("primitives.")
     ]
+
+
+# ---------------------------------------------------------------------------
+# CodeActActor helpers (simulated routing parity)
+# ---------------------------------------------------------------------------
+
+
+def _wrap_primitives_method_for_trace(
+    *,
+    manager: Any,
+    method_name: str,
+    fq_tool_name: str,
+    sink: list[str],
+) -> None:
+    if not hasattr(manager, method_name):
+        return
+    orig = getattr(manager, method_name)
+    if not callable(orig):
+        return
+
+    if asyncio.iscoroutinefunction(orig):
+
+        async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+            sink.append(fq_tool_name)
+            return await orig(*args, **kwargs)
+
+    else:
+
+        def _wrapped(*args: Any, **kwargs: Any) -> Any:
+            sink.append(fq_tool_name)
+            return orig(*args, **kwargs)
+
+    setattr(manager, method_name, _wrapped)
+
+
+def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
+    """Wrap a minimal state-manager surface to record which primitives were invoked."""
+    calls: list[str] = []
+    targets: list[tuple[str, list[str]]] = [
+        ("contacts", ["ask", "update"]),
+        ("tasks", ["ask", "update", "execute"]),
+        ("knowledge", ["ask", "update", "refactor"]),
+        ("transcripts", ["ask"]),
+        ("guidance", ["ask", "update"]),
+        ("web", ["ask"]),
+    ]
+    for manager_attr, methods in targets:
+        try:
+            mgr = getattr(primitives, manager_attr)
+        except Exception:
+            continue
+        for m in methods:
+            _wrap_primitives_method_for_trace(
+                manager=mgr,
+                method_name=m,
+                fq_tool_name=f"primitives.{manager_attr}.{m}",
+                sink=calls,
+            )
+    return calls
+
+
+async def wait_for_recorded_primitives_call(
+    calls: list[str],
+    tool_name: str,
+    *,
+    timeout: float = 60.0,
+    poll: float = 0.05,
+) -> None:
+    """Wait until `tool_name` appears in `calls` (best-effort for CodeAct routing tests)."""
+
+    async def _predicate() -> bool:
+        return tool_name in set(calls)
+
+    try:
+        await asyncio.wait_for(
+            _wait_for_condition(_predicate, poll=poll, timeout=timeout),
+            timeout=timeout + 10.0,
+        )
+    except TimeoutError as e:
+        raise AssertionError(
+            f"Tool '{tool_name}' not recorded within {timeout}s. Calls seen: {calls}",
+        ) from e
+
+
+def _iter_tool_calls_from_chat_history(chat_history: list[dict[str, Any]]):
+    for msg in chat_history:
+        tool_calls = msg.get("tool_calls") or []
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                yield tc
+
+
+def get_code_act_tool_calls(handle: Any) -> list[str]:
+    """Extract tool call names from a CodeActActor handle's chat history."""
+    try:
+        chat_history = list(getattr(handle, "chat_history", []) or [])
+    except Exception:
+        chat_history = []
+
+    names: list[str] = []
+    for tc in _iter_tool_calls_from_chat_history(chat_history):
+        fn = tc.get("function")
+        if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+            names.append(fn["name"])
+            continue
+        if isinstance(tc.get("name"), str):
+            names.append(tc["name"])
+            continue
+    return names
+
+
+def extract_code_act_execute_python_code_snippets(handle: Any) -> list[str]:
+    """Extract the `code` field from execute_python_code tool calls (best-effort)."""
+    try:
+        chat_history = list(getattr(handle, "chat_history", []) or [])
+    except Exception:
+        chat_history = []
+
+    snippets: list[str] = []
+    for tc in _iter_tool_calls_from_chat_history(chat_history):
+        fn = tc.get("function") or {}
+        name = None
+        args = None
+        if isinstance(fn, dict):
+            name = fn.get("name")
+            args = fn.get("arguments")
+        else:
+            name = tc.get("name")
+            args = tc.get("arguments")
+
+        if name != "execute_python_code":
+            continue
+
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = None
+        if isinstance(args, dict):
+            code = args.get("code")
+            if isinstance(code, str) and code.strip():
+                snippets.append(code)
+    return snippets
+
+
+def assert_code_act_tool_called(handle: Any, tool_name: str) -> None:
+    names = get_code_act_tool_calls(handle)
+    assert tool_name in set(names), f"Expected tool call '{tool_name}', saw: {names}"
+
+
+def assert_code_act_function_manager_used(handle: Any) -> None:
+    """Assert that CodeAct used at least one FunctionManager tool call."""
+    names = get_code_act_tool_calls(handle)
+    assert any(n.startswith("FunctionManager_") for n in names), (
+        "Expected CodeAct to call at least one FunctionManager tool, "
+        f"but saw tool calls: {names}"
+    )
+
+
+@asynccontextmanager
+async def make_code_act_actor(
+    *,
+    impl: Literal["real", "simulated"],
+    include_function_manager_tools: bool = False,
+    function_manager: Optional["FunctionManager"] = None,
+    primitives: Optional[Primitives] = None,
+    exposed_managers: Optional[set[str]] = None,
+) -> AsyncIterator[tuple[CodeActActor, Primitives, list[str]]]:
+    """
+    Create a CodeActActor wired to a provided Primitives in primitives-only mode.
+
+    NOTE: IMPL selection ("real" vs "simulated") is controlled by the autouse fixtures
+    in `tests/test_actor/test_state_managers/conftest.py`, keyed off test path.
+    This argument is kept as an assertion/documentation aid.
+    """
+    primitives = primitives or Primitives()
+    calls = instrument_basic_primitives_calls(primitives)
+
+    env = StateManagerEnvironment(primitives, exposed_managers=exposed_managers)
+    actor = CodeActActor(environments=[env], function_manager=function_manager)
+
+    # Optionally strip FunctionManager tools to focus on on-the-fly routing via primitives.
+    if not include_function_manager_tools:
+        actor._tools = {"execute_python_code": actor._tools["execute_python_code"]}
+
+    try:
+        yield actor, primitives, calls
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
 
 
 def assert_tool_called(handle: Any, tool_name: str) -> None:
