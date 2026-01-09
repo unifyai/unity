@@ -1029,84 +1029,64 @@ EXAMPLE_TAGS: dict[str, list[str]] = {
 
 
 def get_function_first_pattern_example() -> str:
-    """Example: prioritizing pre-saved functions over raw primitives."""
+    """Example: prioritizing pre-saved functions via FunctionManager tools (CodeAct style)."""
 
-    return '''
-# ✅ PATTERN: Function-First Workflow
-# ALWAYS check for pre-saved functions before using raw primitives
-
-async def answer_query(query: str):
-    """Answer a data query using the optimal approach."""
-
-    # Step 1: Search for existing functions that match the query
-    functions = await function_manager.search_functions(query)
-
-    if functions:
-        # Step 2a: Found relevant function - USE IT DIRECTLY
-        best_match = functions[0]
-        print(f"Using pre-saved function: {best_match['name']}")
-
-        # Read its signature to understand parameters
-        tools = primitives.files.get_tools()
-        result = await best_match["fn"](tools, **appropriate_params)
-        return result
-
-    else:
-        # Step 2b: No function found - compose with primitives
-        print("No pre-saved function found, using primitives directly")
-        result = await primitives.files.reduce(...)
-        return result
-'''
+    return r"""
+# ✅ PATTERN: Function-First Workflow (CodeActActor)
+# If FunctionManager tools are available, ALWAYS search for an existing function
+# BEFORE writing custom logic with raw primitives.
+#
+# Step 1 (JSON TOOL CALL): search for an existing function
+#   FunctionManager_search_functions_by_similarity(query="contacts prefer phone", n=5)
+#
+# Step 2 (PYTHON): call the injected function by name (it becomes available automatically)
+#   result = await ask_contacts_question("Which of our contacts prefers phone contact?")
+#   print(result)
+#
+# If no function exists, THEN fall back to composing with primitives directly in Python.
+"""
 
 
 def get_function_first_anti_pattern_example() -> str:
-    """Anti-pattern: exploring with primitives when functions exist."""
+    """Anti-pattern: skipping FunctionManager search when it exists (CodeAct style)."""
 
-    return """
-# ❌ ANTI-PATTERN: Exploring when functions already exist
-# DON'T do this - it wastes time and may produce inconsistent results
-
-async def bad_approach(query: str):
-    # ❌ WRONG: Immediately exploring with primitives
-    tables = await primitives.files.tables_overview()  # Unnecessary!
-    schema = await primitives.files.schema_explain(table=tables[0])  # Unnecessary!
-    # ... then manually building reduce() calls
-
-    # The pre-saved function already handles all of this correctly!
-
-# ✅ CORRECT: Check functions first
-async def good_approach(query: str):
-    # Check if a function already handles this
-    functions = await function_manager.search_functions(query)
-    if functions:
-        return await functions[0]["fn"](...)  # Use it!
+    return r"""
+# ❌ ANTI-PATTERN: Skipping FunctionManager when it's available
+#
+# DON'T do this:
+#   - immediately call raw primitives
+#   - re-implement logic that likely exists as a stored function
+#
+# Example (bad):
+#   handle = await primitives.contacts.ask("Which contacts prefer phone?")
+#   result = await handle.result()
+#
+# ✅ CORRECT:
+#   1) Call FunctionManager_search_functions_by_similarity(...) as a JSON tool call
+#   2) Call the injected function in Python (e.g. ask_contacts_question(...))
 """
 
 
 def get_function_parameter_exploration_example() -> str:
-    """Example: reading function signatures to understand parameter options."""
+    """Example: reading function metadata before calling (CodeAct style)."""
 
-    return """
+    return r"""
 # ✅ PATTERN: Read function signatures before calling
-# Pre-saved functions often support multiple parameter variations
-
-async def use_function_intelligently():
-    # Found function: jobs_completed_per_day(tools, group_by=None, include_plots=False, ...)
-
-    # Read its signature/docstring to understand options:
-    # - group_by: Optional[GroupBy | str] - can group by "operative", "trade", "patch", "region"
-    # - include_plots: bool - whether to generate visualizations
-    # - filter_date_from/to: date filtering
-
-    tools = primitives.files.get_tools()
-
-    # Call with appropriate parameters for user's question
-    result = await jobs_completed_per_day(
-        tools,
-        group_by="operative",  # User asked "by operative"
-        include_plots=True,     # User wants charts
-    )
-    return result
+#
+# FunctionManager tool results include:
+# - name
+# - argspec
+# - docstring
+#
+# Use that to pick the right parameters before calling the injected function in Python.
+#
+# Example:
+# 1) JSON tool call:
+#    FunctionManager_search_functions_by_similarity(query="update guidance runbook", n=5)
+#
+# 2) Inspect returned `argspec`/docstring (mentally), then in Python:
+#    result = await update_guidance("Create a runbook titled 'Runbook: DB Failover' ...")
+#    print(result)
 """
 
 

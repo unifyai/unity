@@ -1354,9 +1354,18 @@ def _build_generic_execution_rules() -> str:
 
         4. **Pydantic for Structured Data (When Supported)**: If a tool supports structured outputs via a `response_format` or schema, define Pydantic models inside the code and call `model_rebuild()` on the outermost model.
 
-        5. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
+        5. **Function-First (When Available)**:
+           - If any tool names start with `FunctionManager_`, you **MUST** perform a FunctionManager search **before** you call `execute_python_code` for a new user request.
+           - This rule applies even if the request seems “simple” (including direct state manager calls like `primitives.contacts.ask`, `primitives.tasks.update`, `primitives.guidance.update`, etc.). Many stored functions are thin wrappers around these primitives.
+           - Workflow:
+             1) Make a FunctionManager tool call (structured JSON tool call) to search.
+             2) If a relevant function exists, call it in Python (it will be auto-injected into the sandbox).
+             3) Only fall back to calling `primitives.*`/`computer_primitives.*` directly if no relevant function exists.
+           - You may skip re-searching only when you already searched in this session and you are confident the needed callable is already injected.
 
-        6. **Final Answer Rule**:
+        6. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
+
+        7. **Final Answer Rule**:
            - When the user's request has been fully addressed, you **MUST** provide the final answer directly as a tool-less assistant message.
            - Do not call a tool to print the final answer.
         """,
@@ -1459,6 +1468,8 @@ def _build_code_act_rules_and_examples(
         env = environments["primitives"]
         managers = getattr(env, "_exposed_managers", None)
         parts.append(_build_state_manager_rules_and_examples(managers=managers))
+        env_ctx = env.get_prompt_context()
+        parts.append(env_ctx)
 
     return "\n\n---\n\n".join(p for p in parts if p and p.strip()).strip()
 
