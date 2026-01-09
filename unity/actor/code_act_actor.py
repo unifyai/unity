@@ -92,10 +92,14 @@ You have access to a catalogue of **pre-stored reusable functions** via the Func
 
 **🎯 FUNCTION-FIRST WORKFLOW:**
 
-1. **ALWAYS search first** using FunctionManager tools (structured tool calls, NOT Python code):
+1. **ALWAYS search first** using FunctionManager tools (structured JSON tool calls, NOT Python code):
    - `FunctionManager_search_functions_by_similarity` - semantic search for functions
    - `FunctionManager_search_functions` - filter-based search
    - `FunctionManager_list_functions` - list all available functions
+
+   **Important**: Do this **before** you call `execute_python_code` for a new user request.
+   Even if you *think* the correct answer is a direct `primitives.*` call, still search first —
+   many memoized skills are thin wrappers around state managers (contacts/tasks/knowledge/transcripts/guidance/web).
 
 2. **Functions are automatically injected into your Python sandbox** after searching.
    - The function name(s) returned by the tool become available immediately in Python.
@@ -108,15 +112,11 @@ You have access to a catalogue of **pre-stored reusable functions** via the Func
 4. **Read signatures carefully**: Check `argspec` in the search results for parameter options
    like `group_by`, `include_plots`, date filters, etc.
 
-5. **Execute found functions** in your Python code:
+5. **Execute found functions** in your Python code (after the JSON tool call).
 
-```python
-# Step 1: Search (JSON tool call)
-FunctionManager_search_functions_by_similarity(query="analyze sales data")
-
-# Step 2: Execute in Python code (functions now available)
-result = await analyze_sales_data(tools=primitives.files.get_tools())
-```
+Example workflow:
+- Tool call (JSON): `FunctionManager_search_functions_by_similarity(query="contacts prefer phone", n=5)`
+- Python code (after search): `result = await ask_contacts_question("Which contacts prefer phone?"); print(result)`
 
 **❌ ANTI-PATTERN (AVOID THIS):**
 ```python
@@ -227,6 +227,9 @@ class CodeExecutionSandbox:
         stderr_capture = io.StringIO()
         result = None
         error = None
+        builtins_dict: Any = None
+        original_print: Any = None
+        print_patched = False
 
         try:
             is_empty_or_comment_only = all(
@@ -276,12 +279,75 @@ class CodeExecutionSandbox:
 
             exec(async_code, self.global_state)
 
+            # Robust stdout capture for agent code:
+            #
+            # In practice, some nested tool loops may temporarily replace `sys.stdout`
+            # (e.g. for their own logging/capture), which can bypass `redirect_stdout`
+            # and cause `print(...)` output to leak to the outer process instead of
+            # appearing in the tool result.
+            #
+            # To keep CodeAct reliable, we patch the sandbox built-in `print` so that
+            # it always writes to our per-execution `stdout_capture`, regardless of
+            # any temporary `sys.stdout` replacements inside awaited tool calls.
+            try:
+                builtins_dict = self.global_state.get("__builtins__")
+                if (
+                    isinstance(builtins_dict, dict)
+                    and builtins_dict.get("print") is not None
+                ):
+                    original_print = builtins_dict.get("print")
+
+                    def _captured_print(
+                        *args: Any,
+                        sep: str = " ",
+                        end: str = "\n",
+                        file: Any = None,
+                        flush: bool = False,
+                    ) -> None:
+                        text = sep.join(str(a) for a in args) + end
+                        if file is None:
+                            stdout_capture.write(text)
+                            if flush:
+                                try:
+                                    stdout_capture.flush()
+                                except Exception:
+                                    pass
+                            return
+
+                        # Respect explicit `file=` when possible, but fall back to
+                        # stdout_capture to avoid losing output.
+                        try:
+                            file.write(text)
+                            if flush:
+                                try:
+                                    file.flush()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            stdout_capture.write(text)
+                            if flush:
+                                try:
+                                    stdout_capture.flush()
+                                except Exception:
+                                    pass
+
+                    builtins_dict["print"] = _captured_print
+                    print_patched = True
+            except Exception:
+                # Best-effort: if patching fails, keep executing.
+                print_patched = False
+
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
                 result = await self.global_state["__exec_wrapper"]()
 
         except Exception:
             error = traceback.format_exc()
         finally:
+            if print_patched and isinstance(builtins_dict, dict):
+                try:
+                    builtins_dict["print"] = original_print
+                except Exception:
+                    pass
             if "__exec_wrapper" in self.global_state:
                 del self.global_state["__exec_wrapper"]
 
