@@ -405,12 +405,12 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
     },
     "web": {
         "domain": "Time-Sensitive & External Research",
-        "description": "Current events, real-time information, external research, 'today/latest/now' queries",
+        "description": "External/public information and research (including general concepts/definitions), plus current events and 'today/latest/now' queries",
         "methods": {
             "ask": "Web search for current information, news, weather, public data",
         },
-        "use_when": "Questions requiring up-to-date external information, current events, weather, news",
-        "examples": "'Weather in Berlin today?', 'Latest AI news?', 'Current stock price?', 'Recent announcements?'",
+        "use_when": "Questions answered from public/external knowledge (including definitions/concepts) or requiring up-to-date info: current events, weather, news",
+        "examples": "'What is the Eisenhower Matrix?', 'Weather in Berlin today?', 'Latest AI news?', 'Current stock price?'",
         "priority": 5,
     },
     "guidance": {
