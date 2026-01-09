@@ -5847,6 +5847,7 @@ class HierarchicalActor(BaseActor):
         self,
         description: str,
         *,
+        clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -5883,6 +5884,14 @@ class HierarchicalActor(BaseActor):
         Returns:
             An active handle to the running HierarchicalActorHandle.
         """
+        # Clarification queues are optional. For HierarchicalActor, queue-based clarification
+        # routing implies an outer supervisor is actively consuming those queues.
+        #
+        # `clarification_enabled=False` forces queue routing off even if queues are provided.
+        if not clarification_enabled:
+            _clarification_up_q = None
+            _clarification_down_q = None
+
         dedicated_computer_primitives = None
         if new_session:
             dedicated_computer_primitives = ComputerPrimitives(

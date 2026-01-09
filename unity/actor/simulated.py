@@ -757,6 +757,7 @@ class SimulatedActor(BaseActor):
         self,
         description: str,
         *,
+        clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -767,6 +768,10 @@ class SimulatedActor(BaseActor):
         session_suffix: Optional[str] = None,
         **kwargs,
     ) -> SimulatedActorHandle:
+        if not clarification_enabled:
+            _clarification_up_q = None
+            _clarification_down_q = None
+
         # Emit a scheduler-like nested log for starting an action
         try:
             parts = SimulatedLineage.parent_lineage()

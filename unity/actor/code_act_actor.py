@@ -498,6 +498,7 @@ class CodeActActor(BaseActor):
         self,
         description: str,
         *,
+        clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -518,6 +519,36 @@ class CodeActActor(BaseActor):
             "wait for the user to provide instructions via interjection."
         )
 
+        # Clarification queues:
+        # - When enabled, we ensure the handle has queues (either provided by caller or newly created).
+        # - When disabled, we do not provide queues and we do not wire queue injection into environments.
+        clarification_up_q: Optional[asyncio.Queue[str]]
+        clarification_down_q: Optional[asyncio.Queue[str]]
+        if clarification_enabled:
+            clarification_up_q = _clarification_up_q or asyncio.Queue()
+            clarification_down_q = _clarification_down_q or asyncio.Queue()
+        else:
+            clarification_up_q = None
+            clarification_down_q = None
+
+        # Wire clarification queues to environments per-execution (not per-actor), then recreate the sandbox.
+        # This ensures nested manager handles invoked from the sandbox can request clarifications
+        # that bubble up via the handle's queues.
+        for env in self.environments.values():
+            # Environments implement BaseEnvironment and store queues as private attrs.
+            # Preserve all other environment configuration (e.g., exposed_managers filtering).
+            if hasattr(env, "_clarification_up_q"):
+                setattr(env, "_clarification_up_q", clarification_up_q)
+            if hasattr(env, "_clarification_down_q"):
+                setattr(env, "_clarification_down_q", clarification_down_q)
+
+        # Recreate sandbox so injected globals (e.g. `primitives`) use get_sandbox_instance()
+        # with the updated clarification queue injector wrapper.
+        self._sandbox = CodeExecutionSandbox(
+            computer_primitives=self._computer_primitives,
+            environments=self.environments,
+        )
+
         system_prompt = build_code_act_system_prompt(
             self.environments,
             tools=self._tools,
@@ -526,8 +557,8 @@ class CodeActActor(BaseActor):
             task_description=description or initial_prompt,
             tools=self._tools,
             parent_chat_context=_parent_chat_context,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
             main_event_loop=self._main_event_loop,
             timeout=self._timeout,
             persist=is_interactive_session,
