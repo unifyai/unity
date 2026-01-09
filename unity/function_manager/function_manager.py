@@ -2135,6 +2135,9 @@ class FunctionManager(BaseFunctionManager):
         *,
         query: str,
         n: int = 5,
+        return_callable: bool = False,
+        namespace: Optional[Dict[str, Any]] = None,
+        also_return_metadata: bool = False,
         include_primitives: bool = True,
     ) -> List[Dict[str, Any]]:
         """
@@ -2150,6 +2153,12 @@ class FunctionManager(BaseFunctionManager):
             Up to n results ordered by similarity, including both user functions
             and primitives (if include_primitives=True).
         """
+        if also_return_metadata and not return_callable:
+            raise ValueError("also_return_metadata requires return_callable=True")
+
+        if return_callable and namespace is None:
+            raise ValueError("namespace required when return_callable=True")
+
         allowed_fields = list(Function.model_fields.keys())
 
         # Search user-defined functions in the Compositional context
@@ -2162,28 +2171,48 @@ class FunctionManager(BaseFunctionManager):
         )
 
         if not include_primitives:
-            return compositional_rows
+            results = compositional_rows[:n]
+        else:
+            # Sync and search primitives
+            self.sync_primitives()
 
-        # Sync and search primitives
-        self.sync_primitives()
+            primitive_rows = table_search_top_k(
+                context=self._primitives_ctx,
+                references={"embedding_text": query},
+                k=n,
+                allowed_fields=allowed_fields,
+                unique_id_field="function_id",
+            )
 
-        primitive_rows = table_search_top_k(
-            context=self._primitives_ctx,
-            references={"embedding_text": query},
-            k=n,
-            allowed_fields=allowed_fields,
-            unique_id_field="function_id",
-        )
+            # Merge and sort by the private score column (lower distance = better match)
+            all_rows = compositional_rows + primitive_rows
+            sort_key: str | None = None
+            for row in all_rows:
+                for key in row.keys():
+                    if key.startswith("_"):
+                        sort_key = key
+                        break
+                if sort_key:
+                    break
+            if sort_key:
+                all_rows.sort(key=lambda r: r.get(sort_key, float("inf")))
+            results = all_rows[:n]
 
-        # Merge and sort by the private score column (lower distance = better match)
-        all_rows = compositional_rows + primitive_rows
-        for row in all_rows:
-            for key in row.keys():
-                if key.startswith("_"):
-                    all_rows.sort(key=lambda r, k=key: r.get(k, float("inf")))
-                    return all_rows[:n]
+        if not return_callable:
+            return results
 
-        return all_rows[:n]
+        assert namespace is not None  # validated above
+
+        # Only materialize non-primitive records as callables.
+        exec_rows = [
+            r for r in results if isinstance(r, dict) and r.get("is_primitive") is not True
+        ]
+        callables_list = self._inject_callables_for_functions(exec_rows, namespace=namespace)
+
+        if also_return_metadata:
+            return {"callables": callables_list, "metadata": exec_rows}  # type: ignore[return-value]
+
+        return callables_list  # type: ignore[return-value]
 
     # ------------------------------------------------------------------ #
     #  Inverse linkage: Functions → Guidance                              #
