@@ -1780,25 +1780,61 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
+        return_callable: bool = False,
+        namespace: Optional[Dict[str, Any]] = None,
+        also_return_metadata: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
+        if also_return_metadata and not return_callable:
+            raise ValueError("also_return_metadata requires return_callable=True")
 
-        entries: Dict[str, Dict[str, Any]] = {}
-        for log in unify.get_logs(
+        if return_callable and namespace is None:
+            raise ValueError("namespace required when return_callable=True")
+
+        # Always build metadata in the existing shape for backwards-compat.
+        metadata: Dict[str, Dict[str, Any]] = {}
+        logs = unify.get_logs(
             context=self._compositional_ctx,
             exclude_fields=list_private_fields(self._compositional_ctx),
-        ):
-            data = {
-                "function_id": log.entries["function_id"],
-                "argspec": log.entries["argspec"],
-                "docstring": log.entries["docstring"],
-                "guidance_ids": log.entries.get("guidance_ids", []),
-                "verify": log.entries.get("verify", True),
-                "venv_id": log.entries.get("venv_id"),
+        )
+
+        func_rows: List[Dict[str, Any]] = []
+        for log in logs:
+            ent = log.entries
+            name = ent.get("name")
+            if not isinstance(name, str):
+                continue
+            func_rows.append(ent)
+
+            data: Dict[str, Any] = {
+                "function_id": ent.get("function_id"),
+                "argspec": ent.get("argspec"),
+                "docstring": ent.get("docstring", ""),
+                "guidance_ids": ent.get("guidance_ids", []),
+                "verify": ent.get("verify", True),
+                "venv_id": ent.get("venv_id"),
             }
             if include_implementations:
-                data["implementation"] = log.entries["implementation"]
-            entries[log.entries["name"]] = data
-        return entries
+                data["implementation"] = ent.get("implementation")
+            metadata[name] = data
+
+        if not return_callable:
+            return metadata
+
+        assert namespace is not None  # validated above
+        callables_list = self._inject_callables_for_functions(
+            func_rows,
+            namespace=namespace,
+        )
+        callables_map = {
+            row["name"]: cb
+            for row, cb in zip(func_rows, callables_list)
+            if isinstance(row.get("name"), str)
+        }
+
+        if also_return_metadata:
+            return {"callables": callables_map, "metadata": metadata}  # type: ignore[return-value]
+
+        return callables_map  # type: ignore[return-value]
 
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
