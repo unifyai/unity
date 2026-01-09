@@ -1686,7 +1686,53 @@ class FunctionManager(BaseFunctionManager):
             namespace=namespace,
         )
 
-    
+    def _inject_dependencies(
+        self,
+        func_data: Dict[str, Any],
+        *,
+        namespace: Dict[str, Any],
+        visited: Set[str],
+    ) -> None:
+        """Inject transitive dependencies into ``namespace`` (breadth-first)."""
+        from collections import deque
+
+        calls = func_data.get("calls") or []
+        if not isinstance(calls, list):
+            return
+
+        q = deque([c for c in calls if isinstance(c, str) and c])
+        while q:
+            dep_name = q.popleft()
+            if dep_name in visited:
+                continue
+            visited.add(dep_name)
+
+            dep_data = self._get_function_data_by_name(name=dep_name)
+            if not dep_data:
+                logger.warning(
+                    f"Dependency '{dep_name}' not found for '{func_data.get('name')}', skipping",
+                )
+                continue
+
+            # Create + inject dependency callable.
+            if dep_data.get("venv_id") is not None:
+                namespace[dep_name] = self._create_venv_callable(
+                    dep_data,
+                    namespace=namespace,
+                )
+                # Treat venv functions as atomic; do not recurse into their deps.
+                continue
+
+            namespace[dep_name] = self._create_in_process_callable(
+                dep_data,
+                namespace=namespace,
+            )
+
+            nested = dep_data.get("calls") or []
+            if isinstance(nested, list):
+                for child in nested:
+                    if isinstance(child, str) and child and child not in visited:
+                        q.append(child)
 
     def _inject_callables_for_functions(
         self,
