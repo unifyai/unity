@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import re
+import types
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Literal, Optional
 from unittest.mock import AsyncMock
@@ -47,19 +49,26 @@ def _wrap_primitives_method_for_trace(
     if not callable(orig):
         return
 
-    if asyncio.iscoroutinefunction(orig):
+    # Preserve method identity/name for prompt builders that introspect tool names.
+    # Also ensure the wrapper is *bound* to the instance so `__self__` is present.
+    orig_func = getattr(orig, "__func__", orig)
+    is_async = asyncio.iscoroutinefunction(orig_func)
 
-        async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+    if is_async:
+
+        @functools.wraps(orig_func)
+        async def _wrapped(self, *args: Any, **kwargs: Any) -> Any:
             sink.append(fq_tool_name)
-            return await orig(*args, **kwargs)
+            return await orig_func(self, *args, **kwargs)
 
     else:
 
-        def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        @functools.wraps(orig_func)
+        def _wrapped(self, *args: Any, **kwargs: Any) -> Any:
             sink.append(fq_tool_name)
-            return orig(*args, **kwargs)
+            return orig_func(self, *args, **kwargs)
 
-    setattr(manager, method_name, _wrapped)
+    setattr(manager, method_name, types.MethodType(_wrapped, manager))
 
 
 def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
