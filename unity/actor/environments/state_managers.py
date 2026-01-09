@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, Optional, Set
 
-from unity.actor.environments.base import BaseEnvironment, ToolMetadata
+from unity.actor.environments.base import (
+    BaseEnvironment,
+    ToolMetadata,
+    _ClarificationQueueInjector,
+)
 from unity.function_manager.primitives import (
     MANAGER_METADATA,
     PRIMITIVE_SOURCES,
@@ -14,7 +19,7 @@ class _FilteredPrimitivesProxy:
     """Proxy that restricts access to only allowed managers.
 
     When `exposed_managers` is set on StateManagerEnvironment, this proxy
-    is returned by `get_instance()` instead of the raw Primitives object.
+    is returned by `get_sandbox_instance()` instead of the raw Primitives object.
     Accessing non-allowed managers raises AttributeError with a helpful message.
 
     This is transparent to code that only uses allowed managers - all attributes
@@ -87,7 +92,15 @@ class StateManagerEnvironment(BaseEnvironment):
         self,
         primitives: Primitives,
         exposed_managers: Optional[Set[str]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
+        super().__init__(
+            instance=primitives,
+            namespace="primitives",
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
         self._primitives = primitives
         self._exposed_managers = exposed_managers
 
@@ -107,9 +120,23 @@ class StateManagerEnvironment(BaseEnvironment):
         use get_instance() which always returns the full Primitives. This is a temporary
         solution to avoid hardcoding the list of exposed managers in the CodeExecutionSandbox.
         """
+        instance: Any
         if self._exposed_managers is None:
-            return self._primitives
-        return _FilteredPrimitivesProxy(self._primitives, self._exposed_managers)
+            instance = self._primitives
+        else:
+            instance = _FilteredPrimitivesProxy(
+                self._primitives,
+                self._exposed_managers,
+            )
+
+        # Optionally wrap for clarification queue injection.
+        if getattr(self, "_clarification_up_q", None) is None:
+            return instance
+        return _ClarificationQueueInjector(
+            target=instance,
+            clarification_up_q=self._clarification_up_q,
+            clarification_down_q=self._clarification_down_q,
+        )
 
     def _infer_primitives_attr_name(self, class_path: str) -> str | None:
         """Infer the attribute name on Primitives from a class path."""
