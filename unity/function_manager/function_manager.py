@@ -1673,6 +1673,19 @@ class FunctionManager(BaseFunctionManager):
                 # If something extremely unusual happens, just skip.
                 continue
 
+    def _create_venv_callable(
+        self,
+        func_data: Dict[str, Any],
+        *,
+        namespace: Dict[str, Any],
+    ) -> Callable[..., Any]:
+        """Create a proxy callable for a function that must run in an isolated venv."""
+        return _VenvFunctionProxy(
+            function_manager=self,
+            func_data=func_data,
+            namespace=namespace,
+        )
+
     
 
     def _inject_callables_for_functions(
