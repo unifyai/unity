@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import io
 import traceback
 import json
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 
 from unity.actor.base import BaseActor
 from unity.actor.handle import ActorHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
 from unity.image_manager.types.image_refs import ImageRefs
@@ -18,6 +20,166 @@ from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
+
+
+class _StaticAnswerHandle(SteerableToolHandle):  # type: ignore[abstract-method]
+    """Trivial handle that returns a static answer string (used for ask())."""
+
+    def __init__(self, answer: str) -> None:
+        self._answer = answer
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> SteerableToolHandle:
+        return self
+
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> Optional[str]:
+        return None
+
+    async def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> Optional[str]:
+        return None
+
+    async def pause(self) -> Optional[str]:
+        return None
+
+    async def resume(self) -> Optional[str]:
+        return None
+
+    def done(self) -> bool:
+        return True
+
+    async def result(self) -> str:
+        return self._answer
+
+    async def next_clarification(self) -> dict:
+        await asyncio.Event().wait()
+        return {}
+
+    async def next_notification(self) -> dict:
+        await asyncio.Event().wait()
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None
+
+
+class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-method]
+    """Execute a FunctionManager entrypoint function without invoking the CodeAct LLM loop.
+
+    TaskScheduler delegates task execution to an actor via:
+    `actor.act(task_description, entrypoint=<function_id>, persist=False)`.
+
+    When an `entrypoint` is provided, CodeActActor resolves the function by id,
+    injects it into the sandbox namespace, and executes it in an asyncio task.
+    """
+
+    def __init__(
+        self,
+        *,
+        entrypoint_id: int,
+        execution_task: asyncio.Task[Any],
+    ) -> None:
+        self._entrypoint_id = int(entrypoint_id)
+        self._execution_task = execution_task
+        self._completion_event = asyncio.Event()
+        self._result_str: Optional[str] = None
+        self._stopped = False
+
+        asyncio.create_task(self._monitor_execution())
+
+    async def _monitor_execution(self) -> None:
+        try:
+            out = await self._execution_task
+            if not self._stopped:
+                self._result_str = str(out) if out is not None else ""
+        except asyncio.CancelledError:
+            self._stopped = True
+            self._result_str = f"Entrypoint {self._entrypoint_id} was cancelled."
+        except Exception as e:
+            self._result_str = f"Error: {e}"
+        finally:
+            self._completion_event.set()
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> SteerableToolHandle:
+        status = "completed" if self.done() else "still running"
+        return _StaticAnswerHandle(
+            f"Entrypoint {self._entrypoint_id} status: {status}.",
+        )
+
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+    ) -> Optional[str]:
+        # No-op for non-LLM entrypoint execution.
+        return None
+
+    async def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> Optional[str]:
+        if self._completion_event.is_set():
+            return self._result_str
+        self._stopped = True
+        self._execution_task.cancel()
+        try:
+            await asyncio.wait_for(self._completion_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pass
+        return (
+            f"Entrypoint {self._entrypoint_id} stopped."
+            if not reason
+            else f"Entrypoint {self._entrypoint_id} stopped: {reason}"
+        )
+
+    async def pause(self) -> Optional[str]:
+        return None
+
+    async def resume(self) -> Optional[str]:
+        return None
+
+    def done(self) -> bool:
+        return self._completion_event.is_set()
+
+    async def result(self) -> str:
+        await self._completion_event.wait()
+        return self._result_str or ""
+
+    async def next_clarification(self) -> dict:
+        await asyncio.Event().wait()
+        return {}
+
+    async def next_notification(self) -> dict:
+        await asyncio.Event().wait()
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return None
 
 
 def build_code_act_system_prompt(
@@ -570,8 +732,11 @@ class CodeActActor(BaseActor):
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+        entrypoint: Optional[int] = None,
+        entrypoint_args: Optional[list[Any]] = None,
+        entrypoint_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
-    ) -> ActorHandle:
+    ) -> SteerableToolHandle:
         """
         Creates and starts a new ActorHandle for the CodeAct agent.
         """
@@ -614,6 +779,57 @@ class CodeActActor(BaseActor):
             computer_primitives=self._computer_primitives,
             environments=self.environments,
         )
+
+        # If an explicit FunctionManager entrypoint is provided (e.g., TaskScheduler task execution),
+        # bypass the CodeAct LLM loop and run the function directly.
+        if entrypoint is not None:
+            entrypoint_id = int(entrypoint)
+            args = list(entrypoint_args or [])
+            kwargs_for_entrypoint = dict(entrypoint_kwargs or {})
+
+            async def _run_entrypoint() -> Any:
+                fm = self.function_manager
+                if fm is None:
+                    raise RuntimeError(
+                        "CodeActActor cannot execute entrypoint: function_manager is None",
+                    )
+
+                out = fm.search_functions(
+                    filter=f"function_id == {entrypoint_id}",
+                    return_callable=True,
+                    namespace=self._sandbox.global_state,
+                    also_return_metadata=True,
+                )
+                metadata = []
+                if isinstance(out, dict):
+                    metadata = list(out.get("metadata") or [])
+                if not metadata:
+                    raise ValueError(
+                        f"Entrypoint function_id {entrypoint_id} not found in FunctionManager.",
+                    )
+                fn_name = metadata[0].get("name")
+                if not isinstance(fn_name, str) or not fn_name.strip():
+                    raise ValueError(
+                        f"Entrypoint {entrypoint_id} has no valid function name.",
+                    )
+                fn = self._sandbox.global_state.get(fn_name)
+                if fn is None:
+                    raise ValueError(
+                        f"Entrypoint {entrypoint_id} ({fn_name}) was not injected into the sandbox namespace.",
+                    )
+
+                res = fn(*args, **kwargs_for_entrypoint)
+                if inspect.isawaitable(res):
+                    res = await res
+                return res
+
+            entry_task = asyncio.create_task(_run_entrypoint())
+            entry_handle = _CodeActEntrypointHandle(
+                entrypoint_id=entrypoint_id,
+                execution_task=entry_task,
+            )
+            setattr(entry_handle, "__passthrough__", True)
+            return entry_handle
 
         system_prompt = build_code_act_system_prompt(
             self.environments,
