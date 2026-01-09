@@ -11,7 +11,6 @@ from unity.actor.base import BaseActor
 from unity.actor.handle import ActorHandle
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
-from unity.common.llm_helpers import methods_to_tool_dict
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
@@ -98,18 +97,26 @@ You have access to a catalogue of **pre-stored reusable functions** via the Func
    - `FunctionManager_search_functions` - filter-based search
    - `FunctionManager_list_functions` - list all available functions
 
-2. **If found → USE IT**: Pre-saved functions are tested, optimized, and handle edge cases.
+2. **Functions are automatically injected into your Python sandbox** after searching.
+   - The function name(s) returned by the tool become available immediately in Python.
+   - Dependencies are injected automatically (including nested helper functions).
+   - Venv-backed functions work transparently (subprocess RPC hidden behind an awaitable callable).
+
+3. **If found → USE IT**: Pre-saved functions are tested, optimized, and handle edge cases.
    Don't re-explore tables/schemas when a function already does the job.
 
-3. **Read signatures carefully**: Check `argspec` in the search results for parameter options
+4. **Read signatures carefully**: Check `argspec` in the search results for parameter options
    like `group_by`, `include_plots`, date filters, etc.
 
-4. **Execute found functions** in your Python code:
-   ```python
-   # After finding a function via FunctionManager tools, execute it like this:
-   tools = primitives.files.get_tools()
-   result = await function_name(tools=tools, group_by="operative")
-   ```
+5. **Execute found functions** in your Python code:
+
+```python
+# Step 1: Search (JSON tool call)
+FunctionManager_search_functions_by_similarity(query="analyze sales data")
+
+# Step 2: Execute in Python code (functions now available)
+result = await analyze_sales_data(tools=primitives.files.get_tools())
+```
 
 **❌ ANTI-PATTERN (AVOID THIS):**
 ```python
@@ -414,15 +421,76 @@ class CodeActActor(BaseActor):
             "execute_python_code": execute_python_code,
         }
 
-        # Add FunctionManager read-only tools if available
+        # Add FunctionManager tools (auto-inject callables into sandbox) if available.
+        #
+        # IMPORTANT:
+        # These tools are called via JSON tool calls (not inside Python). They return
+        # metadata to the LLM while injecting the matching function callables into the
+        # sandbox global namespace so they can be executed immediately in Python code.
         if self.function_manager:
-            fm_tools = methods_to_tool_dict(
-                self.function_manager.list_functions,
-                self.function_manager.search_functions,
-                self.function_manager.search_functions_by_similarity,
-                include_class_name=True,
+
+            async def FunctionManager_search_functions_by_similarity(
+                query: str,
+                n: int = 5,
+            ) -> Any:
+                """
+                Search for functions by semantic similarity to a natural-language query.
+
+                Functions are automatically injected into your Python sandbox namespace,
+                so you can execute them immediately after searching.
+                """
+                result = self.function_manager.search_functions_by_similarity(
+                    query=query,
+                    n=n,
+                    return_callable=True,
+                    namespace=self._sandbox.global_state,
+                    also_return_metadata=True,
+                )
+                return result["metadata"]
+
+            async def FunctionManager_search_functions(
+                filter: Optional[str] = None,
+                offset: int = 0,
+                limit: int = 100,
+            ) -> Any:
+                """
+                Search for functions using a Python-like filter expression.
+
+                Functions are automatically injected into your Python sandbox namespace,
+                so you can execute them immediately after searching.
+                """
+                result = self.function_manager.search_functions(
+                    filter=filter,
+                    offset=offset,
+                    limit=limit,
+                    return_callable=True,
+                    namespace=self._sandbox.global_state,
+                    also_return_metadata=True,
+                )
+                return result["metadata"]
+
+            async def FunctionManager_list_functions(
+                include_implementations: bool = False,
+            ) -> Any:
+                """
+                List available functions.
+
+                Functions are automatically injected into your Python sandbox namespace,
+                so you can execute them immediately after listing.
+                """
+                result = self.function_manager.list_functions(
+                    include_implementations=include_implementations,
+                    return_callable=True,
+                    namespace=self._sandbox.global_state,
+                    also_return_metadata=True,
+                )
+                return result["metadata"]
+
+            tools["FunctionManager_search_functions_by_similarity"] = (
+                FunctionManager_search_functions_by_similarity
             )
-            tools.update(fm_tools)
+            tools["FunctionManager_search_functions"] = FunctionManager_search_functions
+            tools["FunctionManager_list_functions"] = FunctionManager_list_functions
 
         return tools
 
