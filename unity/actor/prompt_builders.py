@@ -1393,6 +1393,15 @@ def _build_state_manager_rules_and_examples(
         """
         ### 🧩 State Manager Rules
 
+        - **Do not answer from scratch when `primitives` is available**:
+          - If the user asks an information question, prefer calling the relevant state manager via `await primitives.<manager>.ask(...)`
+            instead of answering purely from memory.
+          - This applies even when you think you “already know” the answer — use the manager as evidence/ground truth.
+
+        - **External / public info** (definitions, general concepts, news, weather, “today/latest/now”):
+          - Default to `await primitives.web.ask(...)` when available (even for stable concepts/definitions).
+          - Do not answer from memory without consulting `primitives.web.ask(...)` unless the user explicitly requests no tool use.
+
         - **Read vs write**:
           - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
           - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` are **impure** (they mutate state or start work).
