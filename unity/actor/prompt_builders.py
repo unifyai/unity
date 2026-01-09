@@ -841,13 +841,33 @@ def _format_images_for_prompt(images: Optional[dict[str, Any]]) -> str:
     return "\n\n" + "\n".join(image_lines)
 
 
-def _build_core_planning_rules() -> str:
+def _build_core_planning_rules(*, has_browser: bool) -> str:
     """
     Environment-agnostic planning rules (condensed from rules 1-13).
     Removes verbose inline code examples for better token efficiency.
     """
+    normalize_hint = ""
+    if has_browser:
+        normalize_hint = textwrap.dedent(
+            """
+              Instead, use a composition pattern:
+              - Ask with clear options (e.g. "reply 'exclude Q3' or 'include Q3'")
+              - Then normalize the free-form answer into a canonical choice using a reasoning tool:
+                - `await computer_primitives.reason(request=..., context=answer, response_format=...)`
+            """,
+        ).rstrip()
+    else:
+        normalize_hint = textwrap.dedent(
+            """
+              Instead, use a composition pattern:
+              - Ask with clear options (e.g. "reply 'exclude Q3' or 'include Q3'")
+              - Then normalize the free-form answer into a canonical choice using plain Python
+                (or ask a follow-up clarification with constrained options).
+            """,
+        ).rstrip()
+
     return textwrap.dedent(
-        """
+        f"""
         ### 🎯 CRITICAL RULES FOR INITIAL PLAN CREATION
 
         1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block. No explanatory text before or after.
@@ -896,10 +916,7 @@ def _build_core_planning_rules() -> str:
             - Do NOT call it as a method on tool providers.
             - `request_clarification(...)` returns a **plain string** (the user's answer).
             - **Avoid brittle parsing** like `"yes" in answer` for decisions.
-              Instead, use a composition pattern:
-              - Ask with clear options (e.g. \"reply 'exclude Q3' or 'include Q3'\")
-              - Then normalize the free-form answer into a canonical choice using a reasoning tool:
-                - `await computer_primitives.reason(request=..., context=answer, response_format=...)`
+{normalize_hint}
 
         12. **Return the Final Value**: If the last step returns a value, your `main_plan` MUST capture and return it.
 
@@ -1457,9 +1474,6 @@ def _build_initial_plan_rules_and_examples(
     tool_reference = _build_tool_reference_by_namespace(tools, environments)
     handle_apis = _build_handle_apis(tools)
 
-    # Core rules (environment-agnostic)
-    core_rules = _build_core_planning_rules()
-
     # Detect active environments
     if environments is None:
         # Legacy mode: infer from tool namespaces to avoid browser assumptions
@@ -1472,6 +1486,9 @@ def _build_initial_plan_rules_and_examples(
         has_browser = "computer_primitives" in environments
         has_primitives = "primitives" in environments
 
+    # Core rules (environment-aware where needed, but still "mostly" agnostic).
+    core_rules = _build_core_planning_rules(has_browser=has_browser)
+
     routing_instruction_str = ""
     if has_primitives:
         routing_instruction_str = textwrap.dedent(
@@ -1481,9 +1498,13 @@ def _build_initial_plan_rules_and_examples(
             - **Default to internal state first** for questions about our org/products/policies/processes (e.g., office hours, onboarding policy, internal return/warranty policies we maintain): use `await primitives.knowledge.ask(...)`.
             - For **how-to / execution instructions** (runbooks, “how to use function X”, “how do we execute Y safely”), use `await primitives.guidance.ask(...)` (or `.update(...)` to create/update those runbooks).
             - **External / public info** (general concepts/definitions; news, weather, “this week/today/latest”, real-time facts): default to `await primitives.web.ask(...)` (even for stable concepts).
-            - Do NOT use `computer_primitives.reason(...)` as a substitute for `primitives.web.ask(...)`. Use `reason` only to structure/summarize after you've gathered evidence (e.g., from web search).
             """,
         ).strip()
+        if has_browser:
+            routing_instruction_str += (
+                "\n- Do NOT use `computer_primitives.reason(...)` as a substitute for `primitives.web.ask(...)`. "
+                "Use `reason` only to structure/summarize after you've gathered evidence (e.g., from web search)."
+            )
 
     # Get exposed managers from environment for filtering
     managers_filter = None

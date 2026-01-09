@@ -5496,9 +5496,6 @@ class HierarchicalActor(BaseActor):
         """
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
-        self.function_manager = (
-            function_manager or ManagerRegistry.get_function_manager()
-        )
         self._session_connect_url = session_connect_url
         self._headless = headless
         self._browser_mode = browser_mode
@@ -5507,19 +5504,14 @@ class HierarchicalActor(BaseActor):
         self._connect_now = connect_now
         self.can_compose = can_compose
         self.can_store = can_store
-        # Only construct ComputerPrimitives when a browser environment is actually configured.
-        # If `environments` are provided explicitly, we must not implicitly introduce browser deps.
-        self.computer_primitives: Optional[ComputerPrimitives] = None
 
-        # Pluggable environments (domain-agnostic tool providers).
+        # Preserve backward-compatible test hooks: many tests monkeypatch
+        # `unity.actor.hierarchical_actor.ComputerPrimitives`. When environments are not
+        # provided explicitly, construct the instance here so those patches still apply,
+        # then let BaseActor build the default environments around it.
+        cp_for_base: Optional[ComputerPrimitives] = None
         if environments is None:
-            from unity.actor.environments import (
-                ComputerEnvironment,
-                StateManagerEnvironment,
-            )
-            from unity.function_manager.primitives import Primitives
-
-            self.computer_primitives = ComputerPrimitives(
+            cp_for_base = ComputerPrimitives(
                 session_connect_url=session_connect_url,
                 headless=headless,
                 browser_mode=browser_mode,
@@ -5527,28 +5519,21 @@ class HierarchicalActor(BaseActor):
                 agent_server_url=agent_server_url,
                 connect_now=connect_now,
             )
-            primitives = Primitives()
-            environments = [
-                ComputerEnvironment(self.computer_primitives),
-                StateManagerEnvironment(primitives),
-            ]
+        super().__init__(
+            environments=environments,
+            computer_primitives=cp_for_base,
+            function_manager=function_manager,
+            session_connect_url=session_connect_url,
+            headless=headless,
+            browser_mode=browser_mode,
+            agent_mode=agent_mode,
+            agent_server_url=agent_server_url,
+            connect_now=connect_now,
+        )
 
-        self.environments: dict[str, "BaseEnvironment"] = {
-            env.namespace: env for env in environments
-        }
-
-        # If the provided environments include a browser environment, expose its instance
-        # (used by some internal helpers and by plans that request a dedicated session).
-        if (
-            self.computer_primitives is None
-            and "computer_primitives" in self.environments
-        ):
-            try:
-                cp = self.environments["computer_primitives"].get_instance()
-                if isinstance(cp, ComputerPrimitives):
-                    self.computer_primitives = cp
-            except Exception:
-                self.computer_primitives = None
+        # Backward-compat: preserve the actor-level `computer_primitives` attribute used by
+        # internal helpers and some legacy plans.
+        self.computer_primitives = self._computer_primitives
 
         # Metadata for tool purity/steerability (used by proxies; not by prompts).
         self.tool_metadata: dict[str, ToolMetadata] = {}

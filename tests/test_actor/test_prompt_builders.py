@@ -354,7 +354,7 @@ def test_initial_plan_includes_existing_functions_library_and_retry_and_images()
         images=_images(),
     )
 
-    assert "### Existing Functions Library (Your Skills)" in prompt
+    assert "### YOUR AVAILABLE FUNCTIONS (Already Loaded & Callable)" in prompt
     assert "trusted_skill" in prompt
     assert "other_skill" in prompt
     assert retry_msg in prompt
@@ -374,7 +374,7 @@ def test_initial_plan_with_empty_state_is_safe() -> None:
         environments=_environments_mixed(),
         images=None,
     )
-    assert "### Existing Functions Library (Your Skills)" in prompt
+    assert "### YOUR AVAILABLE FUNCTIONS (Already Loaded & Callable)" in prompt
     assert "None." in prompt
 
 
@@ -616,7 +616,7 @@ def test_interjection_includes_scoped_context_call_stack_actions_cache_and_pane_
     assert "**origin_tool**: `primitives.contacts.update`" in dynamic
     assert "**status**:" in dynamic
     assert "**capabilities**:" in dynamic
-    assert "... and 2 more handles." in dynamic
+    assert "**handle_id**: `h_11`" in dynamic
     assert "### Tool Reference" in static_prefix
 
 

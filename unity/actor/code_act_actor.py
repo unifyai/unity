@@ -15,7 +15,6 @@ from unity.common.llm_helpers import methods_to_tool_dict
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
-from unity.manager_registry import ManagerRegistry
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
@@ -318,44 +317,15 @@ class CodeActActor(BaseActor):
                 (list_functions, search_functions, search_functions_by_similarity) to the LLM.
                 The LLM can call these tools to discover and retrieve reusable function implementations.
         """
-        from unity.actor.environments import (
-            ComputerEnvironment,
-            StateManagerEnvironment,
-        )
-        from unity.function_manager.primitives import Primitives
-
-        if environments is None:
-            if computer_primitives is not None:
-                _computer_primitives = computer_primitives
-            else:
-                _computer_primitives = ComputerPrimitives(
-                    session_connect_url=session_connect_url,
-                    headless=headless,
-                    browser_mode=browser_mode,
-                    agent_mode=agent_mode,
-                    agent_server_url=agent_server_url,
-                )
-            primitives = Primitives()
-            environments = [
-                ComputerEnvironment(_computer_primitives),
-                StateManagerEnvironment(primitives),
-            ]
-
-        self.environments: Dict[str, "BaseEnvironment"] = {
-            env.namespace: env for env in environments
-        }
-        self._computer_primitives = None
-        if "computer_primitives" in self.environments:
-            try:
-                self._computer_primitives = self.environments[
-                    "computer_primitives"
-                ].get_instance()
-            except Exception:
-                self._computer_primitives = None
-
-        # Set function_manager BEFORE sandbox/tools creation
-        self.function_manager = (
-            function_manager or ManagerRegistry.get_function_manager()
+        super().__init__(
+            environments=environments,
+            computer_primitives=computer_primitives,
+            function_manager=function_manager,
+            session_connect_url=session_connect_url,
+            headless=headless,
+            browser_mode=browser_mode,
+            agent_mode=agent_mode,
+            agent_server_url=agent_server_url,
         )
 
         self._sandbox = CodeExecutionSandbox(
