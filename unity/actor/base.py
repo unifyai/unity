@@ -3,12 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Type
+from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
 from unity.common.async_tool_loop import SteerableToolHandle
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from unity.actor.environments.base import BaseEnvironment
+    from unity.function_manager.function_manager import FunctionManager
+    from unity.function_manager.primitives import ComputerPrimitives
 
 __all__ = [
     "BaseActor",
@@ -73,6 +78,129 @@ class BaseActor(ABC):
     _as_caller_description: str = (
         "the Actor, performing a live action on behalf of the end user"
     )
+
+    def __init__(
+        self,
+        *,
+        environments: Optional[list["BaseEnvironment"]] = None,
+        computer_primitives: Optional["ComputerPrimitives"] = None,
+        function_manager: Optional["FunctionManager"] = None,
+        # Browser-specific params for default environment creation
+        session_connect_url: Optional[str] = None,
+        headless: bool = False,
+        browser_mode: str = "magnitude",
+        agent_mode: str = "browser",
+        agent_server_url: str = "http://localhost:3000",
+        connect_now: bool = False,
+        # Clarification queue params for environment wiring
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> None:
+        """
+        Shared initialization for concrete actor implementations.
+
+        This centralizes:
+        - Environment setup with sensible defaults (browser + state managers)
+        - FunctionManager resolution (registry fallback)
+        - Extraction of computer primitives for backward compatibility
+        """
+        self.environments: Dict[str, "BaseEnvironment"] = self._setup_environments(
+            environments=environments,
+            computer_primitives=computer_primitives,
+            session_connect_url=session_connect_url,
+            headless=headless,
+            browser_mode=browser_mode,
+            agent_mode=agent_mode,
+            agent_server_url=agent_server_url,
+            connect_now=connect_now,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+        # Resolve FunctionManager (used by multiple actors for memoized skills).
+        from unity.manager_registry import ManagerRegistry
+
+        self.function_manager = (
+            function_manager or ManagerRegistry.get_function_manager()
+        )
+
+        # Backward-compat: some call sites expect an actor-level computer primitives instance.
+        self._computer_primitives = self._extract_computer_primitives()
+
+    def _setup_environments(
+        self,
+        *,
+        environments: Optional[list["BaseEnvironment"]],
+        computer_primitives: Optional["ComputerPrimitives"],
+        session_connect_url: Optional[str],
+        headless: bool,
+        browser_mode: str,
+        agent_mode: str,
+        agent_server_url: str,
+        connect_now: bool,
+        clarification_up_q: Optional[asyncio.Queue[str]],
+        clarification_down_q: Optional[asyncio.Queue[str]],
+    ) -> Dict[str, "BaseEnvironment"]:
+        """
+        Setup execution environments with defaults and optional clarification queues.
+
+        Returns:
+            Dict keyed by environment namespace.
+        """
+        from unity.actor.environments import (
+            ComputerEnvironment,
+            StateManagerEnvironment,
+        )
+        from unity.function_manager.primitives import ComputerPrimitives, Primitives
+
+        # If environments are explicitly provided, honor them and do not implicitly
+        # introduce a browser environment (domain-agnostic mode).
+        if environments is None:
+            if computer_primitives is not None:
+                cp = computer_primitives
+            else:
+                cp = ComputerPrimitives(
+                    session_connect_url=session_connect_url,
+                    headless=headless,
+                    browser_mode=browser_mode,
+                    agent_mode=agent_mode,
+                    agent_server_url=agent_server_url,
+                    connect_now=connect_now,
+                )
+
+            primitives = Primitives()
+            environments = [
+                ComputerEnvironment(
+                    cp,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                ),
+                StateManagerEnvironment(
+                    primitives,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                ),
+            ]
+
+        env_map: Dict[str, "BaseEnvironment"] = {}
+        for env in environments:
+            ns = env.namespace
+            if ns in env_map:
+                raise ValueError(
+                    f"Duplicate environment namespace detected: {ns!r}. "
+                    "Environment namespaces must be unique.",
+                )
+            env_map[ns] = env
+        return env_map
+
+    def _extract_computer_primitives(self) -> Optional[Any]:
+        """Extract computer primitives instance for backward compatibility."""
+        if "computer_primitives" in getattr(self, "environments", {}):
+            try:
+                return self.environments["computer_primitives"].get_instance()
+            except Exception:
+                return None
+        return None
 
     # ─────────────────────────── Work management ────────────────────────── #
 

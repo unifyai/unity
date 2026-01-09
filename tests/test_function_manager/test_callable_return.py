@@ -104,7 +104,9 @@ async def test_dependency_injection_supports_indirect_calls_and_returned_functio
 @_handle_project
 def test_search_return_callable_also_returns_metadata():
     fm = FunctionManager()
-    fm.add_functions(implementations="def add_numbers(a: int, b: int) -> int:\n    return a + b\n")
+    fm.add_functions(
+        implementations="def add_numbers(a: int, b: int) -> int:\n    return a + b\n",
+    )
 
     ns = create_base_globals()
     res = fm.search_functions(
@@ -462,4 +464,3 @@ async def test_similarity_search_return_callable_forward_ref_annotations_just_wo
     assert "NoneType" in group_by_str
     assert time_period_name == "TimePeriod"
     assert return_name == "MetricResult"
-
