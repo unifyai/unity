@@ -58,6 +58,28 @@ dependencies = ["torch>=2.0", "transformers>=4.30"]
 - `precondition: Optional[dict]` - Required state before execution
 - `auto_sync: bool = True` - Set to False to exclude from auto-sync
 
+## Best Practice: Import Runtime Domain Types
+
+Custom compositional functions are frequently executed by retrieving a callable from the
+`FunctionManager` (e.g. semantic search) and running it in a fresh sandbox namespace.
+
+Simple rule: **if you use a symbol in the function body, import/define it inside the function**.
+
+Example:
+
+```python
+# ✅ OK: "User" is only an annotation (forward-ref string)
+@custom_function()
+async def greet(user: "User") -> str:
+    return f"Hello {user.name}"
+
+# ✅ Preferred: import the runtime type inside the function if you need it
+@custom_function()
+async def is_admin(role: "Role") -> bool:
+    from my_app.types import Role
+    return role == Role.ADMIN
+```
+
 ## Sync Behavior
 
 - Venvs are synced first, then functions
