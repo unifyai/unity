@@ -103,6 +103,32 @@ class _DependencyVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def _strip_custom_function_decorators(source: str) -> str:
+    """
+    Remove @custom_function decorators from a function source string.
+
+    The @custom_function decorator is used for sync metadata only (it is effectively
+    a no-op at runtime), but the symbol is not guaranteed to exist inside execution
+    environments (e.g., Actor sandboxes or venv runner subprocesses).
+    """
+    try:
+        lines = source.splitlines(keepends=True)
+    except Exception:
+        return source
+
+    out: List[str] = []
+    seen_def = False
+    for line in lines:
+        stripped = line.lstrip()
+        if not seen_def and stripped.startswith("@custom_function"):
+            continue
+        if stripped.startswith("def ") or stripped.startswith("async def "):
+            seen_def = True
+        out.append(line)
+    return "".join(out)
+
+
+
 class FunctionManager(BaseFunctionManager):
     """
     Keeps a catalogue of user-supplied Python functions and system primitives.
