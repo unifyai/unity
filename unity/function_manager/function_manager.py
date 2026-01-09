@@ -1973,7 +1973,15 @@ class FunctionManager(BaseFunctionManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        return_callable: bool = False,
+        namespace: Optional[Dict[str, Any]] = None,
+        also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
+        if also_return_metadata and not return_callable:
+            raise ValueError("also_return_metadata requires return_callable=True")
+
+        if return_callable and namespace is None:
+            raise ValueError("namespace required when return_callable=True")
 
         normalized = normalize_filter_expr(filter)
         # The underlying Unify backend returns 404 when a context hasn't been created yet.
@@ -1981,6 +1989,7 @@ class FunctionManager(BaseFunctionManager):
         # then treat missing context as "no functions" rather than crashing the Actor.
         import time as _time
 
+        rows: List[Dict[str, Any]] = []
         last_exc: Exception | None = None
         for delay in (0.0, 0.05, 0.15):
             if delay:
@@ -1993,7 +2002,9 @@ class FunctionManager(BaseFunctionManager):
                     limit=limit,
                     exclude_fields=list_private_fields(self._compositional_ctx),
                 )
-                return [lg.entries for lg in logs]
+                rows = [lg.entries for lg in logs]
+                last_exc = None
+                break
             except _UnifyRequestError as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
                 if status == 404:
@@ -2003,14 +2014,23 @@ class FunctionManager(BaseFunctionManager):
             except Exception as e:
                 last_exc = e
                 break
+
         # If we still see 404 after retries, treat as empty library.
         if isinstance(last_exc, _UnifyRequestError):
             status = getattr(getattr(last_exc, "response", None), "status_code", None)
             if status == 404:
-                return []
-        if last_exc is not None:
+                rows = []
+        elif last_exc is not None:
             raise last_exc
-        return []
+
+        if not return_callable:
+            return rows
+
+        assert namespace is not None  # validated above
+        callables_list = self._inject_callables_for_functions(rows, namespace=namespace)
+        if also_return_metadata:
+            return {"callables": callables_list, "metadata": rows}  # type: ignore[return-value]
+        return callables_list  # type: ignore[return-value]
 
     # ------------------------------------------------------------------ #
     #  Accessors and disk → context sync                                 #
