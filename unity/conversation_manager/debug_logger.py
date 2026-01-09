@@ -74,7 +74,9 @@ def log_job_startup(
             context="startup_events",
             filter=f"job_name == '{job_name}'",
             api_key=api_key,
-        )[0]
+        )
+        print("Debug Logger - Logs:", log)
+        log = log[0]
         print("Logged Startup Event", job_name)
     except Exception as e:
         print(f"Error logging startup event: {e}")
