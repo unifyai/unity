@@ -15,6 +15,8 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .dependency_analysis import collect_dependencies_from_source
+
 from .custom import CustomFunctionMetadata
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,7 @@ def _compute_function_hash(
     argspec: str,
     docstring: str,
     implementation: str,
+    calls: List[str],
     venv_name: Optional[str],
     venv_id: Optional[int],
     verify: bool,
@@ -134,6 +137,7 @@ def _compute_function_hash(
         argspec,
         docstring or "",
         implementation,
+        "|".join(sorted(calls or [])),
         venv_name or "",
         str(venv_id) if venv_id is not None else "",
         str(verify),
@@ -239,7 +243,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
         )
         return {}
 
-    functions: Dict[str, Dict[str, Any]] = {}
+    staged: List[Tuple[str, Callable, CustomFunctionMetadata, str, str, str]] = []
 
     # Scan all .py files in the functions folder
     for py_file in functions_folder.glob("*.py"):
@@ -255,17 +259,6 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
             argspec = _get_function_argspec(func)
             docstring = _get_function_docstring(func)
 
-            custom_hash = _compute_function_hash(
-                name=name,
-                argspec=argspec,
-                docstring=docstring,
-                implementation=implementation,
-                venv_name=metadata.venv_name,
-                venv_id=metadata.venv_id,
-                verify=metadata.verify,
-                precondition=metadata.precondition,
-            )
-
             # Build embedding text (similar to regular functions)
             embedding_text = (
                 f"Function: {name}\n"
@@ -273,21 +266,56 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
                 f"Docstring: {docstring}"
             )
 
-            functions[name] = {
-                "name": name,
-                "argspec": argspec,
-                "docstring": docstring,
-                "implementation": implementation,
-                "venv_name": metadata.venv_name,
-                "venv_id": metadata.venv_id,
-                "verify": metadata.verify,
-                "precondition": metadata.precondition,
-                "custom_hash": custom_hash,
-                "embedding_text": embedding_text,
-                "calls": [],  # Could be computed via AST analysis if needed
-                "is_primitive": False,
-                "guidance_ids": [],
-            }
+            staged.append((name, func, metadata, argspec, docstring, implementation))
+
+    # Second pass: compute dependency graph now that we know all custom names.
+    functions: Dict[str, Dict[str, Any]] = {}
+    known_names = {name for name, *_rest in staged}
+
+    for name, _func, metadata, argspec, docstring, implementation in staged:
+        deps = sorted(
+            list(
+                collect_dependencies_from_source(
+                    implementation,
+                    known_names,
+                ),
+            ),
+        )
+
+        custom_hash = _compute_function_hash(
+            name=name,
+            argspec=argspec,
+            docstring=docstring,
+            implementation=implementation,
+            calls=deps,
+            venv_name=metadata.venv_name,
+            venv_id=metadata.venv_id,
+            verify=metadata.verify,
+            precondition=metadata.precondition,
+        )
+
+        # Rebuild embedding text (deterministic)
+        embedding_text = (
+            f"Function: {name}\n"
+            f"Signature: {argspec}\n"
+            f"Docstring: {docstring}"
+        )
+
+        functions[name] = {
+            "name": name,
+            "argspec": argspec,
+            "docstring": docstring,
+            "implementation": implementation,
+            "venv_name": metadata.venv_name,
+            "venv_id": metadata.venv_id,
+            "verify": metadata.verify,
+            "precondition": metadata.precondition,
+            "custom_hash": custom_hash,
+            "embedding_text": embedding_text,
+            "calls": deps,
+            "is_primitive": False,
+            "guidance_ids": [],
+        }
 
     logger.debug(f"Collected {len(functions)} custom functions")
     return functions
