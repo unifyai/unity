@@ -128,6 +128,119 @@ def _strip_custom_function_decorators(source: str) -> str:
     return "".join(out)
 
 
+class _VenvFunctionProxy:
+    """Proxy that wraps a venv-backed function as an awaitable callable."""
+
+    def __init__(
+        self,
+        *,
+        function_manager: "FunctionManager",
+        func_data: Dict[str, Any],
+        namespace: Dict[str, Any],
+    ):
+        self._function_manager = function_manager
+        self._func_data = func_data
+        self._namespace = namespace
+
+        self.__name__ = str(func_data.get("name") or "unknown")
+        self.__doc__ = str(func_data.get("docstring") or "")
+
+    @staticmethod
+    def _map_positional_args(
+        *,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        implementation: str,
+        func_name: str,
+    ) -> dict[str, Any]:
+        """
+        Map positional args to kwargs using AST-extracted parameter names.
+
+        Note: the venv runner currently executes with ``fn(**call_kwargs)``, so we can
+        only support positional args by mapping them onto non-positional-only params.
+        """
+        if not args:
+            return kwargs
+
+        try:
+            tree = ast.parse(implementation)
+        except Exception as e:
+            raise TypeError(
+                f"Cannot map positional args for venv function '{func_name}': failed to parse implementation",
+            ) from e
+
+        if not tree.body or not isinstance(
+            tree.body[0],
+            (ast.FunctionDef, ast.AsyncFunctionDef),
+        ):
+            raise TypeError(
+                f"Cannot map positional args for venv function '{func_name}': implementation must contain exactly one top-level function",
+            )
+
+        node: ast.FunctionDef | ast.AsyncFunctionDef = tree.body[0]
+        if node.args.posonlyargs:
+            raise TypeError(
+                f"Cannot call venv function '{func_name}' with positional-only args; use keyword arguments",
+            )
+        if node.args.vararg is not None:
+            raise TypeError(
+                f"Cannot call venv function '{func_name}' with *args; use keyword arguments",
+            )
+
+        param_names = [a.arg for a in node.args.args]
+        if len(args) > len(param_names):
+            raise TypeError(
+                f"Too many positional arguments for venv function '{func_name}'",
+            )
+
+        mapped: dict[str, Any] = dict(kwargs)
+        for k, v in zip(param_names[: len(args)], args):
+            if k in mapped:
+                raise TypeError(
+                    f"Multiple values for argument '{k}' in venv function '{func_name}'",
+                )
+            mapped[k] = v
+        return mapped
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        venv_id = self._func_data.get("venv_id")
+        if venv_id is None:
+            raise ValueError(f"Venv proxy '{self.__name__}' missing venv_id")
+
+        implementation = self._func_data.get("implementation")
+        if not isinstance(implementation, str) or not implementation.strip():
+            raise ValueError(f"Venv function '{self.__name__}' has no implementation")
+
+        # Strip @custom_function decorators (not available in subprocess runner).
+        implementation = _strip_custom_function_decorators(implementation)
+
+        # Determine async-ness based on source (consistent with existing HierarchicalActor proxy).
+        is_async = "async def" in implementation
+
+        # Resolve RPC targets from the injected namespace (caller-controlled).
+        primitives = self._namespace.get("primitives")
+        computer_primitives = self._namespace.get("computer_primitives")
+
+        call_kwargs = self._map_positional_args(
+            args=args,
+            kwargs=kwargs,
+            implementation=implementation,
+            func_name=self.__name__,
+        )
+
+        result = await self._function_manager.execute_in_venv(
+            venv_id=int(venv_id),
+            implementation=implementation,
+            call_kwargs=call_kwargs,
+            is_async=is_async,
+            primitives=primitives,
+            computer_primitives=computer_primitives,
+        )
+
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return result.get("result")
+
 
 class FunctionManager(BaseFunctionManager):
     """
