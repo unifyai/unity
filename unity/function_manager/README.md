@@ -283,6 +283,36 @@ async def example_with_import():
 
 The sandbox includes `__import__`, so any package installed in the environment can be imported.
 
+### Best Practice: Domain Types & Type Hints (Avoid Surprise `NameError`s)
+
+Compositional functions are often used by the Actor/CodeActActor by **retrieving a callable** (e.g. via `search_functions_by_similarity(..., return_callable=True)`) and executing it in a fresh sandbox namespace.
+
+Here’s the simple rule:
+- If you reference a symbol in the **function body**, **import/define it** in the function (don’t assume it exists in globals).
+- If you reference a symbol only in **annotations** (including forward-ref strings), that’s usually fine.
+
+```python
+# ✅ OK: "User" only appears in the annotation (as a forward-ref string).
+# The function body doesn't need the User symbol at runtime.
+async def greet(user: "User") -> str:
+    return f"Hello {user.name}"
+
+
+# ⚠️ NOT OK: Role is used at runtime, so it MUST exist (import/define it).
+async def is_admin(role: "Role") -> bool:
+    return role == Role.ADMIN
+
+
+# ✅ Preferred: import the runtime type inside the function.
+async def is_admin(role: "Role") -> bool:
+    from my_app.types import Role
+    return role == Role.ADMIN
+```
+
+Note: if your code resolves type hints at runtime (e.g. `typing.get_type_hints(...)` or Pydantic model building),
+then all referenced names must be resolvable. `FunctionManager` makes annotation-resolution more robust, but it cannot
+guess the *real* domain objects for runtime logic—imports/definitions are the reliable solution.
+
 #### Pre-Injected by Sandbox
 
 These are always available (from `create_execution_globals()`):
