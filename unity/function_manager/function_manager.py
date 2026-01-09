@@ -8,13 +8,14 @@ import signal
 import sys
 import logging
 from pathlib import Path
-from typing import Dict, List, Set, Union, Tuple, Any, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import unify
 from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import list_private_fields
 from ..common.search_utils import table_search_top_k
 from .execution_env import create_base_globals
+from .dependency_analysis import collect_dependencies_from_function_node
 from .types.function import Function
 from .types.meta import FunctionsMeta
 from .types.venv import VirtualEnv
@@ -445,11 +446,10 @@ class FunctionManager(BaseFunctionManager):
         indirect calls via variables, and returned function name references
         to other known library functions.
         """
-        visitor = _DependencyVisitor(all_known_function_names)
-        visitor.visit(fn_node)
-        # Remove potential self-references if the visitor logic includes them
-        visitor.dependencies.discard(fn_node.name)
-        return visitor.dependencies
+        return collect_dependencies_from_function_node(
+            fn_node,
+            all_known_function_names,
+        )
 
     def _collect_function_calls(
         self,
@@ -1603,9 +1603,15 @@ class FunctionManager(BaseFunctionManager):
         for arg in list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs):
             if getattr(arg, "annotation", None) is not None:
                 ann_exprs.append(arg.annotation)  # type: ignore[arg-type]
-        if args.vararg is not None and getattr(args.vararg, "annotation", None) is not None:
+        if (
+            args.vararg is not None
+            and getattr(args.vararg, "annotation", None) is not None
+        ):
             ann_exprs.append(args.vararg.annotation)  # type: ignore[arg-type]
-        if args.kwarg is not None and getattr(args.kwarg, "annotation", None) is not None:
+        if (
+            args.kwarg is not None
+            and getattr(args.kwarg, "annotation", None) is not None
+        ):
             ann_exprs.append(args.kwarg.annotation)  # type: ignore[arg-type]
         if getattr(fn_node, "returns", None) is not None:
             ann_exprs.append(fn_node.returns)  # type: ignore[arg-type]
@@ -2205,9 +2211,14 @@ class FunctionManager(BaseFunctionManager):
 
         # Only materialize non-primitive records as callables.
         exec_rows = [
-            r for r in results if isinstance(r, dict) and r.get("is_primitive") is not True
+            r
+            for r in results
+            if isinstance(r, dict) and r.get("is_primitive") is not True
         ]
-        callables_list = self._inject_callables_for_functions(exec_rows, namespace=namespace)
+        callables_list = self._inject_callables_for_functions(
+            exec_rows,
+            namespace=namespace,
+        )
 
         if also_return_metadata:
             return {"callables": callables_list, "metadata": exec_rows}  # type: ignore[return-value]
@@ -2672,9 +2683,29 @@ class FunctionManager(BaseFunctionManager):
             # Run uv sync
             logger.info(f"Venv {venv_id}: running 'uv sync'...")
             import asyncio
+            import shutil as _shutil
+            import sys as _sys
+
+            uv_bin = _shutil.which("uv")
+            if uv_bin is None:
+                try:
+                    # NOTE: don't call `.resolve()` here. In venvs, `sys.executable` is
+                    # often a symlink to the system Python, and resolving it would lose
+                    # the venv bin directory (where `uv` is installed).
+                    candidate = Path(_sys.executable).parent / "uv"
+                    if candidate.exists():
+                        uv_bin = str(candidate)
+                except Exception:
+                    uv_bin = None
+
+            if uv_bin is None:
+                raise RuntimeError(
+                    "Failed to sync venv because the 'uv' executable was not found. "
+                    "Install uv (recommended) or ensure it is available on PATH.",
+                )
 
             process = await asyncio.create_subprocess_exec(
-                "uv",
+                uv_bin,
                 "sync",
                 cwd=str(venv_dir),
                 stdout=asyncio.subprocess.PIPE,
