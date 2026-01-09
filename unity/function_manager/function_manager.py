@@ -1519,6 +1519,168 @@ class FunctionManager(BaseFunctionManager):
             raise last_exc
         return None
 
+    def _create_in_process_callable(
+        self,
+        func_data: Dict[str, Any],
+        *,
+        namespace: Dict[str, Any],
+    ) -> Callable[..., Any]:
+        """Create an in-process callable by exec()'ing the stored implementation.
+
+        The function is defined directly into the provided ``namespace`` so that it
+        can reference injected dependencies and injected environment globals.
+        """
+        func_name = func_data.get("name")
+        if not isinstance(func_name, str) or not func_name:
+            raise ValueError("func_data missing valid 'name'")
+
+        implementation = func_data.get("implementation")
+        if not isinstance(implementation, str) or not implementation.strip():
+            raise ValueError(f"Function '{func_name}' has no implementation")
+
+        implementation = _strip_custom_function_decorators(implementation)
+
+        # Ensure user-defined annotation symbols don't cause NameErrors when callers
+        # (e.g., CodeActActor) later resolve type hints via typing.get_type_hints().
+        self._inject_forward_ref_annotation_placeholders(
+            implementation,
+            namespace=namespace,
+        )
+
+        exec(implementation, namespace)
+        fn = namespace.get(func_name)
+        if not callable(fn):
+            raise ValueError(
+                f"Function '{func_name}' not found after exec() into namespace",
+            )
+        return fn
+
+    @staticmethod
+    def _inject_forward_ref_annotation_placeholders(
+        implementation: str,
+        *,
+        namespace: Dict[str, Any],
+    ) -> None:
+        """
+        Inject placeholder types for missing symbols referenced in annotations.
+
+        Motivation:
+        - `exec()` succeeds when annotations are strings, but later calls to
+          `typing.get_type_hints(fn)` will evaluate forward-ref strings in
+          `fn.__globals__` and can raise NameError if the referenced types are not
+          present.
+        - CodeActActor wants a callable that "just works" without manual seeding
+          of domain-specific types into the namespace.
+
+        This only attempts to satisfy *annotation resolution* (not runtime logic).
+        If the function body actually uses a type (e.g. `Role.ADMIN`), the
+        function must still import/define it itself.
+        """
+        try:
+            tree = ast.parse(implementation)
+        except Exception:
+            return
+
+        if not tree.body:
+            return
+
+        fn_node: Optional[Union[ast.FunctionDef, ast.AsyncFunctionDef]] = None
+        if len(tree.body) == 1 and isinstance(
+            tree.body[0],
+            (ast.FunctionDef, ast.AsyncFunctionDef),
+        ):
+            fn_node = tree.body[0]
+        else:
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    fn_node = node
+                    break
+        if fn_node is None:
+            return
+
+        ann_exprs: List[ast.AST] = []
+        args = fn_node.args
+        for arg in list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs):
+            if getattr(arg, "annotation", None) is not None:
+                ann_exprs.append(arg.annotation)  # type: ignore[arg-type]
+        if args.vararg is not None and getattr(args.vararg, "annotation", None) is not None:
+            ann_exprs.append(args.vararg.annotation)  # type: ignore[arg-type]
+        if args.kwarg is not None and getattr(args.kwarg, "annotation", None) is not None:
+            ann_exprs.append(args.kwarg.annotation)  # type: ignore[arg-type]
+        if getattr(fn_node, "returns", None) is not None:
+            ann_exprs.append(fn_node.returns)  # type: ignore[arg-type]
+
+        annotation_names: Set[str] = set()
+        for expr in ann_exprs:
+            # Forward-ref strings: parse the string itself as a Python expression.
+            if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+                ref = expr.value.strip()
+                if not ref:
+                    continue
+                try:
+                    ref_tree = ast.parse(ref, mode="eval")
+                except Exception:
+                    continue
+                for node in ast.walk(ref_tree):
+                    if isinstance(node, ast.Name) and node.id:
+                        annotation_names.add(node.id)
+                continue
+
+            for node in ast.walk(expr):
+                if isinstance(node, ast.Name) and node.id:
+                    annotation_names.add(node.id)
+
+        if not annotation_names:
+            return
+
+        builtins_obj = namespace.get("__builtins__", {})
+        if isinstance(builtins_obj, dict):
+            builtin_names = set(builtins_obj.keys())
+        else:
+            builtin_names = set(dir(builtins_obj))
+
+        typing_mod = namespace.get("typing")
+        pydantic_mod = namespace.get("pydantic")
+
+        for name in sorted(annotation_names):
+            if name == "typing":
+                continue
+            if name in namespace:
+                continue
+            if name in builtin_names:
+                continue
+
+            # Common typing helpers can be recovered from typing when present.
+            if typing_mod is not None and hasattr(typing_mod, name):
+                try:
+                    namespace[name] = getattr(typing_mod, name)
+                    continue
+                except Exception:
+                    pass
+
+            # Some common pydantic types may appear in annotations.
+            if pydantic_mod is not None and hasattr(pydantic_mod, name):
+                try:
+                    namespace[name] = getattr(pydantic_mod, name)
+                    continue
+                except Exception:
+                    pass
+
+            # Fall back to a placeholder type to avoid NameError during hint resolution.
+            try:
+                namespace[name] = type(name, (), {})
+            except Exception:
+                # If something extremely unusual happens, just skip.
+                continue
+
+    
+
+    def _inject_callables_for_functions(
+        self,
+        func_rows: List[Dict[str, Any]],
+        *,
+        namespace: Dict[str, Any],
+    ) -> List[Callable[..., Any]]:
         """Convert function records into callables and inject them into ``namespace``."""
         callables: List[Callable[..., Any]] = []
         visited: Set[str] = set()
