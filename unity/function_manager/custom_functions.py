@@ -296,9 +296,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
 
         # Rebuild embedding text (deterministic)
         embedding_text = (
-            f"Function: {name}\n"
-            f"Signature: {argspec}\n"
-            f"Docstring: {docstring}"
+            f"Function: {name}\n" f"Signature: {argspec}\n" f"Docstring: {docstring}"
         )
 
         functions[name] = {

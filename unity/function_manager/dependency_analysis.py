@@ -64,7 +64,10 @@ class DependencyVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _collect_known_names(expr: Optional[ast.AST], known_function_names: Set[str]) -> Set[str]:
+def _collect_known_names(
+    expr: Optional[ast.AST],
+    known_function_names: Set[str],
+) -> Set[str]:
     if expr is None:
         return set()
     deps: Set[str] = set()
@@ -97,10 +100,22 @@ def collect_dependencies_from_function_node(
     # Function signature annotations + return annotation
     args = fn_node.args
     for arg in list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs):
-        deps |= _collect_known_names(getattr(arg, "annotation", None), known_function_names)
-    deps |= _collect_known_names(getattr(args.vararg, "annotation", None), known_function_names)
-    deps |= _collect_known_names(getattr(args.kwarg, "annotation", None), known_function_names)
-    deps |= _collect_known_names(getattr(fn_node, "returns", None), known_function_names)
+        deps |= _collect_known_names(
+            getattr(arg, "annotation", None),
+            known_function_names,
+        )
+    deps |= _collect_known_names(
+        getattr(args.vararg, "annotation", None),
+        known_function_names,
+    )
+    deps |= _collect_known_names(
+        getattr(args.kwarg, "annotation", None),
+        known_function_names,
+    )
+    deps |= _collect_known_names(
+        getattr(fn_node, "returns", None),
+        known_function_names,
+    )
 
     deps.discard(fn_node.name)
     return deps
@@ -115,8 +130,10 @@ def collect_dependencies_from_source(
         tree = ast.parse(source)
     except Exception:
         return set()
-    if len(tree.body) != 1 or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if len(tree.body) != 1 or not isinstance(
+        tree.body[0],
+        (ast.FunctionDef, ast.AsyncFunctionDef),
+    ):
         return set()
     node: ast.FunctionDef | ast.AsyncFunctionDef = tree.body[0]
     return collect_dependencies_from_function_node(node, known_function_names)
-
