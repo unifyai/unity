@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+import asyncio
 
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
 from unity.function_manager.primitives import ComputerPrimitives
@@ -14,7 +15,19 @@ class ComputerEnvironment(BaseEnvironment):
     generated plan code.
     """
 
-    def __init__(self, computer_primitives: ComputerPrimitives):
+    def __init__(
+        self,
+        computer_primitives: ComputerPrimitives,
+        *,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ):
+        super().__init__(
+            instance=computer_primitives,
+            namespace="computer_primitives",
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
         self._computer_primitives = computer_primitives
 
     @property
