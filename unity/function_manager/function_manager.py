@@ -1468,6 +1468,90 @@ class FunctionManager(BaseFunctionManager):
 
         return results
 
+    # ------------------------------------------------------------------ #
+    #  Callable return + dependency injection                             #
+    # ------------------------------------------------------------------ #
+
+    def _get_function_data_by_name(self, *, name: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single compositional function record by name.
+
+        Returns the full stored record (as a dict) or ``None`` if not found.
+        """
+        # Normalize to the Unify filter grammar (and avoid quote-escaping issues).
+        try:
+            normalized = normalize_filter_expr(f"name == {json.dumps(name)}")
+        except Exception:
+            normalized = f"name == {json.dumps(name)}"
+
+        last_exc: Exception | None = None
+        import time as _time
+
+        # The backend can return 404 for missing contexts in fresh projects/tests.
+        for delay in (0.0, 0.05, 0.15):
+            if delay:
+                _time.sleep(delay)
+            try:
+                logs = unify.get_logs(
+                    context=self._compositional_ctx,
+                    filter=normalized,
+                    limit=1,
+                    exclude_fields=list_private_fields(self._compositional_ctx),
+                )
+                if logs:
+                    return logs[0].entries
+                return None
+            except _UnifyRequestError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    last_exc = e
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                break
+
+        # Treat missing context as empty library.
+        if isinstance(last_exc, _UnifyRequestError):
+            status = getattr(getattr(last_exc, "response", None), "status_code", None)
+            if status == 404:
+                return None
+        if last_exc is not None:
+            raise last_exc
+        return None
+
+        """Convert function records into callables and inject them into ``namespace``."""
+        callables: List[Callable[..., Any]] = []
+        visited: Set[str] = set()
+
+        for func_data in func_rows:
+            name = func_data.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError("Function record missing valid 'name'")
+
+            # Skip primitives (no stored implementation; names often contain dots).
+            if func_data.get("is_primitive") is True:
+                continue
+
+            # Reuse already-injected callables where possible.
+            if name in visited and name in namespace and callable(namespace.get(name)):
+                callables.append(namespace[name])
+                continue
+
+            visited.add(name)  # Prevent cycles from re-injecting the root function.
+            self._inject_dependencies(func_data, namespace=namespace, visited=visited)
+
+            # Create + inject the root callable.
+            if func_data.get("venv_id") is not None:
+                fn = self._create_venv_callable(func_data, namespace=namespace)
+                namespace[name] = fn
+            else:
+                fn = self._create_in_process_callable(func_data, namespace=namespace)
+                namespace[name] = fn
+
+            callables.append(fn)
+
+        return callables
+
     # 2. Listing -------------------------------------------------------- #
 
     @functools.wraps(BaseFunctionManager.list_functions, updated=())
