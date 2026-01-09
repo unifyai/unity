@@ -140,8 +140,6 @@ class FileManager(BaseFileManager):
         # Root contexts
         # - FileRecords: index of files (lightweight per file row)
         # - File:        per-file content roots (one subcontext per safe filepath)
-        # ToDo: REMOVE THIS AFTER METRICS ARE GENERATED
-        base_ctx = "DefaultUser/Assistant"
         self._ctx = f"{base_ctx}/FileRecords/{self._fs_alias}"
         self._per_file_root = f"{base_ctx}/Files/{self._fs_alias}"
 
