@@ -6,6 +6,7 @@ from .browser_backends import (
     BrowserBackend,
     LegacyBrowserBackend,
     MagnitudeBrowserBackend,
+    MockBrowserBackend,
 )
 
 
@@ -14,7 +15,12 @@ class Browser:
     Encapsulates all browser-related capabilities, from simple actions
     to complex, multi-step operations and session recording. This class uses
     a strategy pattern to delegate to a specific backend implementation
-    ('legacy' or 'magnitude') based on the selected mode.
+    based on the selected mode.
+
+    Modes:
+        - 'magnitude': Production backend using Magnitude agent service
+        - 'mock': Lightweight mock backend for testing (no external services)
+        - 'legacy': Original Controller-based backend (deprecated)
     """
 
     def __init__(
@@ -27,7 +33,7 @@ class Browser:
         Initializes the Browser with a specific backend strategy.
 
         Args:
-            mode (str): The backend to use. Can be 'legacy' or 'magnitude'.
+            mode (str): The backend to use. Can be 'magnitude', 'mock', or 'legacy'.
             **kwargs: Arguments to pass to the backend constructor (e.g., headless, session_connect_url, controller_mode).
         """
 
@@ -35,9 +41,11 @@ class Browser:
             self.backend: BrowserBackend = LegacyBrowserBackend(**kwargs)
         elif mode == "magnitude":
             self.backend: BrowserBackend = MagnitudeBrowserBackend(**kwargs)
+        elif mode == "mock":
+            self.backend: BrowserBackend = MockBrowserBackend(**kwargs)
         else:
             raise ValueError(
-                f"Unknown browser mode: '{mode}'. Must be 'legacy' or 'magnitude'.",
+                f"Unknown browser mode: '{mode}'. Must be 'magnitude', 'mock', or 'legacy'.",
             )
 
         self._secret_manager = (

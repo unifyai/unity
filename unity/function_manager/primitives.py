@@ -79,6 +79,10 @@ class ComputerPrimitives:
                 "agent_mode": agent_mode,
                 "agent_server_url": agent_server_url,
             },
+            "mock": {
+                # MockBrowserBackend accepts optional url, screenshot, etc.
+                # but works fine with no kwargs
+            },
         }
 
         self._secret_manager = None
@@ -110,13 +114,15 @@ class ComputerPrimitives:
         from unity.controller.browser_backends import (
             LegacyBrowserBackend,
             MagnitudeBrowserBackend,
+            MockBrowserBackend,
         )
 
-        backend_class = (
-            MagnitudeBrowserBackend
-            if self._browser_mode == "magnitude"
-            else LegacyBrowserBackend
-        )
+        if self._browser_mode == "magnitude":
+            backend_class = MagnitudeBrowserBackend
+        elif self._browser_mode == "mock":
+            backend_class = MockBrowserBackend
+        else:
+            backend_class = LegacyBrowserBackend
 
         def _make_lazy_wrapper(method_name: str, backend_class):
             async def wrapper(*args, **kwargs):
