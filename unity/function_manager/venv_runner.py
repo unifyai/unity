@@ -495,29 +495,222 @@ def make_json_serializable(obj):
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# State Serialization for Read-Only Mode
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _is_user_defined_state(key: str, value: Any, base_globals: dict) -> bool:
+    """
+    Check if a key-value pair represents user-defined state.
+
+    Returns True if the variable was defined by user code (not part of the
+    base execution environment).
+    """
+    # Skip private/dunder names
+    if key.startswith("_"):
+        return False
+
+    # Skip if it exists in the base globals (it's a built-in)
+    if key in base_globals:
+        return False
+
+    # Skip modules (typically imported by base globals)
+    if isinstance(value, type(json)):
+        return False
+
+    # Skip proxies
+    if isinstance(value, (PrimitivesProxy, ComputerPrimitivesProxy, ManagerProxy)):
+        return False
+
+    return True
+
+
+def _serialize_value(value: Any) -> tuple[bool, Any]:
+    """
+    Attempt to serialize a value for state transfer.
+
+    Returns (success, serialized_value). If success is False, the value
+    cannot be serialized and should be skipped.
+    """
+    # Primitives are directly serializable
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return True, {"type": "primitive", "value": value}
+
+    # Lists and tuples
+    if isinstance(value, (list, tuple)):
+        items = []
+        for item in value:
+            success, serialized = _serialize_value(item)
+            if not success:
+                return False, None
+            items.append(serialized)
+        return True, {
+            "type": "list" if isinstance(value, list) else "tuple",
+            "items": items,
+        }
+
+    # Dicts
+    if isinstance(value, dict):
+        serialized_dict = {}
+        for k, v in value.items():
+            if not isinstance(k, str):
+                return False, None  # Only string keys supported
+            success, serialized = _serialize_value(v)
+            if not success:
+                return False, None
+            serialized_dict[k] = serialized
+        return True, {"type": "dict", "items": serialized_dict}
+
+    # Sets and frozensets
+    if isinstance(value, (set, frozenset)):
+        items = []
+        for item in value:
+            success, serialized = _serialize_value(item)
+            if not success:
+                return False, None
+            items.append(serialized)
+        return True, {
+            "type": "set" if isinstance(value, set) else "frozenset",
+            "items": items,
+        }
+
+    # Bytes
+    if isinstance(value, bytes):
+        import base64
+
+        return True, {"type": "bytes", "value": base64.b64encode(value).decode("ascii")}
+
+    # Functions - store their source if possible
+    if callable(value) and hasattr(value, "__code__"):
+        try:
+            import inspect
+
+            source = inspect.getsource(value)
+            return True, {"type": "function", "name": value.__name__, "source": source}
+        except (OSError, TypeError):
+            pass
+
+    # Classes - skip for now (complex to serialize)
+    # Pydantic models, custom objects - skip
+
+    return False, None
+
+
+def _deserialize_value(serialized: dict) -> Any:
+    """Deserialize a value from state transfer format."""
+    value_type = serialized.get("type")
+
+    if value_type == "primitive":
+        return serialized["value"]
+
+    if value_type == "list":
+        return [_deserialize_value(item) for item in serialized["items"]]
+
+    if value_type == "tuple":
+        return tuple(_deserialize_value(item) for item in serialized["items"])
+
+    if value_type == "dict":
+        return {k: _deserialize_value(v) for k, v in serialized["items"].items()}
+
+    if value_type == "set":
+        return {_deserialize_value(item) for item in serialized["items"]}
+
+    if value_type == "frozenset":
+        return frozenset(_deserialize_value(item) for item in serialized["items"])
+
+    if value_type == "bytes":
+        import base64
+
+        return base64.b64decode(serialized["value"])
+
+    if value_type == "function":
+        # Re-execute the function definition to recreate it
+        # This is a best-effort approach
+        source = serialized["source"]
+        name = serialized["name"]
+        local_ns: Dict[str, Any] = {}
+        exec(source, {}, local_ns)
+        return local_ns.get(name)
+
+    raise ValueError(f"Unknown serialized type: {value_type}")
+
+
+def serialize_user_state(globals_dict: dict, base_globals: dict) -> dict:
+    """
+    Extract and serialize user-defined state from globals.
+
+    Returns a dict of {name: serialized_value} for all serializable
+    user-defined variables.
+    """
+    state = {}
+    for key, value in globals_dict.items():
+        if not _is_user_defined_state(key, value, base_globals):
+            continue
+        success, serialized = _serialize_value(value)
+        if success:
+            state[key] = serialized
+    return state
+
+
+def inject_state_into_globals(state: dict, globals_dict: dict) -> None:
+    """
+    Inject deserialized state into a globals dict.
+
+    Args:
+        state: Dict of {name: serialized_value} from serialize_user_state
+        globals_dict: The globals dict to inject into
+    """
+    for name, serialized in state.items():
+        try:
+            globals_dict[name] = _deserialize_value(serialized)
+        except Exception:
+            # Skip values that fail to deserialize
+            pass
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Main Entry Point
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def run_with_rpc_loop(implementation: str, call_kwargs: dict, is_async: bool) -> dict:
+def run_with_rpc_loop(
+    implementation: str,
+    call_kwargs: dict,
+    is_async: bool,
+    initial_state: dict = None,
+) -> dict:
     """
     Run a function with RPC support.
 
     This handles bidirectional communication:
     - Executes the function in a separate thread
     - Main thread handles RPC responses from stdin
+
+    Args:
+        implementation: Function source code to execute.
+        call_kwargs: Keyword arguments to pass to the function.
+        is_async: Whether the function is async.
+        initial_state: Optional serialized state to inject before execution
+            (used for read_only mode to inherit state from persistent session).
     """
     result_queue: Queue = Queue()
 
     def execute_function():
         """Execute the function and put result in queue."""
         try:
+            # Create globals with optional initial state injection
+            globals_dict = create_safe_globals(is_async=is_async)
+            if initial_state:
+                inject_state_into_globals(initial_state, globals_dict)
+
             if is_async:
-                res = asyncio.run(execute_async(implementation, call_kwargs))
+                res = asyncio.run(
+                    execute_async_in_globals(implementation, call_kwargs, globals_dict),
+                )
             else:
-                res = execute_sync(implementation, call_kwargs)
+                res = execute_sync_in_globals(implementation, call_kwargs, globals_dict)
             result_queue.put(res)
-        except Exception as e:
+        except Exception:
             result_queue.put(
                 {
                     "result": None,
@@ -602,9 +795,15 @@ def main():
     implementation = input_data.get("implementation", "")
     call_kwargs = input_data.get("call_kwargs", {})
     is_async = input_data.get("is_async", False)
+    initial_state = input_data.get("initial_state")
 
-    # Execute with RPC support
-    result = run_with_rpc_loop(implementation, call_kwargs, is_async)
+    # Execute with RPC support, optionally with initial state
+    result = run_with_rpc_loop(
+        implementation,
+        call_kwargs,
+        is_async,
+        initial_state=initial_state,
+    )
 
     # Make result JSON-serializable
     result["result"] = make_json_serializable(result["result"])
@@ -692,10 +891,12 @@ def main_server():
     Protocol:
         Input messages:
             {"type": "execute", "implementation": str, "call_kwargs": dict, "is_async": bool}
+            {"type": "get_state"}
             {"type": "shutdown"}
 
         Output messages:
             {"type": "complete", "result": Any, "error": str|null, "stdout": str, "stderr": str}
+            {"type": "state", "state": dict}
             {"type": "ack"}  (response to shutdown)
     """
     _setup_signal_handlers()
@@ -705,6 +906,8 @@ def main_server():
 
     # Persistent globals - survives across calls
     globals_dict = create_safe_globals(is_async=True)
+    # Keep a reference to the base globals for state serialization
+    base_globals = create_safe_globals(is_async=True)
 
     while True:
         try:
@@ -735,12 +938,21 @@ def main_server():
             _cleanup_multiprocessing_children()
             break
 
+        if msg_type == "get_state":
+            # Serialize and return current user-defined state
+            try:
+                state = serialize_user_state(globals_dict, base_globals)
+                send_message({"type": "state", "state": state})
+            except Exception as e:
+                send_message({"type": "state", "state": {}, "error": str(e)})
+            continue
+
         if msg_type != "execute":
             send_message(
                 {
                     "type": "complete",
                     "result": None,
-                    "error": f"Expected 'execute' or 'shutdown' message, got '{msg_type}'",
+                    "error": f"Expected 'execute', 'get_state', or 'shutdown' message, got '{msg_type}'",
                     "stdout": "",
                     "stderr": "",
                 },
