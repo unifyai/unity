@@ -11,8 +11,8 @@ These tests verify that the mock backend:
 import pytest
 from pydantic import BaseModel
 
-from unity.controller.browser_backends import MockBrowserBackend, BrowserBackend
-from unity.controller.browser import Browser
+from unity.function_manager.browser_backends import MockBrowserBackend, BrowserBackend
+from unity.function_manager.browser import Browser
 
 
 class TestMockBrowserBackendInterface:
