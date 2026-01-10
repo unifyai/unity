@@ -84,7 +84,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         -----
         - Implementations should persist records that conform to the
           ``Function`` model (including ``name``, ``function_id``, ``argspec``,
-          ``docstring``, ``implementation``, ``calls``, ``embedding_text`` and
+          ``docstring``, ``implementation``, ``depends_on``, ``embedding_text`` and
           ``precondition``) and ensure that failures for one function do not
           prevent other valid functions in the same batch from being added.
         """
@@ -234,7 +234,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         filter : str | None, default ``None``
             A boolean expression evaluated per row with fields of the
             ``Function`` model in scope (e.g. ``name``, ``argspec``,
-            ``docstring``, ``calls``). When ``None``, returns all rows subject
+            ``docstring``, ``depends_on``). When ``None``, returns all rows subject
             to pagination.
         offset : int, default ``0``
             Zero‑based index of the first result to return.
@@ -271,7 +271,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Examples
         --------
-        >>> mgr.search_functions(filter="'price' in docstring and 'sum' in calls")
+        >>> mgr.search_functions(filter="'price' in docstring and 'sum' in depends_on")
         >>> mgr.search_functions(filter="name.startswith('get_')")
         """
 

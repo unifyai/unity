@@ -1141,7 +1141,7 @@ class FunctionManager(BaseFunctionManager):
                 "docstring": data["docstring"],
                 "embedding_text": data["embedding_text"],
                 "implementation": None,
-                "calls": [],
+                "depends_on": [],
                 "precondition": None,
                 "verify": False,
                 "is_primitive": True,
@@ -1787,7 +1787,7 @@ class FunctionManager(BaseFunctionManager):
                     "argspec": signature,
                     "docstring": docstring,
                     "implementation": source,
-                    "calls": dependencies_list,
+                    "depends_on": dependencies_list,
                     "embedding_text": embedding_text,
                     "precondition": precondition,
                     "verify": should_verify,
@@ -2324,8 +2324,8 @@ class FunctionManager(BaseFunctionManager):
                 id_to_name[fid]: "deleted" for fid in function_ids if fid in id_to_name
             }
 
-            function_calls = {
-                lg.entries["function_id"]: set(lg.entries.get("calls", []))
+            function_deps = {
+                lg.entries["function_id"]: set(lg.entries.get("depends_on", []))
                 for lg in all_logs
             }
 
@@ -2340,8 +2340,8 @@ class FunctionManager(BaseFunctionManager):
                 id_to_name = {
                     lg.entries["function_id"]: lg.entries["name"] for lg in all_logs
                 }
-                function_calls = {
-                    lg.entries["function_id"]: set(lg.entries.get("calls", []))
+                function_deps = {
+                    lg.entries["function_id"]: set(lg.entries.get("depends_on", []))
                     for lg in all_logs
                 }
                 target_names = {target_name}
@@ -2356,8 +2356,8 @@ class FunctionManager(BaseFunctionManager):
                     continue
                 processed.add(current_name)
 
-                for fid, calls in function_calls.items():
-                    if current_name in calls and fid not in ids_to_delete:
+                for fid, deps in function_deps.items():
+                    if current_name in deps and fid not in ids_to_delete:
                         ids_to_delete.add(fid)
                         if fid in id_to_log:
                             log_ids_to_delete.append(id_to_log[fid].id)
@@ -2503,7 +2503,7 @@ class FunctionManager(BaseFunctionManager):
                     self._register_function_file(name, p)
                     continue
 
-                # Parse and validate file to rebuild signature/docstring/calls
+                # Parse and validate file to rebuild signature/docstring/depends_on
                 try:
                     nm2, tree, node, _src = self._parse_implementation(file_text)
                     if nm2 != name:
@@ -2514,7 +2514,7 @@ class FunctionManager(BaseFunctionManager):
                     fn_obj = namespace[name]
                     signature = str(inspect.signature(fn_obj))
                     docstring = inspect.getdoc(fn_obj) or ""
-                    calls = list(self._collect_function_calls(node))
+                    depends_on = list(self._collect_function_calls(node))
                     embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
                     # Update unify row
                     unify.update_logs(
@@ -2524,7 +2524,7 @@ class FunctionManager(BaseFunctionManager):
                             "argspec": signature,
                             "docstring": docstring,
                             "implementation": file_text,
-                            "calls": calls,
+                            "depends_on": depends_on,
                             "embedding_text": embedding_text,
                         },
                         overwrite=True,
