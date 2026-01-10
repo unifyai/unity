@@ -362,8 +362,15 @@ All test commands **automatically detect the current git repository** and use th
 - ✅ Tests run against the **current repo's code**, not a hardcoded path
 - ✅ Logs appear in the **current repo's** `logs/pytest/` directory
 - ✅ No manual path adjustments needed
+- ✅ **Concurrent worktree tests don't interfere** with each other's orchestra
 
 **How it works:** When you run `parallel_run`, the shell function checks `git rev-parse --show-toplevel` to find the current repo root, then uses that repo's `tests/parallel_run.sh`. If you're not in a git repo, it falls back to the originally configured path.
+
+**Orchestra and shared logs:** Since local orchestra is a shared server (one instance for all worktrees), its logs go to a single location. When running from a worktree, `parallel_run.sh` creates symlinks:
+- `logs/orchestra/` → main repo's `logs/orchestra/`
+- `logs/all/` → main repo's `logs/all/` (for OTEL trace correlation)
+
+This means concurrent tests from different worktrees can run without restarting orchestra, while still having all logs accessible from each worktree's `logs/` directory.
 
 ### Browsing All Worktree Logs from Main Repo
 

@@ -19,6 +19,8 @@ All logs are organized under `logs/` with six main subdirectories:
 
 **Cross-correlation:** When running tests via `parallel_run.sh`, OTEL tracing is enabled by default across all four repos (unity, unify, unillm, orchestra). All spans are written to `logs/all/`, enabling full-stack trace analysis. See [Cross-Repo OTEL Traces](#cross-repo-otel-traces-logsall).
 
+**Worktree note:** When running from a git worktree (e.g., Cursor Background Agents), `logs/orchestra/` and `logs/all/` are symlinked to the main repo's directories. This ensures orchestra logs (from the shared server) and OTEL traces (for cross-repo correlation) all go to one place. Other log types (`pytest/`, `unity/`, `unify/`, `unillm/`) remain in the worktree.
+
 ---
 
 ## Pytest Logs (`logs/pytest/`)
