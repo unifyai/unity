@@ -44,18 +44,11 @@ clone_repo() {
 
     echo "Cloning $repo..."
 
-    # Determine repo-specific token (matches GitHub Actions secrets)
-    local repo_token=""
-    case "$repo" in
-        unify)   repo_token="${UNIFY_CLONE_TOKEN:-}" ;;
-        unillm)  repo_token="${UNILLM_CLONE_TOKEN:-}" ;;
-    esac
-
-    # Try repo-specific token first (same as GitHub Actions)
-    if [[ -n "$repo_token" ]]; then
+    # Try CLONE_TOKEN (org-wide cross-repo token)
+    if [[ -n "${CLONE_TOKEN:-}" ]]; then
         if git clone --branch "$SIBLING_BRANCH" --depth 1 \
-            "https://x-access-token:${repo_token}@github.com/unifyai/$repo.git" "$target" 2>/dev/null; then
-            echo "✓ Cloned $repo via repo-specific token"
+            "https://x-access-token:${CLONE_TOKEN}@github.com/unifyai/$repo.git" "$target" 2>/dev/null; then
+            echo "✓ Cloned $repo via CLONE_TOKEN"
             return 0
         fi
     fi
@@ -86,8 +79,8 @@ clone_repo() {
     fi
 
     echo "ERROR: Failed to clone $repo"
-    echo "Add UNIFY_CLONE_TOKEN and UNILLM_CLONE_TOKEN to Cursor Cloud environment secrets."
-    echo "(Use the same tokens as your GitHub Actions secrets)"
+    echo "Add CLONE_TOKEN to Cursor Cloud environment secrets."
+    echo "(Use the org-wide cross-repo token from GitHub Actions secrets)"
     return 1
 }
 

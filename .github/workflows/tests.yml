@@ -529,7 +529,7 @@ jobs:
         repository: unifyai/orchestra
         ref: ${{ needs.discover.outputs.orchestra_branch }}
         path: orchestra
-        token: ${{ secrets.ORCHESTRA_CLONE_TOKEN }}
+        token: ${{ secrets.CLONE_TOKEN }}
         fetch-depth: 1
 
     - name: Clone unify repo
@@ -538,7 +538,7 @@ jobs:
         repository: unifyai/unify
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
         path: unify
-        token: ${{ secrets.UNIFY_CLONE_TOKEN }}
+        token: ${{ secrets.CLONE_TOKEN }}
         fetch-depth: 1
 
     - name: Clone unillm repo
@@ -547,7 +547,7 @@ jobs:
         repository: unifyai/unillm
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
         path: unillm
-        token: ${{ secrets.UNILLM_CLONE_TOKEN }}
+        token: ${{ secrets.CLONE_TOKEN }}
         fetch-depth: 1
 
     - name: Authenticate to Google Cloud
