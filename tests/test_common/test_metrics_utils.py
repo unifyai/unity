@@ -83,10 +83,11 @@ def test_reduce_logs_multi_key_and_group_by():
 def test_reduce_logs_rejects_unsupported_metric():
     ctx = _create_test_context()
     try:
-        assert "count" not in SUPPORTED_REDUCTION_METRICS
+        fake_metric = "not_a_real_metric"
+        assert fake_metric not in SUPPORTED_REDUCTION_METRICS
         try:
-            reduce_logs(context=ctx, metric="count", keys="row_id")
-            assert False, "Expected ValueError for unsupported metric 'count'"
+            reduce_logs(context=ctx, metric=fake_metric, keys="row_id")
+            assert False, f"Expected ValueError for unsupported metric {fake_metric!r}"
         except ValueError:
             pass
     finally:
