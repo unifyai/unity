@@ -517,6 +517,51 @@ class SimulatedFunctionManager(BaseFunctionManager):
 
         return callables_list  # type: ignore[return-value]
 
+    @functools.wraps(BaseFunctionManager.execute_function, updated=())
+    async def execute_function(
+        self,
+        *,
+        function_name: str,
+        call_kwargs: Optional[Dict[str, Any]] = None,
+        target_venv_id: Optional[int] = ...,
+        state_mode: str = "stateless",
+        session_id: int = 0,
+        venv_pool: Optional[Any] = None,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.execute_function",
+            "execute_function",
+            {
+                "function_name": function_name,
+                "call_kwargs": call_kwargs,
+                "state_mode": state_mode,
+            },
+        )
+        # Simulate execution without actually running any code
+        result = {
+            "result": {
+                "simulated": True,
+                "function_name": function_name,
+                "call_kwargs": call_kwargs or {},
+            },
+            "error": None,
+            "stdout": "",
+            "stderr": "",
+        }
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "execute_function",
+                {"function_name": function_name, "success": True},
+                t0,
+            )
+        return result
+
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
         sched = maybe_tool_log_scheduled(
