@@ -365,11 +365,86 @@ fi
 #
 # Local orchestra is started via the orchestra repo's scripts/local.sh.
 # Set ORCHESTRA_REPO_PATH to override the default location (../orchestra).
+#
+# WORKTREE HANDLING:
+# When running from a git worktree (e.g., Cursor Background Agents), we don't
+# restart orchestra just to change log directories. Instead, we create symlinks
+# from the worktree's logs/ to wherever orchestra is currently logging. This
+# avoids disrupting concurrent tests in the main repo or other worktrees.
 
 _is_local_url() {
   local url="${1:-}"
   [[ -z "$url" ]] && return 0  # Unset = local
   [[ "$url" == *"127.0.0.1"* || "$url" == *"localhost"* ]]
+}
+
+_is_git_worktree() {
+  # In git worktrees, .git is a file (containing "gitdir: /path/..."), not a directory
+  [[ -f "$REPO_ROOT/.git" ]]
+}
+
+_create_orchestra_log_symlinks() {
+  # Create symlinks from worktree's log directories to the main repo's log directories.
+  # This ensures all orchestra logs (and OTEL traces) go to a single shared location,
+  # while allowing the worktree to "see" them via symlinks.
+  #
+  # Only called when:
+  # 1. We're in a git worktree
+  # 2. Orchestra is already running with logs pointing elsewhere
+
+  local config_file="/tmp/orchestra-local-server.config"
+
+  [[ -f "$config_file" ]] || return 0
+
+  local current_log_dir current_otel_dir
+  current_log_dir=$(grep "^ORCHESTRA_LOG_DIR=" "$config_file" 2>/dev/null | cut -d= -f2-)
+  current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$config_file" 2>/dev/null | cut -d= -f2-)
+
+  # Ensure logs/ directory exists in worktree
+  mkdir -p "$REPO_ROOT/logs"
+
+  # Symlink logs/orchestra/ → main repo's logs/orchestra/
+  # ORCHESTRA_LOG_DIR includes timestamp subfolder, so we go up one level
+  if [[ -n "$current_log_dir" ]]; then
+    local target_dir
+    target_dir=$(dirname "$current_log_dir")  # Strip timestamp subfolder
+    local link_path="$REPO_ROOT/logs/orchestra"
+
+    if [[ -L "$link_path" ]]; then
+      # Symlink exists - update if pointing elsewhere
+      local current_target
+      current_target=$(readlink "$link_path")
+      if [[ "$current_target" != "$target_dir" ]]; then
+        rm "$link_path"
+        ln -s "$target_dir" "$link_path"
+        echo "  Updated symlink: logs/orchestra → $target_dir"
+      fi
+    elif [[ ! -e "$link_path" ]]; then
+      # Create new symlink
+      ln -s "$target_dir" "$link_path"
+      echo "  Created symlink: logs/orchestra → $target_dir"
+    fi
+    # If it's a real directory, leave it alone (user may have customized)
+  fi
+
+  # Symlink logs/all/ → main repo's logs/all/ (for OTEL trace correlation)
+  # This ensures unity/unify/unillm spans from worktree end up in same dir as orchestra spans
+  if [[ -n "$current_otel_dir" ]]; then
+    local link_path="$REPO_ROOT/logs/all"
+
+    if [[ -L "$link_path" ]]; then
+      local current_target
+      current_target=$(readlink "$link_path")
+      if [[ "$current_target" != "$current_otel_dir" ]]; then
+        rm "$link_path"
+        ln -s "$current_otel_dir" "$link_path"
+        echo "  Updated symlink: logs/all → $current_otel_dir"
+      fi
+    elif [[ ! -e "$link_path" ]]; then
+      ln -s "$current_otel_dir" "$link_path"
+      echo "  Created symlink: logs/all → $current_otel_dir"
+    fi
+  fi
 }
 
 # Resolve orchestra repo path (default: sibling directory)
@@ -481,21 +556,30 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
       fi
 
       if [[ "$_needs_restart" == "true" ]]; then
-        # Restart to pick up logging config. The restart wipes the database,
-        # which is intentional for test runs to ensure isolation.
-        _original_url="$_local_url"
-        echo "Restarting orchestra to apply logging configuration..."
-        "$_local_orchestra_script" restart >/dev/null 2>&1 || true
-        if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
-          echo "Using local orchestra: $_local_url"
+        if _is_git_worktree; then
+          # WORKTREE MODE: Don't restart orchestra (would disrupt other worktrees/main repo).
+          # Instead, create symlinks so logs appear in expected locations.
+          echo "Worktree detected: Using existing orchestra, creating log symlinks..."
+          _create_orchestra_log_symlinks
           export UNIFY_BASE_URL="$_local_url"
           _seed_unity_models_and_endpoints
         else
-          echo "Warning: Orchestra restart failed, using existing instance (logging may not work)" >&2
-          export UNIFY_BASE_URL="$_original_url"
-          _seed_unity_models_and_endpoints
+          # MAIN REPO MODE: Restart to pick up logging config. The restart wipes
+          # the database, which is intentional for test runs to ensure isolation.
+          _original_url="$_local_url"
+          echo "Restarting orchestra to apply logging configuration..."
+          "$_local_orchestra_script" restart >/dev/null 2>&1 || true
+          if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
+            echo "Using local orchestra: $_local_url"
+            export UNIFY_BASE_URL="$_local_url"
+            _seed_unity_models_and_endpoints
+          else
+            echo "Warning: Orchestra restart failed, using existing instance (logging may not work)" >&2
+            export UNIFY_BASE_URL="$_original_url"
+            _seed_unity_models_and_endpoints
+          fi
+          unset _original_url
         fi
-        unset _original_url
       else
         # Logging already configured correctly, reuse existing instance
         # Update ORCHESTRA_LOG_DIR to match what's currently configured
