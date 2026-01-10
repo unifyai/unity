@@ -15,7 +15,6 @@ import functools
 import websockets
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
-from .controller import Controller
 
 logger = logging.getLogger("websockets")
 
@@ -79,8 +78,8 @@ class MockBrowserBackend(BrowserBackend):
     A lightweight mock backend for testing Actor logic without external services.
 
     This backend requires no Redis, no Playwright, no Magnitude service. It returns
-    configurable canned responses and is designed to be a drop-in replacement for
-    tests that previously used LegacyBrowserBackend with connect_now=False.
+    configurable canned responses and is designed for testing Actor logic without
+    requiring external browser services.
 
     The mock also implements the additional methods that MagnitudeBrowserBackend
     provides (barrier, interrupt_current_action, clear_pending_commands) so tests
@@ -227,131 +226,6 @@ class MockBrowserBackend(BrowserBackend):
         In MagnitudeBrowserBackend this removes queued commands.
         In the mock, there are no queued commands.
         """
-
-
-class LegacyBrowserBackend(BrowserBackend):
-    """
-    An implementation that uses the original, Controller-based browser stack.
-    """
-
-    def __init__(self, controller_mode: str = "hybrid", **kwargs):
-        self.controller = Controller(mode=controller_mode, **kwargs)
-        if not self.controller.is_alive():
-            self.controller.start()
-
-    async def act(self, instruction: str) -> str | BrowserAgentError:
-        """
-        Performs a **single, high-level action** in the browser.
-
-        This tool functions by looking at the screen; it **does not have access to the underlying HTML or DOM**. Therefore, instructions must describe elements based on their **visible text or position**, not by HTML attributes like `id`, `class`, or `aria-label`.
-
-        Args:
-            instruction (str): A single, natural-language command. Describe the element to interact with
-                            based on its visible properties.
-
-        Return value:
-            str: A single string 'done' if the action was successful.
-            BrowserAgentError: If the action failed, the error message explaining the reason for the failure.
-
-        Examples:
-            # ✅ Good Example (Using Visible Text)
-            - instruction: "Click the 'Login' button"
-
-            # ✅ Good Example (Using Visible Text)
-            - instruction: "Type 'hello world' into the search bar"
-
-            # ❌ Bad Example (Using HTML Attributes)
-            - instruction: "Click the button with id 'submit-btn'"
-            # This will fail because the tool cannot see HTML IDs.
-
-            # ❌ Bad Example (Using ARIA Labels)
-            - instruction: "Click the image with 'logo' in the aria-label"
-            # This will fail because the tool cannot see aria-labels.
-
-            # ❌ Bad Example (Chained Actions)
-            - instruction: "Click the login button and then enter 'my_user' into the username field."
-        """
-        return await self.controller.act(
-            instruction,
-            expectation="",
-            multi_step_mode=True,
-        )
-
-    async def observe(self, query: str, response_format: Any = str) -> Any:
-        """
-        Analyzes a screenshot of the current browser page to answer a question.
-
-        This tool functions like a person looking at the screen; it **does not have access to the underlying HTML or DOM structure**. It can only answer questions about what is currently visible. Use it for read-only operations to gather information without changing the page state.
-
-        **✅ Good Queries (What you can see):**
-        - "What is the title of the page?"
-        - "List the text on all visible buttons."
-        - "Is the text 'Welcome back, user!' visible on the screen?"
-        - "Transcribe the text from the paragraph under the 'About Us' heading."
-        - "What is the phone number displayed at the top of the page?"
-
-        **❌ Bad Queries (Requires HTML/DOM access):**
-        - Avoid asking for non-visible information.
-        - **Do not ask for HTML attributes** like `href`, `src`, or `alt` text (e.g., "What is the URL of the main product image?" or "Get the alt text for the logo.").
-        - **Do not ask about HTML tags** (e.g., "Find all the `<h1>` tags.").
-        - Avoid asking the tool to interpret meaning. Instead of "Does this image look professional?", ask "Describe the image in the center of the page."
-        - Avoid multi-step queries. Instead of "Find the contact link and tell me the email," break it into separate steps.
-
-        Args:
-            query: The natural-language question to ask about what is visible on the page.
-            response_format: Optional. A Pydantic model to structure the output. The LLM will return a JSON object matching the model.
-        """
-        return await self.controller.observe(query, response_format)
-
-    async def query(self, query: str, response_format: Any = str) -> Any:
-        """
-        Query the agent's memory and action history (not supported in LegacyBrowserBackend).
-
-        This method is not supported by the legacy backend as it doesn't have access to
-        agent memory. Consider using MagnitudeBrowserBackend for this functionality.
-        """
-        raise NotImplementedError(
-            "Query method is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
-        )
-
-    async def get_screenshot(self) -> str:
-        return self.controller._last_shot
-
-    async def get_current_url(self) -> str:
-        try:
-            return self.controller.state.url
-        except Exception as e:
-            return ""
-
-    async def navigate(self, url: str) -> str:
-        return await self.controller.act(
-            f"Navigate to {url}",
-            expectation=f"The browser is on the page with URL '{url}'",
-        )
-
-    async def get_links(
-        self,
-        same_domain: bool = True,
-        selector: str = None,
-        **kwargs,
-    ) -> dict:
-        """
-        Extract all links from the current page (not supported in LegacyBrowserBackend).
-        """
-        raise NotImplementedError(
-            "get_links is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
-        )
-
-    async def get_content(self, format: str = "markdown", **kwargs) -> dict:
-        """
-        Get raw page content (not supported in LegacyBrowserBackend).
-        """
-        raise NotImplementedError(
-            "get_content is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
-        )
-
-    def stop(self):
-        self.controller.stop()
 
 
 class MagnitudeBrowserBackend(BrowserBackend):

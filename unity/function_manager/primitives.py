@@ -58,22 +58,18 @@ class ComputerPrimitives:
 
     def __init__(
         self,
-        session_connect_url: str | None = None,
         headless: bool = False,
         browser_mode: str = "magnitude",
-        controller_mode: str = "hybrid",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
         *,
         connect_now: bool = False,
+        # Deprecated parameters (kept for backward compatibility, ignored)
+        session_connect_url: str | None = None,
+        controller_mode: str = "hybrid",
     ):
         # Cache browser configuration for lazy initialization
         browser_kwargs = {
-            "legacy": {
-                "session_connect_url": session_connect_url,
-                "headless": headless,
-                "controller_mode": controller_mode,
-            },
             "magnitude": {
                 "headless": headless,
                 "agent_mode": agent_mode,
@@ -112,7 +108,6 @@ class ComputerPrimitives:
     def _setup_browser_methods(self):
         """Dynamically create tool methods without forcing an early backend connection."""
         from unity.controller.browser_backends import (
-            LegacyBrowserBackend,
             MagnitudeBrowserBackend,
             MockBrowserBackend,
         )
@@ -122,7 +117,9 @@ class ComputerPrimitives:
         elif self._browser_mode == "mock":
             backend_class = MockBrowserBackend
         else:
-            backend_class = LegacyBrowserBackend
+            raise ValueError(
+                f"Unknown browser_mode: '{self._browser_mode}'. Must be 'magnitude' or 'mock'.",
+            )
 
         def _make_lazy_wrapper(method_name: str, backend_class):
             async def wrapper(*args, **kwargs):

@@ -4,7 +4,6 @@ from unity.common.async_tool_loop import SteerableToolHandle
 from unity.manager_registry import ManagerRegistry
 from .browser_backends import (
     BrowserBackend,
-    LegacyBrowserBackend,
     MagnitudeBrowserBackend,
     MockBrowserBackend,
 )
@@ -20,12 +19,11 @@ class Browser:
     Modes:
         - 'magnitude': Production backend using Magnitude agent service
         - 'mock': Lightweight mock backend for testing (no external services)
-        - 'legacy': Original Controller-based backend (deprecated)
     """
 
     def __init__(
         self,
-        mode: str = "legacy",
+        mode: str = "magnitude",
         secret_manager=None,
         **kwargs,
     ):
@@ -33,19 +31,17 @@ class Browser:
         Initializes the Browser with a specific backend strategy.
 
         Args:
-            mode (str): The backend to use. Can be 'magnitude', 'mock', or 'legacy'.
-            **kwargs: Arguments to pass to the backend constructor (e.g., headless, session_connect_url, controller_mode).
+            mode (str): The backend to use. Can be 'magnitude' or 'mock'.
+            **kwargs: Arguments to pass to the backend constructor (e.g., headless, agent_server_url).
         """
 
-        if mode == "legacy":
-            self.backend: BrowserBackend = LegacyBrowserBackend(**kwargs)
-        elif mode == "magnitude":
+        if mode == "magnitude":
             self.backend: BrowserBackend = MagnitudeBrowserBackend(**kwargs)
         elif mode == "mock":
             self.backend: BrowserBackend = MockBrowserBackend(**kwargs)
         else:
             raise ValueError(
-                f"Unknown browser mode: '{mode}'. Must be 'magnitude', 'mock', or 'legacy'.",
+                f"Unknown browser mode: '{mode}'. Must be 'magnitude' or 'mock'.",
             )
 
         self._secret_manager = (
