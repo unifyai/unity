@@ -3,6 +3,10 @@
     "cp \"$ROOT_WORKTREE_PATH/.env\" .env",
     "ln -sf \"$ROOT_WORKTREE_PATH/.venv\" .venv",
     "mkdir -p logs/pytest && ln -sf \"$ROOT_WORKTREE_PATH/logs/pytest\" logs/pytest/_root",
-    "mkdir -p logs/unillm && ln -sf \"$ROOT_WORKTREE_PATH/logs/unillm\" logs/unillm/_root"
+    "mkdir -p logs/unillm && ln -sf \"$ROOT_WORKTREE_PATH/logs/unillm\" logs/unillm/_root",
+    "# Create symlinks for local editable packages (unify, unillm) at worktree parent level",
+    "# These enable 'uv sync' to work in worktrees by resolving ../unify and ../unillm",
+    "[ -d \"$ROOT_WORKTREE_PATH/../unify\" ] && [ ! -e ../unify ] && ln -s \"$ROOT_WORKTREE_PATH/../unify\" ../unify || true",
+    "[ -d \"$ROOT_WORKTREE_PATH/../unillm\" ] && [ ! -e ../unillm ] && ln -s \"$ROOT_WORKTREE_PATH/../unillm\" ../unillm || true"
   ]
 }
