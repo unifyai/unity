@@ -8706,7 +8706,7 @@ wheels = [
 [[package]]
 name = "unifyai"
 version = "0.9.10"
-source = { editable = "../unify" }
+source = { editable = "unify" }
 dependencies = [
     { name = "aiohttp" },
     { name = "google-genai" },
@@ -8741,7 +8741,7 @@ requires-dist = [
 [[package]]
 name = "unillm"
 version = "0.1.0"
-source = { editable = "../unillm" }
+source = { editable = "unillm" }
 dependencies = [
     { name = "litellm" },
     { name = "pydantic" },
@@ -8754,7 +8754,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.80.10" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
-    { name = "unifyai", editable = "../unify" },
+    { name = "unifyai", editable = "unify" },
 ]
 
 [package.metadata.requires-dev]
@@ -8881,8 +8881,8 @@ requires-dist = [
     { name = "textual-dev", specifier = ">=1.2.0" },
     { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "twilio", specifier = ">=8.0.0" },
-    { name = "unifyai", editable = "../unify" },
-    { name = "unillm", editable = "../unillm" },
+    { name = "unifyai", editable = "unify" },
+    { name = "unillm", editable = "unillm" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
     { name = "websockify", specifier = ">=0.13.0" },
 ]
