@@ -7,12 +7,16 @@ or composition within generated Python code.
 
 Primitives are stored in a dedicated `Functions/Primitives` context, separate from
 user-defined functions in `Functions/Compositional`. Each primitive receives a
-stable `function_id` based on its position in `PRIMITIVE_SOURCES` - these IDs are
-consistent across all users. User-defined functions have their own auto-incrementing
-ID sequence in their separate context, so the two never collide.
+stable `function_id` derived from a hash of its fully-qualified name (e.g.,
+"ContactManager.ask" → deterministic integer). User-defined functions have their
+own auto-incrementing ID sequence in their separate context, so the two never collide.
 
-IMPORTANT: PRIMITIVE_SOURCES is append-only. Never reorder or remove entries -
-only add new primitives at the end. This ensures stable IDs across upgrades.
+Design
+------
+Primitive classes are registered via direct imports (not string paths) so that
+IDE refactoring tools can track renames. Public methods are auto-discovered by
+inspecting `@abstractmethod` definitions on base classes, minus an explicit
+exclusion set for non-primitive methods like `clear()`.
 
 This module provides:
 - `ComputerPrimitives` - Computer use (browser/desktop) control and reasoning capabilities
@@ -25,22 +29,24 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING, TypedDict
 
 from pydantic import BaseModel
 
 from unity.common.llm_client import new_llm_client
 
+# Direct class imports - IDE refactoring will track renames
+from unity.contact_manager.contact_manager import ContactManager
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.secret_manager.secret_manager import SecretManager
+from unity.guidance_manager.guidance_manager import GuidanceManager
+from unity.web_searcher.web_searcher import WebSearcher
+from unity.file_manager.managers.file_manager import FileManager
+
 if TYPE_CHECKING:
-    from unity.contact_manager.contact_manager import ContactManager
-    from unity.transcript_manager.transcript_manager import TranscriptManager
-    from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-    from unity.task_scheduler.task_scheduler import TaskScheduler
-    from unity.secret_manager.secret_manager import SecretManager
-    from unity.guidance_manager.guidance_manager import GuidanceManager
-    from unity.web_searcher.web_searcher import WebSearcher
     from unity.function_manager.computer import Computer
-    from unity.file_manager.managers.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +61,20 @@ class ComputerPrimitives:
     Provides a library of high-level, agentic actions for the HierarchicalActor.
     Each public method is a tool that the actor can incorporate into its generated code.
     """
+
+    # Methods dynamically created from the backend (single source of truth)
+    _DYNAMIC_METHODS = (
+        "act",
+        "observe",
+        "query",
+        "navigate",
+        "get_links",
+        "get_content",
+    )
+    # Methods defined directly on this class
+    _STATIC_METHODS = ("reason",)
+    # All primitive methods (used for discovery)
+    _PRIMITIVE_METHODS = _DYNAMIC_METHODS + _STATIC_METHODS
 
     def __init__(
         self,
@@ -133,14 +153,7 @@ class ComputerPrimitives:
                 wrapper.__doc__ = backend_method.__doc__
             return wrapper
 
-        for method_name in [
-            "act",
-            "observe",
-            "query",
-            "navigate",
-            "get_links",
-            "get_content",
-        ]:
+        for method_name in self._DYNAMIC_METHODS:
             setattr(
                 self,
                 method_name,
@@ -296,62 +309,53 @@ class ComputerPrimitives:
 # ────────────────────────────────────────────────────────────────────────────
 
 
-# Registry of (module.ClassName, [method_names]) to expose as primitives.
-# Each entry maps a fully-qualified class path to the list of public methods
-# that should be available as primitives.
-PRIMITIVE_SOURCES: List[Tuple[str, List[str]]] = [
-    # State managers - public API methods
-    (
-        "unity.contact_manager.contact_manager.ContactManager",
-        ["ask", "update"],
-    ),
-    (
-        "unity.transcript_manager.transcript_manager.TranscriptManager",
-        ["ask"],
-    ),
-    (
-        "unity.knowledge_manager.knowledge_manager.KnowledgeManager",
-        ["ask", "update", "refactor"],
-    ),
-    (
-        "unity.task_scheduler.task_scheduler.TaskScheduler",
-        ["ask", "update", "execute"],
-    ),
-    (
-        "unity.secret_manager.secret_manager.SecretManager",
-        ["ask", "update"],
-    ),
-    (
-        "unity.guidance_manager.guidance_manager.GuidanceManager",
-        ["ask", "update"],
-    ),
-    (
-        "unity.web_searcher.web_searcher.WebSearcher",
-        ["ask"],
-    ),
-    # ComputerPrimitives browser/reasoning methods (now in this module)
-    (
-        "unity.function_manager.primitives.ComputerPrimitives",
-        ["navigate", "act", "observe", "query", "reason"],
-    ),
-    # FileManager - file operations and data access
-    (
-        "unity.file_manager.managers.file_manager.FileManager",
-        [
-            # "ask",
-            # "ask_about_file",
-            # Discovery tools (synchronous - return dict directly)
-            "tables_overview",
-            "list_columns",
-            "schema_explain",
-            # Query/aggregation tools (synchronous)
-            "reduce",
-            "filter_files",
-            "search_files",
-            "visualize",
-        ],
-    ),
+# Classes whose public methods should be exposed as primitives.
+# Uses direct class references (not strings) for IDE refactoring support.
+# Public methods are auto-discovered from @abstractmethod definitions on base classes.
+PRIMITIVE_CLASSES: List[Type] = [
+    # State managers
+    ContactManager,
+    TranscriptManager,
+    KnowledgeManager,
+    TaskScheduler,
+    SecretManager,
+    GuidanceManager,
+    WebSearcher,
+    FileManager,
+    # ComputerPrimitives is defined in this module and handled specially
+    ComputerPrimitives,
 ]
+
+
+# Methods to EXCLUDE from auto-discovery (not user-facing primitives)
+_EXCLUDED_METHODS = frozenset(
+    {
+        # State management
+        "clear",
+        # Internal/admin operations
+        "exists",
+        "list",
+        "ingest_files",
+        "export_file",
+        "export_directory",
+        "file_info",
+        "rename_file",
+        "move_file",
+        "delete_file",
+        "sync",
+        # Low-level contact operations (use ask/update instead)
+        "filter_contacts",
+        "update_contact",
+        # Internal helpers
+        "add_tools",
+        "get_tools",
+        # Knowledge manager internals
+        "filter",
+        "search",
+        # Task scheduler internals
+        "get_active_singleton_handle",
+    },
+)
 
 
 # ---------------------------------------------------------------------------
@@ -473,27 +477,77 @@ _FILE_TOOLS_EXPOSED = frozenset(
 )
 
 
-def _import_class(class_path: str) -> Optional[type]:
+def _get_stable_id(class_name: str, method_name: str) -> int:
     """
-    Dynamically import a class from its fully-qualified path.
+    Generate a stable integer ID from class.method name.
+
+    Uses a hash-based approach so IDs are:
+    - Deterministic (same name → same ID)
+    - Stable across code changes (no positional dependencies)
+    - Unique (collision-resistant within practical limits)
 
     Args:
-        class_path: e.g. "unity.contact_manager.contact_manager.ContactManager"
+        class_name: Short class name (e.g., "ContactManager")
+        method_name: Method name (e.g., "ask")
 
     Returns:
-        The class object, or None if import fails.
+        A stable non-negative integer ID.
     """
-    module_path, class_name = class_path.rsplit(".", 1)
-    try:
-        module = __import__(module_path, fromlist=[class_name])
-        return getattr(module, class_name)
-    except (ImportError, AttributeError) as e:
-        logger.debug(f"Could not import {class_path}: {e}")
-        return None
+    key = f"{class_name}.{method_name}"
+    # Use first 4 bytes of SHA256 as an unsigned 32-bit int
+    digest = hashlib.sha256(key.encode()).digest()
+    return int.from_bytes(digest[:4], "big")
+
+
+def _discover_primitive_methods(cls: Type) -> List[str]:
+    """
+    Auto-discover primitive methods from a class by inspecting its base classes.
+
+    Finds all @abstractmethod definitions on Base* classes in the MRO,
+    excluding methods in _EXCLUDED_METHODS.
+
+    For ComputerPrimitives (which has no base class), discovers public
+    methods directly.
+
+    Args:
+        cls: The class to inspect.
+
+    Returns:
+        List of method names that should be exposed as primitives.
+    """
+    methods = []
+
+    # Special case: ComputerPrimitives has dynamically-created methods
+    # that are added via setattr in __init__, so we can't discover them
+    # from the class itself. Use the class's _PRIMITIVE_METHODS constant.
+    if cls.__name__ == "ComputerPrimitives":
+        return sorted(cls._PRIMITIVE_METHODS)
+
+    # Standard case: find @abstractmethod definitions in Base* classes
+    for base in cls.__mro__:
+        base_name = base.__name__
+        # Look for Base* classes (e.g., BaseContactManager, BaseFileManager)
+        if not base_name.startswith("Base"):
+            continue
+        # Skip the root BaseStateManager - we want the specific manager's base
+        if base_name == "BaseStateManager":
+            continue
+
+        # Get abstract methods from this base class
+        for name, method in vars(base).items():
+            if name.startswith("_"):
+                continue
+            if name in _EXCLUDED_METHODS:
+                continue
+            if getattr(method, "__isabstractmethod__", False):
+                if name not in methods:
+                    methods.append(name)
+
+    return sorted(methods)
 
 
 def _get_method_metadata(
-    cls: type,
+    cls: Type,
     method_name: str,
     class_name: str,
 ) -> Optional[Dict[str, Any]]:
@@ -501,6 +555,7 @@ def _get_method_metadata(
     Extract metadata (signature, docstring) from a class method.
 
     Handles functools.wraps by looking for __wrapped__ attribute.
+    For ComputerPrimitives dynamic methods, looks up docstrings from backend classes.
 
     Args:
         cls: The class containing the method.
@@ -511,6 +566,46 @@ def _get_method_metadata(
         Primitive metadata dict, or None if method not found.
     """
     method = getattr(cls, method_name, None)
+
+    # Special case: ComputerPrimitives dynamic methods don't exist on the class
+    # Get their docstrings from the backend class instead
+    if method is None and class_name == "ComputerPrimitives":
+        if method_name in cls._DYNAMIC_METHODS:
+            # Import backend class to get docstrings
+            from unity.function_manager.computer_backends import MagnitudeBackend
+
+            backend_method = getattr(MagnitudeBackend, method_name, None)
+            if backend_method:
+                docstring = inspect.getdoc(backend_method) or ""
+                try:
+                    signature = str(inspect.signature(backend_method))
+                except (ValueError, TypeError):
+                    signature = "(...)"
+            else:
+                docstring = ""
+                signature = "(...)"
+
+            qualified_name = f"{class_name}.{method_name}"
+            return {
+                "name": qualified_name,
+                "argspec": signature,
+                "docstring": docstring,
+                "embedding_text": (
+                    f"Function Name: {qualified_name}\n"
+                    f"Signature: {signature}\n"
+                    f"Docstring: {docstring}"
+                ),
+                "implementation": None,
+                "is_primitive": True,
+                "depends_on": [],
+                "precondition": None,
+                "verify": False,
+                "guidance_ids": [],
+                "primitive_class": cls.__module__ + "." + cls.__name__,
+                "primitive_method": method_name,
+            }
+        return None
+
     if method is None:
         return None
 
@@ -552,40 +647,51 @@ def _get_method_metadata(
 
 def collect_primitives() -> Dict[str, Dict[str, Any]]:
     """
-    Introspect all registered primitives and return their metadata with stable IDs.
+    Introspect all registered primitive classes and return their metadata.
 
-    Iterates through PRIMITIVE_SOURCES in order, imports each class, and extracts
-    signature and docstring information for each registered method. Each primitive
-    receives an explicit `function_id` based on its sequential position.
+    Auto-discovers primitive methods from each class by inspecting @abstractmethod
+    definitions on base classes, then extracts signature and docstring information.
 
-    The IDs are stable across all users because they depend only on the order
-    in PRIMITIVE_SOURCES, which is append-only.
+    Each primitive receives a stable `function_id` derived from a hash of its
+    fully-qualified name (e.g., "ContactManager.ask"). This ensures IDs are:
+    - Deterministic across runs
+    - Stable when methods are added/removed (no positional dependencies)
+    - Consistent across all deployments
 
     Returns:
         Dict mapping qualified_name (e.g. "ContactManager.ask") to primitive
         metadata suitable for insertion into the Functions/Primitives context.
     """
     primitives: Dict[str, Dict[str, Any]] = {}
-    next_id = 0
 
-    for class_path, method_names in PRIMITIVE_SOURCES:
-        cls = _import_class(class_path)
-        if cls is None:
-            # Still increment IDs even for failed imports to maintain stable ordering
-            next_id += len(method_names)
-            continue
+    for cls in PRIMITIVE_CLASSES:
+        class_name = cls.__name__
 
-        class_name = class_path.rsplit(".", 1)[1]
+        # Auto-discover which methods should be primitives
+        method_names = _discover_primitive_methods(cls)
 
         for method_name in method_names:
             metadata = _get_method_metadata(cls, method_name, class_name)
             if metadata is not None:
-                metadata["function_id"] = next_id
+                # Generate stable ID from name (not position)
+                metadata["function_id"] = _get_stable_id(class_name, method_name)
                 primitives[metadata["name"]] = metadata
-            next_id += 1
 
-    logger.debug(f"Collected {len(primitives)} primitives with IDs 0-{next_id - 1}")
+    logger.debug(f"Collected {len(primitives)} primitives")
     return primitives
+
+
+def get_primitive_sources() -> List[tuple[Type, List[str]]]:
+    """
+    Get all primitive classes with their discovered method names.
+
+    Returns a list of (class, method_names) tuples. This provides access to
+    the auto-discovered primitives for code that needs to iterate over them.
+
+    Returns:
+        List of (class_object, [method_names]) tuples.
+    """
+    return [(cls, _discover_primitive_methods(cls)) for cls in PRIMITIVE_CLASSES]
 
 
 def compute_primitives_hash(primitives: Dict[str, Dict[str, Any]]) -> str:

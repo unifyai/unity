@@ -10,7 +10,7 @@ from unity.actor.environments.base import (
 )
 from unity.function_manager.primitives import (
     MANAGER_METADATA,
-    PRIMITIVE_SOURCES,
+    get_primitive_sources,
     Primitives,
 )
 
@@ -138,9 +138,13 @@ class StateManagerEnvironment(BaseEnvironment):
             clarification_down_q=self._clarification_down_q,
         )
 
-    def _infer_primitives_attr_name(self, class_path: str) -> str | None:
-        """Infer the attribute name on Primitives from a class path."""
-        class_name = class_path.rsplit(".", 1)[-1]
+    def _infer_primitives_attr_name(self, cls_or_path) -> str | None:
+        """Infer the attribute name on Primitives from a class or class path."""
+        # Accept either a class object or a string path
+        if isinstance(cls_or_path, type):
+            class_name = cls_or_path.__name__
+        else:
+            class_name = cls_or_path.rsplit(".", 1)[-1]
         for suffix in ("Manager", "Scheduler", "Searcher"):
             if class_name.endswith(suffix):
                 class_name = class_name[: -len(suffix)]
@@ -199,12 +203,12 @@ class StateManagerEnvironment(BaseEnvironment):
         }
 
         tools: Dict[str, ToolMetadata] = {}
-        for class_path, method_names in PRIMITIVE_SOURCES:
+        for cls, method_names in get_primitive_sources():
             # Skip ComputerPrimitives; those belong to the `computer_primitives` environment.
-            if class_path.endswith(".ComputerPrimitives"):
+            if cls.__name__ == "ComputerPrimitives":
                 continue
 
-            manager_attr = self._infer_primitives_attr_name(class_path)
+            manager_attr = self._infer_primitives_attr_name(cls)
             if not manager_attr:
                 # If the runtime `Primitives` interface doesn't expose this manager, skip it.
                 continue
@@ -238,11 +242,11 @@ class StateManagerEnvironment(BaseEnvironment):
 
         # Collect exposed managers with their metadata
         exposed: list[tuple[str, list[str], dict]] = []
-        for class_path, method_names in PRIMITIVE_SOURCES:
-            if class_path.endswith(".ComputerPrimitives"):
+        for cls, method_names in get_primitive_sources():
+            if cls.__name__ == "ComputerPrimitives":
                 continue
 
-            manager_attr = self._infer_primitives_attr_name(class_path)
+            manager_attr = self._infer_primitives_attr_name(cls)
             if not manager_attr:
                 continue
 

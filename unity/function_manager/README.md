@@ -23,7 +23,12 @@ This separation guarantees:
 
 ### Primitive ID Stability
 
-Primitives receive IDs based on their position in `PRIMITIVE_SOURCES` (in `primitives.py`). This registry is **append-only** – new primitives are added at the end, existing entries are never reordered or removed. This ensures IDs remain stable across Unify upgrades.
+Primitives receive stable IDs derived from a hash of their fully-qualified name (e.g., "ContactManager.ask" → deterministic integer). This means:
+- IDs are consistent across all deployments
+- Adding/removing methods doesn't affect other primitives' IDs
+- No manual ID management required
+
+Primitive methods are auto-discovered from `@abstractmethod` definitions on base classes (e.g., `BaseContactManager`), minus an explicit exclusion list for non-primitive methods like `clear()`.
 
 ---
 
