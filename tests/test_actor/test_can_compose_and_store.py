@@ -18,7 +18,7 @@ from unity.actor.hierarchical_actor import (
     _HierarchicalHandleState,
 )
 from unity.function_manager.primitives import ComputerPrimitives
-from unity.function_manager.browser import Browser
+from unity.function_manager.computer import Computer
 from unity.function_manager.function_manager import FunctionManager
 import unity.actor.hierarchical_actor as hierarchical_actor_module
 
@@ -38,23 +38,23 @@ def mock_function_manager():
 
 
 @pytest.fixture
-def mock_browser():
-    """Provides a mock Browser instance with async methods."""
-    browser = MagicMock(spec=Browser)
-    browser.act = AsyncMock(return_value="Action completed.")
-    browser.observe = AsyncMock(return_value="Observation complete.")
-    browser.get_screenshot = AsyncMock(return_value=None)
-    browser.close = AsyncMock()
-    return browser
+def mock_computer():
+    """Provides a mock Computer instance with async methods."""
+    computer = MagicMock(spec=Computer)
+    computer.act = AsyncMock(return_value="Action completed.")
+    computer.observe = AsyncMock(return_value="Observation complete.")
+    computer.get_screenshot = AsyncMock(return_value=None)
+    computer.close = AsyncMock()
+    return computer
 
 
 @pytest.fixture
-def mock_computer_primitives(mock_browser):
-    """Provides a mock ComputerPrimitives which holds our mock_browser."""
+def mock_computer_primitives(mock_computer):
+    """Provides a mock ComputerPrimitives which holds our mock_computer."""
     provider = MagicMock(spec=ComputerPrimitives)
-    provider.browser = mock_browser
-    provider.browser_act = mock_browser.act
-    provider.browser_observe = mock_browser.observe
+    provider.computer = mock_computer
+    provider.computer_act = mock_computer.act
+    provider.computer_observe = mock_computer.observe
     provider.close = AsyncMock()
     return provider
 

@@ -46,9 +46,9 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
 import unity.actor.prompt_builders as prompt_builders
-from unity.function_manager.browser_backends import (
-    BrowserAgentError,
-    MagnitudeBrowserBackend,
+from unity.function_manager.computer_backends import (
+    ComputerAgentError,
+    MagnitudeBackend,
 )
 from unity.common._async_tool.loop_config import (
     LIVE_IMAGES_REGISTRY,
@@ -1677,7 +1677,7 @@ class _ToolProviderProxy:
 
     Browser-specific features are conditionally enabled when the provided
     `environment` looks like a `ComputerEnvironment`:
-    - Magnitude log capture (if the browser backend is `MagnitudeBrowserBackend`)
+    - Magnitude log capture (if the browser backend is `MagnitudeBackend`)
     - `wait`/`context` kwargs injection
     - URL + post-action screenshot capture for cache metadata
     - scoped context injection into the `reason` tool
@@ -1897,7 +1897,7 @@ class _ToolProviderProxy:
             if self._is_browser_env:
                 try:
                     backend = self._real_instance.browser.backend
-                    is_magnitude = isinstance(backend, MagnitudeBrowserBackend)
+                    is_magnitude = isinstance(backend, MagnitudeBackend)
                 except Exception:
                     backend = None
                     is_magnitude = False
@@ -1922,7 +1922,7 @@ class _ToolProviderProxy:
                     )
                 else:
                     tool_output = await real_attr(*args, **kwargs)
-            except BrowserAgentError as e:
+            except ComputerAgentError as e:
                 if self._is_browser_env and e.error_type == "cancelled":
                     logger.info(
                         f"🔴 Action interrupted by immediate pause: {call_repr}",
@@ -3398,7 +3398,7 @@ async def main_plan():
                     and computer_primitives is not None
                     and isinstance(
                         computer_primitives.browser.backend,
-                        MagnitudeBrowserBackend,
+                        MagnitudeBackend,
                     )
                 ):
                     backend = computer_primitives.browser.backend
@@ -3468,7 +3468,7 @@ async def main_plan():
 
                     if computer_primitives is not None and isinstance(
                         computer_primitives.browser.backend,
-                        MagnitudeBrowserBackend,
+                        MagnitudeBackend,
                     ):
                         await computer_primitives.browser.backend.barrier(
                             up_to_seq=item.exit_seq,
@@ -5465,7 +5465,7 @@ class HierarchicalActor(BaseActor):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
         timeout: Optional[int] = 1000,
-        browser_mode: str = "magnitude",
+        computer_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
         *,
@@ -5473,22 +5473,23 @@ class HierarchicalActor(BaseActor):
         can_compose: bool = True,
         can_store: bool = True,
         environments: Optional[list["BaseEnvironment"]] = None,
+        browser_mode: str | None = None,  # Deprecated alias for computer_mode
     ):
         """
         Initializes the HierarchicalActor.
 
         Args:
             function_manager: Manages a library of reusable functions.
-            controller: The browser controller for executing `act` and `observe`.
-            session_connect_url: URL for connecting to an existing browser session.
-            headless: Whether to run the browser in headless mode.
+            controller: The computer controller for executing `act` and `observe`.
+            session_connect_url: URL for connecting to an existing session.
+            headless: Whether to run in headless mode.
             max_escalations: Default max number of strategic replans for plans.
             max_local_retries: Default max number of tactical retries for plans.
             timeout: Default timeout for plan execution.
-            browser_mode: The browser mode to use. Can be "legacy" or "magnitude".
+            computer_mode: The computer backend mode. Can be "magnitude" or "mock".
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
             agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
-            connect_now: When False (default), defer any browser/agent connections until first use.
+            connect_now: When False (default), defer any agent connections until first use.
             can_compose: When True (default), allows the actor to generate new code on the fly.
                 When False, the actor can only execute pre-existing functions via entrypoint.
             can_store: When True (default), allows verified functions to be persisted
@@ -5496,12 +5497,17 @@ class HierarchicalActor(BaseActor):
                 executed but not stored.
             environments: Optional list of execution environments. If None, defaults to
                 [ComputerEnvironment, StateManagerEnvironment].
+            browser_mode: Deprecated alias for computer_mode.
         """
+        # Handle deprecated browser_mode parameter
+        if browser_mode is not None:
+            computer_mode = browser_mode
+
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
         self._session_connect_url = session_connect_url
         self._headless = headless
-        self._browser_mode = browser_mode
+        self._computer_mode = computer_mode
         self._agent_mode = agent_mode
         self._agent_server_url = agent_server_url
         self._connect_now = connect_now
@@ -5517,7 +5523,7 @@ class HierarchicalActor(BaseActor):
             cp_for_base = ComputerPrimitives(
                 session_connect_url=session_connect_url,
                 headless=headless,
-                browser_mode=browser_mode,
+                computer_mode=computer_mode,
                 agent_mode=agent_mode,
                 agent_server_url=agent_server_url,
                 connect_now=connect_now,
@@ -5528,7 +5534,7 @@ class HierarchicalActor(BaseActor):
             function_manager=function_manager,
             session_connect_url=session_connect_url,
             headless=headless,
-            browser_mode=browser_mode,
+            computer_mode=computer_mode,
             agent_mode=agent_mode,
             agent_server_url=agent_server_url,
             connect_now=connect_now,
@@ -5900,7 +5906,7 @@ class HierarchicalActor(BaseActor):
             dedicated_computer_primitives = ComputerPrimitives(
                 session_connect_url=self._session_connect_url,
                 headless=self._headless,
-                browser_mode=self._browser_mode,
+                computer_mode=self._computer_mode,
                 agent_mode=self._agent_mode,
                 agent_server_url=self._agent_server_url,
                 connect_now=self._connect_now,
@@ -6504,7 +6510,7 @@ class HierarchicalActor(BaseActor):
                     start_seq = -1
                     if computer_primitives is not None and isinstance(
                         computer_primitives.browser.backend,
-                        MagnitudeBrowserBackend,
+                        MagnitudeBackend,
                     ):
                         start_seq = computer_primitives.browser.backend.current_seq
 
@@ -6639,7 +6645,7 @@ class HierarchicalActor(BaseActor):
                             except FatalVerificationError:
                                 raise
 
-                            except (BrowserAgentError, Exception) as e:
+                            except (ComputerAgentError, Exception) as e:
                                 logger.error(
                                     f"Function '{func_name}' failed with a runtime error on attempt {i+1}: {e}",
                                     exc_info=True,
@@ -6706,7 +6712,7 @@ class HierarchicalActor(BaseActor):
                         exit_seq = -1
                         if computer_primitives is not None and isinstance(
                             computer_primitives.browser.backend,
-                            MagnitudeBrowserBackend,
+                            MagnitudeBackend,
                         ):
                             exit_seq = computer_primitives.browser.backend.current_seq
 

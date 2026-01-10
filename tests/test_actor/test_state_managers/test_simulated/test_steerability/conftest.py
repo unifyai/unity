@@ -215,7 +215,7 @@ def create_actor_with_primitives():
     async def _factory(primitives: Primitives):
         actor = HierarchicalActor(
             headless=True,
-            browser_mode="mock",
+            computer_mode="mock",
             connect_now=False,
         )
         # Mock specific browser primitives for test control.

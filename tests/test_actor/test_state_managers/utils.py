@@ -323,7 +323,7 @@ async def wait_for_tool_call(handle: Any, tool_name: str, timeout: int = 60) -> 
 class NoKeychainBrowser:
     """Minimal browser stub to prevent Keychain prompts during tests.
 
-    DEPRECATED: With browser_mode="mock", this class is no longer needed.
+    DEPRECATED: With computer_mode="mock", this class is no longer needed.
     Kept for backward compatibility with tests that import it.
     """
 
@@ -493,7 +493,7 @@ async def make_actor(
     """
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         can_compose=can_compose,
         can_store=can_store,

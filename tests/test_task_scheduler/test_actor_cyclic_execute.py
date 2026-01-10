@@ -231,7 +231,7 @@ async def test_delegate_path_used_and_active_queue_steering_works(monkeypatch):
     # ── Build a HierarchicalActor and mock browser immediately ────────────────
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
     )
     # Mock specific browser primitives for test control.
@@ -416,7 +416,7 @@ async def test_cancel_via_active_task_interject_is_deterministic_in_delegate_mod
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
@@ -590,7 +590,7 @@ async def test_nested_manager_clarification_in_delegate_mode(monkeypatch):
     actor = HierarchicalActor(
         function_manager=fm,
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         can_compose=False,
     )
@@ -698,7 +698,7 @@ async def test_delegate_contextvar_reset_no_leakage(monkeypatch):
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         can_compose=False,
     )

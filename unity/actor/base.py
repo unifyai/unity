@@ -85,10 +85,10 @@ class BaseActor(ABC):
         environments: Optional[list["BaseEnvironment"]] = None,
         computer_primitives: Optional["ComputerPrimitives"] = None,
         function_manager: Optional["FunctionManager"] = None,
-        # Browser-specific params for default environment creation
+        # Computer-use params for default environment creation
         session_connect_url: Optional[str] = None,
         headless: bool = False,
-        browser_mode: str = "magnitude",
+        computer_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
         connect_now: bool = False,
@@ -109,7 +109,7 @@ class BaseActor(ABC):
             computer_primitives=computer_primitives,
             session_connect_url=session_connect_url,
             headless=headless,
-            browser_mode=browser_mode,
+            computer_mode=computer_mode,
             agent_mode=agent_mode,
             agent_server_url=agent_server_url,
             connect_now=connect_now,
@@ -134,7 +134,7 @@ class BaseActor(ABC):
         computer_primitives: Optional["ComputerPrimitives"],
         session_connect_url: Optional[str],
         headless: bool,
-        browser_mode: str,
+        computer_mode: str,
         agent_mode: str,
         agent_server_url: str,
         connect_now: bool,
@@ -154,7 +154,7 @@ class BaseActor(ABC):
         from unity.function_manager.primitives import ComputerPrimitives, Primitives
 
         # If environments are explicitly provided, honor them and do not implicitly
-        # introduce a browser environment (domain-agnostic mode).
+        # introduce a computer environment (domain-agnostic mode).
         if environments is None:
             if computer_primitives is not None:
                 cp = computer_primitives
@@ -162,7 +162,7 @@ class BaseActor(ABC):
                 cp = ComputerPrimitives(
                     session_connect_url=session_connect_url,
                     headless=headless,
-                    browser_mode=browser_mode,
+                    computer_mode=computer_mode,
                     agent_mode=agent_mode,
                     agent_server_url=agent_server_url,
                     connect_now=connect_now,

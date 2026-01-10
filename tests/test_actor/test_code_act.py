@@ -223,7 +223,7 @@ async def test_interjection_incremental_teaching_session():
     in an interactive teaching session.
     """
     # Create actor with mock browser (no external services needed)
-    actor = CodeActActor(headless=True, browser_mode="mock")
+    actor = CodeActActor(headless=True, computer_mode="mock")
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
@@ -321,7 +321,7 @@ async def test_clarification_flow():
     clarification_down_q = asyncio.Queue()
 
     # Create actor with mock browser (no external services needed)
-    planner = CodeActActor(headless=True, browser_mode="mock")
+    planner = CodeActActor(headless=True, computer_mode="mock")
     planner._computer_primitives.navigate = AsyncMock(return_value=None)
     planner._computer_primitives.act = AsyncMock(return_value="Action completed")
     planner._computer_primitives.observe = AsyncMock(return_value="Page content")
