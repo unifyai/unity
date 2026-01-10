@@ -3645,6 +3645,152 @@ class FunctionManager(BaseFunctionManager):
             # Best effort cleanup - don't let cleanup errors propagate
             pass
 
+    async def execute_function(
+        self,
+        *,
+        function_name: str,
+        call_kwargs: Optional[Dict[str, Any]] = None,
+        target_venv_id: Optional[int] = ...,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a stored function by name with optional venv override.
+
+        This method looks up a function by name from the function table and
+        executes it. By default, it uses the venv_id stored in the function
+        record, but this can be overridden to run the function in a different
+        venv.
+
+        This enables:
+        - Running simple/compatible functions in a venv with more packages
+        - Using utility functions from the catalog in specialized sessions
+        - Testing functions in different environments
+
+        Args:
+            function_name: Name of the function to execute.
+            call_kwargs: Keyword arguments to pass to the function.
+            target_venv_id: Override the execution environment:
+                - ... (Ellipsis): Use the function's stored venv_id (default)
+                - None: Execute in the default Python environment
+                - int: Execute in this specific venv_id
+
+        Returns:
+            Dict with keys: result, error, stdout, stderr
+
+        Raises:
+            ValueError: If the function doesn't exist or has no implementation.
+        """
+        # Look up function by name
+        func_data = self._get_function_data_by_name(name=function_name)
+        if func_data is None:
+            raise ValueError(f"Function '{function_name}' not found")
+
+        implementation = func_data.get("implementation")
+        if not isinstance(implementation, str) or not implementation.strip():
+            raise ValueError(f"Function '{function_name}' has no implementation")
+
+        # Strip @custom_function decorators (not available in subprocess runner)
+        implementation = _strip_custom_function_decorators(implementation)
+
+        # Determine execution target venv
+        if target_venv_id is ...:
+            # Use function's default venv_id
+            exec_venv_id = func_data.get("venv_id")
+        else:
+            # User override
+            exec_venv_id = target_venv_id
+
+        # Determine if function is async
+        is_async = "async def" in implementation
+
+        call_kwargs = call_kwargs or {}
+
+        if exec_venv_id is not None:
+            # Execute in specified venv
+            return await self.execute_in_venv(
+                venv_id=int(exec_venv_id),
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                is_async=is_async,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
+        else:
+            # Execute in default environment
+            return await self._execute_in_default_env(
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                is_async=is_async,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
+
+    async def _execute_in_default_env(
+        self,
+        *,
+        implementation: str,
+        call_kwargs: Dict[str, Any],
+        is_async: bool,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a function in the default Python environment (no custom venv).
+
+        This runs the function in-process using the project's Python environment.
+        """
+        from .execution_env import create_base_globals
+        import io
+        import traceback
+        from contextlib import redirect_stdout, redirect_stderr
+
+        globals_dict = create_base_globals()
+
+        # Inject primitives if provided
+        if primitives is not None:
+            globals_dict["primitives"] = primitives
+        if computer_primitives is not None:
+            globals_dict["computer_primitives"] = computer_primitives
+
+        stdout_capture = io.StringIO()
+        stderr_capture = io.StringIO()
+        result = None
+        error = None
+
+        try:
+            # Extract function name from implementation
+            tree = ast.parse(implementation)
+            func_name = None
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_name = node.name
+                    break
+
+            if not func_name:
+                raise ValueError("No function definition found in implementation")
+
+            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                exec(implementation, globals_dict)
+                fn = globals_dict.get(func_name)
+                if fn is None:
+                    raise ValueError(f"Function '{func_name}' not found after exec")
+
+                if is_async:
+                    result = await fn(**call_kwargs)
+                else:
+                    result = fn(**call_kwargs)
+
+        except Exception:
+            error = traceback.format_exc()
+
+        return {
+            "result": self._make_json_serializable(result),
+            "error": error,
+            "stdout": stdout_capture.getvalue(),
+            "stderr": stderr_capture.getvalue(),
+        }
+
     def _make_json_serializable(self, obj: Any) -> Any:
         """Convert an object to a JSON-serializable form."""
         if obj is None or isinstance(obj, (bool, int, float, str)):

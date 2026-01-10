@@ -354,9 +354,91 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
+    async def execute_function(
+        self,
+        *,
+        function_name: str,
+        call_kwargs: Optional[Dict[str, Any]] = None,
+        target_venv_id: Optional[int] = ...,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a stored function by name with optional venv override.
+
+        Signature
+        ---------
+        execute_function(
+            *,
+            function_name: str,
+            call_kwargs: dict[str, Any] | None = None,
+            target_venv_id: int | None = USE_FUNCTION_DEFAULT,
+            primitives: Any | None = None,
+            computer_primitives: Any | None = None,
+        ) -> dict[str, Any]
+
+        Parameters
+        ----------
+        function_name : str
+            Name of the function to execute (must exist in the function table).
+        call_kwargs : dict[str, Any] | None, default ``None``
+            Keyword arguments to pass to the function.
+        target_venv_id : int | None, default ``USE_FUNCTION_DEFAULT``
+            Override the execution environment:
+            - ``USE_FUNCTION_DEFAULT`` (``...``): Use the function's stored ``venv_id``
+              from the function table. This is the default behavior.
+            - ``None``: Execute in the default Python environment (no custom venv).
+            - ``int``: Execute in this specific venv_id, regardless of what's
+              stored in the function table.
+
+            This allows running simple/compatible functions in a different venv
+            than they were originally associated with. The caller is responsible
+            for ensuring the target venv has the required packages.
+        primitives : Any | None, default ``None``
+            The Primitives instance for RPC access to state managers.
+        computer_primitives : Any | None, default ``None``
+            The ComputerPrimitives instance for browser/desktop RPC access.
+
+        Returns
+        -------
+        dict[str, Any]
+            Execution result with keys:
+            - ``result``: The return value of the function (JSON-serializable).
+            - ``error``: Error message if execution failed, ``None`` otherwise.
+            - ``stdout``: Captured stdout from the function.
+            - ``stderr``: Captured stderr from the function.
+
+        Raises
+        ------
+        ValueError
+            If the function does not exist or has no implementation.
+
+        Examples
+        --------
+        >>> # Execute using the function's default venv
+        >>> result = await fm.execute_function(function_name="my_func", call_kwargs={"x": 1})
+
+        >>> # Execute in a specific venv (override)
+        >>> result = await fm.execute_function(
+        ...     function_name="simple_util",
+        ...     call_kwargs={"data": [1, 2, 3]},
+        ...     target_venv_id=5,  # Run in venv 5, not the function's stored venv
+        ... )
+
+        >>> # Execute in default Python environment (no venv)
+        >>> result = await fm.execute_function(
+        ...     function_name="pure_python_func",
+        ...     target_venv_id=None,
+        ... )
+        """
+
+    @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
 
+
+# Sentinel for "use the function's default venv_id"
+USE_FUNCTION_DEFAULT = ...
 
 # Attach centralised docstring
 BaseFunctionManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING
