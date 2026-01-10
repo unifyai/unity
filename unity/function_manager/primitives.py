@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from unity.secret_manager.secret_manager import SecretManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
     from unity.web_searcher.web_searcher import WebSearcher
-    from unity.controller.browser import Browser
+    from unity.function_manager.browser import Browser
     from unity.file_manager.managers.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class ComputerPrimitives:
         self._browser_kwargs_map = browser_kwargs
         # Lazily create the Browser (and thus avoid connecting to agent-service) unless requested
         if connect_now:
-            from unity.controller.browser import Browser
+            from unity.function_manager.browser import Browser
 
             self._browser = Browser(
                 mode=self._browser_mode,
@@ -107,7 +107,7 @@ class ComputerPrimitives:
 
     def _setup_browser_methods(self):
         """Dynamically create tool methods without forcing an early backend connection."""
-        from unity.controller.browser_backends import (
+        from unity.function_manager.browser_backends import (
             MagnitudeBrowserBackend,
             MockBrowserBackend,
         )
@@ -151,7 +151,7 @@ class ComputerPrimitives:
     def browser(self) -> "Browser":
         """Lazily initialize and return the Browser instance."""
         if self._browser is None:
-            from unity.controller.browser import Browser
+            from unity.function_manager.browser import Browser
 
             self._browser = Browser(
                 mode=self._browser_mode,

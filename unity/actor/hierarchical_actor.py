@@ -46,7 +46,10 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
 import unity.actor.prompt_builders as prompt_builders
-from unity.controller.browser_backends import BrowserAgentError, MagnitudeBrowserBackend
+from unity.function_manager.browser_backends import (
+    BrowserAgentError,
+    MagnitudeBrowserBackend,
+)
 from unity.common._async_tool.loop_config import (
     LIVE_IMAGES_REGISTRY,
     LIVE_IMAGES_LOG,

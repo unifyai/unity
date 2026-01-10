@@ -46,7 +46,7 @@ from unity.actor.hierarchical_actor import (
     _HierarchicalHandleState,
 )
 from unity.function_manager.function_manager import FunctionManager
-from unity.controller.browser_backends import BrowserAgentError
+from unity.function_manager.browser_backends import BrowserAgentError
 
 
 # ────────────────────────────────────────────────────────────────────────────
