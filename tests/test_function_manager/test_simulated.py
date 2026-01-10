@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 
 from tests.helpers import _handle_project
 from unity.function_manager.simulated import SimulatedFunctionManager
@@ -136,6 +137,39 @@ def test_search_functions_by_similarity_bounds_and_shape():
     assert isinstance(first, dict)
     for key in ("name", "function_id", "argspec", "score"):
         assert key in first
+
+
+# --------------------------------------------------------------------------- #
+#  execute_function                                                           #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_execute_function_returns_simulated_response():
+    """
+    SimulatedFunctionManager.execute_function should return a simulated
+    response with the expected structure (result, error, stdout, stderr).
+    """
+    fm = SimulatedFunctionManager()
+    response = await fm.execute_function(
+        function_name="my_function",
+        call_kwargs={"x": 1, "y": 2},
+    )
+    assert isinstance(response, dict)
+    # Check required keys in response
+    assert "result" in response
+    assert "error" in response
+    assert "stdout" in response
+    assert "stderr" in response
+    # Error should be None for successful simulation
+    assert response["error"] is None
+    # Result should contain simulated marker and function info
+    result = response["result"]
+    assert isinstance(result, dict)
+    assert result.get("simulated") is True
+    assert result.get("function_name") == "my_function"
+    assert result.get("call_kwargs") == {"x": 1, "y": 2}
 
 
 # --------------------------------------------------------------------------- #
