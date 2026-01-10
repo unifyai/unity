@@ -3151,19 +3151,20 @@ async def main_plan():
                     if fut is not None and not fut.done():
                         fut.cancel()
 
-                self.action_log.append(f"User answered: {answer}")
+            # Success path - only reached if no exception during wait
+            self.action_log.append(f"User answered: {answer}")
 
-                await self._handle_dynamic_implementation(
-                    function_name,
-                    clarification_question=question,
-                    clarification_answer=answer,
-                    call_stack_snapshot=kwargs.get(
-                        "call_stack_snapshot",
-                    ),
-                    scoped_context_snapshot=kwargs.get(
-                        "scoped_context_snapshot",
-                    ),
-                )
+            await self._handle_dynamic_implementation(
+                function_name,
+                clarification_question=question,
+                clarification_answer=answer,
+                call_stack_snapshot=kwargs.get(
+                    "call_stack_snapshot",
+                ),
+                scoped_context_snapshot=kwargs.get(
+                    "scoped_context_snapshot",
+                ),
+            )
 
         elif decision.action == "replan_parent":
             self.action_log.append(
