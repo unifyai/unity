@@ -4,12 +4,104 @@ This document covers the logging infrastructure for tests: local log files, remo
 
 ---
 
+## Downloading CI Logs
+
+When debugging CI failures, use the `download_ci_logs.sh` utility to download log artifacts from GitHub Actions.
+
+### Quick Start
+
+```bash
+# From an artifact URL (copy from GitHub Actions UI)
+./logs/download_ci_logs.sh "https://github.com/unifyai/unity/actions/runs/20882540406/artifacts/5086119156"
+
+# From a run URL + pattern match
+./logs/download_ci_logs.sh "https://github.com/unifyai/unity/actions/runs/20882540406" --pattern "function_manager"
+
+# From just a run ID + pattern
+./logs/download_ci_logs.sh 20882540406 --pattern "function_manager"
+
+# List all artifacts for a run (discovery mode)
+./logs/download_ci_logs.sh 20882540406 --list
+```
+
+### How to Get the URL
+
+1. Go to the GitHub Actions run page (e.g., from a failed CI notification)
+2. Click on the failed job to expand it
+3. Scroll down to **Artifacts** section
+4. Right-click the artifact name → "Copy link address"
+5. Pass that URL to the script
+
+Alternatively, just copy the run URL from your browser and use `--pattern` to filter.
+
+### Output Location
+
+Downloaded logs are extracted to `logs/ci/<run_id>/<artifact_name>/`:
+
+```
+logs/ci/
+├── latest -> 20882540406/logs-function_manager/   # Symlink to most recent
+├── 20882540406/
+│   └── logs-function_manager/
+│       ├── pytest/
+│       │   └── 2026-01-10T18-32-52_unitypid7578/
+│       │       ├── duration_summary.txt
+│       │       ├── test_function_manager-test_basics-test_add_single_success.txt
+│       │       └── ...
+│       ├── unity/
+│       ├── unify/
+│       └── all/
+└── 20881234567/
+    └── logs-web_searcher/
+        └── ...
+```
+
+### Script Options
+
+| Option | Description |
+|--------|-------------|
+| `--pattern <pattern>` | Filter artifacts by name (case-insensitive substring match) |
+| `--list` | List available artifacts without downloading |
+| `--force` | Re-download even if artifact already exists locally |
+| `--repo <owner/repo>` | Override repository (default: `unifyai/unity`) |
+| `--help` | Show usage help |
+
+### Features
+
+- **Flexible input**: Accepts full artifact URLs, run URLs, or just run IDs
+- **Smart waiting**: If the CI run is still in progress, waits for artifacts to become available (up to 10 minutes)
+- **Progress display**: Shows download progress for large artifacts
+- **Idempotent**: Skips re-downloading if artifact already exists (use `--force` to override)
+- **Latest symlink**: `logs/ci/latest` always points to the most recently downloaded artifact
+
+### Troubleshooting
+
+**"Not authenticated with GitHub CLI"**
+```bash
+gh auth login
+```
+
+**"No artifacts matching pattern"**
+```bash
+# List all available artifacts first
+./logs/download_ci_logs.sh <run_id> --list
+```
+
+**"Run still in progress"**
+The script waits up to 10 minutes for artifacts to be uploaded. If the run takes longer, re-run the script after the CI job completes.
+
+**Large artifacts (100MB+)**
+Expect ~1-2 minutes per 100MB on typical connections. The script shows progress during download.
+
+---
+
 ## Log Directory Overview
 
-All logs are organized under `logs/` with six main subdirectories:
+All logs are organized under `logs/` with seven main subdirectories:
 
 | Directory | Purpose | Structure | Control |
 |-----------|---------|-----------|---------|
+| `logs/ci/` | **Downloaded CI artifacts** | `<run_id>/<artifact>/` | `download_ci_logs.sh` |
 | `logs/pytest/` | Test output (stdout/stderr) | One `.txt` per test | Test-only |
 | `logs/unity/` | Unity LOGGER output (async tool loop, managers) | `unity.log` per session | `UNITY_LOG` + `UNITY_LOG_DIR` |
 | `logs/unillm/` | Raw LLM request/response traces | `.txt` files per request | `UNILLM_LOG` + `UNILLM_LOG_DIR` |
