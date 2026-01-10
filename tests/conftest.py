@@ -65,10 +65,10 @@ def static_now():
 
 
 @pytest.fixture(autouse=True)
-def stub_controller_deps(monkeypatch):
+def stub_external_deps(monkeypatch):
     """
-    This fixture automatically stubs heavy dependencies for the Controller tests,
-    namely Redis and the BrowserWorker. It runs for every test.
+    This fixture automatically stubs heavy external dependencies for tests,
+    namely Redis. It runs for every test.
     """
 
     # --- Redis stub -----------------------------------------------------------
@@ -118,27 +118,6 @@ def stub_controller_deps(monkeypatch):
 
     # Safely patch redis.Redis with our fake version
     monkeypatch.setattr("redis.Redis", _FakeRedis)
-
-    # --- BrowserWorker stub ---------------------------------------------------
-    class _DummyWorker:
-        def __init__(self, *a, **k):
-            self.started = False
-            self.stopped = False
-
-        def start(self):
-            self.started = True
-
-        def stop(self):
-            self.stopped = True
-
-        def join(self, *a, **k):
-            pass
-
-    # Safely patch the BrowserWorker class where it's defined
-    monkeypatch.setattr(
-        "unity.controller.playwright_utils.worker.BrowserWorker",
-        _DummyWorker,
-    )
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
     # Two sources of timestamps appear in LLM prompts:

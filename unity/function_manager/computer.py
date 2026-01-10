@@ -2,42 +2,49 @@ from typing import Any, Type
 
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.manager_registry import ManagerRegistry
-from .browser_backends import (
-    BrowserBackend,
-    LegacyBrowserBackend,
-    MagnitudeBrowserBackend,
+from .computer_backends import (
+    ComputerBackend,
+    MagnitudeBackend,
+    MockComputerBackend,
 )
 
 
-class Browser:
+class Computer:
     """
-    Encapsulates all browser-related capabilities, from simple actions
+    Encapsulates all computer use capabilities, from simple actions
     to complex, multi-step operations and session recording. This class uses
     a strategy pattern to delegate to a specific backend implementation
-    ('legacy' or 'magnitude') based on the selected mode.
+    based on the selected mode.
+
+    Supports both browser automation and general desktop/computer control
+    via vision-based agents (Magnitude).
+
+    Modes:
+        - 'magnitude': Production backend using Magnitude agent service
+        - 'mock': Lightweight mock backend for testing (no external services)
     """
 
     def __init__(
         self,
-        mode: str = "legacy",
+        mode: str = "magnitude",
         secret_manager=None,
         **kwargs,
     ):
         """
-        Initializes the Browser with a specific backend strategy.
+        Initializes the Computer with a specific backend strategy.
 
         Args:
-            mode (str): The backend to use. Can be 'legacy' or 'magnitude'.
-            **kwargs: Arguments to pass to the backend constructor (e.g., headless, session_connect_url, controller_mode).
+            mode (str): The backend to use. Can be 'magnitude' or 'mock'.
+            **kwargs: Arguments to pass to the backend constructor (e.g., headless, agent_server_url).
         """
 
-        if mode == "legacy":
-            self.backend: BrowserBackend = LegacyBrowserBackend(**kwargs)
-        elif mode == "magnitude":
-            self.backend: BrowserBackend = MagnitudeBrowserBackend(**kwargs)
+        if mode == "magnitude":
+            self.backend: ComputerBackend = MagnitudeBackend(**kwargs)
+        elif mode == "mock":
+            self.backend: ComputerBackend = MockComputerBackend(**kwargs)
         else:
             raise ValueError(
-                f"Unknown browser mode: '{mode}'. Must be 'legacy' or 'magnitude'.",
+                f"Unknown computer mode: '{mode}'. Must be 'magnitude' or 'mock'.",
             )
 
         self._secret_manager = (
@@ -75,7 +82,7 @@ class Browser:
     # --- Placeholders for other planned methods ---
     async def multi_step(self, description: str) -> SteerableToolHandle:
         """
-        Performs a complex, sequential browser task using a dedicated sub-agent.
+        Performs a complex, sequential computer task using a dedicated sub-agent.
         Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
         Returns a handle to the sub-agent that will execute the task.
         """
@@ -85,11 +92,11 @@ class Browser:
 
     async def reason(self, query: str) -> str:
         """
-        Asks a question about the current state of the browser page.
+        Asks a question about the current state of the page/screen.
         e.g., "What is the title of the page?", "Is there a button with the text 'Submit'?"
         """
         # TODO: Implement reasoning logic
-        print("Starting browser reasoning...")
+        print("Starting computer reasoning...")
 
     def start_recording(
         self,
@@ -97,12 +104,12 @@ class Browser:
         include_transcript: bool = True,
     ):
         # TODO: Implement screen recording logic
-        print("Starting browser recording...")
+        print("Starting screen recording...")
 
     def stop_recording(self):
         # TODO: Implement logic to stop and save the recording
-        print("Stopping browser recording...")
+        print("Stopping screen recording...")
 
     def seed(self, state: Any):
-        # TODO: Implement logic to reset the browser to a specific state
-        print("Seeding browser state...")
+        # TODO: Implement logic to reset the computer to a specific state
+        print("Seeding computer state...")

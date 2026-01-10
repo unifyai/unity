@@ -15,7 +15,7 @@ IMPORTANT: PRIMITIVE_SOURCES is append-only. Never reorder or remove entries -
 only add new primitives at the end. This ensures stable IDs across upgrades.
 
 This module provides:
-- `ComputerPrimitives` - Browser/desktop control and reasoning capabilities
+- `ComputerPrimitives` - Computer use (browser/desktop) control and reasoning capabilities
 - `Primitives` - Runtime interface for accessing all primitives from executed functions
 - Registry functions for syncing primitives to the database
 """
@@ -39,14 +39,14 @@ if TYPE_CHECKING:
     from unity.secret_manager.secret_manager import SecretManager
     from unity.guidance_manager.guidance_manager import GuidanceManager
     from unity.web_searcher.web_searcher import WebSearcher
-    from unity.controller.browser import Browser
+    from unity.function_manager.computer import Computer
     from unity.file_manager.managers.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# ComputerPrimitives - Browser/Desktop Control
+# ComputerPrimitives - Computer Use (Browser/Desktop) Control
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -58,43 +58,43 @@ class ComputerPrimitives:
 
     def __init__(
         self,
-        session_connect_url: str | None = None,
         headless: bool = False,
-        browser_mode: str = "magnitude",
-        controller_mode: str = "hybrid",
+        computer_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
         *,
         connect_now: bool = False,
+        # Deprecated parameters (kept for backward compatibility, ignored)
+        session_connect_url: str | None = None,
+        controller_mode: str = "hybrid",
     ):
-        # Cache browser configuration for lazy initialization
-        browser_kwargs = {
-            "legacy": {
-                "session_connect_url": session_connect_url,
-                "headless": headless,
-                "controller_mode": controller_mode,
-            },
+        # Cache computer configuration for lazy initialization
+        computer_kwargs = {
             "magnitude": {
                 "headless": headless,
                 "agent_mode": agent_mode,
                 "agent_server_url": agent_server_url,
             },
+            "mock": {
+                # MockComputerBackend accepts optional url, screenshot, etc.
+                # but works fine with no kwargs
+            },
         }
 
         self._secret_manager = None
-        self._browser = None
-        self._browser_mode = browser_mode
-        self._browser_kwargs_map = browser_kwargs
-        # Lazily create the Browser (and thus avoid connecting to agent-service) unless requested
+        self._computer = None
+        self._computer_mode = computer_mode
+        self._computer_kwargs_map = computer_kwargs
+        # Lazily create the Computer (and thus avoid connecting to agent-service) unless requested
         if connect_now:
-            from unity.controller.browser import Browser
+            from unity.function_manager.computer import Computer
 
-            self._browser = Browser(
-                mode=self._browser_mode,
+            self._computer = Computer(
+                mode=self._computer_mode,
                 secret_manager=self.secret_manager,
-                **self._browser_kwargs_map[self._browser_mode],
+                **self._computer_kwargs_map[self._computer_mode],
             )
-        self._setup_browser_methods()
+        self._setup_computer_methods()
 
     @property
     def secret_manager(self):
@@ -105,22 +105,25 @@ class ComputerPrimitives:
             self._secret_manager = ManagerRegistry.get_secret_manager()
         return self._secret_manager
 
-    def _setup_browser_methods(self):
+    def _setup_computer_methods(self):
         """Dynamically create tool methods without forcing an early backend connection."""
-        from unity.controller.browser_backends import (
-            LegacyBrowserBackend,
-            MagnitudeBrowserBackend,
+        from unity.function_manager.computer_backends import (
+            MagnitudeBackend,
+            MockComputerBackend,
         )
 
-        backend_class = (
-            MagnitudeBrowserBackend
-            if self._browser_mode == "magnitude"
-            else LegacyBrowserBackend
-        )
+        if self._computer_mode == "magnitude":
+            backend_class = MagnitudeBackend
+        elif self._computer_mode == "mock":
+            backend_class = MockComputerBackend
+        else:
+            raise ValueError(
+                f"Unknown computer_mode: '{self._computer_mode}'. Must be 'magnitude' or 'mock'.",
+            )
 
         def _make_lazy_wrapper(method_name: str, backend_class):
             async def wrapper(*args, **kwargs):
-                backend_method = getattr(self.browser.backend, method_name)
+                backend_method = getattr(self.computer.backend, method_name)
                 return await backend_method(*args, **kwargs)
 
             wrapper.__name__ = method_name
@@ -145,17 +148,17 @@ class ComputerPrimitives:
             )
 
     @property
-    def browser(self) -> "Browser":
-        """Lazily initialize and return the Browser instance."""
-        if self._browser is None:
-            from unity.controller.browser import Browser
+    def computer(self) -> "Computer":
+        """Lazily initialize and return the Computer instance."""
+        if self._computer is None:
+            from unity.function_manager.computer import Computer
 
-            self._browser = Browser(
-                mode=self._browser_mode,
+            self._computer = Computer(
+                mode=self._computer_mode,
                 secret_manager=self.secret_manager,
-                **self._browser_kwargs_map[self._browser_mode],
+                **self._computer_kwargs_map[self._computer_mode],
             )
-        return self._browser
+        return self._computer
 
     # --- Generic Reasoning Action ---
     async def reason(

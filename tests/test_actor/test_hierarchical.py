@@ -46,7 +46,7 @@ from unity.actor.hierarchical_actor import (
     _HierarchicalHandleState,
 )
 from unity.function_manager.function_manager import FunctionManager
-from unity.controller.browser_backends import BrowserAgentError
+from unity.function_manager.computer_backends import ComputerAgentError
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -76,9 +76,9 @@ unity.init(overwrite=True)
 # ────────────────────────────────────────────────────────────────────────────
 
 
-class NoKeychainBrowser:
+class NoKeychainComputer:
     """
-    Mock browser that prevents Keychain prompts during tests.
+    Mock computer that prevents Keychain prompts during tests.
 
     Args:
         url: URL to return from get_current_url()
@@ -377,10 +377,9 @@ async def test_cache_hits_after_interjection_for_browser_primitives():
     )
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="magnitude",
+        computer_mode="magnitude",
         connect_now=False,
     )  # connect_now=False prevents real browser init
-    actor.computer_primitives._browser = NoKeychainBrowser()
 
     active_task = None
     try:
@@ -631,10 +630,9 @@ async def test_loop_iterations_get_unique_cache_keys():
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="magnitude",
+        computer_mode="magnitude",
         connect_now=False,
     )
-    actor.computer_primitives._browser = NoKeychainBrowser()
 
     active_task = None
 
@@ -922,10 +920,9 @@ async def test_nested_loop_combinations_get_unique_cache_keys():
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="magnitude",
+        computer_mode="magnitude",
         connect_now=False,
     )
-    actor.computer_primitives._browser = NoKeychainBrowser()
 
     active_task = None
 
@@ -1126,10 +1123,10 @@ async def test_recovery_agent_launches_on_user_interjection():
     """
     print("\n\n--- Starting Test: Recovery after Interjection ---")
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -1277,13 +1274,13 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
     # Use connect_now=False to prevent real browser initialization
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         function_manager=fm,
     )
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -1858,9 +1855,7 @@ async def test_verification_runs_async_and_handles_failures_and_preemption():
 
     Uses configurable mock delays to simulate real-world verification timing.
     """
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
-    # Prevent real browser/keychain interactions in tests
-    actor.computer_primitives._browser = NoKeychainBrowser()  # type: ignore[attr-defined]
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
     try:
         await _test_non_blocking_and_success(actor)
         await _test_failure_and_cancellation(actor)
@@ -1915,11 +1910,11 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
     )
 
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://www.allrecipes.com",
         screenshot="mock_screenshot_base64",
         with_backend_mocks=True,
@@ -2247,13 +2242,13 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
             function_manager=fm,
             headless=True,
             connect_now=False,
-            browser_mode="legacy",
+            computer_mode="mock",
         )
 
         # Mock external I/O
         actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
-        actor.computer_primitives._browser = NoKeychainBrowser(
+        actor.computer_primitives._computer = NoKeychainComputer(
             url="https://mock-url.com",
             screenshot="mock_screenshot_base64",
             with_backend_mocks=True,
@@ -2466,18 +2461,15 @@ CANNED_PLAN_WITH_OBSERVE_IMMEDIATE_PAUSE_RESUME = textwrap.dedent(
 @pytest.mark.timeout(120)
 async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
     """
-    Validates that an in-flight action cancellation (mapped to BrowserAgentError('cancelled'))
+    Validates that an in-flight action cancellation (mapped to ComputerAgentError('cancelled'))
     results in a _ControlledInterruptionException, which restarts the @verify function cleanly.
 
     Flow:
       - First act() call blocks on an event so we can align pause(immediate=True).
-      - We then release the act() which raises BrowserAgentError('cancelled') once.
+      - We then release the act() which raises ComputerAgentError('cancelled') once.
       - The function restarts (idempotency cache avoids duplicate work), plan is PAUSED, then RESUMED to completion.
     """
-    actor = HierarchicalActor(headless=True, connect_now=False, browser_mode="legacy")
-
-    # Avoid system prompts/keychain
-    actor.computer_primitives._browser = NoKeychainBrowser()  # type: ignore[attr-defined]
+    actor = HierarchicalActor(headless=True, connect_now=False, computer_mode="mock")
 
     # Event-driven alignment
     act_entered = asyncio.Event()
@@ -2490,7 +2482,7 @@ async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
             act_entered.set()
             await act_proceed.wait()
             first_act_done = True
-            raise BrowserAgentError("cancelled", "Action was interrupted.")
+            raise ComputerAgentError("cancelled", "Action was interrupted.")
         return None
 
     actor.computer_primitives.act = AsyncMock(side_effect=act_side_effect)  # type: ignore[attr-defined]
@@ -2558,8 +2550,7 @@ async def test_immediate_pause_caches_completed_actions_for_replay_after_resume(
 
     This ensures observe() results are properly cached and reused during restart.
     """
-    actor = HierarchicalActor(headless=True, connect_now=False, browser_mode="legacy")
-    actor.computer_primitives._browser = NoKeychainBrowser()  # type: ignore[attr-defined]
+    actor = HierarchicalActor(headless=True, connect_now=False, computer_mode="mock")
 
     # Orchestrate: let 'open' and 'observe' run; cancel at 'click cta'.
     open_called = asyncio.Event()
@@ -2579,7 +2570,7 @@ async def test_immediate_pause_caches_completed_actions_for_replay_after_resume(
             await cta_proceed.wait()
             if cta_cancel_count == 0:
                 cta_cancel_count += 1
-                raise BrowserAgentError("cancelled", "Action was interrupted.")
+                raise ComputerAgentError("cancelled", "Action was interrupted.")
             return None
         return None
 
@@ -2686,10 +2677,8 @@ async def test_user_interjections_incrementally_build_and_modify_plan():
     print("--- Starting Test Harness for Incremental Teaching Session ---")
 
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
-    # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser()
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
@@ -3213,10 +3202,10 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
     """
     print("--- Starting Test Harness for 'Retrospective Refactor' (MOCKED) ---")
 
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -3462,10 +3451,10 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
         actor = HierarchicalActor(
             function_manager=fm,
             headless=True,
-            browser_mode="legacy",
+            computer_mode="mock",
             connect_now=False,
         )
-        actor.computer_primitives._browser = NoKeychainBrowser(
+        actor.computer_primitives._computer = NoKeychainComputer(
             url="https://mock-url.com",
             screenshot="mock_screenshot_base64",
         )
@@ -3645,13 +3634,13 @@ async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
     # Use connect_now=False to prevent real browser initialization
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         function_manager=fm,
     )
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -3818,10 +3807,10 @@ async def test_nested_functions_maintain_correct_scope_in_prompts():
     """
     print("\n\n--- Starting Test: Scoped Context in Prompts (MOCKED) ---")
 
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -4050,12 +4039,12 @@ async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_
         actor = HierarchicalActor(
             function_manager=fm,
             headless=True,
-            browser_mode="legacy",
+            computer_mode="mock",
             connect_now=False,
         )
 
         # 4. Mock the browser and action_provider
-        actor.computer_primitives._browser = NoKeychainBrowser(
+        actor.computer_primitives._computer = NoKeychainComputer(
             url="https://mock-url.com",
             screenshot="mock_screenshot_base64",
         )
@@ -4243,12 +4232,12 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
     actor = HierarchicalActor(
         function_manager=fm,
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
     )
 
     # Mock browser and action_provider
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -4505,12 +4494,12 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
         actor = HierarchicalActor(
             function_manager=fm,
             headless=True,
-            browser_mode="legacy",
+            computer_mode="mock",
             connect_now=False,
         )
 
         # Mock browser and action_provider
-        actor.computer_primitives._browser = NoKeychainBrowser(
+        actor.computer_primitives._computer = NoKeychainComputer(
             url="https://mock-url.com",
             screenshot="mock_screenshot_base64",
         )
@@ -4680,10 +4669,10 @@ async def test_explore_interjection_runs_in_detached_sandbox():
     print("--- Starting Test Harness for 'explore_detached' (MOCKED) ---")
 
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -4834,10 +4823,10 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
     print("--- Starting Test Harness for 'modify_task' (MOCKED) ---")
 
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -4994,10 +4983,10 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
     print("--- Starting Test Harness for 'replace_task' (MOCKED) ---")
 
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )
@@ -5120,10 +5109,10 @@ async def test_actor_extracts_information_from_images_during_execution():
     print("--- Starting Test Harness for 'Actor Live Visual Reasoning' (MOCKED) ---")
 
     # Use connect_now=False to prevent real browser initialization
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._browser = NoKeychainBrowser(
+    actor.computer_primitives._computer = NoKeychainComputer(
         url="https://mock-url.com",
         screenshot="mock_screenshot_base64",
     )

@@ -110,32 +110,6 @@ def _get_status(handles: list[dict], handle_id: str) -> str:
     raise AssertionError(f"handle_id not found: {handle_id}")
 
 
-class _NoKeychainBrowser:
-    """Prevents macOS Keychain prompts and real browser init."""
-
-    def __init__(
-        self,
-        *,
-        url: str = "https://mock-url.local/",
-        screenshot: str = "mock_screenshot_base64",
-    ):
-        self.backend = MagicMock()
-        self.backend.barrier = AsyncMock()
-        self.backend.interrupt_current_action = AsyncMock()
-        self.backend.clear_pending_commands = AsyncMock()
-        self._url = url
-        self._screenshot = screenshot
-
-    async def get_current_url(self) -> str:
-        return self._url
-
-    async def get_screenshot(self) -> str:
-        return self._screenshot
-
-    def stop(self) -> None:
-        pass
-
-
 class _ClarifyingHandle(SteerableToolHandle):
     """A handle that emits a clarification and blocks `result()` until answered."""
 
@@ -967,14 +941,11 @@ async def test_actor_clarification_bubbles_up_and_is_answered() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
     )
-    # Mock browser immediately (CI-safe) even though this is primitives-only.
-    if getattr(actor, "computer_primitives", None) is not None:
-        actor.computer_primitives._browser = _NoKeychainBrowser()  # type: ignore[attr-defined]
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -1041,13 +1012,11 @@ async def test_broadcast_interject_reaches_concurrent_handles() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
     )
-    if getattr(actor, "computer_primitives", None) is not None:
-        actor.computer_primitives._browser = _NoKeychainBrowser()  # type: ignore[attr-defined]
 
     task = HierarchicalActorHandle(
         actor=actor,
@@ -1116,13 +1085,11 @@ async def test_stop_cancels_watchers_without_deadlock() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
     )
-    if getattr(actor, "computer_primitives", None) is not None:
-        actor.computer_primitives._browser = _NoKeychainBrowser()  # type: ignore[attr-defined]
 
     task = HierarchicalActorHandle(
         actor=actor,
@@ -1174,13 +1141,11 @@ async def test_verification_captures_pane_events() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
     )
-    if getattr(actor, "computer_primitives", None) is not None:
-        actor.computer_primitives._browser = _NoKeychainBrowser()  # type: ignore[attr-defined]
 
     task = HierarchicalActorHandle(
         actor=actor,
@@ -1247,14 +1212,13 @@ async def actor_with_mocked_browser():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
 
-    # Defensive: mock immediately if a browser env exists for any back-compat path.
+    # Mock specific browser methods that the test expects
     if actor.computer_primitives is not None:
-        actor.computer_primitives._browser = _NoKeychainBrowser()  # type: ignore[attr-defined]
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
         actor.computer_primitives.observe = AsyncMock(return_value={})
         actor.computer_primitives.act = AsyncMock(return_value="mock action complete")
@@ -1290,7 +1254,7 @@ async def test_pane_registers_handles_for_cross_manager_join():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1375,7 +1339,7 @@ async def test_verification_captures_pane_events_for_contact_mutation(
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1465,7 +1429,7 @@ async def test_concurrent_handles_broadcast_interject_fans_out():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1630,7 +1594,7 @@ async def test_actor_interject_broadcast_routes_to_inflight_handles():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1751,7 +1715,7 @@ async def test_actor_interject_targeted_routes_to_specific_handle():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )

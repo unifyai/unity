@@ -17,7 +17,7 @@ import contextlib
 import json
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -74,27 +74,6 @@ class _MockEnvironment(BaseEnvironment):
 
     async def capture_state(self) -> Dict[str, Any]:
         return {}
-
-
-class _NoKeychainBrowser:
-    """Mock browser that prevents keychain prompts and real browser initialization in tests."""
-
-    def __init__(self, url: str = "https://mock-url.com", screenshot: str = "aGVsbG8="):
-        self._url = url
-        self._screenshot = screenshot
-        self.backend = MagicMock()
-        self.backend.barrier = AsyncMock()
-        self.backend.interrupt_current_action = AsyncMock()
-        self.backend.clear_pending_commands = AsyncMock()
-
-    async def get_current_url(self) -> str:
-        return self._url
-
-    async def get_screenshot(self) -> str:
-        return self._screenshot
-
-    def stop(self) -> None:
-        return None
 
 
 async def _dummy_contacts_ask(query: str) -> str:
@@ -1169,9 +1148,8 @@ async def test_actor_captures_and_passes_call_stack_and_scoped_context_to_dynami
     import unity.actor.hierarchical_actor as hierarchical_actor_mod
     import unity.actor.prompt_builders as prompt_builders
 
-    # Create actor and mock browser immediately (even if we don't use browser tools).
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
-    actor.computer_primitives._browser = _NoKeychainBrowser()
+    # Create actor with mock browser (no external services needed).
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # We'll patch the prompt builder to record the actor-supplied snapshots, and patch
     # `llm_call` to stop execution after the prompt is built (so we don't do any real LLM work).
@@ -1278,8 +1256,7 @@ async def test_actor_captures_tool_calls_in_idempotency_cache_and_passes_cache_t
     from unity.actor.hierarchical_actor import HierarchicalActor
     import unity.actor.prompt_builders as prompt_builders
 
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
-    actor.computer_primitives._browser = _NoKeychainBrowser()
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
     called = asyncio.Event()
@@ -1380,8 +1357,7 @@ async def test_actor_passes_primitives_handle_history_into_verification_prompt(
     import unity.actor.hierarchical_actor as hierarchical_actor_mod
     import unity.actor.prompt_builders as prompt_builders
 
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
-    actor.computer_primitives._browser = _NoKeychainBrowser()
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Patch the underlying primitives manager to return a handle that exposes `get_history()`.
     primitives_env = actor.environments.get("primitives")
@@ -1515,8 +1491,7 @@ async def test_actor_passes_primitives_cache_and_history_into_interjection_promp
     import unity.actor.hierarchical_actor as hierarchical_actor_mod
     import unity.actor.prompt_builders as prompt_builders
 
-    actor = HierarchicalActor(headless=True, browser_mode="legacy", connect_now=False)
-    actor.computer_primitives._browser = _NoKeychainBrowser()
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     primitives_env = actor.environments.get("primitives")
     assert (
