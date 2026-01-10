@@ -31,10 +31,13 @@ def _office_hours_fact_present() -> bool:
             for row in rows:
                 row_str = str(row).lower()
                 if (
-                    "office hours" in row_str
+                    "office" in row_str
+                    and "hours" in row_str
                     and "9" in row_str
                     and "5" in row_str
-                    and "pt" in row_str
+                    and (
+                        "pt" in row_str or ("pacific" in row_str and "time" in row_str)
+                    )
                 ):
                     found = True
                     break
