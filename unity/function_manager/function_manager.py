@@ -4,8 +4,11 @@ import inspect
 import functools
 import json
 import os
+import re
 import signal
+import socket
 import sys
+import tempfile
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
@@ -128,8 +131,6 @@ def _strip_custom_function_decorators(source: str) -> str:
         out.append(line)
     return "".join(out)
 
-
-import re
 
 # Pattern for shell script metadata comments
 _SHELL_NAME_PATTERN = re.compile(r"^#\s*@name:\s*(.+?)\s*$", re.MULTILINE)
@@ -3662,3 +3663,390 @@ class FunctionManager(BaseFunctionManager):
             pass
         # For other types, convert to string representation
         return str(obj)
+
+    # ────────────────────────────────────────────────────────────────────────────
+    # Shell Script Execution with Primitives Bridge
+    # ────────────────────────────────────────────────────────────────────────────
+
+    def _get_shell_interpreter(self, language: str) -> List[str]:
+        """
+        Get the shell interpreter command for a given language.
+
+        Args:
+            language: One of "sh", "bash", "zsh", "powershell"
+
+        Returns:
+            List of command args to invoke the interpreter
+        """
+        interpreters = {
+            "sh": ["/bin/sh"],
+            "bash": ["/bin/bash"],
+            "zsh": ["/bin/zsh"],
+            "powershell": ["pwsh", "-NoProfile", "-NonInteractive", "-File"],
+        }
+        if language not in interpreters:
+            raise ValueError(f"Unsupported shell language: {language}")
+        return interpreters[language]
+
+    def _get_primitives_metadata(self) -> Dict[str, Any]:
+        """
+        Get metadata about available primitives for shell script introspection.
+
+        Returns:
+            Dict with structure:
+            {
+                "managers": {
+                    "files": {
+                        "description": "...",
+                        "methods": {
+                            "search_files": {"signature": "...", "docstring": "..."},
+                            ...
+                        }
+                    },
+                    ...
+                }
+            }
+        """
+        from .primitives import PRIMITIVE_SOURCES, MANAGER_METADATA
+
+        result: Dict[str, Dict[str, Any]] = {"managers": {}}
+
+        # Map class names to manager short names
+        class_to_manager = {
+            "ContactManager": "contacts",
+            "TranscriptManager": "transcripts",
+            "KnowledgeManager": "knowledge",
+            "TaskScheduler": "tasks",
+            "SecretManager": "secrets",
+            "GuidanceManager": "guidance",
+            "WebSearcher": "web",
+            "FileManager": "files",
+            "ComputerPrimitives": "computer",
+        }
+
+        # Collect methods from PRIMITIVE_SOURCES
+        for class_path, method_names in PRIMITIVE_SOURCES:
+            class_name = class_path.rsplit(".", 1)[-1]
+            manager_name = class_to_manager.get(class_name)
+            if not manager_name:
+                continue
+
+            # Get description from MANAGER_METADATA
+            metadata = MANAGER_METADATA.get(manager_name, {})
+            description = metadata.get("description", "")
+
+            # Get class and extract method signatures
+            try:
+                module_path, cls_name = class_path.rsplit(".", 1)
+                module = __import__(module_path, fromlist=[cls_name])
+                cls = getattr(module, cls_name)
+
+                methods_info: Dict[str, Dict[str, str]] = {}
+                for method_name in method_names:
+                    method = getattr(cls, method_name, None)
+                    if method is None:
+                        continue
+
+                    # Unwrap functools.wraps
+                    fn = method
+                    while hasattr(fn, "__wrapped__"):
+                        fn = fn.__wrapped__
+
+                    try:
+                        sig = str(inspect.signature(fn))
+                    except (ValueError, TypeError):
+                        sig = "(...)"
+
+                    docstring = inspect.getdoc(fn) or ""
+
+                    methods_info[method_name] = {
+                        "signature": sig,
+                        "docstring": docstring,
+                    }
+
+                result["managers"][manager_name] = {
+                    "description": description,
+                    "methods": methods_info,
+                }
+
+            except Exception as e:
+                logger.debug(f"Could not introspect {class_path}: {e}")
+                continue
+
+        return result
+
+    async def execute_shell_script(
+        self,
+        *,
+        implementation: str,
+        language: Literal["sh", "bash", "zsh", "powershell"] = "sh",
+        call_args: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None,
+        cwd: Optional[str] = None,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+        timeout: float = 300.0,
+    ) -> Dict[str, Any]:
+        """
+        Execute a shell script with access to Unity primitives via RPC.
+
+        This method runs a shell script in a subprocess while providing access
+        to all Unity primitives (ContactManager, FileManager, etc.) via the
+        `unity-primitive` CLI command.
+
+        Shell scripts can call primitives like:
+            result=$(unity-primitive files search_files --references '{"query": "budget"}')
+            contacts=$(unity-primitive contacts ask --text "Find Alice")
+
+        Args:
+            implementation: The shell script source code.
+            language: Shell interpreter to use ("sh", "bash", "zsh", "powershell").
+            call_args: Optional list of positional arguments to pass to the script.
+            env: Optional environment variables to add to the script's environment.
+            cwd: Optional working directory for the script.
+            primitives: The Primitives instance for RPC access to state managers.
+            computer_primitives: The ComputerPrimitives instance for RPC access.
+            timeout: Maximum execution time in seconds (default 5 minutes).
+
+        Returns:
+            Dict with keys:
+            - result: The script's exit code (0 = success)
+            - error: Error message if execution failed, None otherwise
+            - stdout: Captured stdout from the script
+            - stderr: Captured stderr from the script
+        """
+        call_args = call_args or []
+
+        # Create temporary directory for script and socket
+        with tempfile.TemporaryDirectory(prefix="unity_shell_") as tmpdir:
+            tmpdir_path = Path(tmpdir)
+
+            # Write script to temporary file
+            if language == "powershell":
+                script_path = tmpdir_path / "script.ps1"
+            else:
+                script_path = tmpdir_path / "script.sh"
+
+            script_path.write_text(implementation)
+            script_path.chmod(0o755)
+
+            # Create Unix domain socket for RPC
+            socket_path = tmpdir_path / "rpc.sock"
+
+            # Get the path to unity-primitive CLI
+            shell_runner_path = Path(__file__).parent / "shell_runner.py"
+
+            # Build environment for the subprocess
+            script_env = os.environ.copy()
+            script_env["UNITY_RPC_SOCKET"] = str(socket_path)
+            # Add the shell_runner.py as unity-primitive command
+            # We create a wrapper script that invokes python with shell_runner.py
+            wrapper_path = tmpdir_path / "unity-primitive"
+            python_path = sys.executable
+            wrapper_path.write_text(
+                f'#!/bin/sh\nexec "{python_path}" "{shell_runner_path}" "$@"\n',
+            )
+            wrapper_path.chmod(0o755)
+            # Prepend tmpdir to PATH so unity-primitive is available
+            script_env["PATH"] = f"{tmpdir}:{script_env.get('PATH', '')}"
+
+            # Add user-provided environment variables
+            if env:
+                script_env.update(env)
+
+            # Set up the RPC server (Unix domain socket)
+            server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server_socket.bind(str(socket_path))
+            server_socket.listen(5)
+            server_socket.setblocking(False)
+
+            # Start the shell script subprocess
+            interpreter = self._get_shell_interpreter(language)
+            cmd = interpreter + [str(script_path)] + call_args
+
+            use_process_group = sys.platform != "win32"
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=script_env,
+                cwd=cwd,
+                start_new_session=use_process_group,
+            )
+
+            stdout_output: List[str] = []
+            stderr_output: List[str] = []
+
+            async def read_stdout():
+                """Read stdout in background."""
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    stdout_output.append(line.decode())
+
+            async def read_stderr():
+                """Read stderr in background."""
+                while True:
+                    line = await process.stderr.readline()
+                    if not line:
+                        break
+                    stderr_output.append(line.decode())
+
+            async def handle_rpc_client(client_socket: socket.socket):
+                """Handle a single RPC client connection."""
+                loop = asyncio.get_event_loop()
+                try:
+                    # Read request
+                    data = b""
+                    while True:
+                        try:
+                            chunk = await asyncio.wait_for(
+                                loop.sock_recv(client_socket, 4096),
+                                timeout=1.0,
+                            )
+                            if not chunk:
+                                break
+                            data += chunk
+                            if b"\n" in data:
+                                break
+                        except asyncio.TimeoutError:
+                            if process.returncode is not None:
+                                break
+                            continue
+
+                    if not data:
+                        return
+
+                    request = json.loads(data.decode("utf-8").strip())
+                    request_id = request.get("id", "")
+                    path = request.get("path", "")
+                    kwargs = request.get("kwargs", {})
+
+                    # Handle introspection requests
+                    if path == "_introspect.list_primitives":
+                        result = self._get_primitives_metadata()
+                        response = {
+                            "type": "rpc_result",
+                            "id": request_id,
+                            "result": result,
+                        }
+                    else:
+                        # Handle regular RPC calls
+                        try:
+                            result = await self._handle_rpc_call(
+                                path=path,
+                                kwargs=kwargs,
+                                primitives=primitives,
+                                computer_primitives=computer_primitives,
+                            )
+                            result = self._make_json_serializable(result)
+                            response = {
+                                "type": "rpc_result",
+                                "id": request_id,
+                                "result": result,
+                            }
+                        except Exception as e:
+                            logger.error(f"RPC error for {path}: {e}", exc_info=True)
+                            response = {
+                                "type": "rpc_error",
+                                "id": request_id,
+                                "error": str(e),
+                            }
+
+                    # Send response
+                    response_data = (json.dumps(response) + "\n").encode("utf-8")
+                    await loop.sock_sendall(client_socket, response_data)
+
+                finally:
+                    client_socket.close()
+
+            async def accept_rpc_connections():
+                """Accept and handle RPC connections from shell script."""
+                loop = asyncio.get_event_loop()
+                while process.returncode is None:
+                    try:
+                        client_socket, _ = await asyncio.wait_for(
+                            loop.sock_accept(server_socket),
+                            timeout=0.1,
+                        )
+                        # Handle client in background
+                        asyncio.create_task(handle_rpc_client(client_socket))
+                    except asyncio.TimeoutError:
+                        continue
+                    except Exception as e:
+                        if process.returncode is None:
+                            logger.debug(f"RPC accept error: {e}")
+                        break
+
+            # Start all tasks
+            stdout_task = asyncio.create_task(read_stdout())
+            stderr_task = asyncio.create_task(read_stderr())
+            rpc_task = asyncio.create_task(accept_rpc_connections())
+
+            try:
+                # Wait for process to complete with timeout
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    # Process timed out
+                    await self._terminate_process_group(process, use_process_group)
+                    return {
+                        "result": -1,
+                        "error": f"Shell script timed out after {timeout}s",
+                        "stdout": "".join(stdout_output),
+                        "stderr": "".join(stderr_output),
+                    }
+
+                # Wait for stdout/stderr to be fully read
+                await asyncio.gather(stdout_task, stderr_task)
+
+                # Build result
+                exit_code = process.returncode
+                return {
+                    "result": exit_code,
+                    "error": (
+                        None
+                        if exit_code == 0
+                        else f"Script exited with code {exit_code}"
+                    ),
+                    "stdout": "".join(stdout_output),
+                    "stderr": "".join(stderr_output),
+                }
+
+            except asyncio.CancelledError:
+                await self._terminate_process_group(process, use_process_group)
+                raise
+
+            except Exception as e:
+                return {
+                    "result": -1,
+                    "error": str(e),
+                    "stdout": "".join(stdout_output),
+                    "stderr": "".join(stderr_output),
+                }
+
+            finally:
+                # Clean up
+                rpc_task.cancel()
+                try:
+                    await rpc_task
+                except asyncio.CancelledError:
+                    pass
+
+                stdout_task.cancel()
+                stderr_task.cancel()
+                try:
+                    await stdout_task
+                except asyncio.CancelledError:
+                    pass
+                try:
+                    await stderr_task
+                except asyncio.CancelledError:
+                    pass
+
+                server_socket.close()
+
+                # Ensure process is terminated
+                if process.returncode is None:
+                    await self._terminate_process_group(process, use_process_group)
