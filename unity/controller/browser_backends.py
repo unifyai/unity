@@ -74,6 +74,161 @@ class BrowserBackend(ABC):
         """Cleanly shut down the backend."""
 
 
+class MockBrowserBackend(BrowserBackend):
+    """
+    A lightweight mock backend for testing Actor logic without external services.
+
+    This backend requires no Redis, no Playwright, no Magnitude service. It returns
+    configurable canned responses and is designed to be a drop-in replacement for
+    tests that previously used LegacyBrowserBackend with connect_now=False.
+
+    The mock also implements the additional methods that MagnitudeBrowserBackend
+    provides (barrier, interrupt_current_action, clear_pending_commands) so tests
+    can use it without modification.
+
+    Usage:
+        # Basic usage - returns default canned responses
+        backend = MockBrowserBackend()
+
+        # Configured responses
+        backend = MockBrowserBackend(
+            url="https://example.com",
+            screenshot="base64_encoded_screenshot",
+            act_response="done",
+            observe_response="Page shows login form",
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        url: str = "https://mock.example.com",
+        screenshot: str = "mock_screenshot_base64",
+        act_response: str = "done",
+        observe_response: str = "Mock observation",
+        query_response: str = "Mock query response",
+        **kwargs,
+    ):
+        """
+        Initialize the mock backend with configurable responses.
+
+        Args:
+            url: URL to return from get_current_url()
+            screenshot: Base64 string to return from get_screenshot()
+            act_response: Response to return from act()
+            observe_response: Response to return from observe()
+            query_response: Response to return from query()
+            **kwargs: Ignored (for compatibility with other backends)
+        """
+        self._url = url
+        self._screenshot = screenshot
+        self._act_response = act_response
+        self._observe_response = observe_response
+        self._query_response = query_response
+
+        # Sequence tracking (for barrier compatibility)
+        self._seq = 0
+
+    async def act(self, instruction: str, expectation: str = "") -> str:
+        """Returns the configured act response."""
+        self._seq += 1
+        return self._act_response
+
+    async def observe(self, query: str, response_format: Any = str) -> Any:
+        """Returns the configured observe response, optionally validated against response_format."""
+        self._seq += 1
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            # If a Pydantic model is requested, try to create an instance with defaults
+            try:
+                return response_format()
+            except Exception:
+                return self._observe_response
+        return self._observe_response
+
+    async def query(self, query: str, response_format: Any = str) -> Any:
+        """Returns the configured query response."""
+        self._seq += 1
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            try:
+                return response_format()
+            except Exception:
+                return self._query_response
+        return self._query_response
+
+    async def get_screenshot(self) -> str:
+        """Returns the configured screenshot string."""
+        return self._screenshot
+
+    async def get_current_url(self) -> str:
+        """Returns the configured URL."""
+        return self._url
+
+    async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
+        """Updates the internal URL and returns success."""
+        self._url = url
+        self._seq += 1
+        return "success"
+
+    async def get_links(
+        self,
+        same_domain: bool = True,
+        selector: str = None,
+        **kwargs,
+    ) -> dict:
+        """Returns an empty links response."""
+        return {
+            "base_url": self._url,
+            "current_url": self._url,
+            "links": [],
+            "total": 0,
+        }
+
+    async def get_content(self, format: str = "markdown", **kwargs) -> dict:
+        """Returns a minimal content response."""
+        return {
+            "url": self._url,
+            "title": "Mock Page",
+            "content": "Mock page content",
+            "format": format,
+        }
+
+    def stop(self):
+        """No-op for mock backend."""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Additional methods from MagnitudeBrowserBackend that tests may use
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @property
+    def current_seq(self) -> int:
+        """Returns the current command sequence number."""
+        return self._seq
+
+    async def barrier(self, *, up_to_seq: Optional[int] = None) -> None:
+        """
+        No-op barrier for mock backend.
+
+        In MagnitudeBrowserBackend this waits for commands to complete.
+        In the mock, all commands complete instantly, so this is a no-op.
+        """
+
+    async def interrupt_current_action(self) -> None:
+        """
+        No-op interrupt for mock backend.
+
+        In MagnitudeBrowserBackend this interrupts the agent's action loop.
+        In the mock, there's nothing to interrupt.
+        """
+
+    async def clear_pending_commands(self, run_id: int) -> None:
+        """
+        No-op clear for mock backend.
+
+        In MagnitudeBrowserBackend this removes queued commands.
+        In the mock, there are no queued commands.
+        """
+
+
 class LegacyBrowserBackend(BrowserBackend):
     """
     An implementation that uses the original, Controller-based browser stack.
