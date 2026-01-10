@@ -379,6 +379,42 @@ class _VenvConnection:
         except Exception as e:
             return {"type": "rpc_error", "id": request_id, "error": str(e)}
 
+    async def get_state(self, timeout: float = 30.0) -> Dict[str, Any]:
+        """
+        Get serialized user-defined state from the persistent subprocess.
+
+        This is used for read_only mode to capture the current state before
+        executing in an ephemeral subprocess.
+
+        Args:
+            timeout: Timeout for state retrieval.
+
+        Returns:
+            Dict of serialized state variables.
+
+        Raises:
+            RuntimeError: If the subprocess has died or retrieval fails.
+            asyncio.TimeoutError: If retrieval exceeds timeout.
+        """
+        async with self._lock:
+            if not self.is_alive():
+                raise RuntimeError(
+                    f"Venv {self._venv_id} subprocess has died (returncode={self._process.returncode})",
+                )
+
+            await self._write_message({"type": "get_state"})
+
+            async def wait_for_state() -> Dict[str, Any]:
+                while True:
+                    msg = await self._read_message()
+                    if msg.get("type") == "state":
+                        return msg.get("state", {})
+                    # Ignore other message types while waiting
+
+            if timeout is not None:
+                return await asyncio.wait_for(wait_for_state(), timeout=timeout)
+            return await wait_for_state()
+
     async def shutdown(self, timeout: float = 5.0) -> None:
         """
         Gracefully shut down the subprocess.
@@ -532,6 +568,31 @@ class VenvPool:
                     timeout=timeout,
                 )
             raise
+
+    async def get_connection_state(
+        self,
+        venv_id: int,
+        function_manager: "FunctionManager",
+        timeout: float = 30.0,
+    ) -> Dict[str, Any]:
+        """
+        Get serialized state from a venv connection.
+
+        Used for read_only mode to snapshot current state before ephemeral execution.
+
+        Args:
+            venv_id: The virtual environment ID.
+            function_manager: The FunctionManager for venv preparation.
+            timeout: Timeout for state retrieval.
+
+        Returns:
+            Dict of serialized state variables.
+        """
+        conn = await self.get_or_create_connection(
+            venv_id=venv_id,
+            function_manager=function_manager,
+        )
+        return await conn.get_state(timeout=timeout)
 
     async def close(self) -> None:
         """Close all connections in the pool."""
@@ -3424,6 +3485,7 @@ class FunctionManager(BaseFunctionManager):
         implementation: str,
         call_kwargs: Optional[Dict[str, Any]] = None,
         is_async: bool = True,
+        initial_state: Optional[Dict[str, Any]] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
     ) -> Dict[str, Any]:
@@ -3441,6 +3503,8 @@ class FunctionManager(BaseFunctionManager):
             implementation: The function source code.
             call_kwargs: Keyword arguments to pass to the function.
             is_async: Whether the function is async (default True).
+            initial_state: Optional serialized state to inject before execution.
+                Used for read_only mode to inherit state from a persistent session.
             primitives: The Primitives instance for RPC access to state managers.
             computer_primitives: The ComputerPrimitives instance for RPC access.
 
@@ -3458,17 +3522,16 @@ class FunctionManager(BaseFunctionManager):
         runner_path = self._get_venv_runner_path(venv_id)
 
         # Prepare initial execution request
-        execute_msg = (
-            json.dumps(
-                {
-                    "type": "execute",
-                    "implementation": implementation,
-                    "call_kwargs": call_kwargs,
-                    "is_async": is_async,
-                },
-            )
-            + "\n"
-        )
+        execute_payload: Dict[str, Any] = {
+            "type": "execute",
+            "implementation": implementation,
+            "call_kwargs": call_kwargs,
+            "is_async": is_async,
+        }
+        if initial_state is not None:
+            execute_payload["initial_state"] = initial_state
+
+        execute_msg = json.dumps(execute_payload) + "\n"
 
         # Execute in subprocess with bidirectional communication
         # Use start_new_session=True to create a new process group, allowing
@@ -3651,21 +3714,26 @@ class FunctionManager(BaseFunctionManager):
         function_name: str,
         call_kwargs: Optional[Dict[str, Any]] = None,
         target_venv_id: Optional[int] = ...,
+        state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+        venv_pool: Optional["VenvPool"] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        Execute a stored function by name with optional venv override.
+        Execute a stored function by name with optional venv and state mode overrides.
 
         This method looks up a function by name from the function table and
         executes it. By default, it uses the venv_id stored in the function
         record, but this can be overridden to run the function in a different
         venv.
 
-        This enables:
-        - Running simple/compatible functions in a venv with more packages
-        - Using utility functions from the catalog in specialized sessions
-        - Testing functions in different environments
+        State modes:
+        - "stateless" (default): Fresh subprocess with no inherited state. Pure
+          function behavior. Backward compatible with previous behavior.
+        - "stateful": Uses persistent VenvPool connection. Variables from previous
+          executions persist. Requires venv_pool for venv functions.
+        - "read_only": Reads current state from VenvPool but executes in ephemeral
+          subprocess. Changes are NOT persisted. Useful for "what-if" exploration.
 
         Args:
             function_name: Name of the function to execute.
@@ -3674,12 +3742,15 @@ class FunctionManager(BaseFunctionManager):
                 - ... (Ellipsis): Use the function's stored venv_id (default)
                 - None: Execute in the default Python environment
                 - int: Execute in this specific venv_id
+            state_mode: How to handle global state ("stateful", "read_only", "stateless").
+            venv_pool: VenvPool for stateful/read_only modes with venv functions.
 
         Returns:
             Dict with keys: result, error, stdout, stderr
 
         Raises:
             ValueError: If the function doesn't exist or has no implementation.
+            ValueError: If state_mode requires venv_pool but none is provided.
         """
         # Look up function by name
         func_data = self._get_function_data_by_name(name=function_name)
@@ -3706,19 +3777,64 @@ class FunctionManager(BaseFunctionManager):
 
         call_kwargs = call_kwargs or {}
 
-        if exec_venv_id is not None:
-            # Execute in specified venv
-            return await self.execute_in_venv(
-                venv_id=int(exec_venv_id),
+        # Handle execution based on venv and state_mode
+        if exec_venv_id is None:
+            # No venv - execute in default environment (state_mode doesn't apply)
+            return await self._execute_in_default_env(
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,
                 primitives=primitives,
                 computer_primitives=computer_primitives,
             )
-        else:
-            # Execute in default environment
-            return await self._execute_in_default_env(
+
+        # Venv execution - state_mode matters
+        venv_id = int(exec_venv_id)
+
+        if state_mode == "stateful":
+            # Use persistent connection via VenvPool
+            if venv_pool is None:
+                raise ValueError(
+                    "state_mode='stateful' requires venv_pool for venv functions. "
+                    "Either provide venv_pool or use state_mode='stateless'.",
+                )
+            return await venv_pool.execute_in_venv(
+                venv_id=venv_id,
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                is_async=is_async,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+                function_manager=self,
+            )
+
+        elif state_mode == "read_only":
+            # Get state from persistent connection, execute in ephemeral subprocess
+            if venv_pool is None:
+                raise ValueError(
+                    "state_mode='read_only' requires venv_pool to read existing state. "
+                    "Either provide venv_pool or use state_mode='stateless'.",
+                )
+            # Get current state from the persistent connection
+            initial_state = await venv_pool.get_connection_state(
+                venv_id=venv_id,
+                function_manager=self,
+            )
+            # Execute in fresh subprocess with that state (not modifying persistent state)
+            return await self.execute_in_venv(
+                venv_id=venv_id,
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                is_async=is_async,
+                initial_state=initial_state,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
+
+        else:  # state_mode == "stateless"
+            # Fresh subprocess with no inherited state
+            return await self.execute_in_venv(
+                venv_id=venv_id,
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,

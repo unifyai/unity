@@ -10,6 +10,9 @@ from ..common.state_managers import BaseStateManager
 # Supported function languages
 FunctionLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
 
+# State modes for Python function execution
+StateMode = Literal["stateful", "read_only", "stateless"]
+
 
 class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
@@ -360,11 +363,13 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         function_name: str,
         call_kwargs: Optional[Dict[str, Any]] = None,
         target_venv_id: Optional[int] = ...,
+        state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+        venv_pool: Optional[Any] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        Execute a stored function by name with optional venv override.
+        Execute a stored function by name with optional venv and state mode overrides.
 
         Signature
         ---------
@@ -373,6 +378,8 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             function_name: str,
             call_kwargs: dict[str, Any] | None = None,
             target_venv_id: int | None = USE_FUNCTION_DEFAULT,
+            state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+            venv_pool: VenvPool | None = None,
             primitives: Any | None = None,
             computer_primitives: Any | None = None,
         ) -> dict[str, Any]
@@ -394,6 +401,25 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             This allows running simple/compatible functions in a different venv
             than they were originally associated with. The caller is responsible
             for ensuring the target venv has the required packages.
+        state_mode : Literal["stateful", "read_only", "stateless"], default ``"stateless"``
+            Controls how global state is handled during execution:
+            - ``"stateless"``: Executes in a fresh subprocess with no inherited state.
+              Every execution starts with a clean globals dict. This is the default
+              for backward compatibility and is useful for pure functions that should
+              not depend on or affect session state.
+            - ``"stateful"``: Uses a persistent subprocess connection (via VenvPool).
+              Variables defined in previous executions persist. Enables Jupyter-
+              notebook-style incremental development. Requires ``venv_pool``.
+            - ``"read_only"``: Reads the current global state from the persistent
+              connection but executes in an ephemeral subprocess. Changes are not
+              persisted. Useful for "what-if" exploration. Requires ``venv_pool``.
+
+            Note: For functions without a venv (``venv_id=None``), state_mode has no
+            effect as these run in-process with fresh globals each time.
+        venv_pool : VenvPool | None, default ``None``
+            The VenvPool instance for stateful execution. Required when
+            ``state_mode="stateful"`` or ``state_mode="read_only"`` and the function
+            has a venv. If not provided for these modes, an error is raised.
         primitives : Any | None, default ``None``
             The Primitives instance for RPC access to state managers.
         computer_primitives : Any | None, default ``None``
@@ -412,23 +438,29 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         ------
         ValueError
             If the function does not exist or has no implementation.
+        ValueError
+            If state_mode requires a VenvPool but none is provided.
 
         Examples
         --------
-        >>> # Execute using the function's default venv
-        >>> result = await fm.execute_function(function_name="my_func", call_kwargs={"x": 1})
-
-        >>> # Execute in a specific venv (override)
+        >>> # Execute statefully (default) - state persists across calls
         >>> result = await fm.execute_function(
-        ...     function_name="simple_util",
-        ...     call_kwargs={"data": [1, 2, 3]},
-        ...     target_venv_id=5,  # Run in venv 5, not the function's stored venv
+        ...     function_name="my_func",
+        ...     call_kwargs={"x": 1},
+        ...     venv_pool=pool,
         ... )
 
-        >>> # Execute in default Python environment (no venv)
+        >>> # Execute read-only - see result without persisting state changes
+        >>> result = await fm.execute_function(
+        ...     function_name="exploratory_func",
+        ...     state_mode="read_only",
+        ...     venv_pool=pool,
+        ... )
+
+        >>> # Execute statelessly - fresh environment every time
         >>> result = await fm.execute_function(
         ...     function_name="pure_python_func",
-        ...     target_venv_id=None,
+        ...     state_mode="stateless",
         ... )
         """
 
