@@ -67,12 +67,7 @@ class ComputerPrimitives:
         # Deprecated parameters (kept for backward compatibility, ignored)
         session_connect_url: str | None = None,
         controller_mode: str = "hybrid",
-        browser_mode: str | None = None,  # Deprecated alias for computer_mode
     ):
-        # Handle deprecated browser_mode parameter
-        if browser_mode is not None:
-            computer_mode = browser_mode
-
         # Cache computer configuration for lazy initialization
         computer_kwargs = {
             "magnitude": {
