@@ -65,11 +65,19 @@ class ShellSession:
         self._started = False
 
     def _get_shell_command(self) -> List[str]:
-        """Get the shell interpreter command for the configured language."""
+        """Get the shell interpreter command for the configured language.
+
+        We use non-interactive mode to avoid prompts and command echoing
+        which would interfere with our marker-based output parsing.
+        """
         commands = {
-            "bash": ["/bin/bash", "--norc", "--noprofile", "-i"],
-            "zsh": ["/bin/zsh", "--no-rcs", "-i"],
-            "sh": ["/bin/sh", "-i"],
+            # Non-interactive bash - no prompts, no rc files
+            "bash": ["/bin/bash", "--norc", "--noprofile"],
+            # Non-interactive zsh - no prompts, no rc files
+            "zsh": ["/bin/zsh", "--no-rcs", "--no-globalrcs"],
+            # POSIX sh - minimal shell
+            "sh": ["/bin/sh"],
+            # PowerShell - read from stdin
             "powershell": ["pwsh", "-NoProfile", "-NoLogo", "-Command", "-"],
         }
         if self.language not in commands:
@@ -108,12 +116,25 @@ class ShellSession:
         )
         self._started = True
 
-    async def execute(self, command: str) -> ShellExecutionResult:
+    async def execute(
+        self,
+        command: str,
+        *,
+        timeout: Optional[float] = 30.0,
+    ) -> ShellExecutionResult:
         """
         Execute a command in the persistent session.
 
+        Uses a marker-based approach to detect command completion:
+        1. Send the command
+        2. Send an echo of a unique marker with the exit code
+        3. Read output until we see the marker
+        4. Parse exit code from marker line
+
         Args:
             command: The shell command to execute.
+            timeout: Maximum time to wait for command completion (default 30s).
+                     Set to None for no timeout.
 
         Returns:
             ShellExecutionResult with stdout, stderr, exit_code, and error.
@@ -121,8 +142,97 @@ class ShellSession:
         Raises:
             RuntimeError: If the session is not started.
         """
-        # Placeholder - will be implemented in Step 1.2
-        raise NotImplementedError("Command execution will be implemented in Step 1.2")
+        if not self._started or self._process is None:
+            raise RuntimeError("Session not started. Call start() first.")
+
+        if self._process.returncode is not None:
+            return ShellExecutionResult(
+                stdout="",
+                stderr="",
+                exit_code=-1,
+                error="Shell process has terminated",
+            )
+
+        # Construct command with completion marker
+        # The marker line format: __MARKER__ <exit_code>
+        # We use a subshell to capture the exit code reliably
+        wrapped_command = (
+            f"{command}\n" f"__unity_ec__=$?\n" f'echo "{self._marker} $__unity_ec__"\n'
+        )
+
+        try:
+            self._process.stdin.write(wrapped_command.encode())
+            await self._process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as e:
+            return ShellExecutionResult(
+                stdout="",
+                stderr="",
+                exit_code=-1,
+                error=f"Failed to send command: {e}",
+            )
+
+        # Read until we see the marker
+        stdout_lines: List[str] = []
+        exit_code = 0
+
+        async def read_until_marker() -> ShellExecutionResult:
+            nonlocal exit_code
+            while True:
+                try:
+                    line = await self._process.stdout.readline()
+                except Exception as e:
+                    return ShellExecutionResult(
+                        stdout="".join(stdout_lines),
+                        stderr="",
+                        exit_code=-1,
+                        error=f"Error reading output: {e}",
+                    )
+
+                if not line:
+                    # Process ended unexpectedly
+                    return ShellExecutionResult(
+                        stdout="".join(stdout_lines),
+                        stderr="",
+                        exit_code=-1,
+                        error="Shell process terminated unexpectedly",
+                    )
+
+                decoded = line.decode()
+
+                # Check if this line contains our marker
+                if self._marker in decoded:
+                    # Parse exit code from marker line
+                    # Format: "__MARKER__ <exit_code>"
+                    parts = decoded.strip().split()
+                    if len(parts) >= 2:
+                        try:
+                            exit_code = int(parts[-1])
+                        except ValueError:
+                            exit_code = 0
+                    break
+
+                stdout_lines.append(decoded)
+
+            return ShellExecutionResult(
+                stdout="".join(stdout_lines),
+                stderr="",  # Merged into stdout
+                exit_code=exit_code,
+                error=None,
+            )
+
+        # Apply timeout if specified
+        if timeout is not None:
+            try:
+                return await asyncio.wait_for(read_until_marker(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return ShellExecutionResult(
+                    stdout="".join(stdout_lines),
+                    stderr="",
+                    exit_code=-1,
+                    error=f"Command timed out after {timeout} seconds",
+                )
+        else:
+            return await read_until_marker()
 
     async def close(self) -> None:
         """
