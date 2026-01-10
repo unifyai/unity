@@ -87,12 +87,12 @@ def function_manager_factory():
 def mock_computer_primitives():
     """Provides a mock ComputerPrimitives."""
     provider = MagicMock(spec=ComputerPrimitives)
-    provider.browser = MagicMock()
-    provider.browser.act = AsyncMock(return_value="Action completed.")
-    provider.browser.observe = AsyncMock(return_value="Observation complete.")
-    provider.browser.get_screenshot = AsyncMock(return_value=b"fake_screenshot")
-    provider.browser.get_current_url = AsyncMock(return_value="https://example.com")
-    provider.browser.backend = MagicMock()
+    provider.computer = MagicMock()
+    provider.computer.act = AsyncMock(return_value="Action completed.")
+    provider.computer.observe = AsyncMock(return_value="Observation complete.")
+    provider.computer.get_screenshot = AsyncMock(return_value=b"fake_screenshot")
+    provider.computer.get_current_url = AsyncMock(return_value="https://example.com")
+    provider.computer.backend = MagicMock()
     provider.click = AsyncMock(return_value=None)
     provider.close = AsyncMock()
     return provider

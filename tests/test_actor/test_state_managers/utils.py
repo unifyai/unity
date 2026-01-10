@@ -321,7 +321,11 @@ async def wait_for_tool_call(handle: Any, tool_name: str, timeout: int = 60) -> 
 
 
 class NoKeychainBrowser:
-    """Minimal browser stub to prevent Keychain prompts during tests."""
+    """Minimal browser stub to prevent Keychain prompts during tests.
+
+    DEPRECATED: With computer_mode="mock", this class is no longer needed.
+    Kept for backward compatibility with tests that import it.
+    """
 
     def __init__(self, *, url: str = "", screenshot: str = "") -> None:
         self._url = url
@@ -489,14 +493,13 @@ async def make_actor(
     """
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        computer_mode="mock",
         connect_now=False,
         can_compose=can_compose,
         can_store=can_store,
     )
 
-    # Mock browser immediately (before any handle creation).
-    actor.computer_primitives._browser = NoKeychainBrowser()
+    # Mock specific browser primitives for test control.
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="acted")
     actor.computer_primitives.observe = AsyncMock(side_effect=_mock_observe)

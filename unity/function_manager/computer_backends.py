@@ -15,30 +15,32 @@ import functools
 import websockets
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
-from .controller import Controller
 
 logger = logging.getLogger("websockets")
 
 
-class BrowserAgentError(Exception):
+class ComputerAgentError(Exception):
     def __init__(self, error_type: str, message: str):
         self.error_type = error_type
         self.message = message
         super().__init__(f"[{error_type}] {message}")
 
 
-class BrowserBackend(ABC):
+class ComputerBackend(ABC):
     """
-    Abstract Base Class defining the interface for any browser backend.
+    Abstract Base Class defining the interface for any computer use backend.
+
+    Supports both browser automation (agent_mode="browser") and general
+    desktop/computer control (agent_mode="desktop") via vision-based agents.
     """
 
     @abstractmethod
     async def act(self, instruction: str) -> str:
-        """Perform an action in the browser."""
+        """Perform an action on the screen (browser or desktop)."""
 
     @abstractmethod
     async def observe(self, query: str, response_format: Any = str) -> Any:
-        """Observe the state of the browser page."""
+        """Observe the state of the current page/screen."""
 
     @abstractmethod
     async def query(self, query: str, response_format: Any = str) -> Any:
@@ -50,11 +52,11 @@ class BrowserBackend(ABC):
 
     @abstractmethod
     async def get_current_url(self) -> str:
-        """Get the current URL of the browser."""
+        """Get the current URL (browser mode) or active window info (desktop mode)."""
 
     @abstractmethod
     async def navigate(self, url: str) -> str:
-        """Navigate the browser to a specific URL."""
+        """Navigate to a specific URL."""
 
     @abstractmethod
     async def get_links(
@@ -74,105 +76,100 @@ class BrowserBackend(ABC):
         """Cleanly shut down the backend."""
 
 
-class LegacyBrowserBackend(BrowserBackend):
+class MockComputerBackend(ComputerBackend):
     """
-    An implementation that uses the original, Controller-based browser stack.
+    A lightweight mock backend for testing Actor logic without external services.
+
+    This backend requires no Redis, no Playwright, no Magnitude service. It returns
+    configurable canned responses and is designed for testing Actor logic without
+    requiring external services.
+
+    The mock also implements the additional methods that MagnitudeBackend
+    provides (barrier, interrupt_current_action, clear_pending_commands) so tests
+    can use it without modification.
+
+    Usage:
+        # Basic usage - returns default canned responses
+        backend = MockComputerBackend()
+
+        # Configured responses
+        backend = MockComputerBackend(
+            url="https://example.com",
+            screenshot="base64_encoded_screenshot",
+            act_response="done",
+            observe_response="Page shows login form",
+        )
     """
 
-    def __init__(self, controller_mode: str = "hybrid", **kwargs):
-        self.controller = Controller(mode=controller_mode, **kwargs)
-        if not self.controller.is_alive():
-            self.controller.start()
-
-    async def act(self, instruction: str) -> str | BrowserAgentError:
+    def __init__(
+        self,
+        *,
+        url: str = "https://mock.example.com",
+        screenshot: str = "mock_screenshot_base64",
+        act_response: str = "done",
+        observe_response: str = "Mock observation",
+        query_response: str = "Mock query response",
+        **kwargs,
+    ):
         """
-        Performs a **single, high-level action** in the browser.
-
-        This tool functions by looking at the screen; it **does not have access to the underlying HTML or DOM**. Therefore, instructions must describe elements based on their **visible text or position**, not by HTML attributes like `id`, `class`, or `aria-label`.
+        Initialize the mock backend with configurable responses.
 
         Args:
-            instruction (str): A single, natural-language command. Describe the element to interact with
-                            based on its visible properties.
-
-        Return value:
-            str: A single string 'done' if the action was successful.
-            BrowserAgentError: If the action failed, the error message explaining the reason for the failure.
-
-        Examples:
-            # ✅ Good Example (Using Visible Text)
-            - instruction: "Click the 'Login' button"
-
-            # ✅ Good Example (Using Visible Text)
-            - instruction: "Type 'hello world' into the search bar"
-
-            # ❌ Bad Example (Using HTML Attributes)
-            - instruction: "Click the button with id 'submit-btn'"
-            # This will fail because the tool cannot see HTML IDs.
-
-            # ❌ Bad Example (Using ARIA Labels)
-            - instruction: "Click the image with 'logo' in the aria-label"
-            # This will fail because the tool cannot see aria-labels.
-
-            # ❌ Bad Example (Chained Actions)
-            - instruction: "Click the login button and then enter 'my_user' into the username field."
+            url: URL to return from get_current_url()
+            screenshot: Base64 string to return from get_screenshot()
+            act_response: Response to return from act()
+            observe_response: Response to return from observe()
+            query_response: Response to return from query()
+            **kwargs: Ignored (for compatibility with other backends)
         """
-        return await self.controller.act(
-            instruction,
-            expectation="",
-            multi_step_mode=True,
-        )
+        self._url = url
+        self._screenshot = screenshot
+        self._act_response = act_response
+        self._observe_response = observe_response
+        self._query_response = query_response
+
+        # Sequence tracking (for barrier compatibility)
+        self._seq = 0
+
+    async def act(self, instruction: str, expectation: str = "") -> str:
+        """Returns the configured act response."""
+        self._seq += 1
+        return self._act_response
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
-        """
-        Analyzes a screenshot of the current browser page to answer a question.
-
-        This tool functions like a person looking at the screen; it **does not have access to the underlying HTML or DOM structure**. It can only answer questions about what is currently visible. Use it for read-only operations to gather information without changing the page state.
-
-        **✅ Good Queries (What you can see):**
-        - "What is the title of the page?"
-        - "List the text on all visible buttons."
-        - "Is the text 'Welcome back, user!' visible on the screen?"
-        - "Transcribe the text from the paragraph under the 'About Us' heading."
-        - "What is the phone number displayed at the top of the page?"
-
-        **❌ Bad Queries (Requires HTML/DOM access):**
-        - Avoid asking for non-visible information.
-        - **Do not ask for HTML attributes** like `href`, `src`, or `alt` text (e.g., "What is the URL of the main product image?" or "Get the alt text for the logo.").
-        - **Do not ask about HTML tags** (e.g., "Find all the `<h1>` tags.").
-        - Avoid asking the tool to interpret meaning. Instead of "Does this image look professional?", ask "Describe the image in the center of the page."
-        - Avoid multi-step queries. Instead of "Find the contact link and tell me the email," break it into separate steps.
-
-        Args:
-            query: The natural-language question to ask about what is visible on the page.
-            response_format: Optional. A Pydantic model to structure the output. The LLM will return a JSON object matching the model.
-        """
-        return await self.controller.observe(query, response_format)
+        """Returns the configured observe response, optionally validated against response_format."""
+        self._seq += 1
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            # If a Pydantic model is requested, try to create an instance with defaults
+            try:
+                return response_format()
+            except Exception:
+                return self._observe_response
+        return self._observe_response
 
     async def query(self, query: str, response_format: Any = str) -> Any:
-        """
-        Query the agent's memory and action history (not supported in LegacyBrowserBackend).
-
-        This method is not supported by the legacy backend as it doesn't have access to
-        agent memory. Consider using MagnitudeBrowserBackend for this functionality.
-        """
-        raise NotImplementedError(
-            "Query method is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
-        )
+        """Returns the configured query response."""
+        self._seq += 1
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            try:
+                return response_format()
+            except Exception:
+                return self._query_response
+        return self._query_response
 
     async def get_screenshot(self) -> str:
-        return self.controller._last_shot
+        """Returns the configured screenshot string."""
+        return self._screenshot
 
     async def get_current_url(self) -> str:
-        try:
-            return self.controller.state.url
-        except Exception as e:
-            return ""
+        """Returns the configured URL."""
+        return self._url
 
-    async def navigate(self, url: str) -> str:
-        return await self.controller.act(
-            f"Navigate to {url}",
-            expectation=f"The browser is on the page with URL '{url}'",
-        )
+    async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
+        """Updates the internal URL and returns success."""
+        self._url = url
+        self._seq += 1
+        return "success"
 
     async def get_links(
         self,
@@ -180,26 +177,61 @@ class LegacyBrowserBackend(BrowserBackend):
         selector: str = None,
         **kwargs,
     ) -> dict:
-        """
-        Extract all links from the current page (not supported in LegacyBrowserBackend).
-        """
-        raise NotImplementedError(
-            "get_links is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
-        )
+        """Returns an empty links response."""
+        return {
+            "base_url": self._url,
+            "current_url": self._url,
+            "links": [],
+            "total": 0,
+        }
 
     async def get_content(self, format: str = "markdown", **kwargs) -> dict:
-        """
-        Get raw page content (not supported in LegacyBrowserBackend).
-        """
-        raise NotImplementedError(
-            "get_content is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
-        )
+        """Returns a minimal content response."""
+        return {
+            "url": self._url,
+            "title": "Mock Page",
+            "content": "Mock page content",
+            "format": format,
+        }
 
     def stop(self):
-        self.controller.stop()
+        """No-op for mock backend."""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Additional methods from MagnitudeBackend that tests may use
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @property
+    def current_seq(self) -> int:
+        """Returns the current command sequence number."""
+        return self._seq
+
+    async def barrier(self, *, up_to_seq: Optional[int] = None) -> None:
+        """
+        No-op barrier for mock backend.
+
+        In MagnitudeBackend this waits for commands to complete.
+        In the mock, all commands complete instantly, so this is a no-op.
+        """
+
+    async def interrupt_current_action(self) -> None:
+        """
+        No-op interrupt for mock backend.
+
+        In MagnitudeBackend this interrupts the agent's action loop.
+        In the mock, there's nothing to interrupt.
+        """
+
+    async def clear_pending_commands(self, run_id: int) -> None:
+        """
+        No-op clear for mock backend.
+
+        In MagnitudeBackend this removes queued commands.
+        In the mock, there are no queued commands.
+        """
 
 
-class MagnitudeBrowserBackend(BrowserBackend):
+class MagnitudeBackend(ComputerBackend):
     _agent_base_url = "http://localhost:3000"
     _process = None  # Keep for process management if needed
 
@@ -232,7 +264,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self._current_processing_seq: Optional[int] = None
 
         # Keep the simpler initialization from HEAD but add logging support
-        MagnitudeBrowserBackend._agent_base_url = agent_server_url
+        MagnitudeBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
 
         # Session ID for this backend instance
@@ -272,7 +304,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._async_initialized = False
 
         except Exception as e:
-            logger.info(f"❌ Failed to initialize MagnitudeBrowserBackend: {e}")
+            logger.info(f"❌ Failed to initialize MagnitudeBackend: {e}")
             self.stop()
             raise
 
@@ -291,7 +323,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         else:
             self.stop()
             raise RuntimeError(
-                f"Magnitude BrowserAgent failed to become ready within 30 seconds on {self.agent_base_url}",
+                f"Magnitude agent failed to become ready within 30 seconds on {self.agent_base_url}",
             )
 
     async def _ensure_async_initialized(self):
@@ -490,7 +522,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         endpoint: str,
         payload: dict | None = None,
     ) -> Any:
-        url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
+        url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
 
         if payload is None:
             payload = {}
@@ -516,7 +548,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     ) as resp:
                         if resp.status >= 400:
                             try:
-                                from ..actor.hierarchical_actor import (
+                                from unity.actor.hierarchical_actor import (
                                     ReplanFromParentException,
                                 )
 
@@ -528,9 +560,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                                 message = error_data.get("message", "No error message.")
                                 if error_type == "misalignment":
                                     raise ReplanFromParentException(message)
-                                raise BrowserAgentError(error_type, message)
+                                raise ComputerAgentError(error_type, message)
                             except Exception as e:
-                                raise BrowserAgentError(
+                                raise ComputerAgentError(
                                     "service_error",
                                     f"Server error: {resp.status} - {await resp.text()}",
                                 ) from e
@@ -548,7 +580,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         payload: dict | None = None,
     ) -> Any:
         try:
-            url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
+            url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
             auth_key = SESSION_DETAILS.unify_key
             assistant_email = SESSION_DETAILS.assistant.email
             headers = {
@@ -817,14 +849,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
         override_cache: bool = False,
     ) -> Any:
         """
-        Executes a high-level browser task using the Magnitude BrowserAgent.
+        Executes a high-level computer task using the Magnitude agent.
 
         This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page.
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
             wait (bool): If True (default), the function will block and wait for the action to
-                        complete in the browser before returning. If False,
+                        complete before returning. If False,
                         the command is added to a queue for background execution, and
                         the function returns immediately.
             context (dict): Internal metadata for command tracking.
@@ -836,7 +868,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         This is ideal for sequences of actions where the plan doesn't need immediate feedback.
         ```python
         # The plan queues up all actions and continues its own execution
-        # without waiting for the browser to finish each one.
+        # without waiting for the agent to finish each one.
         await computer_primitives.act("Type 'testuser' into the username field", wait=False)
         await computer_primitives.act("Type 'password123' into the password field", wait=False)
         await computer_primitives.act("Click the 'Login' button", wait=False)
@@ -899,7 +931,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             await self._request("POST", "/interrupt_action")
         except Exception as e:
             logger.info(
-                f"⚠️ Warning: Failed to send interrupt request. The browser action may continue in the background. Error: {e}",
+                f"⚠️ Warning: Failed to send interrupt request. The action may continue in the background. Error: {e}",
             )
 
     async def observe(
@@ -911,7 +943,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         bypass_dom_processing: bool = False,
     ) -> Any:
         """
-        Extracts structured information from the current page using the Magnitude BrowserAgent.
+        Extracts structured information from the current page/screen using the Magnitude agent.
 
         This is your primary tool for perception. The agent uses a vision-language model to
         analyze the page, so its success depends entirely on the quality and clarity of your `query`.
@@ -1141,7 +1173,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         return await self._request("POST", "/content", {"format": format})
 
     async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
-        """Navigates the browser to a given URL."""
+        """Navigates to a given URL."""
         await self._ensure_async_initialized()
         logger.info(f"🐍 PYTHON: Navigating to URL: {url}")
 
@@ -1159,7 +1191,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             try:
                 response = await self._request("POST", "/nav", {"url": url})
                 return response.get("status", "success")
-            except BrowserAgentError as e:
+            except ComputerAgentError as e:
                 if "Target page" in str(e) and attempt < max_retries - 1:
                     logger.info(
                         f"⚠️ Navigation failed due to closed page, retrying (attempt {attempt + 1}/{max_retries})...",
@@ -1190,16 +1222,16 @@ class MagnitudeBrowserBackend(BrowserBackend):
             logger.info(f"Warning: Failed to send stop request: {e}")
 
         # If the backend started the process, terminate it
-        if MagnitudeBrowserBackend._process:
+        if MagnitudeBackend._process:
             logger.info(
-                f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
+                f"🛑 Stopping Magnitude agent service (PID: {MagnitudeBackend._process.pid})...",
             )
-            MagnitudeBrowserBackend._process.terminate()
+            MagnitudeBackend._process.terminate()
             try:
-                MagnitudeBrowserBackend._process.wait(timeout=5)
+                MagnitudeBackend._process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                MagnitudeBrowserBackend._process.kill()
-            MagnitudeBrowserBackend._process = None
+                MagnitudeBackend._process.kill()
+            MagnitudeBackend._process = None
 
     async def await_sequence_logs(self, seq: int) -> list[str]:
         """

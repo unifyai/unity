@@ -14,8 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 from unity.actor.code_act_actor import CodeActActor, CodeExecutionSandbox
 from unity.function_manager.primitives import ComputerPrimitives
 
-from tests.test_actor.test_hierarchical import NoKeychainBrowser
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -224,9 +222,8 @@ async def test_interjection_incremental_teaching_session():
     Test that CodeActActor can handle incremental interjections
     in an interactive teaching session.
     """
-    # Create actor with mocked browser
-    actor = CodeActActor(headless=True, browser_mode="legacy")
-    actor._computer_primitives._browser = NoKeychainBrowser()
+    # Create actor with mock browser (no external services needed)
+    actor = CodeActActor(headless=True, computer_mode="mock")
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
@@ -323,9 +320,8 @@ async def test_clarification_flow():
     clarification_up_q = asyncio.Queue()
     clarification_down_q = asyncio.Queue()
 
-    # Create actor with mocked browser
-    planner = CodeActActor(headless=True, browser_mode="legacy")
-    planner._computer_primitives._browser = NoKeychainBrowser()
+    # Create actor with mock browser (no external services needed)
+    planner = CodeActActor(headless=True, computer_mode="mock")
     planner._computer_primitives.navigate = AsyncMock(return_value=None)
     planner._computer_primitives.act = AsyncMock(return_value="Action completed")
     planner._computer_primitives.observe = AsyncMock(return_value="Page content")

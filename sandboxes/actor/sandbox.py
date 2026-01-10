@@ -89,7 +89,7 @@ def _create_actor(args) -> BaseActor:
         return HierarchicalActor(
             headless=args.headless,
             agent_server_url=args.agent_url,
-            browser_mode="magnitude",
+            computer_mode="magnitude",
         )
     elif actor_choice == "code_act":
         if args.no_browser:
@@ -117,7 +117,7 @@ def _create_actor(args) -> BaseActor:
             return CodeActActor(
                 headless=args.headless,
                 agent_server_url=args.agent_url,
-                browser_mode="magnitude",
+                computer_mode="magnitude",
             )
     else:
         raise ValueError(f"Unknown actor type: {actor_choice}")
