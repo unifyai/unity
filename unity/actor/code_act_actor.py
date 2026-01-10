@@ -306,12 +306,16 @@ class CodeExecutionSandbox:
 
     This class maintains a persistent global state across multiple executions,
     capturing stdout, stderr, return values, and exceptions in a structured format.
+
+    It can optionally use a VenvPool for persistent venv subprocess connections,
+    enabling state to be preserved across multiple calls to venv-backed functions.
     """
 
     def __init__(
         self,
         computer_primitives: Optional[ComputerPrimitives] = None,
         environments: Optional[Dict[str, "BaseEnvironment"]] = None,
+        venv_pool: Optional[Any] = None,
     ):
         """
         Initializes the sandbox.
@@ -321,11 +325,18 @@ class CodeExecutionSandbox:
                              sandbox's global state, making browser tools available.
             environments: Optional mapping of environment namespaces to environments. If
                 provided, each environment instance is injected into the sandbox globals.
+            venv_pool: Optional VenvPool for persistent venv subprocess connections.
+                If provided, venv-backed functions will use persistent connections
+                that maintain state across calls.
         """
         from unity.function_manager.execution_env import create_execution_globals
 
         self.global_state: Dict[str, Any] = create_execution_globals()
         self._browser_used: bool = False
+
+        # Inject venv pool into namespace if provided (for _VenvFunctionProxy to use)
+        if venv_pool is not None:
+            self.global_state["__venv_pool__"] = venv_pool
 
         class _UsageTrackingProxy:
             def __init__(self, target: Any, on_use: Callable[[], None]):
@@ -563,9 +574,15 @@ class CodeActActor(BaseActor):
             agent_server_url=agent_server_url,
         )
 
+        # Create a persistent venv pool that survives across act() calls
+        from unity.function_manager.function_manager import VenvPool
+
+        self._venv_pool = VenvPool()
+
         self._sandbox = CodeExecutionSandbox(
             computer_primitives=self._computer_primitives,
             environments=self.environments,
+            venv_pool=self._venv_pool,
         )
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
@@ -775,9 +792,11 @@ class CodeActActor(BaseActor):
 
         # Recreate sandbox so injected globals (e.g. `primitives`) use get_sandbox_instance()
         # with the updated clarification queue injector wrapper.
+        # Note: We preserve the same venv_pool so persistent venv state survives across act() calls.
         self._sandbox = CodeExecutionSandbox(
             computer_primitives=self._computer_primitives,
             environments=self.environments,
+            venv_pool=self._venv_pool,
         )
 
         # If an explicit FunctionManager entrypoint is provided (e.g., TaskScheduler task execution),
@@ -853,5 +872,8 @@ class CodeActActor(BaseActor):
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
+        # Close the venv pool (terminates persistent subprocess connections)
+        await self._venv_pool.close()
+
         if self._computer_primitives:
             self._computer_primitives.browser.stop()

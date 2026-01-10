@@ -312,6 +312,17 @@ def create_safe_globals(is_async: bool = True):
         "RuntimeError",
         "StopIteration",
         "AssertionError",
+        "NameError",
+        "ImportError",
+        "ModuleNotFoundError",
+        "FileNotFoundError",
+        "OSError",
+        "IOError",
+        "EOFError",
+        "ZeroDivisionError",
+        "OverflowError",
+        "MemoryError",
+        "RecursionError",
         "super",
         "property",
         "classmethod",
@@ -368,34 +379,35 @@ def create_safe_globals(is_async: bool = True):
 
 
 def execute_sync(implementation: str, call_kwargs: dict) -> dict:
-    """Execute a synchronous function."""
+    """Execute a synchronous function (one-shot mode with fresh globals)."""
+    globals_dict = create_safe_globals(is_async=False)
+    return execute_sync_in_globals(implementation, call_kwargs, globals_dict)
+
+
+def execute_sync_in_globals(
+    implementation: str,
+    call_kwargs: dict,
+    globals_dict: dict,
+) -> dict:
+    """Execute a synchronous function in the provided globals dict."""
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     result = None
     error = None
 
     try:
-        globals_dict = create_safe_globals(is_async=False)
+        # Extract function name from implementation BEFORE exec
+        func_name = _extract_function_name(implementation)
+        if not func_name:
+            raise ValueError("No function definition found in implementation")
 
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             exec(implementation, globals_dict)
 
-            # Find the function that was defined
-            func_name = None
-            base_names = set(create_safe_globals(is_async=False).keys())
-            for name, obj in globals_dict.items():
-                if (
-                    callable(obj)
-                    and not name.startswith("_")
-                    and name not in base_names
-                ):
-                    func_name = name
-                    break
+            fn = globals_dict.get(func_name)
+            if fn is None:
+                raise ValueError(f"Function '{func_name}' not found after exec")
 
-            if func_name is None:
-                raise ValueError("No function found in implementation")
-
-            fn = globals_dict[func_name]
             result = fn(**call_kwargs)
 
     except Exception:
@@ -410,33 +422,51 @@ def execute_sync(implementation: str, call_kwargs: dict) -> dict:
 
 
 async def execute_async(implementation: str, call_kwargs: dict) -> dict:
-    """Execute an asynchronous function."""
+    """Execute an asynchronous function (one-shot mode with fresh globals)."""
+    globals_dict = create_safe_globals(is_async=True)
+    return await execute_async_in_globals(implementation, call_kwargs, globals_dict)
+
+
+def _extract_function_name(implementation: str) -> str:
+    """Extract the function name from an implementation string using AST.
+
+    Raises SyntaxError if the implementation has invalid Python syntax.
+    Returns empty string if no function definition is found.
+    """
+    import ast as _ast
+
+    # Let SyntaxError propagate so callers see the actual parsing error
+    tree = _ast.parse(implementation)
+    for node in tree.body:
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            return node.name
+    return ""
+
+
+async def execute_async_in_globals(
+    implementation: str,
+    call_kwargs: dict,
+    globals_dict: dict,
+) -> dict:
+    """Execute an asynchronous function in the provided globals dict."""
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     result = None
     error = None
 
     try:
-        globals_dict = create_safe_globals(is_async=True)
+        # Extract function name from implementation BEFORE exec
+        func_name = _extract_function_name(implementation)
+        if not func_name:
+            raise ValueError("No function definition found in implementation")
 
         exec(implementation, globals_dict)
 
-        # Find the async function that was defined
-        func_name = None
-        base_globals = set(create_safe_globals(is_async=True).keys())
-        for name, obj in globals_dict.items():
-            if (
-                asyncio.iscoroutinefunction(obj)
-                and not name.startswith("_")
-                and name not in base_globals
-            ):
-                func_name = name
-                break
-
-        if func_name is None:
-            raise ValueError("No async function found in implementation")
-
-        fn = globals_dict[func_name]
+        fn = globals_dict.get(func_name)
+        if fn is None:
+            raise ValueError(f"Function '{func_name}' not found after exec")
+        if not asyncio.iscoroutinefunction(fn):
+            raise ValueError(f"Function '{func_name}' is not async")
 
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             result = await fn(**call_kwargs)
@@ -524,7 +554,7 @@ def run_with_rpc_loop(implementation: str, call_kwargs: dict, is_async: bool) ->
 
 
 def main():
-    """Main entry point for the runner."""
+    """Main entry point for one-shot runner mode."""
     # Set up signal handlers for graceful shutdown
     _setup_signal_handlers()
 
@@ -588,5 +618,162 @@ def main():
     )
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Persistent Server Mode
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def run_server_with_rpc_loop(
+    implementation: str,
+    call_kwargs: dict,
+    is_async: bool,
+    globals_dict: dict,
+) -> dict:
+    """
+    Run a function with RPC support using a persistent globals dict.
+
+    This handles bidirectional communication:
+    - Executes the function in a separate thread
+    - Main thread handles RPC responses from stdin
+    """
+    result_queue: Queue = Queue()
+
+    def execute_function():
+        """Execute the function and put result in queue."""
+        try:
+            if is_async:
+                res = asyncio.run(
+                    execute_async_in_globals(implementation, call_kwargs, globals_dict),
+                )
+            else:
+                res = execute_sync_in_globals(implementation, call_kwargs, globals_dict)
+            result_queue.put(res)
+        except Exception:
+            result_queue.put(
+                {
+                    "result": None,
+                    "error": traceback.format_exc(),
+                    "stdout": "",
+                    "stderr": "",
+                },
+            )
+
+    # Start function execution in a thread
+    exec_thread = threading.Thread(target=execute_function, daemon=True)
+    exec_thread.start()
+
+    # Main thread handles RPC responses
+    while exec_thread.is_alive():
+        try:
+            import select
+
+            readable, _, _ = select.select([sys.__stdin__], [], [], 0.1)
+            if readable:
+                line = sys.__stdin__.readline()
+                if line:
+                    msg = json.loads(line.strip())
+                    if msg.get("type") in ("rpc_result", "rpc_error"):
+                        dispatch_rpc_response(msg)
+        except Exception:
+            pass
+
+    # Get the result
+    return result_queue.get(timeout=1)
+
+
+def main_server():
+    """
+    Persistent server mode entry point.
+
+    Maintains state across multiple function calls by keeping a persistent
+    globals dict. The server loops waiting for execute requests until it
+    receives a shutdown message or stdin is closed.
+
+    Protocol:
+        Input messages:
+            {"type": "execute", "implementation": str, "call_kwargs": dict, "is_async": bool}
+            {"type": "shutdown"}
+
+        Output messages:
+            {"type": "complete", "result": Any, "error": str|null, "stdout": str, "stderr": str}
+            {"type": "ack"}  (response to shutdown)
+    """
+    _setup_signal_handlers()
+
+    # Send ready signal so parent knows we're listening
+    send_message({"type": "ready"})
+
+    # Persistent globals - survives across calls
+    globals_dict = create_safe_globals(is_async=True)
+
+    while True:
+        try:
+            line = sys.__stdin__.readline()
+            if not line:
+                # stdin closed, exit gracefully
+                break
+
+            input_data = json.loads(line.strip())
+        except json.JSONDecodeError as e:
+            send_message(
+                {
+                    "type": "complete",
+                    "result": None,
+                    "error": f"Invalid JSON input: {e}",
+                    "stdout": "",
+                    "stderr": "",
+                },
+            )
+            continue
+        except EOFError:
+            break
+
+        msg_type = input_data.get("type", "execute")
+
+        if msg_type == "shutdown":
+            send_message({"type": "ack"})
+            _cleanup_multiprocessing_children()
+            break
+
+        if msg_type != "execute":
+            send_message(
+                {
+                    "type": "complete",
+                    "result": None,
+                    "error": f"Expected 'execute' or 'shutdown' message, got '{msg_type}'",
+                    "stdout": "",
+                    "stderr": "",
+                },
+            )
+            continue
+
+        implementation = input_data.get("implementation", "")
+        call_kwargs = input_data.get("call_kwargs", {})
+        is_async = input_data.get("is_async", True)
+
+        # Execute with RPC support using persistent globals
+        result = run_server_with_rpc_loop(
+            implementation,
+            call_kwargs,
+            is_async,
+            globals_dict,
+        )
+
+        # Make result JSON-serializable
+        result["result"] = make_json_serializable(result["result"])
+
+        # Send completion message
+        send_message(
+            {
+                "type": "complete",
+                **result,
+            },
+        )
+
+
 if __name__ == "__main__":
-    main()
+    # Check for server mode flag
+    if len(sys.argv) > 1 and sys.argv[1] == "--server":
+        main_server()
+    else:
+        main()

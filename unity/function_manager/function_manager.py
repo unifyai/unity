@@ -129,6 +129,396 @@ def _strip_custom_function_decorators(source: str) -> str:
     return "".join(out)
 
 
+class _VenvConnection:
+    """
+    Manages a persistent connection to a venv subprocess in server mode.
+
+    The subprocess maintains state across calls, enabling variables to persist
+    between function executions within the same venv.
+    """
+
+    def __init__(
+        self,
+        process: asyncio.subprocess.Process,
+        venv_id: int,
+        function_manager: "FunctionManager",
+    ):
+        self._process = process
+        self._venv_id = venv_id
+        self._function_manager = function_manager
+        self._lock = asyncio.Lock()  # Serialize calls to same venv
+        self._closed = False
+        self._tainted = False  # Set to True after timeout or other corruption
+
+    @classmethod
+    async def create(
+        cls,
+        venv_id: int,
+        function_manager: "FunctionManager",
+        timeout: float = 30.0,
+    ) -> "_VenvConnection":
+        """
+        Create a new persistent venv connection.
+
+        Args:
+            venv_id: The virtual environment to connect to.
+            function_manager: The FunctionManager instance for venv preparation.
+            timeout: Timeout for subprocess startup.
+
+        Returns:
+            A new _VenvConnection instance.
+
+        Raises:
+            RuntimeError: If the subprocess fails to start or send ready signal.
+        """
+        python_path = await function_manager.prepare_venv(venv_id=venv_id)
+        runner_path = function_manager._get_venv_runner_path(venv_id)
+
+        use_process_group = sys.platform != "win32"
+        process = await asyncio.create_subprocess_exec(
+            str(python_path),
+            str(runner_path),
+            "--server",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=use_process_group,
+        )
+
+        conn = cls(process, venv_id, function_manager)
+
+        # Wait for ready signal from subprocess
+        try:
+            ready_msg = await asyncio.wait_for(
+                conn._read_message(),
+                timeout=timeout,
+            )
+            if ready_msg.get("type") != "ready":
+                raise RuntimeError(
+                    f"Venv {venv_id} subprocess sent unexpected message: {ready_msg}",
+                )
+        except asyncio.TimeoutError:
+            await conn.shutdown()
+            raise RuntimeError(
+                f"Venv {venv_id} subprocess did not send ready signal within {timeout}s",
+            )
+        except Exception as e:
+            await conn.shutdown()
+            raise RuntimeError(
+                f"Venv {venv_id} subprocess failed to start: {e}",
+            ) from e
+
+        return conn
+
+    async def _read_message(self) -> dict:
+        """Read a JSON message from the subprocess stdout."""
+        if self._process.stdout is None:
+            raise RuntimeError("Subprocess stdout is None")
+        line = await self._process.stdout.readline()
+        if not line:
+            raise EOFError("Subprocess stdout closed")
+        return json.loads(line.decode().strip())
+
+    async def _write_message(self, msg: dict) -> None:
+        """Write a JSON message to the subprocess stdin."""
+        if self._process.stdin is None:
+            raise RuntimeError("Subprocess stdin is None")
+        data = json.dumps(msg) + "\n"
+        self._process.stdin.write(data.encode())
+        await self._process.stdin.drain()
+
+    def is_alive(self) -> bool:
+        """Check if the subprocess is still running and usable."""
+        return (
+            not self._closed and not self._tainted and self._process.returncode is None
+        )
+
+    async def execute(
+        self,
+        implementation: str,
+        call_kwargs: dict,
+        is_async: bool,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+        timeout: Optional[float] = None,
+    ) -> dict:
+        """
+        Execute a function in the persistent venv subprocess.
+
+        Args:
+            implementation: The function source code.
+            call_kwargs: Keyword arguments to pass to the function.
+            is_async: Whether the function is async.
+            primitives: The Primitives instance for RPC access.
+            computer_primitives: The ComputerPrimitives instance for RPC access.
+            timeout: Execution timeout in seconds (None for no timeout).
+
+        Returns:
+            Dict with keys: result, error, stdout, stderr
+
+        Raises:
+            RuntimeError: If the subprocess has died or execution fails.
+            asyncio.TimeoutError: If execution exceeds timeout.
+        """
+        async with self._lock:
+            if not self.is_alive():
+                raise RuntimeError(
+                    f"Venv {self._venv_id} subprocess has died (returncode={self._process.returncode})",
+                )
+
+            # Send execute request
+            await self._write_message(
+                {
+                    "type": "execute",
+                    "implementation": implementation,
+                    "call_kwargs": call_kwargs,
+                    "is_async": is_async,
+                },
+            )
+
+            # Handle bidirectional RPC until we get a complete message
+            async def handle_rpc_loop() -> dict:
+                while True:
+                    msg = await self._read_message()
+                    msg_type = msg.get("type")
+
+                    if msg_type == "complete":
+                        return msg
+
+                    if msg_type == "rpc_call":
+                        # Handle RPC call from subprocess
+                        rpc_result = await self._handle_rpc_call(
+                            msg,
+                            primitives=primitives,
+                            computer_primitives=computer_primitives,
+                        )
+                        await self._write_message(rpc_result)
+                    else:
+                        logger.warning(
+                            f"Venv {self._venv_id}: unexpected message type '{msg_type}'",
+                        )
+
+            if timeout is not None:
+                try:
+                    return await asyncio.wait_for(handle_rpc_loop(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    # After a timeout, the subprocess is in an unknown state.
+                    # Mark it as tainted so the pool recreates it on next use.
+                    self._tainted = True
+                    raise
+            return await handle_rpc_loop()
+
+    async def _handle_rpc_call(
+        self,
+        msg: dict,
+        primitives: Optional[Any],
+        computer_primitives: Optional[Any],
+    ) -> dict:
+        """Handle an RPC call from the subprocess."""
+        request_id = msg.get("id")
+        path = msg.get("path", "")
+        kwargs = msg.get("kwargs", {})
+
+        try:
+            parts = path.split(".")
+            if len(parts) == 2:
+                namespace, method = parts
+                if namespace == "computer" and computer_primitives is not None:
+                    fn = getattr(computer_primitives, method, None)
+                elif primitives is not None:
+                    manager = getattr(primitives, namespace, None)
+                    fn = getattr(manager, method, None) if manager else None
+                else:
+                    fn = None
+
+                if fn is not None and callable(fn):
+                    result = fn(**kwargs)
+                    if asyncio.iscoroutine(result):
+                        result = await result
+                    return {"type": "rpc_result", "id": request_id, "result": result}
+
+            return {
+                "type": "rpc_error",
+                "id": request_id,
+                "error": f"Unknown RPC path: {path}",
+            }
+        except Exception as e:
+            return {"type": "rpc_error", "id": request_id, "error": str(e)}
+
+    async def shutdown(self, timeout: float = 5.0) -> None:
+        """
+        Gracefully shut down the subprocess.
+
+        Args:
+            timeout: Timeout for graceful shutdown before force-killing.
+        """
+        if self._closed:
+            return
+        self._closed = True
+
+        if self._process.returncode is not None:
+            return
+
+        try:
+            # Try graceful shutdown
+            await self._write_message({"type": "shutdown"})
+            await asyncio.wait_for(self._process.wait(), timeout=timeout)
+        except (asyncio.TimeoutError, Exception):
+            # Force kill if graceful shutdown fails
+            try:
+                if sys.platform != "win32":
+                    # Kill entire process group
+                    os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
+                else:
+                    self._process.terminate()
+                await asyncio.wait_for(self._process.wait(), timeout=2.0)
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+
+
+class VenvPool:
+    """
+    Manages a pool of persistent venv subprocess connections.
+
+    Each sandbox gets its own VenvPool, ensuring state isolation between
+    different actors/sandboxes while preserving state across function calls
+    within the same sandbox.
+    """
+
+    def __init__(self) -> None:
+        self._connections: Dict[int, _VenvConnection] = {}
+        self._lock = asyncio.Lock()
+        self._closed = False
+
+    async def get_or_create_connection(
+        self,
+        venv_id: int,
+        function_manager: "FunctionManager",
+        timeout: float = 30.0,
+    ) -> _VenvConnection:
+        """
+        Get an existing connection or create a new one for the given venv_id.
+
+        Args:
+            venv_id: The virtual environment ID.
+            function_manager: The FunctionManager for venv preparation.
+            timeout: Timeout for creating a new connection.
+
+        Returns:
+            A _VenvConnection instance.
+        """
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("VenvPool has been closed")
+
+            if venv_id in self._connections:
+                conn = self._connections[venv_id]
+                if conn.is_alive():
+                    return conn
+                # Connection died, remove it and create a new one
+                logger.warning(
+                    f"VenvPool: connection for venv {venv_id} died, creating new one",
+                )
+                del self._connections[venv_id]
+
+            # Create new connection
+            conn = await _VenvConnection.create(
+                venv_id=venv_id,
+                function_manager=function_manager,
+                timeout=timeout,
+            )
+            self._connections[venv_id] = conn
+            return conn
+
+    async def execute_in_venv(
+        self,
+        *,
+        venv_id: int,
+        implementation: str,
+        call_kwargs: dict,
+        is_async: bool,
+        primitives: Optional[Any] = None,
+        computer_primitives: Optional[Any] = None,
+        function_manager: "FunctionManager",
+        timeout: Optional[float] = None,
+    ) -> dict:
+        """
+        Execute a function in a persistent venv subprocess.
+
+        Args:
+            venv_id: The virtual environment to use.
+            implementation: The function source code.
+            call_kwargs: Keyword arguments to pass to the function.
+            is_async: Whether the function is async.
+            primitives: The Primitives instance for RPC access.
+            computer_primitives: The ComputerPrimitives instance for RPC access.
+            function_manager: The FunctionManager for venv preparation.
+            timeout: Execution timeout in seconds.
+
+        Returns:
+            Dict with keys: result, error, stdout, stderr
+        """
+        conn = await self.get_or_create_connection(
+            venv_id=venv_id,
+            function_manager=function_manager,
+        )
+
+        try:
+            return await conn.execute(
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                is_async=is_async,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+                timeout=timeout,
+            )
+        except RuntimeError as e:
+            if "subprocess has died" in str(e):
+                # Try to recreate and retry once
+                logger.warning(
+                    f"VenvPool: retrying after subprocess death for venv {venv_id}",
+                )
+                async with self._lock:
+                    if venv_id in self._connections:
+                        del self._connections[venv_id]
+
+                conn = await self.get_or_create_connection(
+                    venv_id=venv_id,
+                    function_manager=function_manager,
+                )
+                return await conn.execute(
+                    implementation=implementation,
+                    call_kwargs=call_kwargs,
+                    is_async=is_async,
+                    primitives=primitives,
+                    computer_primitives=computer_primitives,
+                    timeout=timeout,
+                )
+            raise
+
+    async def close(self) -> None:
+        """Close all connections in the pool."""
+        async with self._lock:
+            self._closed = True
+            for conn in self._connections.values():
+                await conn.shutdown()
+            self._connections.clear()
+
+    def __del__(self) -> None:
+        """Ensure cleanup on garbage collection."""
+        if self._connections and not self._closed:
+            # Can't run async cleanup in __del__, but we can try to kill processes
+            for conn in self._connections.values():
+                try:
+                    if conn._process.returncode is None:
+                        conn._process.kill()
+                except Exception:
+                    pass
+
+
 class _VenvFunctionProxy:
     """Proxy that wraps a venv-backed function as an awaitable callable."""
 
@@ -229,14 +619,28 @@ class _VenvFunctionProxy:
             func_name=self.__name__,
         )
 
-        result = await self._function_manager.execute_in_venv(
-            venv_id=int(venv_id),
-            implementation=implementation,
-            call_kwargs=call_kwargs,
-            is_async=is_async,
-            primitives=primitives,
-            computer_primitives=computer_primitives,
-        )
+        # Check if a persistent venv pool is available (injected by CodeExecutionSandbox)
+        venv_pool = self._namespace.get("__venv_pool__")
+        if venv_pool is not None:
+            result = await venv_pool.execute_in_venv(
+                venv_id=int(venv_id),
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                is_async=is_async,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+                function_manager=self._function_manager,
+            )
+        else:
+            # Fallback to one-shot execution (backward compatibility)
+            result = await self._function_manager.execute_in_venv(
+                venv_id=int(venv_id),
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                is_async=is_async,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
 
         if result.get("error"):
             raise RuntimeError(str(result.get("error")))
