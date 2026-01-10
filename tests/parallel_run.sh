@@ -733,6 +733,69 @@ set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 cd "$REPO_ROOT"
 
 # ---------------------------------------------------------------------------
+# Worktree dependency symlinks (for local editable packages)
+# ---------------------------------------------------------------------------
+# pyproject.toml references ../unify and ../unillm as editable local packages.
+# In the main repo at ~/unity, these resolve to ~/unify and ~/unillm.
+# In a worktree at ~/.cursor/worktrees/unity/xyz, they resolve to
+# ~/.cursor/worktrees/unity/unify which doesn't exist by default.
+#
+# This function creates symlinks at the worktree parent level so that
+# `uv sync` works correctly in any worktree without manual setup.
+ensure_worktree_dependency_symlinks() {
+  local git_file="$REPO_ROOT/.git"
+
+  # Only applies to git worktrees (where .git is a file, not a directory)
+  if [[ ! -f "$git_file" ]]; then
+    return 0
+  fi
+
+  # Parse the gitdir from .git file (format: "gitdir: /path/to/main/.git/worktrees/name")
+  local gitdir
+  gitdir=$(sed 's/^gitdir: //' "$git_file")
+
+  # Derive the main repo path: /main/repo/.git/worktrees/name -> /main/repo
+  local main_repo
+  main_repo=$(dirname "$(dirname "$(dirname "$gitdir")")")
+
+  # The worktree parent is where all worktrees live (e.g., ~/.cursor/worktrees/unity/)
+  local worktree_parent
+  worktree_parent=$(dirname "$REPO_ROOT")
+
+  # For each local dependency, ensure a symlink exists at the worktree parent level
+  local deps=("unify" "unillm")
+  for dep in "${deps[@]}"; do
+    local target="$main_repo/../$dep"  # e.g., ~/unify (sibling of main repo)
+    local link="$worktree_parent/$dep"  # e.g., ~/.cursor/worktrees/unity/unify
+
+    # Resolve to absolute path
+    if [[ -d "$target" ]]; then
+      target=$(cd "$target" && pwd -P)
+    else
+      # Local dependency doesn't exist; skip (will fail later in uv sync with clear error)
+      continue
+    fi
+
+    # Create symlink if missing or pointing to wrong location
+    if [[ -L "$link" ]]; then
+      local current_target
+      current_target=$(readlink "$link")
+      if [[ "$current_target" != "$target" ]]; then
+        echo "Updating worktree symlink: $link -> $target" >&2
+        rm "$link"
+        ln -s "$target" "$link"
+      fi
+    elif [[ ! -e "$link" ]]; then
+      echo "Creating worktree symlink: $link -> $target" >&2
+      ln -s "$target" "$link"
+    fi
+  done
+}
+
+# Ensure symlinks before venv setup (silent if not in a worktree)
+ensure_worktree_dependency_symlinks
+
+# ---------------------------------------------------------------------------
 # Python environment (uv + repo-local .venv)
 # ---------------------------------------------------------------------------
 # This script is used in local dev, CI, and Cursor Cloud Agents.
