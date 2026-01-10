@@ -37,7 +37,11 @@ intranet/logs/
 assets/
 discord_messages.md
 .cursor/debug.log
-# Ignore log contents but keep the README
+# Ignore log contents but keep the README and utility scripts
 logs/*
 !logs/README.md
+!logs/download_ci_logs.sh
+!logs/ci/
+logs/ci/*
+!logs/ci/.gitkeep
 .repairs_queries/
