@@ -5473,7 +5473,6 @@ class HierarchicalActor(BaseActor):
         can_compose: bool = True,
         can_store: bool = True,
         environments: Optional[list["BaseEnvironment"]] = None,
-        browser_mode: str | None = None,  # Deprecated alias for computer_mode
     ):
         """
         Initializes the HierarchicalActor.
@@ -5497,12 +5496,7 @@ class HierarchicalActor(BaseActor):
                 executed but not stored.
             environments: Optional list of execution environments. If None, defaults to
                 [ComputerEnvironment, StateManagerEnvironment].
-            browser_mode: Deprecated alias for computer_mode.
         """
-        # Handle deprecated browser_mode parameter
-        if browser_mode is not None:
-            computer_mode = browser_mode
-
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
         self._session_connect_url = session_connect_url
