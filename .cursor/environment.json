@@ -3,7 +3,7 @@
     "context": "..",
     "dockerfile": "Dockerfile"
   },
-  "install": "cd /workspace && uv sync --all-groups",
+  "install": "cd /workspace && ./scripts/cloud-bootstrap.sh",
   "start": "cd /workspace && ./scripts/configure-git-identity.sh && ./scripts/install-git-hooks.sh && sudo service redis-server start",
   "terminals": [
     {
