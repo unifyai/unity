@@ -8,7 +8,7 @@ import signal
 import sys
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 import unify
 from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
@@ -127,6 +127,39 @@ def _strip_custom_function_decorators(source: str) -> str:
             seen_def = True
         out.append(line)
     return "".join(out)
+
+
+import re
+
+# Pattern for shell script metadata comments
+_SHELL_NAME_PATTERN = re.compile(r"^#\s*@name:\s*(.+?)\s*$", re.MULTILINE)
+_SHELL_ARGS_PATTERN = re.compile(r"^#\s*@args:\s*(.+?)\s*$", re.MULTILINE)
+_SHELL_DESC_PATTERN = re.compile(r"^#\s*@description:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _parse_shell_script_metadata(source: str) -> Dict[str, Optional[str]]:
+    """
+    Parse metadata from shell script comments.
+
+    Expected format at the top of the script::
+
+        #!/bin/sh
+        # @name: my_function
+        # @args: (input_file output_file --verbose)
+        # @description: Brief description of what the function does
+
+    Returns:
+        Dict with keys: name, argspec, docstring (any may be None if not found)
+    """
+    name_match = _SHELL_NAME_PATTERN.search(source)
+    args_match = _SHELL_ARGS_PATTERN.search(source)
+    desc_match = _SHELL_DESC_PATTERN.search(source)
+
+    return {
+        "name": name_match.group(1).strip() if name_match else None,
+        "argspec": args_match.group(1).strip() if args_match else "()",
+        "docstring": desc_match.group(1).strip() if desc_match else "",
+    }
 
 
 class _VenvConnection:
@@ -1680,6 +1713,7 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         implementations: Union[str, List[str]],
+        language: Literal["python", "bash", "zsh", "sh", "powershell"] = "python",
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
@@ -1689,6 +1723,7 @@ class FunctionManager(BaseFunctionManager):
 
         Args:
             implementations: Function source code (single string or list of strings).
+            language: The language/interpreter for the function(s). Default is "python".
             preconditions: Optional preconditions for functions.
             verify: Optional verification settings (name -> bool).
             overwrite: If True, update existing functions; if False, skip duplicates.
@@ -1704,6 +1739,17 @@ class FunctionManager(BaseFunctionManager):
         if isinstance(implementations, str):
             implementations = [implementations]
 
+        # Branch based on language
+        if language != "python":
+            return self._add_shell_functions(
+                implementations=implementations,
+                language=language,
+                preconditions=preconditions,
+                verify=verify,
+                overwrite=overwrite,
+            )
+
+        # Python-specific parsing and validation
         parsed: List[Tuple[str, ast.Module, ast.FunctionDef, str]] = []
         parse_errors: Dict[str, str] = {}
         temp_names: Set[str] = set()
@@ -1784,6 +1830,7 @@ class FunctionManager(BaseFunctionManager):
                 should_verify = verify.get(name, True)
 
                 entry_data = {
+                    "language": "python",
                     "argspec": signature,
                     "docstring": docstring,
                     "implementation": source,
@@ -1867,6 +1914,181 @@ class FunctionManager(BaseFunctionManager):
         # Write function files to disk
         for name, source in functions_to_write:
             p = self._write_function_file(name, source)
+            if p is not None:
+                self._register_function_file(name, p)
+
+        return results
+
+    def _add_shell_functions(
+        self,
+        *,
+        implementations: List[str],
+        language: Literal["bash", "zsh", "sh", "powershell"],
+        preconditions: Dict[str, Dict],
+        verify: Dict[str, bool],
+        overwrite: bool,
+    ) -> Dict[str, str]:
+        """
+        Add shell script functions (bash, zsh, sh, powershell).
+
+        Shell scripts must include metadata comments at the top:
+            # @name: my_function
+            # @args: (input_file output_file --verbose)
+            # @description: Brief description
+
+        The @name comment is required. @args and @description are optional.
+        """
+        results: Dict[str, str] = {}
+        parsed: List[Tuple[str, str, str, str, str]] = (
+            []
+        )  # (name, argspec, docstring, source, language)
+        temp_names: Set[str] = set()
+
+        # Parse metadata from all implementations
+        for i, source in enumerate(implementations):
+            metadata = _parse_shell_script_metadata(source)
+            name = metadata["name"]
+
+            if not name:
+                key = f"implementation_{i+1}"
+                results[key] = (
+                    "error: Shell script must include '# @name: <function_name>' comment"
+                )
+                continue
+
+            parsed.append(
+                (
+                    name,
+                    metadata["argspec"],
+                    metadata["docstring"],
+                    source,
+                    language,
+                ),
+            )
+            temp_names.add(name)
+
+        # Get existing functions for duplicate detection
+        try:
+            existing_functions = self.list_functions()
+            existing_names = set(existing_functions.keys())
+        except Exception as e:
+            logger.warning(f"Failed to list existing functions: {e}")
+            existing_functions = {}
+            existing_names = set()
+
+        # Check for duplicates
+        duplicates_to_skip: Set[str] = set()
+        existing_to_update: Set[str] = set()
+
+        for name in temp_names:
+            if name in existing_names:
+                if overwrite:
+                    existing_to_update.add(name)
+                else:
+                    duplicates_to_skip.add(name)
+                    results[name] = "skipped: already exists"
+
+        # Prepare entries for batch operations
+        entries_to_create: List[Dict[str, Any]] = []
+        entries_to_update: List[Dict[str, Any]] = []
+        log_ids_to_update: List[int] = []
+        log_id_to_name: Dict[int, str] = {}
+        functions_to_write: List[Tuple[str, str]] = []
+
+        for name, argspec, docstring, source, lang in parsed:
+            if name in duplicates_to_skip:
+                continue
+
+            try:
+                embedding_text = f"Function Name: {name}\nLanguage: {lang}\nSignature: {argspec}\nDocstring: {docstring}"
+                precondition = preconditions.get(name)
+                should_verify = verify.get(name, True)
+
+                entry_data = {
+                    "argspec": argspec,
+                    "docstring": docstring,
+                    "implementation": source,
+                    "language": lang,
+                    "depends_on": [],  # Shell scripts don't have auto-detected dependencies
+                    "embedding_text": embedding_text,
+                    "precondition": precondition,
+                    "verify": should_verify,
+                }
+
+                if name in existing_to_update:
+                    # Update existing function
+                    log_id = self._get_log_by_function_id(
+                        function_id=existing_functions[name]["function_id"],
+                        raise_if_missing=True,
+                    ).id
+                    log_ids_to_update.append(log_id)
+                    log_id_to_name[log_id] = name
+                    entries_to_update.append(entry_data)
+                    results[name] = "updated"
+                else:
+                    # Create new function
+                    entry_data["name"] = name
+                    entry_data["guidance_ids"] = []
+                    entries_to_create.append(entry_data)
+                    results[name] = "added"
+
+                functions_to_write.append((name, source))
+
+            except Exception as e:
+                results[name] = f"error: {e}"
+                logger.error(
+                    f"Error processing shell function {name}: {e}",
+                    exc_info=True,
+                )
+
+        # Batch create new functions
+        if entries_to_create:
+            try:
+                unity_create_logs(
+                    context=self._compositional_ctx,
+                    entries=entries_to_create,
+                    batched=True,
+                    add_to_all_context=self.include_in_multi_assistant_table,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to batch create shell function logs: {e}",
+                    exc_info=True,
+                )
+                for entry in entries_to_create:
+                    name = entry["name"]
+                    if results.get(name) == "added":
+                        results[name] = f"error: Failed to create log - {e}"
+                        functions_to_write = [
+                            (n, s) for n, s in functions_to_write if n != name
+                        ]
+
+        # Batch update existing functions
+        if log_ids_to_update and entries_to_update:
+            try:
+                unify.update_logs(
+                    logs=log_ids_to_update,
+                    context=self._compositional_ctx,
+                    entries=entries_to_update,
+                    overwrite=True,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to batch update shell function logs: {e}",
+                    exc_info=True,
+                )
+                for log_id in log_ids_to_update:
+                    name = log_id_to_name.get(log_id)
+                    if name and results.get(name) == "updated":
+                        results[name] = f"error: Failed to update log - {e}"
+                        functions_to_write = [
+                            (n, s) for n, s in functions_to_write if n != name
+                        ]
+
+        # Write function files to disk (with appropriate extension)
+        for name, source in functions_to_write:
+            ext = ".sh" if language in ("bash", "zsh", "sh") else ".ps1"
+            p = self._write_function_file(f"{name}{ext}", source)
             if p is not None:
                 self._register_function_file(name, p)
 
@@ -2217,6 +2439,10 @@ class FunctionManager(BaseFunctionManager):
 
             data: Dict[str, Any] = {
                 "function_id": ent.get("function_id"),
+                "language": ent.get(
+                    "language",
+                    "python",
+                ),  # Default for backward compat
                 "argspec": ent.get("argspec"),
                 "docstring": ent.get("docstring", ""),
                 "guidance_ids": ent.get("guidance_ids", []),

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
 
+# Supported function languages
+FunctionLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
+
 
 class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract for a function catalogue that stores and retrieves
-    user‑supplied Python functions and their metadata.
+    user‑supplied functions and their metadata.
 
     Overview
     --------
@@ -42,6 +45,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         *,
         implementations: Union[str, List[str]],
+        language: FunctionLanguage = "python",
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
     ) -> Dict[str, str]:
@@ -53,6 +57,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         add_functions(
             *,
             implementations: str | list[str],
+            language: Literal["python", "bash", "zsh", "sh", "powershell"] = "python",
             preconditions: dict[str, dict] | None = None,
             verify: dict[str, bool] | None = None,
         ) -> dict[str, str]
@@ -60,10 +65,13 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         Parameters
         ----------
         implementations : str | list[str]
-            One or more full Python function source strings. Each string must
+            One or more function source strings. For Python, each string must
             contain exactly one top‑level ``def`` (or ``async def``) starting at
-            column 0. The implementation may call built‑ins and object methods
-            but must not call other user‑defined functions in the same batch.
+            column 0. For shell languages, the script should include metadata
+            comments at the top (see Notes).
+        language : Literal["python", "bash", "zsh", "sh", "powershell"], default ``"python"``
+            The language/interpreter for the function(s). All implementations
+            in a single call must be the same language.
         preconditions : dict[str, dict] | None, default ``None``
             Optional mapping from function name → precondition payload. The
             payload is stored as the ``precondition`` field on the corresponding
@@ -82,10 +90,19 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Notes
         -----
+        - For Python functions: implementations are validated via AST parsing
+          and executed to extract signatures and docstrings automatically.
+        - For shell functions (bash, zsh, sh, powershell): metadata is extracted
+          from comments at the top of the script using these patterns::
+
+              # @name: my_function
+              # @args: (input_file output_file --verbose)
+              # @description: Brief description of what the function does
+
+          The ``@name`` comment is required for shell functions. ``@args`` and
+          ``@description`` are optional.
         - Implementations should persist records that conform to the
-          ``Function`` model (including ``name``, ``function_id``, ``argspec``,
-          ``docstring``, ``implementation``, ``depends_on``, ``embedding_text`` and
-          ``precondition``) and ensure that failures for one function do not
+          ``Function`` model and ensure that failures for one function do not
           prevent other valid functions in the same batch from being added.
         """
 
