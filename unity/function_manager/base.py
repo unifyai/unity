@@ -364,6 +364,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         call_kwargs: Optional[Dict[str, Any]] = None,
         target_venv_id: Optional[int] = ...,
         state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+        session_id: int = 0,
         venv_pool: Optional[Any] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
@@ -379,6 +380,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             call_kwargs: dict[str, Any] | None = None,
             target_venv_id: int | None = USE_FUNCTION_DEFAULT,
             state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+            session_id: int = 0,
             venv_pool: VenvPool | None = None,
             primitives: Any | None = None,
             computer_primitives: Any | None = None,
@@ -416,6 +418,12 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
 
             Note: For functions without a venv (``venv_id=None``), state_mode has no
             effect as these run in-process with fresh globals each time.
+        session_id : int, default ``0``
+            The session ID within the venv. Multiple sessions allow independent
+            stateful execution contexts within the same venv. Each session has its
+            own subprocess and globals dict, enabling concurrent "notebook panes"
+            that share packages but have isolated state. Only applies to
+            ``state_mode="stateful"`` or ``state_mode="read_only"``.
         venv_pool : VenvPool | None, default ``None``
             The VenvPool instance for stateful execution. Required when
             ``state_mode="stateful"`` or ``state_mode="read_only"`` and the function
@@ -443,10 +451,19 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Examples
         --------
-        >>> # Execute statefully (default) - state persists across calls
+        >>> # Execute statefully - state persists across calls
         >>> result = await fm.execute_function(
         ...     function_name="my_func",
         ...     call_kwargs={"x": 1},
+        ...     state_mode="stateful",
+        ...     venv_pool=pool,
+        ... )
+
+        >>> # Execute in a different session (independent state)
+        >>> result = await fm.execute_function(
+        ...     function_name="my_func",
+        ...     state_mode="stateful",
+        ...     session_id=1,  # Different session, independent globals
         ...     venv_pool=pool,
         ... )
 

@@ -456,10 +456,14 @@ class VenvPool:
     Each sandbox gets its own VenvPool, ensuring state isolation between
     different actors/sandboxes while preserving state across function calls
     within the same sandbox.
+
+    Connections are keyed by (venv_id, session_id), allowing multiple independent
+    stateful sessions per venv. Each session has its own subprocess and globals.
     """
 
     def __init__(self) -> None:
-        self._connections: Dict[int, _VenvConnection] = {}
+        # Key: (venv_id, session_id) -> _VenvConnection
+        self._connections: Dict[Tuple[int, int], _VenvConnection] = {}
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -467,32 +471,35 @@ class VenvPool:
         self,
         venv_id: int,
         function_manager: "FunctionManager",
+        session_id: int = 0,
         timeout: float = 30.0,
     ) -> _VenvConnection:
         """
-        Get an existing connection or create a new one for the given venv_id.
+        Get an existing connection or create a new one for the given venv/session.
 
         Args:
             venv_id: The virtual environment ID.
             function_manager: The FunctionManager for venv preparation.
+            session_id: The session ID within the venv (default 0).
             timeout: Timeout for creating a new connection.
 
         Returns:
             A _VenvConnection instance.
         """
+        key = (venv_id, session_id)
         async with self._lock:
             if self._closed:
                 raise RuntimeError("VenvPool has been closed")
 
-            if venv_id in self._connections:
-                conn = self._connections[venv_id]
+            if key in self._connections:
+                conn = self._connections[key]
                 if conn.is_alive():
                     return conn
                 # Connection died, remove it and create a new one
                 logger.warning(
-                    f"VenvPool: connection for venv {venv_id} died, creating new one",
+                    f"VenvPool: connection for venv {venv_id} session {session_id} died, creating new one",
                 )
-                del self._connections[venv_id]
+                del self._connections[key]
 
             # Create new connection
             conn = await _VenvConnection.create(
@@ -500,7 +507,7 @@ class VenvPool:
                 function_manager=function_manager,
                 timeout=timeout,
             )
-            self._connections[venv_id] = conn
+            self._connections[key] = conn
             return conn
 
     async def execute_in_venv(
@@ -510,6 +517,7 @@ class VenvPool:
         implementation: str,
         call_kwargs: dict,
         is_async: bool,
+        session_id: int = 0,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
         function_manager: "FunctionManager",
@@ -523,6 +531,7 @@ class VenvPool:
             implementation: The function source code.
             call_kwargs: Keyword arguments to pass to the function.
             is_async: Whether the function is async.
+            session_id: The session ID within the venv (default 0).
             primitives: The Primitives instance for RPC access.
             computer_primitives: The ComputerPrimitives instance for RPC access.
             function_manager: The FunctionManager for venv preparation.
@@ -531,9 +540,11 @@ class VenvPool:
         Returns:
             Dict with keys: result, error, stdout, stderr
         """
+        key = (venv_id, session_id)
         conn = await self.get_or_create_connection(
             venv_id=venv_id,
             function_manager=function_manager,
+            session_id=session_id,
         )
 
         try:
@@ -549,15 +560,16 @@ class VenvPool:
             if "subprocess has died" in str(e):
                 # Try to recreate and retry once
                 logger.warning(
-                    f"VenvPool: retrying after subprocess death for venv {venv_id}",
+                    f"VenvPool: retrying after subprocess death for venv {venv_id} session {session_id}",
                 )
                 async with self._lock:
-                    if venv_id in self._connections:
-                        del self._connections[venv_id]
+                    if key in self._connections:
+                        del self._connections[key]
 
                 conn = await self.get_or_create_connection(
                     venv_id=venv_id,
                     function_manager=function_manager,
+                    session_id=session_id,
                 )
                 return await conn.execute(
                     implementation=implementation,
@@ -573,6 +585,7 @@ class VenvPool:
         self,
         venv_id: int,
         function_manager: "FunctionManager",
+        session_id: int = 0,
         timeout: float = 30.0,
     ) -> Dict[str, Any]:
         """
@@ -583,6 +596,7 @@ class VenvPool:
         Args:
             venv_id: The virtual environment ID.
             function_manager: The FunctionManager for venv preparation.
+            session_id: The session ID within the venv (default 0).
             timeout: Timeout for state retrieval.
 
         Returns:
@@ -591,6 +605,7 @@ class VenvPool:
         conn = await self.get_or_create_connection(
             venv_id=venv_id,
             function_manager=function_manager,
+            session_id=session_id,
         )
         return await conn.get_state(timeout=timeout)
 
@@ -3715,6 +3730,7 @@ class FunctionManager(BaseFunctionManager):
         call_kwargs: Optional[Dict[str, Any]] = None,
         target_venv_id: Optional[int] = ...,
         state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+        session_id: int = 0,
         venv_pool: Optional["VenvPool"] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
@@ -3743,6 +3759,9 @@ class FunctionManager(BaseFunctionManager):
                 - None: Execute in the default Python environment
                 - int: Execute in this specific venv_id
             state_mode: How to handle global state ("stateful", "read_only", "stateless").
+            session_id: The session ID within the venv (default 0). Multiple sessions
+                allow independent stateful execution contexts within the same venv.
+                Only applies to stateful/read_only modes.
             venv_pool: VenvPool for stateful/read_only modes with venv functions.
 
         Returns:
@@ -3803,6 +3822,7 @@ class FunctionManager(BaseFunctionManager):
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,
+                session_id=session_id,
                 primitives=primitives,
                 computer_primitives=computer_primitives,
                 function_manager=self,
@@ -3819,6 +3839,7 @@ class FunctionManager(BaseFunctionManager):
             initial_state = await venv_pool.get_connection_state(
                 venv_id=venv_id,
                 function_manager=self,
+                session_id=session_id,
             )
             # Execute in fresh subprocess with that state (not modifying persistent state)
             return await self.execute_in_venv(
