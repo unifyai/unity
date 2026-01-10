@@ -537,7 +537,7 @@ def _get_method_metadata(
         ),
         "implementation": None,
         "is_primitive": True,
-        "calls": [],
+        "depends_on": [],
         "precondition": None,
         "verify": False,
         "guidance_ids": [],

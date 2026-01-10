@@ -30,9 +30,9 @@ class Function(BaseModel):
             "None for primitives (implementation lives in Python class)."
         ),
     )
-    calls: List[str] = Field(
+    depends_on: List[str] = Field(
         [],
-        description="A list of other functions called by this function.",
+        description="A list of other functions that this function depends on.",
     )
     embedding_text: str = Field(
         ...,
