@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import textwrap
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -26,25 +26,6 @@ from unity.common.task_execution_context import current_task_execution_delegate
 from unity.function_manager.function_manager import FunctionManager
 from unity.manager_registry import ManagerRegistry
 from unity.task_scheduler.task_scheduler import TaskScheduler
-
-
-class _NoKeychainBrowser:
-    """Prevents macOS Keychain prompts and real browser init."""
-
-    def __init__(self):
-        self.backend = MagicMock()
-        self.backend.barrier = AsyncMock()
-        self.backend.interrupt_current_action = AsyncMock()
-
-    async def get_current_url(self) -> str:
-        return "https://mock-url.invalid"
-
-    async def get_screenshot(self) -> str:
-        # 1x1 PNG (valid base64) – avoids downstream vision-client base64 decode errors.
-        return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO8GZfkAAAAASUVORK5CYII="
-
-    def stop(self) -> None:
-        return None
 
 
 class _SimpleMockVerificationClient:
@@ -250,11 +231,10 @@ async def test_delegate_path_used_and_active_queue_steering_works(monkeypatch):
     # ── Build a HierarchicalActor and mock browser immediately ────────────────
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
     )
-    # Mock browser + core primitives to avoid any real backend/browser usage.
-    actor.computer_primitives._browser = _NoKeychainBrowser()
+    # Mock specific browser primitives for test control.
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
     actor.computer_primitives.observe = AsyncMock(return_value="Mock observation.")
@@ -436,10 +416,9 @@ async def test_cancel_via_active_task_interject_is_deterministic_in_delegate_mod
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
     )
-    actor.computer_primitives._browser = _NoKeychainBrowser()
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
     actor.computer_primitives.observe = AsyncMock(return_value="Mock observation.")
@@ -611,11 +590,10 @@ async def test_nested_manager_clarification_in_delegate_mode(monkeypatch):
     actor = HierarchicalActor(
         function_manager=fm,
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
         can_compose=False,
     )
-    actor.computer_primitives._browser = _NoKeychainBrowser()
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
     actor.computer_primitives.observe = AsyncMock(return_value="Mock observation.")
@@ -720,11 +698,10 @@ async def test_delegate_contextvar_reset_no_leakage(monkeypatch):
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
         can_compose=False,
     )
-    actor.computer_primitives._browser = _NoKeychainBrowser()
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
     actor.computer_primitives.observe = AsyncMock(return_value="Mock observation.")

@@ -209,23 +209,18 @@ def create_actor_with_primitives():
 
     from unity.actor.environments import StateManagerEnvironment
     from unity.actor.hierarchical_actor import HierarchicalActor
-    from tests.test_actor.test_state_managers.utils import (
-        NoKeychainBrowser,
-        _mock_observe,
-    )
+    from tests.test_actor.test_state_managers.utils import _mock_observe
 
     @asynccontextmanager
     async def _factory(primitives: Primitives):
         actor = HierarchicalActor(
             headless=True,
-            browser_mode="legacy",
+            browser_mode="mock",
             connect_now=False,
         )
-        # Mirror `tests.test_actor.test_state_managers.utils.make_actor`: mock browser
-        # primitives immediately (before any handle creation) to avoid Keychain/network.
+        # Mock specific browser primitives for test control.
         cp = getattr(actor, "computer_primitives", None)
         if cp is not None:
-            cp._browser = NoKeychainBrowser()
             cp.navigate = AsyncMock(return_value=None)
             cp.act = AsyncMock(return_value="acted")
             cp.observe = AsyncMock(side_effect=_mock_observe)

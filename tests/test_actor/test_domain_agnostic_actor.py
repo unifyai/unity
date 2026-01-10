@@ -64,41 +64,6 @@ unity.init(overwrite=True)
 # ────────────────────────────────────────────────────────────────────────────
 
 
-class NoKeychainBrowser:
-    """
-    Mock browser that prevents Keychain prompts during tests.
-
-    Args:
-        url: URL to return from get_current_url()
-        screenshot: Screenshot data to return from get_screenshot()
-        with_backend_mocks: If True, adds MagicMock backend with barrier/interrupt
-    """
-
-    def __init__(
-        self,
-        url: str = "",
-        screenshot: str = "",
-        with_backend_mocks: bool = False,
-    ):
-        self._url = url
-        self._screenshot = screenshot
-        if with_backend_mocks:
-            self.backend = MagicMock()
-            self.backend.barrier = AsyncMock()
-            self.backend.interrupt_current_action = AsyncMock()
-        else:
-            self.backend = object()
-
-    async def get_current_url(self) -> str:
-        return self._url
-
-    async def get_screenshot(self) -> str:
-        return self._screenshot
-
-    def stop(self) -> None:
-        pass
-
-
 class SimpleMockVerificationClient:
     """
     Mock verification client that always returns success.
@@ -325,15 +290,10 @@ async def test_pure_state_manager_task_schedules_reminder_without_browser():
     # Create Actor with ONLY StateManagerEnvironment (no browser)
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
-
-    # No browser environment is configured for this actor. Do not assume
-    # `computer_primitives` exists.
-    if getattr(actor, "computer_primitives", None) is not None:
-        actor.computer_primitives._browser = NoKeychainBrowser()
 
     # Clear function manager to avoid interference
     fm = FunctionManager()
@@ -437,7 +397,7 @@ async def test_plan_sanitizer_instruments_primitives_tool_calls_with_checkpoints
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -555,14 +515,8 @@ async def test_mixed_modality_task_searches_web_and_updates_contacts():
     # Create Actor with default environments (browser + state managers)
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
-    )
-
-    # Mock the browser to prevent Keychain prompts when handle auto-starts execution
-    actor.computer_primitives._browser = NoKeychainBrowser(
-        url="https://google.com/search?q=Anthropic+CEO",
-        screenshot="mock_screenshot",
     )
     actor.computer_primitives.navigate = AsyncMock(return_value="Navigated")
     actor.computer_primitives.act = AsyncMock(return_value="Action completed")
@@ -708,12 +662,9 @@ async def test_pure_logic_task_calculates_average_without_tools():
     # Create Actor with default environments (to prove it works even when tools available)
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
     )
-
-    # Mock the browser to prevent Keychain prompts when handle auto-starts execution
-    actor.computer_primitives._browser = NoKeychainBrowser()
 
     # Clear function manager
     fm = FunctionManager()
@@ -847,12 +798,9 @@ async def test_live_handle_management_tracks_steerable_primitives():
     # Create Actor with default environments
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="legacy",
+        browser_mode="mock",
         connect_now=False,
     )
-
-    # Mock the browser to prevent Keychain prompts when handle auto-starts execution
-    actor.computer_primitives._browser = NoKeychainBrowser()
 
     # Replace the state manager environment with our mocked one
     actor.environments["primitives"] = StateManagerEnvironment(primitives)
