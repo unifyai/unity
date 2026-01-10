@@ -1,13 +1,14 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 
 
 class Function(BaseModel):
     """
-    Represents a single Python function stored in the FunctionManager.
+    Represents a function stored in the FunctionManager.
 
-    Functions can be either user-defined (with implementation source code) or
-    primitives (action methods from state managers with no stored implementation).
+    Functions can be written in multiple languages (Python, Bash, Zsh, Sh, PowerShell)
+    and can be either user-defined (with implementation source code) or primitives
+    (action methods from state managers with no stored implementation).
     """
 
     function_id: Optional[int] = Field(
@@ -17,10 +18,21 @@ class Function(BaseModel):
             "Auto-assigned for user functions, explicit stable IDs for primitives."
         ),
     )
+    language: Literal["python", "bash", "zsh", "sh", "powershell"] = Field(
+        "python",
+        description=(
+            "The language/interpreter for this function. "
+            "Defaults to 'python' for backward compatibility."
+        ),
+    )
     name: str = Field(..., description="The name of the function.")
     argspec: str = Field(
         ...,
-        description="The function's signature, e.g., '(x: int, y: int) -> int'.",
+        description=(
+            "The function's signature. Format varies by language: "
+            "Python: '(x: int, y: int) -> int'. "
+            "Shell: '(input_file output_file --verbose)' or positional description."
+        ),
     )
     docstring: str = Field("", description="The docstring of the function.")
     implementation: Optional[str] = Field(
@@ -82,9 +94,10 @@ class Function(BaseModel):
     venv_id: Optional[int] = Field(
         None,
         description=(
-            "Optional reference to a VirtualEnv.venv_id specifying which virtual "
-            "environment to use when executing this function. If None, the function "
-            "runs in the project's default environment."
+            "Optional reference to a VirtualEnv.venv_id specifying which Python virtual "
+            "environment to use when executing this function. Only applicable when "
+            "language='python'. Ignored for other languages. If None, the function "
+            "runs in the project's default Python environment."
         ),
     )
 
