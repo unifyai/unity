@@ -174,29 +174,6 @@ async def test_source_uri_filter_local(file_manager, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_source_uri_consistency_across_rename(file_manager, tmp_path: Path):
-    """Test source_uri remains filterable after rename operations."""
-    fm = file_manager
-    fm.clear()
-
-    src = tmp_path / "rename_me_ident.txt"
-    src.write_text("data")
-    fm.ingest_files(str(src))
-
-    before = fm.file_info(identifier=str(src))
-    uri = before.source_uri
-    assert isinstance(uri, str)
-
-    h = await fm.organize(f"Rename {src.as_posix()} to renamed_ident.txt")
-    _ = await h.result()
-
-    rows = fm.filter_files(filter=f"source_uri == '{uri}'")
-    assert rows, "Row should still be indexed by source_uri after rename"
-    assert any("renamed_ident.txt" in str(r.get("file_path", "")) for r in rows)
-
-
-@pytest.mark.asyncio
-@_handle_project
 async def test_root_vs_rootless_source_uri_consistency(tmp_path: Path):
     """Test source_uri consistency between rooted and rootless managers."""
     from unity.file_manager.managers.file_manager import FileManager
@@ -255,13 +232,6 @@ async def test_rootless_local_manager_file_info(tmp_path, rootless_file_manager)
     h = await fm.ask_about_file(str(a), "What does this file contain?")
     ans = await h.result()
     assert isinstance(ans, str) and ans.strip()
-
-    # organize operations should accept absolute path as well
-    h2 = await fm.organize(
-        f"Rename {a.as_posix()} to renamed_outside.txt and move {b.as_posix()} to {tmp_path.as_posix()}",
-    )
-    ans2 = await h2.result()
-    assert isinstance(ans2, str) and ans2.strip()
 
 
 # =============================================================================
@@ -439,18 +409,6 @@ async def test_global_file_manager_identity(tmp_path: Path):
     rows_rootless = fm_rootless.filter_files(filter=f"source_uri == '{canon}'")
     assert rows_rooted and rows_rootless
 
-    # Global ask doesn't break identity-based filtering
-    h_ask = await gfm.ask("List available filesystems and overall inventory")
-    _ = await h_ask.result()
-    rows_after_ask_rooted = fm_rooted.filter_files(filter=f"source_uri == '{canon}'")
-    assert rows_after_ask_rooted
-
-    # Global organize on a different file does not affect f1's source_uri lookup
-    h_org = await gfm.organize(
-        f"Rename /{f2.name} to renamed_other.txt and then move renamed_other.txt to /",
-    )
-    _ = await h_org.result()
-    rows_after_org_rootless = fm_rootless.filter_files(
-        filter=f"source_uri == '{canon}'",
-    )
-    assert rows_after_org_rootless
+    # list_filesystems should work
+    filesystems = gfm.list_filesystems()
+    assert isinstance(filesystems, list) and len(filesystems) > 0

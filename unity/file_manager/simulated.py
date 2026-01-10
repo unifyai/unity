@@ -18,11 +18,7 @@ from .managers.utils.viz_utils import PlotResult as _VizPlotResult
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.llm_client import new_llm_client
 from .prompt_builders import (
-    build_file_manager_ask_prompt,
     build_file_manager_ask_about_file_prompt,
-    build_file_manager_organize_prompt,
-    build_global_file_manager_ask_prompt,
-    build_global_file_manager_organize_prompt,
     build_simulated_method_prompt,
 )
 from ..common.simulated import (
@@ -31,7 +27,6 @@ from ..common.simulated import (
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
-    maybe_tool_log_scheduled,
 )
 from ..constants import LOGGER
 
@@ -41,7 +36,7 @@ from ..constants import LOGGER
 # ─────────────────────────────────────────────────────────────────────────────
 class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
     """
-    Handle returned by SimulatedFileManager.ask.
+    Handle returned by SimulatedFileManager.ask_about_file.
     """
 
     def __init__(
@@ -69,8 +64,10 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._needs_clar = _requests_clarification
 
         # Human-friendly log label derived from current lineage, mirroring other simulated managers:
-        # "<outer...>->SimulatedFileManager.ask(abcd)"
-        self._log_label = SimulatedLineage.make_label("SimulatedFileManager.ask")
+        # "<outer...>->SimulatedFileManager.ask_about_file(abcd)"
+        self._log_label = SimulatedLineage.make_label(
+            "SimulatedFileManager.ask_about_file",
+        )
 
         # fire clarification question immediately if queues supplied
         if self._needs_clar:
@@ -353,30 +350,6 @@ class SimulatedFileManager(BaseFileManager):
 
         # Mirror the real file manager's tool exposure programmatically
         try:
-            ask_tools = mirror_file_manager_tools("ask")
-        except (ImportError, AttributeError):
-            # Fallback if mirror function doesn't exist yet
-            ask_tools = {
-                "list_columns": {"description": "List available table columns"},
-                "tables_overview": {"description": "Get overview of available tables"},
-                "schema_explain": {
-                    "description": "Get natural-language schema explanation",
-                },
-                "file_info": {
-                    "description": "Get comprehensive file status and identity",
-                },
-                "filter_files": {
-                    "description": "Filter files using boolean expressions",
-                },
-                "search_files": {"description": "Semantic search over file contents"},
-                "reduce": {"description": "Compute aggregates over rows"},
-                "list": {"description": "List all available files"},
-                "ask_about_file": {
-                    "description": "Ask questions about a specific file",
-                },
-            }
-
-        try:
             ask_about_file_tools = mirror_file_manager_tools("ask_about_file")
         except (ImportError, AttributeError):
             ask_about_file_tools = {
@@ -399,29 +372,9 @@ class SimulatedFileManager(BaseFileManager):
                 "search_multi_join": {"description": "Multi-table search-based join"},
             }
 
-        try:
-            organize_tools = mirror_file_manager_tools("organize")
-        except (ImportError, AttributeError):
-            organize_tools = {
-                "ask": {"description": "Ask questions to discover files"},
-                "rename_file": {"description": "Rename a file"},
-                "move_file": {"description": "Move a file to a new location"},
-                "delete_file": {"description": "Delete a file"},
-            }
-
         # Build prompt using the new prompt builders
-        ask_msg = build_file_manager_ask_prompt(
-            ask_tools,
-            num_files=len(self._files),
-            include_activity=self._rolling_summary_in_prompts,
-        )
         about_msg = build_file_manager_ask_about_file_prompt(
             ask_about_file_tools,
-            include_activity=self._rolling_summary_in_prompts,
-        )
-        org_msg = build_file_manager_organize_prompt(
-            organize_tools,
-            num_files=len(self._files),
             include_activity=self._rolling_summary_in_prompts,
         )
 
@@ -429,70 +382,11 @@ class SimulatedFileManager(BaseFileManager):
             "You are a *simulated* file manager assistant. "
             "There is no real file storage; invent plausible file records and "
             "keep your story consistent across turns.\n\n"
-            "As reference, here are the system messages used by the *real* file manager. "
+            "As reference, here is the system message used by the *real* file manager. "
             "You do not have access to tools – produce the final answer only.\n\n"
-            f"'ask' system message:\n{ask_msg}\n\n"
             f"'ask_about_file' system message:\n{about_msg}\n\n"
-            f"'organize' system message:\n{org_msg}\n\n"
             f"Back-story: {self._description}",
         )
-
-    # --------------------------------------------------------------------- #
-    # ask                                                                   #
-    # --------------------------------------------------------------------- #
-    @functools.wraps(BaseFileManager.ask, updated=())
-    async def ask(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: list[dict] | None = None,
-        _requests_clarification: bool = False,
-        _clarification_up_q: asyncio.Queue[str] | None = None,
-        _clarification_down_q: asyncio.Queue[str] | None = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        log_events: bool = False,
-        response_format: Optional[Type[BaseModel]] = None,
-    ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None  # No EventBus publishing for simulated managers
-
-        # Provide inventory summary to make simulated answers coherent
-        inventory = sorted(list(self._files.keys()))
-        instruction = build_simulated_method_prompt(
-            "ask",
-            json.dumps({"question": text, "inventory": inventory}, indent=2),
-            parent_chat_context=_parent_chat_context,
-        )
-
-        handle = _SimulatedFileHandle(
-            self._llm,
-            instruction,
-            _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=_requests_clarification,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
-            response_format=response_format,
-        )
-
-        # Tool-style scheduled log (only when no parent lineage)
-        maybe_tool_log_scheduled(
-            "SimulatedFileManager.ask",
-            "ask",
-            {
-                "question": text,
-                "requests_clarification": _requests_clarification,
-            },
-        )
-
-        return handle
-
-    # Append guidance for outer orchestrators via tool description
-    ask.__doc__ = (ask.__doc__ or "") + (
-        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
-        "arguments within the same conversation. Prefer reusing prior results and "
-        "compose the final answer once sufficient information has been gathered."
-    )
 
     # --------------------------------------------------------------------- #
     # Synchronous methods that don't need handles                          #
@@ -597,46 +491,6 @@ class SimulatedFileManager(BaseFileManager):
         )
         file_info = self._files[filename]
         instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
-        handle = _SimulatedFileHandle(
-            self._llm,
-            instruction,
-            _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=_requests_clarification,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
-            response_format=response_format,
-        )
-        return handle
-
-    # --------------------------------------------------------------------- #
-    # organize                                                               #
-    # --------------------------------------------------------------------- #
-    @functools.wraps(BaseFileManager.organize, updated=())
-    async def organize(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _requests_clarification: bool = False,
-        _clarification_up_q: asyncio.Queue[str] | None = None,
-        _clarification_down_q: asyncio.Queue[str] | None = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        _call_id: Optional[str] = None,
-        response_format: Optional[Type[BaseModel]] = None,
-    ) -> SteerableToolHandle:
-        # Simulate an organization plan by summarizing current files
-        inventory = sorted(list(self._files.keys()))
-        prompt_body = {
-            "action": "organize",
-            "request": text,
-            "files": inventory,
-        }
-        instruction = build_simulated_method_prompt(
-            "organize",
-            json.dumps(prompt_body, indent=2),
-            parent_chat_context=_parent_chat_context,
-        )
         handle = _SimulatedFileHandle(
             self._llm,
             instruction,
@@ -1321,55 +1175,13 @@ class SimulatedFileManager(BaseFileManager):
 
 class SimulatedGlobalFileManager(BaseGlobalFileManager):
     """
-    Simulated counterpart to GlobalFileManager that produces plausible
-    answers without invoking real tools. Aggregates multiple FileManagers
-    and exposes the BaseGlobalFileManager public contract.
+    Simulated counterpart to GlobalFileManager. Aggregates multiple FileManagers
+    and provides the list_filesystems helper. For filesystem‑wide operations,
+    use ``FunctionManager`` to compose bespoke logic.
     """
 
     def __init__(self, managers: List[BaseFileManager]):
         self._managers: List[BaseFileManager] = list(managers)
-        self._llm = new_llm_client(stateful=True)
-
-        # Build prompt tool lists to mirror class-named exposure
-        def _lf() -> List[str]:
-            names = [
-                getattr(m.__class__, "__name__", "FileManager") for m in self._managers
-            ]
-            return sorted(set(names))
-
-        ask_tools: Dict[str, Any] = {"GlobalFileManager_list_filesystems": _lf}
-        for mgr in self._managers:
-            cname = getattr(mgr.__class__, "__name__", "FileManager")
-            ask_tools[f"{cname}_ask"] = (
-                lambda text, _c=cname: None
-            )  # placeholder signature
-            ask_tools[f"{cname}_ask_about_file"] = (
-                lambda filename, question, _c=cname: None
-            )
-
-        organize_tools: Dict[str, Any] = {"GlobalFileManager_ask": (lambda text: None)}
-        for mgr in self._managers:
-            cname = getattr(mgr.__class__, "__name__", "FileManager")
-            organize_tools[f"{cname}_organize"] = lambda text, _c=cname: None
-
-        ask_sys = build_global_file_manager_ask_prompt(
-            ask_tools,
-            num_filesystems=len(self._managers),
-            include_activity=True,
-        )
-        org_sys = build_global_file_manager_organize_prompt(
-            organize_tools,
-            num_filesystems=len(self._managers),
-            include_activity=True,
-        )
-        self._llm.set_system_message(
-            "You are a *simulated* global file manager assistant. "
-            "Work at the conceptual level across multiple filesystems.\n\n"
-            "As reference, here are the system messages used by the *real* global file manager. "
-            "You do not have access to tools – produce final answers only.\n\n"
-            f"'ask' (global) system message:\n{ask_sys}\n\n"
-            f"'organize' (global) system message:\n{org_sys}",
-        )
 
     def list_filesystems(self) -> List[str]:
         names = [
@@ -1377,133 +1189,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         ]
         return sorted(set(names))
 
-    # ------------------------------ Public API ------------------------------ #
-    @functools.wraps(BaseGlobalFileManager.ask, updated=())
-    async def ask(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _requests_clarification: bool = False,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        response_format: Optional[Type[BaseModel]] = None,
-    ) -> SteerableToolHandle:
-        # Provide a compact inventory snapshot to the simulator
-        inventory = {
-            getattr(m.__class__, "__name__", "FileManager"): getattr(
-                m,
-                "list",
-                lambda: [],
-            )()
-            for m in self._managers
-        }
-        body = {
-            "action": "global.ask",
-            "request": text,
-            "filesystems": self.list_filesystems(),
-            "inventory": inventory,
-        }
-        instruction = build_simulated_method_prompt(
-            "global_ask",
-            json.dumps(body, indent=2),
-            parent_chat_context=_parent_chat_context,
-        )
-        handle = _SimulatedFileHandle(
-            self._llm,
-            instruction,
-            _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=_requests_clarification,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
-            response_format=response_format,
-        )
-        return handle
-
-    @functools.wraps(BaseGlobalFileManager.organize, updated=())
-    async def organize(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _requests_clarification: bool = False,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        response_format: Optional[Type[BaseModel]] = None,
-    ) -> SteerableToolHandle:
-        # Build a simple plan description and return a handle
-        plan = {
-            "action": "global.organize",
-            "request": text,
-            "filesystems": self.list_filesystems(),
-        }
-        instruction = build_simulated_method_prompt(
-            "global_organize",
-            json.dumps(plan, indent=2),
-            parent_chat_context=_parent_chat_context,
-        )
-        handle = _SimulatedFileHandle(
-            self._llm,
-            instruction,
-            _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=_requests_clarification,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
-            response_format=response_format,
-        )
-        return handle
-
-    # --------------------------------------------------------------------- #
-    # Simulation helpers                                                    #
-    # --------------------------------------------------------------------- #
-    def add_simulated_file(
-        self,
-        filename: str,
-        records: List[Dict[str, Any]],
-        metadata: Optional[Dict[str, Any]] = None,
-        full_text: Optional[str] = None,
-        description: Optional[str] = None,
-        status: str = "success",
-    ) -> None:
-        """Add a simulated file to the storage."""
-        self._files[filename] = {
-            "file_id": self._next_file_id,
-            "records": records,
-            "metadata": metadata or {},
-            "full_text": full_text or f"Simulated content for {filename}",
-            "description": description or f"Simulated file: {filename}",
-            "status": status,
-            "error": None,
-            "imported_at": "2024-01-01T00:00:00Z",
-        }
-        self._next_file_id += 1
-
-    def remove_simulated_file(self, filename: str) -> None:
-        """Remove a simulated file from storage."""
-        if filename in self._files:
-            del self._files[filename]
-
-    def clear_simulated_files(self) -> None:
-        """Clear all simulated files."""
-        self._files.clear()
-
     @functools.wraps(BaseGlobalFileManager.clear, updated=())
     def clear(self) -> None:  # type: ignore[override]
-        """Re-initialise the simulated manager and reset stateful LLM."""
-        type(self).__init__(
-            self,
-            description=getattr(
-                self,
-                "_description",
-                "nothing fixed, make up some imaginary scenario",
-            ),
-            log_events=getattr(self, "_log_events", False),
-            rolling_summary_in_prompts=getattr(
-                self,
-                "_rolling_summary_in_prompts",
-                True,
-            ),
-            simulation_guidance=getattr(self, "_simulation_guidance", None),
-        )
+        """Re-initialise the simulated manager."""
+        type(self).__init__(self, managers=self._managers)

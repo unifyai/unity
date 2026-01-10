@@ -26,11 +26,8 @@ from unity.file_manager.types.ingest import (
 )
 from unity.file_manager.filesystem_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.prompt_builders import (
-    build_file_manager_ask_prompt,
     build_file_manager_ask_about_file_prompt,
-    build_file_manager_organize_prompt,
 )
-from unity.common.business_context import BusinessContextPayload
 from unity.common.llm_helpers import (
     methods_to_tool_dict,
 )
@@ -171,26 +168,6 @@ class FileManager(BaseFileManager):
         self._BUILTIN_FIELDS: tuple[str, ...] = tuple(FileRecord.model_fields.keys())
 
         # Public tool dictionaries, mirroring other managers
-        # Ask/AskAboutFile tool surfaces (read-only). No ingest_files - this is read-only.
-        ask_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # Schema discovery helpers
-            self.list_columns,
-            self.tables_overview,
-            self.schema_explain,
-            # File info (combines filesystem + index + ingest identity)
-            self.file_info,
-            # Retrieval helpers
-            self.filter_files,
-            self.search_files,
-            self.reduce,
-            # Visualization
-            self.visualize,
-            # Inventory listing
-            self.list,
-            # Delegate to file-scoped Q&A when needed
-            self.ask_about_file,
-            include_class_name=False,
-        )
         # Multi-table tools (joins across per-file tables)
         ask_multi_table_tools: Dict[str, Callable] = methods_to_tool_dict(
             self.filter_join,
@@ -199,8 +176,6 @@ class FileManager(BaseFileManager):
             self.search_multi_join,
             include_class_name=False,
         )
-        self.add_tools("ask", ask_tools)
-        self.add_tools("ask.multi_table", ask_multi_table_tools)
         ask_about_file_tools: Dict[str, Callable] = methods_to_tool_dict(
             # Read-only helpers (no ingest_files - this is read-only)
             self.file_info,
@@ -216,17 +191,6 @@ class FileManager(BaseFileManager):
         )
         self.add_tools("ask_about_file", ask_about_file_tools)
         self.add_tools("ask_about_file.multi_table", ask_multi_table_tools)
-        # Organize is mutation-focused. It may call ask() to gather context,
-        # but should not receive direct read-only retrieval tools itself.
-        organize_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self.ask,
-            self.rename_file,
-            self.move_file,
-            self.delete_file,
-            self.sync,
-            include_class_name=False,
-        )
-        self.add_tools("organize", organize_tools)
 
     @functools.cached_property
     def _parser(self):
@@ -2641,18 +2605,6 @@ class FileManager(BaseFileManager):
         )
 
     @staticmethod
-    def _default_ask_tool_policy(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """
-        Prefer path-first targeting; avoid forcing broad discovery.
-        - If the user supplied an explicit path, allow immediate use of read-only tools.
-        - Do not require a first-step semantic search; keep the toolset on auto.
-        """
-        return ("auto", current_tools)
-
-    @staticmethod
     def _default_ask_about_file_tool_policy(
         step_index: int,
         current_tools: Dict[str, Any],
@@ -2662,22 +2614,6 @@ class FileManager(BaseFileManager):
         - If the user supplied an explicit path, allow immediate use of read-only tools.
         - Do not require a first-step semantic search; keep the toolset on auto.
         """
-        return ("auto", current_tools)
-
-    @staticmethod
-    def _default_organize_tool_policy(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """Require ask on the first step (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if (
-            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
-            and step_index < 1
-            and "ask" in current_tools
-        ):
-            return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
     # ---------- High-level importers (delegated to adapter) ---------------- #
@@ -2857,108 +2793,6 @@ class FileManager(BaseFileManager):
             )
         return self._adapter.save_file_to_downloads(file_path, contents)
 
-    # Filesystem-level Q&A
-    @functools.wraps(BaseFileManager.ask, updated=())
-    @manager_tool
-    @log_manager_call("FileManager", "ask", payload_key="question")
-    async def ask(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: Optional[Any] = None,
-        _clarification_down_q: Optional[Any] = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        business_payload: Optional[BusinessContextPayload] = None,
-        _call_id: Optional[str] = None,
-    ) -> SteerableToolHandle:  # type: ignore[override]
-        """
-        Ask a question about the filesystem, using read-only tools.
-
-        Parameters
-        ----------
-        text : str
-            The user's natural-language question.
-        _return_reasoning_steps : bool, default False
-            When True, wraps handle.result() to return (answer, messages).
-        _parent_chat_context : list[dict] | None
-            Optional chat lineage to prepend for context.
-        _clarification_up_q, _clarification_down_q : asyncio.Queue | None
-            If both provided, enables an interactive clarification tool.
-        rolling_summary_in_prompts : bool | None
-            Override whether to include rolling activity summaries in system prompts.
-        business_payload : BusinessContextPayload | None
-            Structured domain-specific context (role, rules, guidelines, hints)
-            injected via slot-filling pattern. Business role appears FIRST in prompt.
-        _call_id : str | None
-            Correlation ID for event logging.
-
-        Returns
-        -------
-        SteerableToolHandle
-            A handle controlling the interactive tool-use loop (read-only).
-        """
-        client = new_llm_client()
-        tools = dict(self.get_tools("ask"))
-
-        # Expose join/multi-join tools for cross-context retrieval
-        tools.update(dict(self.get_tools("ask.multi_table")))
-
-        if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="FileManager",
-                method="ask",
-                call_id=_call_id,
-            )
-
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-        system_msg = build_file_manager_ask_prompt(
-            tools=tools,
-            num_files=self._num_files(),
-            include_activity=include_activity,
-            business_payload=business_payload,
-        )
-        # TODO: REMOVE - Debug file dump for prompt inspection
-        open("system_msg.txt", "w").write(system_msg)
-        client.set_system_message(system_msg)
-        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
-        tool_policy_fn = (
-            None
-            if use_semantic_cache in ("read", "both")
-            else self._default_ask_tool_policy
-        )
-        handle = start_async_tool_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.ask",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=_parent_chat_context,
-            tool_policy=tool_policy_fn,
-            handle_cls=(
-                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
-            ),
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.ask",
-        )
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def _wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = _wrapped_result  # type: ignore[attr-defined]
-        return handle
-
     # File-specific Q&A
     @functools.wraps(BaseFileManager.ask_about_file, updated=())
     @manager_tool
@@ -3054,77 +2888,6 @@ class FileManager(BaseFileManager):
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.ask_about_file",
             response_format=response_format,
-        )
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def _wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = _wrapped_result  # type: ignore[attr-defined]
-        return handle
-
-    # Filesystem reorganization
-    @functools.wraps(BaseFileManager.organize, updated=())
-    @log_manager_call("FileManager", "organize", payload_key="text")
-    async def organize(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: Optional[Any] = None,
-        _clarification_down_q: Optional[Any] = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        _call_id: Optional[str] = None,
-    ) -> SteerableToolHandle:  # type: ignore[override]
-        """
-        Plan and execute safe reorganization operations (rename/move/delete) with guardrails.
-
-        Parameters
-        ----------
-        text : str
-            Natural-language request (e.g., "Move all PDFs to /docs").
-        _return_reasoning_steps, _parent_chat_context, _clarification_up_q, _clarification_down_q,
-        rolling_summary_in_prompts, _call_id
-            See ask().
-
-        Returns
-        -------
-        SteerableToolHandle
-            Interactive tool loop handle. Mutations are capability-guarded via the adapter.
-        """
-        client = new_llm_client()
-        tools = dict(self.get_tools("organize"))
-        if _clarification_up_q is not None and _clarification_down_q is not None:
-            add_clarification_tool_with_events(
-                tools,
-                _clarification_up_q,
-                _clarification_down_q,
-                manager="FileManager",
-                method="organize",
-                call_id=_call_id,
-            )
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-        system_msg = build_file_manager_organize_prompt(
-            tools=tools,
-            num_files=len(self.list()),
-            include_activity=include_activity,
-        )
-        client.set_system_message(system_msg)
-        handle = start_async_tool_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.organize",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=_parent_chat_context,
-            tool_policy=self._default_organize_tool_policy,
         )
         if _return_reasoning_steps:
             original_result = handle.result

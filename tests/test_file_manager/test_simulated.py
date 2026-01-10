@@ -39,32 +39,14 @@ def test_docstrings_match_base():
     from unity.file_manager.simulated import SimulatedFileManager
 
     assert (
-        BaseFileManager.ask.__doc__.strip() in SimulatedFileManager.ask.__doc__.strip()
-    ), ".ask doc-string was not copied correctly"
+        BaseFileManager.ask_about_file.__doc__.strip()
+        in SimulatedFileManager.ask_about_file.__doc__.strip()
+    ), ".ask_about_file doc-string was not copied correctly"
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 2.  Basic start-and-ask                                                    #
+# 2.  Basic ask_about_file                                                   #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_start_and_ask(simulated_file_manager):
-    fm = simulated_file_manager
-    # Add a sample file
-    fm.add_simulated_file(
-        "sample.txt",
-        records=[{"content": "Sample document content"}],
-        metadata={"mime_type": "text/plain"},
-        full_text="Sample document content for testing",
-        description="A sample document for testing purposes",
-    )
-
-    instruction = "Give a brief inventory overview of available files."
-    handle = await fm.ask(instruction)
-    answer = await handle.result()
-    assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
-
-
 @pytest.mark.asyncio
 @_handle_project
 async def test_ask_about_file(simulated_file_manager):
@@ -88,75 +70,8 @@ async def test_ask_about_file(simulated_file_manager):
     ), f"Judge deemed 'ask_about_file' incorrect. Verdict: {verdict}"
 
 
-@pytest.mark.asyncio
-@_handle_project
-async def test_organize(simulated_file_manager):
-    fm = simulated_file_manager
-    fm.add_simulated_file(
-        "docA.txt",
-        records=[{"content": "alpha"}],
-        full_text="alpha",
-        description="A",
-    )
-    fm.add_simulated_file(
-        "docB.txt",
-        records=[{"content": "beta"}],
-        full_text="beta",
-        description="B",
-    )
-    instruction = "Rename docA.txt to alpha_document.txt and delete docB.txt."
-    handle = await fm.organize(instruction)
-    answer = await handle.result()
-    assert isinstance(answer, str) and answer.strip()
-
-    # Ask LLM judge to verify the plausibility of the simulated response
-    verdict = await ask_judge(instruction, answer)
-    assert (
-        verdict.lower().strip().startswith("correct")
-    ), f"Judge deemed the operation incorrect. Verdict: {verdict}"
-
-
 # ────────────────────────────────────────────────────────────────────────────
-# 3.  Stateful memory – serial asks                                          #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_stateful_serial_asks(simulated_file_manager):
-    """
-    Two consecutive .ask() calls should share context.
-    """
-    fm = simulated_file_manager
-
-    # Add a file
-    file_content = "Project Alpha documentation with detailed specifications"
-    fm.add_simulated_file(
-        "project.txt",
-        records=[{"content": "Project Alpha documentation"}],
-        metadata={"project": "Alpha"},
-        full_text=file_content,
-        description="Documentation for Project Alpha",
-    )
-
-    # first question – ask for a single‐word theme
-    instruction1 = (
-        "Using one word only, what is the overall theme of our current files?"
-    )
-    h1 = await fm.ask(instruction1)
-    theme = (await h1.result()).strip()
-    assert theme, "Theme word should not be empty"
-
-    # follow-up question
-    instruction2 = "What single word did you just use to describe the theme?"
-    h2 = await fm.ask(instruction2)
-    ans2 = (await h2.result()).lower()
-
-    assert (
-        theme.lower() in ans2
-    ), f"LLM should recall the theme it produced earlier. Theme: '{theme}', Answer: '{ans2}'"
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 4.  Basic synchronous methods                                              #
+# 3.  Basic synchronous methods                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_synchronous_operations(simulated_file_manager):
@@ -206,11 +121,8 @@ async def test_synchronous_operations(simulated_file_manager):
     assert result["missing.txt"].status == "error"
 
 
-# Remaining tests intentionally create isolated instances or operate on handles.
-
-
 # ────────────────────────────────────────────────────────────────────────────
-# Steerable handle tests                                                     #
+# 4.  Steerable handle tests                                                 #
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -244,7 +156,7 @@ async def test_interject(monkeypatch, simulated_file_manager):
     )
 
     instruction = "Summarize the key points of the report.txt file."
-    handle = await fm.ask(instruction)
+    handle = await fm.ask_about_file("report.txt", instruction)
     await asyncio.sleep(0.05)
     reply = handle.interject("Focus on financial metrics.")
     assert _ack_ok(reply)
@@ -279,7 +191,10 @@ async def test_stop(simulated_file_manager):
         description="Large document for testing",
     )
 
-    handle = await fm.ask("Generate a detailed analysis of the large.txt file.")
+    handle = await fm.ask_about_file(
+        "large.txt",
+        "Generate a detailed analysis of the large.txt file.",
+    )
     await asyncio.sleep(0.05)
     handle.stop()
     await handle.result()
@@ -303,7 +218,8 @@ async def test_requests_clarification(simulated_file_manager):
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    handle = await fm.ask(
+    handle = await fm.ask_about_file(
+        "data.txt",
         "Please analyze 'data.txt' thoroughly.",
         _clarification_up_q=up_q,
         _clarification_down_q=down_q,
@@ -375,7 +291,10 @@ async def test_pause_and_resume(monkeypatch, simulated_file_manager):
         description="Complex test document",
     )
 
-    handle = await fm.ask("Perform a comprehensive analysis of complex.txt.")
+    handle = await fm.ask_about_file(
+        "complex.txt",
+        "Perform a comprehensive analysis of complex.txt.",
+    )
 
     # Pause the handle
     pause_msg = await handle.pause()
@@ -404,7 +323,7 @@ async def test_pause_and_resume(monkeypatch, simulated_file_manager):
 @_handle_project
 async def test_handle_ask(simulated_file_manager):
     """
-    The internal handle returned by SimulatedFileManager.ask exposes a
+    The internal handle returned by SimulatedFileManager.ask_about_file exposes a
     dynamic ask() method that should produce a nested handle whose result can
     be awaited independently of the parent.
     """
@@ -418,7 +337,7 @@ async def test_handle_ask(simulated_file_manager):
 
     # Start an initial ask to obtain the live handle
     instruction1 = "Summarize this business document about European expansion."
-    handle = await fm.ask(instruction1)
+    handle = await fm.ask_about_file("business.txt", instruction1)
 
     # Add extra context to ensure nested prompt includes it
     handle.interject("Focus on European market opportunities.")
@@ -480,7 +399,8 @@ async def test_reasoning_steps_toggle(simulated_file_manager):
 
     # Ask with reasoning steps
     instruction = "What are the key insights from analysis.txt?"
-    handle = await fm.ask(
+    handle = await fm.ask_about_file(
+        "analysis.txt",
         instruction,
         _return_reasoning_steps=True,
     )
@@ -498,7 +418,8 @@ async def test_reasoning_steps_toggle(simulated_file_manager):
     ), f"Judge deemed ask with reasoning incorrect. Verdict: {verdict}"
 
     # Ask without reasoning steps
-    handle2 = await fm.ask(
+    handle2 = await fm.ask_about_file(
+        "analysis.txt",
         instruction,
         _return_reasoning_steps=False,
     )
@@ -556,74 +477,9 @@ def simulated_global_file_manager():
     yield gfm
 
 
-def test_global_docstrings_match_base():
-    from unity.file_manager.base import BaseGlobalFileManager
-    from unity.file_manager.simulated import SimulatedGlobalFileManager
-
-    assert (
-        BaseGlobalFileManager.ask.__doc__.strip()
-        in SimulatedGlobalFileManager.ask.__doc__.strip()
-    ), ".ask doc-string was not copied correctly for GlobalFileManager"
-
-    assert (
-        BaseGlobalFileManager.organize.__doc__.strip()
-        in SimulatedGlobalFileManager.organize.__doc__.strip()
-    ), ".organize doc-string was not copied correctly for GlobalFileManager"
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_global_start_and_ask(simulated_global_file_manager):
+def test_global_list_filesystems(simulated_global_file_manager):
+    """Test that list_filesystems returns the expected manager class names."""
     gfm = simulated_global_file_manager
-    handle = await gfm.ask("List available filesystems and provide a brief overview.")
-    answer = await handle.result()
-    assert isinstance(answer, str) and answer.strip()
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_global_requests_clarification(simulated_global_file_manager):
-    gfm = simulated_global_file_manager
-    up_q: asyncio.Queue[str] = asyncio.Queue()
-    down_q: asyncio.Queue[str] = asyncio.Queue()
-
-    handle = await gfm.ask(
-        "Please summarise the global inventory.",
-        _clarification_up_q=up_q,
-        _clarification_down_q=down_q,
-        _requests_clarification=True,
-    )
-
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
-    assert "clarify" in question.lower()
-    await down_q.put("Focus on high-level counts only.")
-    answer = await handle.result()
-    assert isinstance(answer, str) and answer.strip()
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_global_pause_and_resume(simulated_global_file_manager):
-    gfm = simulated_global_file_manager
-    handle = await gfm.ask("Provide an overview across all managers.")
-
-    pause_msg = await handle.pause()
-    assert "pause" in pause_msg.lower() or "paused" in pause_msg.lower()
-
-    res_task = asyncio.create_task(handle.result())
-    await _assert_blocks_while_paused(res_task)
-
-    resume_msg = await handle.resume()
-    assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
-
-    answer = await asyncio.wait_for(res_task, timeout=60)
-    assert isinstance(answer, str) and answer.strip()
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_global_organize_basic(simulated_global_file_manager):
-    gfm = simulated_global_file_manager
-    handle = await gfm.organize("Propose a re-organisation plan across filesystems.")
-    answer = await handle.result()
-    assert isinstance(answer, str) and answer.strip()
+    filesystems = gfm.list_filesystems()
+    assert isinstance(filesystems, list)
+    assert "SimulatedFileManager" in filesystems
