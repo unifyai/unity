@@ -44,7 +44,23 @@ clone_repo() {
 
     echo "Cloning $repo..."
 
-    # Try gh CLI first (uses Cursor's GitHub auth)
+    # Determine repo-specific token (matches GitHub Actions secrets)
+    local repo_token=""
+    case "$repo" in
+        unify)   repo_token="${UNIFY_CLONE_TOKEN:-}" ;;
+        unillm)  repo_token="${UNILLM_CLONE_TOKEN:-}" ;;
+    esac
+
+    # Try repo-specific token first (same as GitHub Actions)
+    if [[ -n "$repo_token" ]]; then
+        if git clone --branch "$SIBLING_BRANCH" --depth 1 \
+            "https://x-access-token:${repo_token}@github.com/unifyai/$repo.git" "$target" 2>/dev/null; then
+            echo "✓ Cloned $repo via repo-specific token"
+            return 0
+        fi
+    fi
+
+    # Try gh CLI (uses Cursor's GitHub auth)
     if command -v gh >/dev/null 2>&1; then
         if gh repo clone "unifyai/$repo" "$target" -- --branch "$SIBLING_BRANCH" --depth 1 2>/dev/null; then
             echo "✓ Cloned $repo via gh CLI"
@@ -52,7 +68,7 @@ clone_repo() {
         fi
     fi
 
-    # Fall back to git with token if available
+    # Fall back to generic GH_TOKEN/GITHUB_TOKEN
     if [[ -n "${GH_TOKEN:-}" ]] || [[ -n "${GITHUB_TOKEN:-}" ]]; then
         local token="${GH_TOKEN:-$GITHUB_TOKEN}"
         if git clone --branch "$SIBLING_BRANCH" --depth 1 \
@@ -70,7 +86,8 @@ clone_repo() {
     fi
 
     echo "ERROR: Failed to clone $repo"
-    echo "Make sure you have GitHub authentication configured in Cursor Cloud."
+    echo "Add UNIFY_CLONE_TOKEN and UNILLM_CLONE_TOKEN to Cursor Cloud environment secrets."
+    echo "(Use the same tokens as your GitHub Actions secrets)"
     return 1
 }
 
