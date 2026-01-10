@@ -2405,11 +2405,11 @@ class FunctionManager(BaseFunctionManager):
         """Inject transitive dependencies into ``namespace`` (breadth-first)."""
         from collections import deque
 
-        calls = func_data.get("calls") or []
-        if not isinstance(calls, list):
+        deps = func_data.get("depends_on") or []
+        if not isinstance(deps, list):
             return
 
-        q = deque([c for c in calls if isinstance(c, str) and c])
+        q = deque([d for d in deps if isinstance(d, str) and d])
         while q:
             dep_name = q.popleft()
             if dep_name in visited:
@@ -2437,7 +2437,7 @@ class FunctionManager(BaseFunctionManager):
                 namespace=namespace,
             )
 
-            nested = dep_data.get("calls") or []
+            nested = dep_data.get("depends_on") or []
             if isinstance(nested, list):
                 for child in nested:
                     if isinstance(child, str) and child and child not in visited:
