@@ -1,8 +1,8 @@
 """
-Unit tests for MockBrowserBackend.
+Unit tests for MockComputerBackend.
 
 These tests verify that the mock backend:
-1. Implements all BrowserBackend abstract methods
+1. Implements all ComputerBackend abstract methods
 2. Returns configurable canned responses
 3. Implements additional methods used by tests (barrier, interrupt_current_action, etc.)
 4. Works without any external services
@@ -11,25 +11,28 @@ These tests verify that the mock backend:
 import pytest
 from pydantic import BaseModel
 
-from unity.function_manager.browser_backends import MockBrowserBackend, BrowserBackend
-from unity.function_manager.browser import Browser
+from unity.function_manager.computer_backends import (
+    MockComputerBackend,
+    ComputerBackend,
+)
+from unity.function_manager.computer import Computer
 
 
-class TestMockBrowserBackendInterface:
-    """Verify MockBrowserBackend implements the BrowserBackend interface."""
+class TestMockComputerBackendInterface:
+    """Verify MockComputerBackend implements the ComputerBackend interface."""
 
-    def test_is_browser_backend(self):
-        """MockBrowserBackend should be a subclass of BrowserBackend."""
-        assert issubclass(MockBrowserBackend, BrowserBackend)
+    def test_is_computer_backend(self):
+        """MockComputerBackend should be a subclass of ComputerBackend."""
+        assert issubclass(MockComputerBackend, ComputerBackend)
 
     def test_can_instantiate_without_args(self):
         """Should instantiate without any arguments."""
-        backend = MockBrowserBackend()
+        backend = MockComputerBackend()
         assert backend is not None
 
     def test_can_instantiate_with_kwargs(self):
         """Should accept configuration kwargs."""
-        backend = MockBrowserBackend(
+        backend = MockComputerBackend(
             url="https://test.com",
             screenshot="test_screenshot",
             act_response="custom_act",
@@ -41,12 +44,12 @@ class TestMockBrowserBackendInterface:
         assert backend._observe_response == "custom_observe"
 
 
-class TestMockBrowserBackendMethods:
-    """Verify all BrowserBackend methods work correctly."""
+class TestMockComputerBackendMethods:
+    """Verify all ComputerBackend methods work correctly."""
 
     @pytest.fixture
     def backend(self):
-        return MockBrowserBackend(
+        return MockComputerBackend(
             url="https://example.com",
             screenshot="base64_screenshot",
             act_response="done",
@@ -122,12 +125,12 @@ class TestMockBrowserBackendMethods:
         backend.stop()  # Should not raise
 
 
-class TestMockBrowserBackendExtras:
+class TestMockComputerBackendExtras:
     """Verify additional methods used by tests."""
 
     @pytest.fixture
     def backend(self):
-        return MockBrowserBackend()
+        return MockComputerBackend()
 
     @pytest.mark.asyncio
     async def test_barrier(self, backend):
@@ -161,24 +164,24 @@ class TestMockBrowserBackendExtras:
         assert backend.current_seq == 3
 
 
-class TestBrowserWithMockMode:
-    """Verify Browser class works with mode='mock'."""
+class TestComputerWithMockMode:
+    """Verify Computer class works with mode='mock'."""
 
-    def test_browser_mock_mode(self):
-        """Browser should accept mode='mock'."""
-        browser = Browser(mode="mock")
-        assert isinstance(browser.backend, MockBrowserBackend)
+    def test_computer_mock_mode(self):
+        """Computer should accept mode='mock'."""
+        computer = Computer(mode="mock")
+        assert isinstance(computer.backend, MockComputerBackend)
 
     @pytest.mark.asyncio
-    async def test_browser_mock_mode_act(self):
-        """Browser with mock mode should delegate to MockBrowserBackend."""
-        browser = Browser(mode="mock")
-        result = await browser.act("Click button")
+    async def test_computer_mock_mode_act(self):
+        """Computer with mock mode should delegate to MockComputerBackend."""
+        computer = Computer(mode="mock")
+        result = await computer.act("Click button")
         assert result == "done"
 
     @pytest.mark.asyncio
-    async def test_browser_mock_mode_get_url(self):
-        """Browser with mock mode should return mock URL."""
-        browser = Browser(mode="mock")
-        url = await browser.get_current_url()
+    async def test_computer_mock_mode_get_url(self):
+        """Computer with mock mode should return mock URL."""
+        computer = Computer(mode="mock")
+        url = await computer.get_current_url()
         assert url == "https://mock.example.com"

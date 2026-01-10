@@ -543,7 +543,7 @@ class CodeActActor(BaseActor):
         self,
         session_connect_url: Optional[str] = None,
         headless: bool = False,
-        browser_mode: str = "magnitude",
+        computer_mode: str = "magnitude",
         timeout: float = 1000,
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
@@ -569,7 +569,7 @@ class CodeActActor(BaseActor):
             function_manager=function_manager,
             session_connect_url=session_connect_url,
             headless=headless,
-            browser_mode=browser_mode,
+            computer_mode=computer_mode,
             agent_mode=agent_mode,
             agent_server_url=agent_server_url,
         )

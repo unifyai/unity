@@ -941,7 +941,7 @@ async def test_actor_clarification_bubbles_up_and_is_answered() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
@@ -1012,7 +1012,7 @@ async def test_broadcast_interject_reaches_concurrent_handles() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
@@ -1085,7 +1085,7 @@ async def test_stop_cancels_watchers_without_deadlock() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
@@ -1141,7 +1141,7 @@ async def test_verification_captures_pane_events() -> None:
 
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         function_manager=MagicMock(search_functions=MagicMock(return_value=[])),
         environments=[StateManagerEnvironment(primitives)],
@@ -1212,7 +1212,7 @@ async def actor_with_mocked_browser():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1254,7 +1254,7 @@ async def test_pane_registers_handles_for_cross_manager_join():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1339,7 +1339,7 @@ async def test_verification_captures_pane_events_for_contact_mutation(
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1429,7 +1429,7 @@ async def test_concurrent_handles_broadcast_interject_fans_out():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1594,7 +1594,7 @@ async def test_actor_interject_broadcast_routes_to_inflight_handles():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -1715,7 +1715,7 @@ async def test_actor_interject_targeted_routes_to_specific_handle():
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )

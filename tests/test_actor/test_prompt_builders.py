@@ -1149,7 +1149,7 @@ async def test_actor_captures_and_passes_call_stack_and_scoped_context_to_dynami
     import unity.actor.prompt_builders as prompt_builders
 
     # Create actor with mock browser (no external services needed).
-    actor = HierarchicalActor(headless=True, browser_mode="mock", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # We'll patch the prompt builder to record the actor-supplied snapshots, and patch
     # `llm_call` to stop execution after the prompt is built (so we don't do any real LLM work).
@@ -1256,7 +1256,7 @@ async def test_actor_captures_tool_calls_in_idempotency_cache_and_passes_cache_t
     from unity.actor.hierarchical_actor import HierarchicalActor
     import unity.actor.prompt_builders as prompt_builders
 
-    actor = HierarchicalActor(headless=True, browser_mode="mock", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
     called = asyncio.Event()
@@ -1357,7 +1357,7 @@ async def test_actor_passes_primitives_handle_history_into_verification_prompt(
     import unity.actor.hierarchical_actor as hierarchical_actor_mod
     import unity.actor.prompt_builders as prompt_builders
 
-    actor = HierarchicalActor(headless=True, browser_mode="mock", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Patch the underlying primitives manager to return a handle that exposes `get_history()`.
     primitives_env = actor.environments.get("primitives")
@@ -1491,7 +1491,7 @@ async def test_actor_passes_primitives_cache_and_history_into_interjection_promp
     import unity.actor.hierarchical_actor as hierarchical_actor_mod
     import unity.actor.prompt_builders as prompt_builders
 
-    actor = HierarchicalActor(headless=True, browser_mode="mock", connect_now=False)
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     primitives_env = actor.environments.get("primitives")
     assert (

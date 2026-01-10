@@ -272,7 +272,7 @@ class SingleFunctionActor(BaseActor):
         computer_primitives: Optional[ComputerPrimitives] = None,
         function_manager: Optional["FunctionManager"] = None,
         headless: bool = True,
-        browser_mode: str = "magnitude",
+        computer_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
     ):
@@ -284,9 +284,9 @@ class SingleFunctionActor(BaseActor):
                            one will be created with the given parameters.
             function_manager: Optional FunctionManager instance. If not provided,
                             uses the singleton.
-            headless: Whether to run browser in headless mode.
-            browser_mode: Browser backend mode ("magnitude" or "legacy").
-            agent_mode: Agent mode for ComputerPrimitives.
+            headless: Whether to run in headless mode.
+            computer_mode: Computer backend mode ("magnitude" or "mock").
+            agent_mode: Agent mode for ComputerPrimitives ("browser" or "desktop").
             agent_server_url: URL for the agent server.
         """
         if computer_primitives is not None:
@@ -294,7 +294,7 @@ class SingleFunctionActor(BaseActor):
         else:
             self._computer_primitives = ComputerPrimitives(
                 headless=headless,
-                browser_mode=browser_mode,
+                computer_mode=computer_mode,
                 agent_mode=agent_mode,
                 agent_server_url=agent_server_url,
             )

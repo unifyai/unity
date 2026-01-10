@@ -19,25 +19,28 @@ from unity.settings import SETTINGS
 logger = logging.getLogger("websockets")
 
 
-class BrowserAgentError(Exception):
+class ComputerAgentError(Exception):
     def __init__(self, error_type: str, message: str):
         self.error_type = error_type
         self.message = message
         super().__init__(f"[{error_type}] {message}")
 
 
-class BrowserBackend(ABC):
+class ComputerBackend(ABC):
     """
-    Abstract Base Class defining the interface for any browser backend.
+    Abstract Base Class defining the interface for any computer use backend.
+
+    Supports both browser automation (agent_mode="browser") and general
+    desktop/computer control (agent_mode="desktop") via vision-based agents.
     """
 
     @abstractmethod
     async def act(self, instruction: str) -> str:
-        """Perform an action in the browser."""
+        """Perform an action on the screen (browser or desktop)."""
 
     @abstractmethod
     async def observe(self, query: str, response_format: Any = str) -> Any:
-        """Observe the state of the browser page."""
+        """Observe the state of the current page/screen."""
 
     @abstractmethod
     async def query(self, query: str, response_format: Any = str) -> Any:
@@ -49,11 +52,11 @@ class BrowserBackend(ABC):
 
     @abstractmethod
     async def get_current_url(self) -> str:
-        """Get the current URL of the browser."""
+        """Get the current URL (browser mode) or active window info (desktop mode)."""
 
     @abstractmethod
     async def navigate(self, url: str) -> str:
-        """Navigate the browser to a specific URL."""
+        """Navigate to a specific URL."""
 
     @abstractmethod
     async def get_links(
@@ -73,24 +76,24 @@ class BrowserBackend(ABC):
         """Cleanly shut down the backend."""
 
 
-class MockBrowserBackend(BrowserBackend):
+class MockComputerBackend(ComputerBackend):
     """
     A lightweight mock backend for testing Actor logic without external services.
 
     This backend requires no Redis, no Playwright, no Magnitude service. It returns
     configurable canned responses and is designed for testing Actor logic without
-    requiring external browser services.
+    requiring external services.
 
-    The mock also implements the additional methods that MagnitudeBrowserBackend
+    The mock also implements the additional methods that MagnitudeBackend
     provides (barrier, interrupt_current_action, clear_pending_commands) so tests
     can use it without modification.
 
     Usage:
         # Basic usage - returns default canned responses
-        backend = MockBrowserBackend()
+        backend = MockComputerBackend()
 
         # Configured responses
-        backend = MockBrowserBackend(
+        backend = MockComputerBackend(
             url="https://example.com",
             screenshot="base64_encoded_screenshot",
             act_response="done",
@@ -195,7 +198,7 @@ class MockBrowserBackend(BrowserBackend):
         """No-op for mock backend."""
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Additional methods from MagnitudeBrowserBackend that tests may use
+    # Additional methods from MagnitudeBackend that tests may use
     # ─────────────────────────────────────────────────────────────────────────
 
     @property
@@ -207,7 +210,7 @@ class MockBrowserBackend(BrowserBackend):
         """
         No-op barrier for mock backend.
 
-        In MagnitudeBrowserBackend this waits for commands to complete.
+        In MagnitudeBackend this waits for commands to complete.
         In the mock, all commands complete instantly, so this is a no-op.
         """
 
@@ -215,7 +218,7 @@ class MockBrowserBackend(BrowserBackend):
         """
         No-op interrupt for mock backend.
 
-        In MagnitudeBrowserBackend this interrupts the agent's action loop.
+        In MagnitudeBackend this interrupts the agent's action loop.
         In the mock, there's nothing to interrupt.
         """
 
@@ -223,12 +226,12 @@ class MockBrowserBackend(BrowserBackend):
         """
         No-op clear for mock backend.
 
-        In MagnitudeBrowserBackend this removes queued commands.
+        In MagnitudeBackend this removes queued commands.
         In the mock, there are no queued commands.
         """
 
 
-class MagnitudeBrowserBackend(BrowserBackend):
+class MagnitudeBackend(ComputerBackend):
     _agent_base_url = "http://localhost:3000"
     _process = None  # Keep for process management if needed
 
@@ -261,7 +264,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         self._current_processing_seq: Optional[int] = None
 
         # Keep the simpler initialization from HEAD but add logging support
-        MagnitudeBrowserBackend._agent_base_url = agent_server_url
+        MagnitudeBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
 
         # Session ID for this backend instance
@@ -301,7 +304,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._async_initialized = False
 
         except Exception as e:
-            logger.info(f"❌ Failed to initialize MagnitudeBrowserBackend: {e}")
+            logger.info(f"❌ Failed to initialize MagnitudeBackend: {e}")
             self.stop()
             raise
 
@@ -320,7 +323,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         else:
             self.stop()
             raise RuntimeError(
-                f"Magnitude BrowserAgent failed to become ready within 30 seconds on {self.agent_base_url}",
+                f"Magnitude agent failed to become ready within 30 seconds on {self.agent_base_url}",
             )
 
     async def _ensure_async_initialized(self):
@@ -519,7 +522,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         endpoint: str,
         payload: dict | None = None,
     ) -> Any:
-        url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
+        url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
 
         if payload is None:
             payload = {}
@@ -557,9 +560,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                                 message = error_data.get("message", "No error message.")
                                 if error_type == "misalignment":
                                     raise ReplanFromParentException(message)
-                                raise BrowserAgentError(error_type, message)
+                                raise ComputerAgentError(error_type, message)
                             except Exception as e:
-                                raise BrowserAgentError(
+                                raise ComputerAgentError(
                                     "service_error",
                                     f"Server error: {resp.status} - {await resp.text()}",
                                 ) from e
@@ -577,7 +580,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         payload: dict | None = None,
     ) -> Any:
         try:
-            url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
+            url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
             auth_key = SESSION_DETAILS.unify_key
             assistant_email = SESSION_DETAILS.assistant.email
             headers = {
@@ -846,14 +849,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
         override_cache: bool = False,
     ) -> Any:
         """
-        Executes a high-level browser task using the Magnitude BrowserAgent.
+        Executes a high-level computer task using the Magnitude agent.
 
         This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page.
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
             wait (bool): If True (default), the function will block and wait for the action to
-                        complete in the browser before returning. If False,
+                        complete before returning. If False,
                         the command is added to a queue for background execution, and
                         the function returns immediately.
             context (dict): Internal metadata for command tracking.
@@ -865,7 +868,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         This is ideal for sequences of actions where the plan doesn't need immediate feedback.
         ```python
         # The plan queues up all actions and continues its own execution
-        # without waiting for the browser to finish each one.
+        # without waiting for the agent to finish each one.
         await computer_primitives.act("Type 'testuser' into the username field", wait=False)
         await computer_primitives.act("Type 'password123' into the password field", wait=False)
         await computer_primitives.act("Click the 'Login' button", wait=False)
@@ -928,7 +931,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             await self._request("POST", "/interrupt_action")
         except Exception as e:
             logger.info(
-                f"⚠️ Warning: Failed to send interrupt request. The browser action may continue in the background. Error: {e}",
+                f"⚠️ Warning: Failed to send interrupt request. The action may continue in the background. Error: {e}",
             )
 
     async def observe(
@@ -940,7 +943,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         bypass_dom_processing: bool = False,
     ) -> Any:
         """
-        Extracts structured information from the current page using the Magnitude BrowserAgent.
+        Extracts structured information from the current page/screen using the Magnitude agent.
 
         This is your primary tool for perception. The agent uses a vision-language model to
         analyze the page, so its success depends entirely on the quality and clarity of your `query`.
@@ -1170,7 +1173,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         return await self._request("POST", "/content", {"format": format})
 
     async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
-        """Navigates the browser to a given URL."""
+        """Navigates to a given URL."""
         await self._ensure_async_initialized()
         logger.info(f"🐍 PYTHON: Navigating to URL: {url}")
 
@@ -1188,7 +1191,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             try:
                 response = await self._request("POST", "/nav", {"url": url})
                 return response.get("status", "success")
-            except BrowserAgentError as e:
+            except ComputerAgentError as e:
                 if "Target page" in str(e) and attempt < max_retries - 1:
                     logger.info(
                         f"⚠️ Navigation failed due to closed page, retrying (attempt {attempt + 1}/{max_retries})...",
@@ -1219,16 +1222,16 @@ class MagnitudeBrowserBackend(BrowserBackend):
             logger.info(f"Warning: Failed to send stop request: {e}")
 
         # If the backend started the process, terminate it
-        if MagnitudeBrowserBackend._process:
+        if MagnitudeBackend._process:
             logger.info(
-                f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
+                f"🛑 Stopping Magnitude agent service (PID: {MagnitudeBackend._process.pid})...",
             )
-            MagnitudeBrowserBackend._process.terminate()
+            MagnitudeBackend._process.terminate()
             try:
-                MagnitudeBrowserBackend._process.wait(timeout=5)
+                MagnitudeBackend._process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                MagnitudeBrowserBackend._process.kill()
-            MagnitudeBrowserBackend._process = None
+                MagnitudeBackend._process.kill()
+            MagnitudeBackend._process = None
 
     async def await_sequence_logs(self, seq: int) -> list[str]:
         """

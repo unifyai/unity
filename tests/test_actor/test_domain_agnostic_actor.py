@@ -290,7 +290,7 @@ async def test_pure_state_manager_task_schedules_reminder_without_browser():
     # Create Actor with ONLY StateManagerEnvironment (no browser)
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -397,7 +397,7 @@ async def test_plan_sanitizer_instruments_primitives_tool_calls_with_checkpoints
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
         environments=[StateManagerEnvironment(primitives)],
     )
@@ -515,7 +515,7 @@ async def test_mixed_modality_task_searches_web_and_updates_contacts():
     # Create Actor with default environments (browser + state managers)
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value="Navigated")
@@ -662,7 +662,7 @@ async def test_pure_logic_task_calculates_average_without_tools():
     # Create Actor with default environments (to prove it works even when tools available)
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
     )
 
@@ -798,7 +798,7 @@ async def test_live_handle_management_tracks_steerable_primitives():
     # Create Actor with default environments
     actor = HierarchicalActor(
         headless=True,
-        browser_mode="mock",
+        computer_mode="mock",
         connect_now=False,
     )
 
