@@ -767,7 +767,7 @@ class FunctionManager(BaseFunctionManager):
 
     This separation ensures:
     - User function IDs are stable (adding/removing primitives doesn't affect them)
-    - Primitive IDs are consistent across all users (based on PRIMITIVE_SOURCES order)
+    - Primitive IDs are consistent across all users (hash-based stable IDs)
     - No ID collisions between the two namespaces
     """
 
@@ -3990,7 +3990,7 @@ class FunctionManager(BaseFunctionManager):
                 }
             }
         """
-        from .primitives import PRIMITIVE_SOURCES, MANAGER_METADATA
+        from .primitives import get_primitive_sources, MANAGER_METADATA
 
         result: Dict[str, Dict[str, Any]] = {"managers": {}}
 
@@ -4007,9 +4007,9 @@ class FunctionManager(BaseFunctionManager):
             "ComputerPrimitives": "computer",
         }
 
-        # Collect methods from PRIMITIVE_SOURCES
-        for class_path, method_names in PRIMITIVE_SOURCES:
-            class_name = class_path.rsplit(".", 1)[-1]
+        # Collect methods from primitive sources
+        for cls, method_names in get_primitive_sources():
+            class_name = cls.__name__
             manager_name = class_to_manager.get(class_name)
             if not manager_name:
                 continue
@@ -4018,43 +4018,34 @@ class FunctionManager(BaseFunctionManager):
             metadata = MANAGER_METADATA.get(manager_name, {})
             description = metadata.get("description", "")
 
-            # Get class and extract method signatures
-            try:
-                module_path, cls_name = class_path.rsplit(".", 1)
-                module = __import__(module_path, fromlist=[cls_name])
-                cls = getattr(module, cls_name)
+            # Extract method signatures
+            methods_info: Dict[str, Dict[str, str]] = {}
+            for method_name in method_names:
+                method = getattr(cls, method_name, None)
+                if method is None:
+                    continue
 
-                methods_info: Dict[str, Dict[str, str]] = {}
-                for method_name in method_names:
-                    method = getattr(cls, method_name, None)
-                    if method is None:
-                        continue
+                # Unwrap functools.wraps
+                fn = method
+                while hasattr(fn, "__wrapped__"):
+                    fn = fn.__wrapped__
 
-                    # Unwrap functools.wraps
-                    fn = method
-                    while hasattr(fn, "__wrapped__"):
-                        fn = fn.__wrapped__
+                try:
+                    sig = str(inspect.signature(fn))
+                except (ValueError, TypeError):
+                    sig = "(...)"
 
-                    try:
-                        sig = str(inspect.signature(fn))
-                    except (ValueError, TypeError):
-                        sig = "(...)"
+                docstring = inspect.getdoc(fn) or ""
 
-                    docstring = inspect.getdoc(fn) or ""
-
-                    methods_info[method_name] = {
-                        "signature": sig,
-                        "docstring": docstring,
-                    }
-
-                result["managers"][manager_name] = {
-                    "description": description,
-                    "methods": methods_info,
+                methods_info[method_name] = {
+                    "signature": sig,
+                    "docstring": docstring,
                 }
 
-            except Exception as e:
-                logger.debug(f"Could not introspect {class_path}: {e}")
-                continue
+            result["managers"][manager_name] = {
+                "description": description,
+                "methods": methods_info,
+            }
 
         return result
 

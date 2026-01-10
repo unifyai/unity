@@ -5,7 +5,7 @@ Tests the primitives registry, sync mechanism, and semantic search
 that includes both user-defined functions and action primitives.
 
 Primitives are stored in a separate context (Functions/Primitives) with
-stable explicit function_id values, while user-defined functions are in
+stable hash-based function_id values, while user-defined functions are in
 Functions/Compositional with auto-incrementing IDs.
 """
 
@@ -15,6 +15,7 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import (
     collect_primitives,
     compute_primitives_hash,
+    get_primitive_sources,
 )
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
@@ -63,23 +64,21 @@ def function_manager_factory():
 
 
 def test_collect_primitives_returns_expected_methods():
-    """collect_primitives() should return metadata for registered methods."""
+    """collect_primitives() should return metadata for all auto-discovered methods."""
     primitives = collect_primitives()
 
     # Should have collected at least some primitives
     assert len(primitives) > 0
 
-    # Check that expected primitives are present
-    # These are from the PRIMITIVE_SOURCES registry
-    expected_names = [
-        "ContactManager.ask",
-        "TaskScheduler.execute",
-        # FileManager primitives
-        "FileManager.ask",
-        "FileManager.reduce",
-    ]
-    for name in expected_names:
-        assert name in primitives, f"Expected primitive '{name}' not found"
+    # Verify primitives match what get_primitive_sources returns
+    # (i.e., the auto-discovery is working correctly)
+    for cls, method_names in get_primitive_sources():
+        class_name = cls.__name__
+        for method_name in method_names:
+            qualified_name = f"{class_name}.{method_name}"
+            assert (
+                qualified_name in primitives
+            ), f"Expected auto-discovered primitive '{qualified_name}' not found"
 
 
 def test_collect_primitives_has_required_fields():
@@ -100,21 +99,24 @@ def test_collect_primitives_has_required_fields():
 
 
 def test_collect_primitives_has_stable_ids():
-    """Primitive function_ids should be stable based on PRIMITIVE_SOURCES order."""
+    """Primitive function_ids should be stable hash-based IDs."""
     primitives = collect_primitives()
 
-    # Verify IDs are sequential and start at 0
-    ids = sorted([p["function_id"] for p in primitives.values()])
-    assert ids[0] == 0, "First primitive ID should be 0"
-
     # Verify no duplicate IDs
+    ids = [p["function_id"] for p in primitives.values()]
     assert len(ids) == len(set(ids)), "Primitive IDs should be unique"
 
-    # Verify specific primitives have expected IDs based on PRIMITIVE_SOURCES order
-    # ContactManager.ask should be ID 0 (first method of first class)
-    # ContactManager.update should be ID 1 (second method of first class)
-    assert primitives["ContactManager.ask"]["function_id"] == 0
-    assert primitives["ContactManager.update"]["function_id"] == 1
+    # Verify IDs are deterministic (calling twice gives same IDs)
+    primitives2 = collect_primitives()
+    for name, data in primitives.items():
+        assert (
+            primitives2[name]["function_id"] == data["function_id"]
+        ), f"ID for '{name}' should be stable across calls"
+
+    # Verify IDs are non-negative integers (hash-based)
+    for name, data in primitives.items():
+        assert isinstance(data["function_id"], int)
+        assert data["function_id"] >= 0
 
 
 def test_collect_primitives_has_docstrings():
@@ -158,16 +160,23 @@ def test_compute_primitives_hash_changes_on_modification():
 
 
 def test_collect_primitives_includes_file_manager():
-    """FileManager primitives should be collected with correct methods."""
+    """FileManager primitives should be collected from auto-discovery."""
     primitives = collect_primitives()
 
     file_primitives = [n for n in primitives if n.startswith("FileManager.")]
     assert len(file_primitives) >= 5, "Expected at least 5 FileManager primitives"
 
-    expected_methods = ["ask", "ask_about_file", "reduce", "filter_files", "visualize"]
-    for method in expected_methods:
-        name = f"FileManager.{method}"
-        assert name in primitives, f"Expected {name} in primitives"
+    # Verify that the auto-discovered methods match what's in primitives
+    from unity.file_manager.managers.file_manager import FileManager
+
+    for cls, method_names in get_primitive_sources():
+        if cls is FileManager:
+            for method_name in method_names:
+                name = f"FileManager.{method_name}"
+                assert (
+                    name in primitives
+                ), f"Expected auto-discovered {name} in primitives"
+            break
 
 
 # ────────────────────────────────────────────────────────────────────────────
