@@ -265,11 +265,10 @@ async def test_inject_venv_function_proxies(
     # Create a venv and add a function to it
     venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
 
-    # Add the function with venv_id
+    # Add the function and associate it with the venv
     fm.add_functions(implementations=[SIMPLE_VENV_FUNCTION])
-
-    # Update the function to have the venv_id
-    fm.set_function_venv(function_name="simple_add", venv_id=venv_id)
+    func = fm.search_functions(filter="name == 'simple_add'", limit=1)[0]
+    fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Create a mock actor and plan
     with patch.object(
@@ -313,11 +312,10 @@ async def test_inject_library_functions_skips_venv_functions(
     # Create a venv and add a venv function
     venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
 
-    # Add both functions
+    # Add both functions and associate the venv function with the venv
     fm.add_functions(implementations=[SIMPLE_VENV_FUNCTION, NORMAL_ADD_FUNCTION])
-
-    # Set the venv_id for the venv function
-    fm.set_function_venv(function_name="simple_add", venv_id=venv_id)
+    func = fm.search_functions(filter="name == 'simple_add'", limit=1)[0]
+    fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Create a mock actor
     with patch.object(
@@ -368,7 +366,8 @@ async def test_venv_functions_listed_in_search(function_manager_factory):
 
     venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
     fm.add_functions(implementations=[VENV_FUNC_IMPL])
-    fm.set_function_venv(function_name="venv_func", venv_id=venv_id)
+    func = fm.search_functions(filter="name == 'venv_func'", limit=1)[0]
+    fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Search for venv functions specifically
     venv_functions = fm.search_functions(filter="venv_id != None", limit=100)
@@ -402,7 +401,8 @@ async def test_proxy_call_with_mock_execute_in_venv(
 
     venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
     fm.add_functions(implementations=[MULTIPLY_IMPL])
-    fm.set_function_venv(function_name="multiply", venv_id=venv_id)
+    func = fm.search_functions(filter="name == 'multiply'", limit=1)[0]
+    fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Create a mock plan
     mock_plan = MagicMock()
