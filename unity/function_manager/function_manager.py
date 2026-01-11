@@ -1141,6 +1141,12 @@ class FunctionManager(BaseFunctionManager):
                 # Non-fatal – tests without FileManager still pass
                 self._functions_dir = None
 
+        # ------------------------------------------------------------------ #
+        #  In-process session state (for stateful/read_only modes)           #
+        # ------------------------------------------------------------------ #
+        # Dict[session_id, Dict[str, Any]] - persistent globals per session
+        self._in_process_sessions: Dict[int, Dict[str, Any]] = {}
+
     @property
     def _dangerous_builtins(self) -> Set[str]:
         """
@@ -1400,6 +1406,8 @@ class FunctionManager(BaseFunctionManager):
             self._primitives_synced = False
             self._custom_venvs_synced = False
             self._custom_functions_synced = False
+            # Clear in-process session state
+            self._in_process_sessions.clear()
         except Exception:
             pass
 
@@ -1421,6 +1429,20 @@ class FunctionManager(BaseFunctionManager):
                     _time.sleep(0.05)
         except Exception:
             pass
+
+    def clear_in_process_sessions(self, session_id: Optional[int] = None) -> None:
+        """
+        Clear in-process session state.
+
+        Parameters
+        ----------
+        session_id : int | None, default ``None``
+            If provided, clear only the specified session. If None, clear all sessions.
+        """
+        if session_id is not None:
+            self._in_process_sessions.pop(session_id, None)
+        else:
+            self._in_process_sessions.clear()
 
     # ------------------------------------------------------------------ #
     #  Primitives sync                                                   #
@@ -4089,11 +4111,13 @@ class FunctionManager(BaseFunctionManager):
 
         # Handle execution based on venv and state_mode
         if exec_venv_id is None:
-            # No venv - execute in default environment (state_mode doesn't apply)
+            # No venv - execute in default environment with state_mode support
             return await self._execute_in_default_env(
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,
+                state_mode=state_mode,
+                session_id=session_id,
                 primitives=primitives,
                 computer_primitives=computer_primitives,
             )
@@ -4256,6 +4280,8 @@ class FunctionManager(BaseFunctionManager):
         implementation: str,
         call_kwargs: Dict[str, Any],
         is_async: bool,
+        state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+        session_id: int = 0,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
     ) -> Dict[str, Any]:
@@ -4263,15 +4289,37 @@ class FunctionManager(BaseFunctionManager):
         Execute a function in the default Python environment (no custom venv).
 
         This runs the function in-process using the project's Python environment.
+
+        State modes:
+        - stateless: Fresh globals each time (pure function behavior)
+        - stateful: Persistent globals per session_id (Jupyter-notebook style)
+        - read_only: Reads existing state but doesn't persist changes
         """
         from .execution_env import create_base_globals
         import io
         import traceback
         from contextlib import redirect_stdout, redirect_stderr
 
-        globals_dict = create_base_globals()
+        # Determine which globals dict to use based on state_mode
+        if state_mode == "stateful":
+            # Use persistent session globals
+            if session_id not in self._in_process_sessions:
+                self._in_process_sessions[session_id] = create_base_globals()
+            globals_dict = self._in_process_sessions[session_id]
+        elif state_mode == "read_only":
+            # Copy state from persistent session into fresh globals
+            globals_dict = create_base_globals()
+            if session_id in self._in_process_sessions:
+                # Copy user-defined state (excluding base globals and dunder names)
+                base_keys = set(create_base_globals().keys())
+                for key, value in self._in_process_sessions[session_id].items():
+                    if key not in base_keys and not key.startswith("_"):
+                        # Shallow copy - sufficient for most state
+                        globals_dict[key] = value
+        else:  # stateless
+            globals_dict = create_base_globals()
 
-        # Inject primitives if provided
+        # Inject primitives (always, since they may change between calls)
         if primitives is not None:
             globals_dict["primitives"] = primitives
         if computer_primitives is not None:
