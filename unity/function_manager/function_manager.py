@@ -609,6 +609,41 @@ class VenvPool:
         )
         return await conn.get_state(timeout=timeout)
 
+    def list_active_sessions(self) -> List[Tuple[int, int]]:
+        """
+        List all active venv sessions in the pool.
+
+        Returns:
+            List of (venv_id, session_id) tuples for sessions with live connections.
+        """
+        return [key for key, conn in self._connections.items() if conn.is_alive()]
+
+    async def get_all_states(
+        self,
+        function_manager: "FunctionManager",
+        timeout: float = 30.0,
+    ) -> Dict[Tuple[int, int], Dict[str, Any]]:
+        """
+        Get serialized state from all active venv connections.
+
+        Args:
+            function_manager: The FunctionManager for venv preparation.
+            timeout: Timeout for state retrieval per connection.
+
+        Returns:
+            Dict mapping (venv_id, session_id) -> state dict for each active session.
+        """
+        results: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        for key, conn in list(self._connections.items()):
+            if conn.is_alive():
+                try:
+                    state = await conn.get_state(timeout=timeout)
+                    results[key] = state
+                except Exception as e:
+                    # Connection may have died during iteration
+                    results[key] = {"__error__": str(e)}
+        return results
+
     async def close(self) -> None:
         """Close all connections in the pool."""
         async with self._lock:
