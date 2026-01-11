@@ -1024,3 +1024,269 @@ async def test_sh_bash_zsh_all_independent(
         assert "sh_value" in sh_result["stdout"]
     finally:
         await pool.close()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# PowerShell State Mode Tests
+# ────────────────────────────────────────────────────────────────────────────
+#
+# Note: These tests require PowerShell Core (pwsh) to be installed.
+# Tests are automatically skipped if pwsh is not available.
+
+import shutil
+
+# Check if PowerShell is available
+PWSH_AVAILABLE = shutil.which("pwsh") is not None
+PWSH_SKIP_REASON = "PowerShell Core (pwsh) not installed"
+
+# PowerShell-specific shell functions
+PS_SET_VAR = """
+# @name: ps_set_var
+# @args: ()
+# @description: Sets $MY_PS_VAR to a value
+$MY_PS_VAR = "ps_stateful_value"
+Write-Host "Set MY_PS_VAR to $MY_PS_VAR"
+""".strip()
+
+PS_GET_VAR = """
+# @name: ps_get_var
+# @args: ()
+# @description: Gets the current value of $MY_PS_VAR
+Write-Host "MY_PS_VAR=$MY_PS_VAR"
+""".strip()
+
+PS_DEFINE_FUNC = """
+# @name: ps_define_greeter
+# @args: ()
+# @description: Defines a Greet function in PowerShell
+function Greet { param($Name) Write-Host "Hello from PowerShell, $Name!" }
+Write-Host "Defined PowerShell Greet function"
+""".strip()
+
+PS_CALL_FUNC = """
+# @name: ps_call_greeter
+# @args: ()
+# @description: Calls the Greet function in PowerShell
+Greet -Name "World"
+""".strip()
+
+PS_SIMPLE = """
+# @name: ps_simple_echo
+# @args: ()
+# @description: Simple PowerShell Write-Host command
+Write-Host "Hello from PowerShell function"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.skipif(not PWSH_AVAILABLE, reason=PWSH_SKIP_REASON)
+async def test_powershell_stateless_mode_basic(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """PowerShell functions execute in stateless mode."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=PS_SIMPLE, language="powershell")
+
+        result = await fm.execute_function(
+            function_name="ps_simple_echo",
+            state_mode="stateless",
+        )
+
+        assert result["error"] is None
+        assert "Hello from PowerShell function" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.skipif(not PWSH_AVAILABLE, reason=PWSH_SKIP_REASON)
+async def test_powershell_stateful_mode_persists_variables(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """PowerShell variables persist across stateful executions."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=PS_SET_VAR, language="powershell")
+        fm.add_functions(implementations=PS_GET_VAR, language="powershell")
+
+        # Set variable
+        result1 = await fm.execute_function(
+            function_name="ps_set_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result1["error"] is None
+
+        # Get variable in same session - should be set
+        result2 = await fm.execute_function(
+            function_name="ps_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result2["error"] is None
+        assert "ps_stateful_value" in result2["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.skipif(not PWSH_AVAILABLE, reason=PWSH_SKIP_REASON)
+async def test_powershell_stateful_mode_persists_functions(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """PowerShell functions defined in one call persist to later calls."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=PS_DEFINE_FUNC, language="powershell")
+        fm.add_functions(implementations=PS_CALL_FUNC, language="powershell")
+
+        # Define the function
+        result1 = await fm.execute_function(
+            function_name="ps_define_greeter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result1["error"] is None
+        assert "Defined PowerShell Greet function" in result1["stdout"]
+
+        # Call it
+        result2 = await fm.execute_function(
+            function_name="ps_call_greeter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result2["error"] is None
+        assert "Hello from PowerShell, World!" in result2["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.skipif(not PWSH_AVAILABLE, reason=PWSH_SKIP_REASON)
+async def test_powershell_read_only_sees_stateful_state(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """PowerShell read-only mode sees state from stateful session."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=PS_GET_VAR, language="powershell")
+
+        # Set variable in stateful mode
+        await pool.execute(
+            language="powershell",
+            command='$MY_PS_VAR = "ps_read_only_test"',
+        )
+
+        # Read in read_only mode - should see the variable
+        result = await fm.execute_function(
+            function_name="ps_get_var",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "ps_read_only_test" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.skipif(not PWSH_AVAILABLE, reason=PWSH_SKIP_REASON)
+async def test_powershell_read_only_does_not_persist_changes(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """PowerShell read-only mode does not persist state changes."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=PS_SET_VAR, language="powershell")
+        fm.add_functions(implementations=PS_GET_VAR, language="powershell")
+
+        # Set initial value in stateful mode
+        await pool.execute(
+            language="powershell",
+            command='$MY_PS_VAR = "original_ps_value"',
+        )
+
+        # Execute set_var in read_only - modifies ephemeral session
+        result = await fm.execute_function(
+            function_name="ps_set_var",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "ps_stateful_value" in result["stdout"]
+
+        # Stateful session should still have original value
+        result = await fm.execute_function(
+            function_name="ps_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "original_ps_value" in result["stdout"]
+        assert "ps_stateful_value" not in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.skipif(not PWSH_AVAILABLE, reason=PWSH_SKIP_REASON)
+async def test_powershell_all_shells_independent(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """PowerShell has independent sessions from bash/zsh/sh in the same pool."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
+        fm.add_functions(implementations=PS_GET_VAR, language="powershell")
+
+        # Set different values in each shell
+        await pool.execute(
+            language="bash",
+            command="MY_SHELL_VAR=bash_value",
+        )
+        await pool.execute(
+            language="powershell",
+            command='$MY_PS_VAR = "powershell_value"',
+        )
+
+        # Verify bash sees its value
+        bash_result = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "bash_value" in bash_result["stdout"]
+
+        # Verify PowerShell sees its value
+        ps_result = await fm.execute_function(
+            function_name="ps_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "powershell_value" in ps_result["stdout"]
+    finally:
+        await pool.close()

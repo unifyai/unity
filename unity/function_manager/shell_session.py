@@ -163,12 +163,24 @@ class ShellSession:
         # The start marker ensures any pending output is flushed before we
         # begin, and the end marker indicates command completion.
         start_marker = f"__UNITY_START_{self._marker[-8:]}__"
-        wrapped_command = (
-            f'echo "{start_marker}"\n'
-            f"{command}\n"
-            f"__unity_ec__=$?\n"
-            f'echo "{self._marker} $__unity_ec__"\n'
-        )
+
+        if self.language == "powershell":
+            # PowerShell uses different syntax
+            # $? is boolean success, if $? { 0 } else { 1 } gives numeric exit
+            wrapped_command = (
+                f'Write-Host "{start_marker}"\n'
+                f"{command}\n"
+                f"$__unity_ec__ = if ($?) {{ 0 }} else {{ 1 }}\n"
+                f'Write-Host "{self._marker} $__unity_ec__"\n'
+            )
+        else:
+            # Bash/zsh/sh syntax
+            wrapped_command = (
+                f'echo "{start_marker}"\n'
+                f"{command}\n"
+                f"__unity_ec__=$?\n"
+                f'echo "{self._marker} $__unity_ec__"\n'
+            )
 
         try:
             self._process.stdin.write(wrapped_command.encode())
@@ -287,8 +299,6 @@ class ShellSession:
         Returns a dict containing the serialized state that can be passed
         to restore_state() on a fresh session.
 
-        Currently supported for bash. Other shells return minimal state.
-
         Returns:
             Dict with keys: cwd, variables, functions, aliases, options
         """
@@ -301,8 +311,9 @@ class ShellSession:
             return await self._snapshot_zsh_state()
         elif self.language == "sh":
             return await self._snapshot_sh_state()
+        elif self.language == "powershell":
+            return await self._snapshot_powershell_state()
         else:
-            # PowerShell would need different approach
             return await self._snapshot_minimal_state()
 
     async def _snapshot_bash_state(self) -> Dict[str, str]:
@@ -423,6 +434,68 @@ class ShellSession:
 
         return state
 
+    async def _snapshot_powershell_state(self) -> Dict[str, str]:
+        """Capture PowerShell-specific state.
+
+        PowerShell state capture includes:
+        - Current working directory (Get-Location)
+        - Variables (Get-Variable, filtered to user-defined)
+        - Functions (Get-ChildItem Function:)
+        - Aliases (Get-Alias)
+
+        Note: PowerShell variables are captured as assignment statements
+        that can be re-executed.
+        """
+        state: Dict[str, str] = {}
+
+        # Capture working directory
+        result = await self.execute("(Get-Location).Path", timeout=5.0)
+        state["cwd"] = result.stdout.strip() if result.error is None else ""
+
+        # Capture variables - output as PowerShell assignment statements
+        # Filter out automatic/readonly variables
+        result = await self.execute(
+            "Get-Variable | Where-Object { "
+            "$_.Options -notmatch 'ReadOnly|Constant' -and "
+            "$_.Name -notmatch '^(\\$|\\?|_|args|Error|ExecutionContext|"
+            "false|HOME|Host|input|MyInvocation|null|PID|PROFILE|"
+            "PSBoundParameters|PSCommandPath|PSCulture|PSScriptRoot|"
+            "PSUICulture|PSVersionTable|PWD|ShellId|true)$' "
+            "} | ForEach-Object { "
+            "\"$\" + $_.Name + ' = ' + "
+            "($_.Value | ConvertTo-Json -Compress -Depth 1 -ErrorAction SilentlyContinue) "
+            "}",
+            timeout=10.0,
+        )
+        state["variables"] = result.stdout if result.error is None else ""
+
+        # Capture functions - output as function definitions
+        result = await self.execute(
+            "Get-ChildItem Function: | Where-Object { "
+            "$_.Source -eq '' "  # User-defined functions have empty Source
+            "} | ForEach-Object { "
+            "'function ' + $_.Name + ' { ' + $_.Definition + ' }' "
+            "}",
+            timeout=10.0,
+        )
+        state["functions"] = result.stdout if result.error is None else ""
+
+        # Capture aliases - output as Set-Alias commands
+        result = await self.execute(
+            "Get-Alias | Where-Object { "
+            "$_.Options -notmatch 'ReadOnly|Constant' "
+            "} | ForEach-Object { "
+            "'Set-Alias -Name ' + $_.Name + ' -Value ' + $_.Definition "
+            "}",
+            timeout=10.0,
+        )
+        state["aliases"] = result.stdout if result.error is None else ""
+
+        # PowerShell doesn't have shell options like bash
+        state["options"] = ""
+
+        return state
+
     async def restore_state(self, state: Dict[str, str]) -> ShellExecutionResult:
         """
         Restore previously captured shell state.
@@ -445,6 +518,8 @@ class ShellSession:
             return await self._restore_zsh_state(state)
         elif self.language == "sh":
             return await self._restore_sh_state(state)
+        elif self.language == "powershell":
+            return await self._restore_powershell_state(state)
         else:
             return await self._restore_minimal_state(state)
 
@@ -558,6 +633,55 @@ class ShellSession:
                 errors.append(f"Failed to restore variables: {result.error}")
 
         # Aliases might work depending on sh implementation
+        if state.get("aliases"):
+            result = await self.execute(state["aliases"], timeout=10.0)
+            if result.error:
+                errors.append(f"Failed to restore aliases: {result.error}")
+
+        if errors:
+            return ShellExecutionResult(
+                stdout="",
+                stderr="",
+                exit_code=1,
+                error="; ".join(errors),
+            )
+
+        return ShellExecutionResult(
+            stdout="State restored successfully",
+            stderr="",
+            exit_code=0,
+            error=None,
+        )
+
+    async def _restore_powershell_state(
+        self,
+        state: Dict[str, str],
+    ) -> ShellExecutionResult:
+        """Restore PowerShell state."""
+        errors: List[str] = []
+
+        # 1. Change to saved directory
+        if state.get("cwd"):
+            result = await self.execute(
+                f'Set-Location -Path "{state["cwd"]}"',
+                timeout=5.0,
+            )
+            if result.error:
+                errors.append(f"Failed to restore cwd: {result.error}")
+
+        # 2. Restore variables
+        if state.get("variables"):
+            result = await self.execute(state["variables"], timeout=30.0)
+            if result.error:
+                errors.append(f"Failed to restore variables: {result.error}")
+
+        # 3. Restore functions
+        if state.get("functions"):
+            result = await self.execute(state["functions"], timeout=30.0)
+            if result.error:
+                errors.append(f"Failed to restore functions: {result.error}")
+
+        # 4. Restore aliases
         if state.get("aliases"):
             result = await self.execute(state["aliases"], timeout=10.0)
             if result.error:
