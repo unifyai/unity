@@ -3732,44 +3732,47 @@ class FunctionManager(BaseFunctionManager):
         state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
         session_id: int = 0,
         venv_pool: Optional["VenvPool"] = None,
+        shell_pool: Optional["ShellPool"] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        Execute a stored function by name with optional venv and state mode overrides.
+        Execute a stored function by name with optional state mode overrides.
 
         This method looks up a function by name from the function table and
-        executes it. By default, it uses the venv_id stored in the function
-        record, but this can be overridden to run the function in a different
-        venv.
+        executes it. It automatically routes to the appropriate executor based
+        on the function's language (Python vs shell).
 
         State modes:
         - "stateless" (default): Fresh subprocess with no inherited state. Pure
           function behavior. Backward compatible with previous behavior.
-        - "stateful": Uses persistent VenvPool connection. Variables from previous
-          executions persist. Requires venv_pool for venv functions.
-        - "read_only": Reads current state from VenvPool but executes in ephemeral
+        - "stateful": Uses persistent pool connection. Variables from previous
+          executions persist. Requires venv_pool (Python) or shell_pool (shell).
+        - "read_only": Reads current state from pool but executes in ephemeral
           subprocess. Changes are NOT persisted. Useful for "what-if" exploration.
 
         Args:
             function_name: Name of the function to execute.
             call_kwargs: Keyword arguments to pass to the function.
-            target_venv_id: Override the execution environment:
+            target_venv_id: Override the execution environment (Python only):
                 - ... (Ellipsis): Use the function's stored venv_id (default)
                 - None: Execute in the default Python environment
                 - int: Execute in this specific venv_id
             state_mode: How to handle global state ("stateful", "read_only", "stateless").
-            session_id: The session ID within the venv (default 0). Multiple sessions
-                allow independent stateful execution contexts within the same venv.
+            session_id: The session ID within the pool (default 0). Multiple sessions
+                allow independent stateful execution contexts.
                 Only applies to stateful/read_only modes.
-            venv_pool: VenvPool for stateful/read_only modes with venv functions.
+            venv_pool: VenvPool for stateful/read_only modes with Python venv functions.
+            shell_pool: ShellPool for stateful/read_only modes with shell functions.
+            primitives: Primitives instance for RPC access to state managers.
+            computer_primitives: ComputerPrimitives instance for browser/desktop RPC.
 
         Returns:
             Dict with keys: result, error, stdout, stderr
 
         Raises:
             ValueError: If the function doesn't exist or has no implementation.
-            ValueError: If state_mode requires venv_pool but none is provided.
+            ValueError: If state_mode requires a pool but none is provided.
         """
         # Look up function by name
         func_data = self._get_function_data_by_name(name=function_name)
@@ -3780,6 +3783,49 @@ class FunctionManager(BaseFunctionManager):
         if not isinstance(implementation, str) or not implementation.strip():
             raise ValueError(f"Function '{function_name}' has no implementation")
 
+        # Check language and route appropriately
+        language = func_data.get("language", "python")
+
+        if language == "python":
+            return await self._execute_python_function(
+                func_data=func_data,
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                target_venv_id=target_venv_id,
+                state_mode=state_mode,
+                session_id=session_id,
+                venv_pool=venv_pool,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
+        elif language in ("bash", "zsh", "sh", "powershell"):
+            return await self._execute_shell_function(
+                func_data=func_data,
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+                state_mode=state_mode,
+                session_id=session_id,
+                shell_pool=shell_pool,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
+        else:
+            raise ValueError(f"Unsupported function language: {language}")
+
+    async def _execute_python_function(
+        self,
+        *,
+        func_data: Dict[str, Any],
+        implementation: str,
+        call_kwargs: Optional[Dict[str, Any]],
+        target_venv_id: Optional[int],
+        state_mode: Literal["stateful", "read_only", "stateless"],
+        session_id: int,
+        venv_pool: Optional["VenvPool"],
+        primitives: Optional[Any],
+        computer_primitives: Optional[Any],
+    ) -> Dict[str, Any]:
+        """Execute a Python function with venv and state mode support."""
         # Strip @custom_function decorators (not available in subprocess runner)
         implementation = _strip_custom_function_decorators(implementation)
 
@@ -3861,6 +3907,67 @@ class FunctionManager(BaseFunctionManager):
                 is_async=is_async,
                 primitives=primitives,
                 computer_primitives=computer_primitives,
+            )
+
+    async def _execute_shell_function(
+        self,
+        *,
+        func_data: Dict[str, Any],
+        implementation: str,
+        call_kwargs: Optional[Dict[str, Any]],
+        state_mode: Literal["stateful", "read_only", "stateless"],
+        session_id: int,
+        shell_pool: Optional["ShellPool"],
+        primitives: Optional[Any],
+        computer_primitives: Optional[Any],
+    ) -> Dict[str, Any]:
+        """
+        Execute a shell function with state mode support.
+
+        For shell functions:
+        - "stateless": Uses execute_shell_script (fresh subprocess each time)
+        - "stateful": Uses ShellPool for persistent sessions
+        - "read_only": Not yet implemented (requires state snapshot/restore)
+        """
+        from .shell_pool import ShellPool  # noqa: F811
+
+        language = func_data.get("language", "bash")
+
+        if state_mode == "stateless":
+            # Use existing execute_shell_script (fresh subprocess each time)
+            return await self.execute_shell_script(
+                implementation=implementation,
+                language=language,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
+
+        elif state_mode == "stateful":
+            if shell_pool is None:
+                raise ValueError(
+                    "state_mode='stateful' requires shell_pool for shell functions. "
+                    "Either provide shell_pool or use state_mode='stateless'.",
+                )
+
+            # Execute in persistent session via ShellPool
+            result = await shell_pool.execute(
+                language=language,
+                command=implementation,
+                session_id=session_id,
+            )
+
+            return {
+                "result": result.exit_code,  # For shell, "result" is exit code
+                "error": result.error,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+
+        elif state_mode == "read_only":
+            # TODO: Implement in Phase 4 (requires state snapshot/restore)
+            raise NotImplementedError(
+                "state_mode='read_only' for shell functions is not yet implemented. "
+                "Use 'stateful' or 'stateless' mode instead.",
             )
 
     async def _execute_in_default_env(
