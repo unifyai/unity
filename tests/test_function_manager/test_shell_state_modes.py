@@ -804,3 +804,223 @@ async def test_zsh_and_bash_independent_sessions(
         assert "zsh_value" in zsh_result["stdout"]
     finally:
         await pool.close()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# POSIX sh State Mode Tests
+# ────────────────────────────────────────────────────────────────────────────
+#
+# Note: POSIX sh has limited state persistence compared to bash/zsh:
+# - Only EXPORTED variables persist (use `export VAR=value`)
+# - Shell-local variables (VAR=value) do NOT persist in read_only mode
+# - Functions are NOT supported for snapshot/restore
+# - For full state persistence, use bash or zsh instead.
+
+# POSIX sh-specific shell functions
+SH_SET_EXPORT = """#!/bin/sh
+# @name: sh_set_export
+# @args: ()
+# @description: Sets and exports MY_SH_VAR
+export MY_SH_VAR="sh_stateful_value"
+echo "Set MY_SH_VAR to $MY_SH_VAR"
+""".strip()
+
+SH_GET_VAR = """#!/bin/sh
+# @name: sh_get_var
+# @args: ()
+# @description: Gets the current value of MY_SH_VAR
+echo "MY_SH_VAR=$MY_SH_VAR"
+""".strip()
+
+SH_SIMPLE = """#!/bin/sh
+# @name: sh_simple_echo
+# @args: ()
+# @description: Simple POSIX sh echo command
+echo "Hello from POSIX sh function"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sh_stateless_mode_basic(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """POSIX sh functions execute in stateless mode."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SH_SIMPLE, language="sh")
+
+        result = await fm.execute_function(
+            function_name="sh_simple_echo",
+            state_mode="stateless",
+        )
+
+        assert result["error"] is None
+        assert "Hello from POSIX sh function" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sh_stateful_mode_persists_exported_variables(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """POSIX sh exported variables persist across stateful executions."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SH_SET_EXPORT, language="sh")
+        fm.add_functions(implementations=SH_GET_VAR, language="sh")
+
+        # Set exported variable
+        result1 = await fm.execute_function(
+            function_name="sh_set_export",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result1["error"] is None
+
+        # Get variable in same session - should be set
+        result2 = await fm.execute_function(
+            function_name="sh_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result2["error"] is None
+        assert "sh_stateful_value" in result2["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sh_read_only_sees_exported_state(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """POSIX sh read-only mode sees exported state from stateful session."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SH_GET_VAR, language="sh")
+
+        # Set exported variable in stateful mode
+        await pool.execute(
+            language="sh",
+            command="export MY_SH_VAR=sh_read_only_test",
+        )
+
+        # Read in read_only mode - should see the exported variable
+        result = await fm.execute_function(
+            function_name="sh_get_var",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "sh_read_only_test" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sh_read_only_does_not_persist_changes(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """POSIX sh read-only mode does not persist state changes."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SH_SET_EXPORT, language="sh")
+        fm.add_functions(implementations=SH_GET_VAR, language="sh")
+
+        # Set initial value in stateful mode
+        await pool.execute(
+            language="sh",
+            command="export MY_SH_VAR=original_sh_value",
+        )
+
+        # Execute set_export in read_only - modifies ephemeral session
+        result = await fm.execute_function(
+            function_name="sh_set_export",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "sh_stateful_value" in result["stdout"]
+
+        # Stateful session should still have original value
+        result = await fm.execute_function(
+            function_name="sh_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "original_sh_value" in result["stdout"]
+        assert "sh_stateful_value" not in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_sh_bash_zsh_all_independent(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """POSIX sh, bash, and zsh have independent sessions in the same pool."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
+        fm.add_functions(implementations=ZSH_GET_VAR, language="zsh")
+        fm.add_functions(implementations=SH_GET_VAR, language="sh")
+
+        # Set different values in each shell
+        await pool.execute(
+            language="bash",
+            command="MY_SHELL_VAR=bash_value",
+        )
+        await pool.execute(
+            language="zsh",
+            command="MY_ZSH_VAR=zsh_value",
+        )
+        await pool.execute(
+            language="sh",
+            command="export MY_SH_VAR=sh_value",
+        )
+
+        # Verify bash sees its value
+        bash_result = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "bash_value" in bash_result["stdout"]
+
+        # Verify zsh sees its value
+        zsh_result = await fm.execute_function(
+            function_name="zsh_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "zsh_value" in zsh_result["stdout"]
+
+        # Verify sh sees its value
+        sh_result = await fm.execute_function(
+            function_name="sh_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "sh_value" in sh_result["stdout"]
+    finally:
+        await pool.close()
