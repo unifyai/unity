@@ -551,3 +551,256 @@ async def test_mixed_python_and_shell_functions(
         assert "Hello from shell function" in sh_result["stdout"]
     finally:
         await pool.close()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Zsh State Mode Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+# Zsh-specific shell functions
+ZSH_SET_VAR = """#!/bin/zsh
+# @name: zsh_set_var
+# @args: ()
+# @description: Sets MY_ZSH_VAR to a value
+MY_ZSH_VAR="zsh_stateful_value"
+echo "Set MY_ZSH_VAR to $MY_ZSH_VAR"
+""".strip()
+
+ZSH_GET_VAR = """#!/bin/zsh
+# @name: zsh_get_var
+# @args: ()
+# @description: Gets the current value of MY_ZSH_VAR
+echo "MY_ZSH_VAR=$MY_ZSH_VAR"
+""".strip()
+
+ZSH_DEFINE_FUNC = """#!/bin/zsh
+# @name: zsh_define_greeter
+# @args: ()
+# @description: Defines a greet function in zsh
+greet() {
+    echo "Hello from zsh, $1!"
+}
+echo "Defined zsh greet function"
+""".strip()
+
+ZSH_CALL_FUNC = """#!/bin/zsh
+# @name: zsh_call_greeter
+# @args: ()
+# @description: Calls the greet function in zsh
+greet "World"
+""".strip()
+
+ZSH_SIMPLE = """#!/bin/zsh
+# @name: zsh_simple_echo
+# @args: ()
+# @description: Simple zsh echo command
+echo "Hello from zsh function"
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_zsh_stateless_mode_basic(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Zsh functions execute in stateless mode."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=ZSH_SIMPLE, language="zsh")
+
+        result = await fm.execute_function(
+            function_name="zsh_simple_echo",
+            state_mode="stateless",
+        )
+
+        assert result["error"] is None
+        assert "Hello from zsh function" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_zsh_stateful_mode_persists_variables(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Zsh variables persist across stateful executions."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=ZSH_SET_VAR, language="zsh")
+        fm.add_functions(implementations=ZSH_GET_VAR, language="zsh")
+
+        # Set variable
+        result1 = await fm.execute_function(
+            function_name="zsh_set_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result1["error"] is None
+
+        # Get variable in same session - should be set
+        result2 = await fm.execute_function(
+            function_name="zsh_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result2["error"] is None
+        assert "zsh_stateful_value" in result2["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_zsh_stateful_mode_persists_functions(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Zsh functions defined in one call persist to later calls."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=ZSH_DEFINE_FUNC, language="zsh")
+        fm.add_functions(implementations=ZSH_CALL_FUNC, language="zsh")
+
+        # Define the function
+        result1 = await fm.execute_function(
+            function_name="zsh_define_greeter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result1["error"] is None
+        assert "Defined zsh greet function" in result1["stdout"]
+
+        # Call it
+        result2 = await fm.execute_function(
+            function_name="zsh_call_greeter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result2["error"] is None
+        assert "Hello from zsh, World!" in result2["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_zsh_read_only_sees_stateful_state(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Zsh read-only mode sees state from stateful session."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=ZSH_GET_VAR, language="zsh")
+
+        # Set variable in stateful mode
+        await pool.execute(
+            language="zsh",
+            command="MY_ZSH_VAR=zsh_read_only_test",
+        )
+
+        # Read in read_only mode - should see the variable
+        result = await fm.execute_function(
+            function_name="zsh_get_var",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "zsh_read_only_test" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_zsh_read_only_does_not_persist_changes(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Zsh read-only mode does not persist state changes."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=ZSH_SET_VAR, language="zsh")
+        fm.add_functions(implementations=ZSH_GET_VAR, language="zsh")
+
+        # Set initial value in stateful mode
+        await pool.execute(
+            language="zsh",
+            command="MY_ZSH_VAR=original_zsh_value",
+        )
+
+        # Execute set_var in read_only - modifies ephemeral session
+        result = await fm.execute_function(
+            function_name="zsh_set_var",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "zsh_stateful_value" in result["stdout"]
+
+        # Stateful session should still have original value
+        result = await fm.execute_function(
+            function_name="zsh_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "original_zsh_value" in result["stdout"]
+        assert "zsh_stateful_value" not in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_zsh_and_bash_independent_sessions(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Zsh and bash have independent sessions in the same pool."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
+        fm.add_functions(implementations=ZSH_GET_VAR, language="zsh")
+
+        # Set different values in bash and zsh
+        await pool.execute(
+            language="bash",
+            command="MY_SHELL_VAR=bash_value",
+        )
+        await pool.execute(
+            language="zsh",
+            command="MY_ZSH_VAR=zsh_value",
+        )
+
+        # Verify bash sees its value
+        bash_result = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "bash_value" in bash_result["stdout"]
+
+        # Verify zsh sees its value
+        zsh_result = await fm.execute_function(
+            function_name="zsh_get_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "zsh_value" in zsh_result["stdout"]
+    finally:
+        await pool.close()
