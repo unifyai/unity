@@ -328,6 +328,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        include_implementations: bool = True,
         return_callable: bool = False,
         namespace: Optional[Dict[str, Any]] = None,
         also_return_metadata: bool = False,
@@ -389,6 +390,14 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 t0,
             )
 
+        # Strip implementations if not requested
+        if not include_implementations:
+            data = [
+                {k: v for k, v in rec.items() if k != "implementation"}
+                for rec in data
+                if isinstance(rec, dict)
+            ]
+
         if not return_callable:
             return data
 
@@ -426,6 +435,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         query: str,
         n: int = 5,
+        include_implementations: bool = True,
         return_callable: bool = False,
         namespace: Optional[Dict[str, Any]] = None,
         also_return_metadata: bool = False,
@@ -485,6 +495,14 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 {"total": len(data)},
                 t0,
             )
+
+        # Strip implementations if not requested
+        if not include_implementations:
+            data = [
+                {k: v for k, v in rec.items() if k != "implementation"}
+                for rec in data
+                if isinstance(rec, dict)
+            ]
 
         if not return_callable:
             return data

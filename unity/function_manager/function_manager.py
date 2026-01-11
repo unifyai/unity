@@ -2953,6 +2953,7 @@ class FunctionManager(BaseFunctionManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        include_implementations: bool = True,
         return_callable: bool = False,
         namespace: Optional[Dict[str, Any]] = None,
         also_return_metadata: bool = False,
@@ -3004,12 +3005,26 @@ class FunctionManager(BaseFunctionManager):
             raise last_exc
 
         if not return_callable:
+            # Strip implementations if not requested (reduces payload size)
+            if not include_implementations:
+                rows = [
+                    {k: v for k, v in row.items() if k != "implementation"}
+                    for row in rows
+                ]
             return rows
 
         assert namespace is not None  # validated above
+        # Note: rows must contain implementations for callable injection to work.
         callables_list = self._inject_callables_for_functions(rows, namespace=namespace)
         if also_return_metadata:
-            return {"callables": callables_list, "metadata": rows}  # type: ignore[return-value]
+            # Strip implementations from metadata if not requested
+            metadata_rows = rows
+            if not include_implementations:
+                metadata_rows = [
+                    {k: v for k, v in row.items() if k != "implementation"}
+                    for row in rows
+                ]
+            return {"callables": callables_list, "metadata": metadata_rows}  # type: ignore[return-value]
         return callables_list  # type: ignore[return-value]
 
     # ------------------------------------------------------------------ #
@@ -3115,6 +3130,7 @@ class FunctionManager(BaseFunctionManager):
         *,
         query: str,
         n: int = 5,
+        include_implementations: bool = True,
         return_callable: bool = False,
         namespace: Optional[Dict[str, Any]] = None,
         also_return_metadata: bool = False,
@@ -3126,6 +3142,7 @@ class FunctionManager(BaseFunctionManager):
         Args:
             query: Natural-language text describing the desired function(s).
             n: Number of similar results to return.
+            include_implementations: If True (default), include full source code.
             include_primitives: If True (default), sync and include primitives
                 in the search results alongside user-defined functions.
 
@@ -3179,11 +3196,18 @@ class FunctionManager(BaseFunctionManager):
             results = all_rows[:n]
 
         if not return_callable:
+            # Strip implementations if not requested (reduces payload size)
+            if not include_implementations:
+                results = [
+                    {k: v for k, v in row.items() if k != "implementation"}
+                    for row in results
+                ]
             return results
 
         assert namespace is not None  # validated above
 
         # Only materialize non-primitive records as callables.
+        # Note: exec_rows must contain implementations for callable injection to work.
         exec_rows = [
             r
             for r in results
@@ -3195,7 +3219,14 @@ class FunctionManager(BaseFunctionManager):
         )
 
         if also_return_metadata:
-            return {"callables": callables_list, "metadata": exec_rows}  # type: ignore[return-value]
+            # Strip implementations from metadata if not requested
+            metadata_rows = exec_rows
+            if not include_implementations:
+                metadata_rows = [
+                    {k: v for k, v in row.items() if k != "implementation"}
+                    for row in exec_rows
+                ]
+            return {"callables": callables_list, "metadata": metadata_rows}  # type: ignore[return-value]
 
         return callables_list  # type: ignore[return-value]
 
