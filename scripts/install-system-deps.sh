@@ -65,6 +65,11 @@ apt-get install -y --no-install-recommends redis-server
 apt-get install -y --no-install-recommends tmux
 
 # =============================================================================
+# ZSH (for shell function testing)
+# =============================================================================
+apt-get install -y --no-install-recommends zsh
+
+# =============================================================================
 # LOCALES (for UTF-8 emoji support)
 # =============================================================================
 apt-get install -y --no-install-recommends locales

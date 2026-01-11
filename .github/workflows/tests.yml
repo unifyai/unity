@@ -645,11 +645,11 @@ jobs:
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
         packages: >-
-          tmux portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2
+          tmux zsh portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2
           libxkbcommon0 libgtk-3-dev libgbm-dev libgirepository1.0-dev
           libasound2t64 libatspi2.0-0 libgtk-3-0 libnspr4 libwayland-client0
           libxcomposite1 libxdamage1 libxrandr2 xvfb
-        version: 1.0
+        version: 1.1
 
     - name: Install uv and poetry
       run: |
