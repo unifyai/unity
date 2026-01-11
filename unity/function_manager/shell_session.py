@@ -155,9 +155,19 @@ class ShellSession:
 
         # Construct command with completion marker
         # The marker line format: __MARKER__ <exit_code>
-        # We use a subshell to capture the exit code reliably
+        # We use a two-marker approach to ensure complete output capture:
+        # 1. Echo start marker to sync output stream
+        # 2. Run the command
+        # 3. Capture exit code
+        # 4. Echo end marker with exit code
+        # The start marker ensures any pending output is flushed before we
+        # begin, and the end marker indicates command completion.
+        start_marker = f"__UNITY_START_{self._marker[-8:]}__"
         wrapped_command = (
-            f"{command}\n" f"__unity_ec__=$?\n" f'echo "{self._marker} $__unity_ec__"\n'
+            f'echo "{start_marker}"\n'
+            f"{command}\n"
+            f"__unity_ec__=$?\n"
+            f'echo "{self._marker} $__unity_ec__"\n'
         )
 
         try:
@@ -175,8 +185,11 @@ class ShellSession:
         stdout_lines: List[str] = []
         exit_code = 0
 
+        start_marker = f"__UNITY_START_{self._marker[-8:]}__"
+        found_start = False
+
         async def read_until_marker() -> ShellExecutionResult:
-            nonlocal exit_code
+            nonlocal exit_code, found_start
             while True:
                 try:
                     line = await self._process.stdout.readline()
@@ -199,7 +212,12 @@ class ShellSession:
 
                 decoded = line.decode()
 
-                # Check if this line contains our marker
+                # Skip start marker line - it's just for synchronization
+                if start_marker in decoded:
+                    found_start = True
+                    continue
+
+                # Check if this line contains our end marker
                 if self._marker in decoded:
                     # Parse exit code from marker line
                     # Format: "__MARKER__ <exit_code>"
@@ -211,7 +229,9 @@ class ShellSession:
                             exit_code = 0
                     break
 
-                stdout_lines.append(decoded)
+                # Only capture output after we've seen the start marker
+                if found_start:
+                    stdout_lines.append(decoded)
 
             return ShellExecutionResult(
                 stdout="".join(stdout_lines),
@@ -258,6 +278,303 @@ class ShellSession:
             self._started
             and self._process is not None
             and self._process.returncode is None
+        )
+
+    async def snapshot_state(self) -> Dict[str, str]:
+        """
+        Capture the current shell state for later restoration.
+
+        Returns a dict containing the serialized state that can be passed
+        to restore_state() on a fresh session.
+
+        Currently supported for bash. Other shells return minimal state.
+
+        Returns:
+            Dict with keys: cwd, variables, functions, aliases, options
+        """
+        if not self.is_running:
+            raise RuntimeError("Cannot snapshot state: session not running")
+
+        if self.language == "bash":
+            return await self._snapshot_bash_state()
+        elif self.language == "zsh":
+            return await self._snapshot_zsh_state()
+        elif self.language == "sh":
+            return await self._snapshot_sh_state()
+        else:
+            # PowerShell would need different approach
+            return await self._snapshot_minimal_state()
+
+    async def _snapshot_bash_state(self) -> Dict[str, str]:
+        """Capture bash-specific state."""
+        state: Dict[str, str] = {}
+
+        # Capture working directory
+        result = await self.execute("pwd", timeout=5.0)
+        state["cwd"] = result.stdout.strip() if result.error is None else ""
+
+        # Capture shell variables (declare -p outputs variable declarations)
+        # Filter out readonly and special variables that can't be restored
+        result = await self.execute(
+            "declare -p 2>/dev/null | grep -v '^declare -[a-z]*r' | "
+            "grep -v '^declare -[a-z]* BASH' | "
+            "grep -v '^declare -[a-z]* EUID' | "
+            "grep -v '^declare -[a-z]* PPID' | "
+            "grep -v '^declare -[a-z]* UID' | "
+            "grep -v '^declare -[a-z]* GROUPS' | "
+            "grep -v '^declare -[a-z]* SHELLOPTS' | "
+            "grep -v '^declare -[a-z]* BASHOPTS' | "
+            "grep -v '^declare -[a-z]* _='",
+            timeout=10.0,
+        )
+        state["variables"] = result.stdout if result.error is None else ""
+
+        # Capture functions
+        result = await self.execute("declare -f 2>/dev/null", timeout=10.0)
+        state["functions"] = result.stdout if result.error is None else ""
+
+        # Capture aliases
+        result = await self.execute("alias 2>/dev/null", timeout=5.0)
+        state["aliases"] = result.stdout if result.error is None else ""
+
+        # Capture shell options (shopt for bash-specific, set +o for POSIX)
+        result = await self.execute("shopt -p 2>/dev/null", timeout=5.0)
+        shopt_output = result.stdout if result.error is None else ""
+        result = await self.execute("set +o 2>/dev/null", timeout=5.0)
+        set_output = result.stdout if result.error is None else ""
+        state["options"] = f"{shopt_output}\n{set_output}"
+
+        return state
+
+    async def _snapshot_zsh_state(self) -> Dict[str, str]:
+        """Capture zsh-specific state."""
+        state: Dict[str, str] = {}
+
+        # Capture working directory
+        result = await self.execute("pwd", timeout=5.0)
+        state["cwd"] = result.stdout.strip() if result.error is None else ""
+
+        # Capture variables using typeset (zsh equivalent of declare)
+        result = await self.execute(
+            "typeset -p 2>/dev/null | grep -v '^typeset -r'",
+            timeout=10.0,
+        )
+        state["variables"] = result.stdout if result.error is None else ""
+
+        # Capture functions
+        result = await self.execute("typeset -f 2>/dev/null", timeout=10.0)
+        state["functions"] = result.stdout if result.error is None else ""
+
+        # Capture aliases
+        result = await self.execute("alias 2>/dev/null", timeout=5.0)
+        state["aliases"] = result.stdout if result.error is None else ""
+
+        # Capture options
+        result = await self.execute("setopt 2>/dev/null", timeout=5.0)
+        state["options"] = result.stdout if result.error is None else ""
+
+        return state
+
+    async def _snapshot_sh_state(self) -> Dict[str, str]:
+        """Capture POSIX sh state (limited capabilities)."""
+        state: Dict[str, str] = {}
+
+        # Capture working directory
+        result = await self.execute("pwd", timeout=5.0)
+        state["cwd"] = result.stdout.strip() if result.error is None else ""
+
+        # POSIX sh has limited introspection - use set to get variables
+        # This is less precise than bash's declare -p
+        result = await self.execute("set 2>/dev/null", timeout=10.0)
+        state["variables"] = result.stdout if result.error is None else ""
+
+        # sh typically doesn't have declare -f, functions are limited
+        state["functions"] = ""
+
+        # Aliases may or may not be supported
+        result = await self.execute("alias 2>/dev/null || true", timeout=5.0)
+        state["aliases"] = result.stdout if result.error is None else ""
+
+        # Shell options
+        result = await self.execute("set +o 2>/dev/null", timeout=5.0)
+        state["options"] = result.stdout if result.error is None else ""
+
+        return state
+
+    async def _snapshot_minimal_state(self) -> Dict[str, str]:
+        """Capture minimal state for unsupported shells."""
+        state: Dict[str, str] = {}
+
+        result = await self.execute("pwd", timeout=5.0)
+        state["cwd"] = result.stdout.strip() if result.error is None else ""
+        state["variables"] = ""
+        state["functions"] = ""
+        state["aliases"] = ""
+        state["options"] = ""
+
+        return state
+
+    async def restore_state(self, state: Dict[str, str]) -> ShellExecutionResult:
+        """
+        Restore previously captured shell state.
+
+        This should be called on a freshly started session to restore
+        state from a snapshot.
+
+        Args:
+            state: State dict from snapshot_state()
+
+        Returns:
+            ShellExecutionResult indicating success/failure of restoration
+        """
+        if not self.is_running:
+            raise RuntimeError("Cannot restore state: session not running")
+
+        if self.language == "bash":
+            return await self._restore_bash_state(state)
+        elif self.language == "zsh":
+            return await self._restore_zsh_state(state)
+        elif self.language == "sh":
+            return await self._restore_sh_state(state)
+        else:
+            return await self._restore_minimal_state(state)
+
+    async def _restore_bash_state(self, state: Dict[str, str]) -> ShellExecutionResult:
+        """Restore bash state."""
+        errors: List[str] = []
+
+        # 1. Change to saved directory
+        if state.get("cwd"):
+            result = await self.execute(f'cd "{state["cwd"]}"', timeout=5.0)
+            if result.error:
+                errors.append(f"Failed to restore cwd: {result.error}")
+
+        # 2. Restore shell options first (affects how other things are parsed)
+        if state.get("options"):
+            # Options are already in executable format from shopt -p and set +o
+            result = await self.execute(state["options"], timeout=10.0)
+            if result.error:
+                errors.append(f"Failed to restore options: {result.error}")
+
+        # 3. Restore variables (declare statements are executable)
+        if state.get("variables"):
+            result = await self.execute(state["variables"], timeout=30.0)
+            if result.error:
+                errors.append(f"Failed to restore variables: {result.error}")
+
+        # 4. Restore functions
+        if state.get("functions"):
+            result = await self.execute(state["functions"], timeout=30.0)
+            if result.error:
+                errors.append(f"Failed to restore functions: {result.error}")
+
+        # 5. Restore aliases
+        if state.get("aliases"):
+            # Alias output format is: alias name='value'
+            result = await self.execute(state["aliases"], timeout=10.0)
+            if result.error:
+                errors.append(f"Failed to restore aliases: {result.error}")
+
+        if errors:
+            return ShellExecutionResult(
+                stdout="",
+                stderr="",
+                exit_code=1,
+                error="; ".join(errors),
+            )
+
+        return ShellExecutionResult(
+            stdout="State restored successfully",
+            stderr="",
+            exit_code=0,
+            error=None,
+        )
+
+    async def _restore_zsh_state(self, state: Dict[str, str]) -> ShellExecutionResult:
+        """Restore zsh state."""
+        errors: List[str] = []
+
+        if state.get("cwd"):
+            result = await self.execute(f'cd "{state["cwd"]}"', timeout=5.0)
+            if result.error:
+                errors.append(f"Failed to restore cwd: {result.error}")
+
+        if state.get("variables"):
+            result = await self.execute(state["variables"], timeout=30.0)
+            if result.error:
+                errors.append(f"Failed to restore variables: {result.error}")
+
+        if state.get("functions"):
+            result = await self.execute(state["functions"], timeout=30.0)
+            if result.error:
+                errors.append(f"Failed to restore functions: {result.error}")
+
+        if state.get("aliases"):
+            result = await self.execute(state["aliases"], timeout=10.0)
+            if result.error:
+                errors.append(f"Failed to restore aliases: {result.error}")
+
+        if errors:
+            return ShellExecutionResult(
+                stdout="",
+                stderr="",
+                exit_code=1,
+                error="; ".join(errors),
+            )
+
+        return ShellExecutionResult(
+            stdout="State restored successfully",
+            stderr="",
+            exit_code=0,
+            error=None,
+        )
+
+    async def _restore_sh_state(self, state: Dict[str, str]) -> ShellExecutionResult:
+        """Restore POSIX sh state (limited)."""
+        errors: List[str] = []
+
+        if state.get("cwd"):
+            result = await self.execute(f'cd "{state["cwd"]}"', timeout=5.0)
+            if result.error:
+                errors.append(f"Failed to restore cwd: {result.error}")
+
+        # sh's set output isn't directly executable, skip variables
+        # Aliases might work
+        if state.get("aliases"):
+            result = await self.execute(state["aliases"], timeout=10.0)
+            if result.error:
+                errors.append(f"Failed to restore aliases: {result.error}")
+
+        if errors:
+            return ShellExecutionResult(
+                stdout="",
+                stderr="",
+                exit_code=1,
+                error="; ".join(errors),
+            )
+
+        return ShellExecutionResult(
+            stdout="State restored successfully",
+            stderr="",
+            exit_code=0,
+            error=None,
+        )
+
+    async def _restore_minimal_state(
+        self,
+        state: Dict[str, str],
+    ) -> ShellExecutionResult:
+        """Restore minimal state (just cwd)."""
+        if state.get("cwd"):
+            result = await self.execute(f'cd "{state["cwd"]}"', timeout=5.0)
+            if result.error:
+                return result
+
+        return ShellExecutionResult(
+            stdout="State restored successfully",
+            stderr="",
+            exit_code=0,
+            error=None,
         )
 
     async def __aenter__(self) -> "ShellSession":

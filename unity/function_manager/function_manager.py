@@ -3964,11 +3964,46 @@ class FunctionManager(BaseFunctionManager):
             }
 
         elif state_mode == "read_only":
-            # TODO: Implement in Phase 4 (requires state snapshot/restore)
-            raise NotImplementedError(
-                "state_mode='read_only' for shell functions is not yet implemented. "
-                "Use 'stateful' or 'stateless' mode instead.",
+            # Get state from persistent session, execute in ephemeral session
+            if shell_pool is None:
+                raise ValueError(
+                    "state_mode='read_only' requires shell_pool to read existing state. "
+                    "Either provide shell_pool or use state_mode='stateless'.",
+                )
+
+            from .shell_session import ShellSession
+
+            # Get current state from the persistent session
+            session = await shell_pool.get_session(
+                language=language,
+                session_id=session_id,
             )
+            state = await session.snapshot_state()
+
+            # Execute in fresh ephemeral session with restored state
+            ephemeral = ShellSession(language=language)
+            try:
+                await ephemeral.start()
+                restore_result = await ephemeral.restore_state(state)
+                if restore_result.error:
+                    return {
+                        "result": -1,
+                        "error": f"Failed to restore state: {restore_result.error}",
+                        "stdout": "",
+                        "stderr": "",
+                    }
+
+                # Execute the command in ephemeral session
+                result = await ephemeral.execute(implementation)
+
+                return {
+                    "result": result.exit_code,
+                    "error": result.error,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                }
+            finally:
+                await ephemeral.close()
 
     async def _execute_in_default_env(
         self,

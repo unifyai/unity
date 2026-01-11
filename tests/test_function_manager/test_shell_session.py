@@ -730,3 +730,287 @@ async def test_shell_session_independent_sessions_have_independent_state():
     finally:
         await session1.close()
         await session2.close()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Phase 4.1: State Snapshot and Restore
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_snapshot_captures_variables():
+    """snapshot_state captures shell variables."""
+    session = ShellSession(language="bash")
+    await session.start()
+
+    try:
+        # Set some variables
+        await session.execute("MY_VAR='snapshot_test_value'")
+        await session.execute("export MY_EXPORT='exported_value'")
+
+        # Take snapshot
+        state = await session.snapshot_state()
+
+        # Verify variables are in the snapshot
+        assert "MY_VAR" in state["variables"]
+        assert "snapshot_test_value" in state["variables"]
+        assert "MY_EXPORT" in state["variables"]
+    finally:
+        await session.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_snapshot_captures_functions():
+    """snapshot_state captures function definitions."""
+    session = ShellSession(language="bash")
+    await session.start()
+
+    try:
+        # Define a function
+        await session.execute("my_func() { echo 'hello from function'; }")
+
+        # Take snapshot
+        state = await session.snapshot_state()
+
+        # Verify function is captured
+        assert "my_func" in state["functions"]
+        assert "hello from function" in state["functions"]
+    finally:
+        await session.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_snapshot_captures_cwd():
+    """snapshot_state captures current working directory."""
+    session = ShellSession(language="bash")
+    await session.start()
+
+    try:
+        # Change directory
+        await session.execute("cd /tmp")
+
+        # Take snapshot
+        state = await session.snapshot_state()
+
+        # Verify cwd is captured (macOS uses /private/tmp)
+        assert "/tmp" in state["cwd"] or "/private/tmp" in state["cwd"]
+    finally:
+        await session.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_snapshot_captures_aliases():
+    """snapshot_state captures aliases."""
+    session = ShellSession(language="bash")
+    await session.start()
+
+    try:
+        # Define an alias
+        await session.execute("alias myalias='echo test_alias_output'")
+
+        # Take snapshot
+        state = await session.snapshot_state()
+
+        # Verify alias is captured
+        assert "myalias" in state["aliases"]
+    finally:
+        await session.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_restore_variables():
+    """restore_state restores variables to a fresh session."""
+    session1 = ShellSession(language="bash")
+    session2 = ShellSession(language="bash")
+
+    await session1.start()
+
+    try:
+        # Set up state in session1
+        await session1.execute("RESTORE_VAR='restored_value'")
+        await session1.execute("export RESTORE_EXPORT='exported_restored'")
+
+        # Take snapshot
+        state = await session1.snapshot_state()
+
+        # Start fresh session and restore
+        await session2.start()
+        restore_result = await session2.restore_state(state)
+        assert restore_result.error is None
+
+        # Verify variables are restored
+        result = await session2.execute("echo $RESTORE_VAR")
+        assert "restored_value" in result.stdout
+
+        result = await session2.execute("echo $RESTORE_EXPORT")
+        assert "exported_restored" in result.stdout
+    finally:
+        await session1.close()
+        await session2.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_restore_functions():
+    """restore_state restores function definitions to a fresh session."""
+    session1 = ShellSession(language="bash")
+    session2 = ShellSession(language="bash")
+
+    await session1.start()
+
+    try:
+        # Define function in session1
+        await session1.execute("restored_func() { echo 'function_restored'; }")
+
+        # Verify it works
+        result = await session1.execute("restored_func")
+        assert "function_restored" in result.stdout
+
+        # Take snapshot
+        state = await session1.snapshot_state()
+
+        # Start fresh session and restore
+        await session2.start()
+        restore_result = await session2.restore_state(state)
+        assert restore_result.error is None
+
+        # Verify function is restored and works
+        result = await session2.execute("restored_func")
+        assert "function_restored" in result.stdout
+    finally:
+        await session1.close()
+        await session2.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_restore_cwd():
+    """restore_state restores current working directory."""
+    session1 = ShellSession(language="bash")
+    session2 = ShellSession(language="bash")
+
+    await session1.start()
+
+    try:
+        # Change to tmp in session1
+        await session1.execute("cd /tmp")
+
+        # Take snapshot
+        state = await session1.snapshot_state()
+
+        # Start fresh session (starts in different cwd)
+        await session2.start()
+
+        # Restore state
+        restore_result = await session2.restore_state(state)
+        assert restore_result.error is None
+
+        # Verify cwd is restored
+        result = await session2.execute("pwd")
+        assert "/tmp" in result.stdout or "/private/tmp" in result.stdout
+    finally:
+        await session1.close()
+        await session2.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_snapshot_not_running_raises():
+    """snapshot_state raises when session not running."""
+    session = ShellSession(language="bash")
+
+    with pytest.raises(RuntimeError, match="not running"):
+        await session.snapshot_state()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_restore_not_running_raises():
+    """restore_state raises when session not running."""
+    session = ShellSession(language="bash")
+    state = {"cwd": "/tmp", "variables": "", "functions": "", "aliases": ""}
+
+    with pytest.raises(RuntimeError, match="not running"):
+        await session.restore_state(state)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_snapshot_restore_complex_state():
+    """Full snapshot/restore cycle with complex state."""
+    session1 = ShellSession(language="bash")
+    session2 = ShellSession(language="bash")
+
+    await session1.start()
+
+    try:
+        # Build up complex state
+        await session1.execute("COUNTER=42")
+        await session1.execute("declare -a MY_ARRAY=(one two three)")
+        await session1.execute('complex_func() { echo "arg: $1"; }')
+        await session1.execute("alias ll='ls -la'")
+        await session1.execute("cd /tmp")
+
+        # Snapshot
+        state = await session1.snapshot_state()
+
+        # Restore to fresh session
+        await session2.start()
+        restore_result = await session2.restore_state(state)
+        assert restore_result.error is None
+
+        # Verify all state is restored
+        result = await session2.execute("echo $COUNTER")
+        assert "42" in result.stdout
+
+        result = await session2.execute('echo "${MY_ARRAY[1]}"')
+        assert "two" in result.stdout
+
+        result = await session2.execute("complex_func 'test_arg'")
+        assert "arg: test_arg" in result.stdout
+
+        result = await session2.execute("pwd")
+        assert "/tmp" in result.stdout or "/private/tmp" in result.stdout
+    finally:
+        await session1.close()
+        await session2.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_session_restore_does_not_affect_source():
+    """Restoring state doesn't affect the source session."""
+    session1 = ShellSession(language="bash")
+    session2 = ShellSession(language="bash")
+
+    await session1.start()
+
+    try:
+        # Set initial state
+        await session1.execute("SOURCE_VAR='original'")
+
+        # Snapshot
+        state = await session1.snapshot_state()
+
+        # Restore to session2
+        await session2.start()
+        await session2.restore_state(state)
+
+        # Modify in session2
+        await session2.execute("SOURCE_VAR='modified'")
+
+        # Source session should be unchanged
+        result = await session1.execute("echo $SOURCE_VAR")
+        assert "original" in result.stdout
+
+        # Session2 has modification
+        result = await session2.execute("echo $SOURCE_VAR")
+        assert "modified" in result.stdout
+    finally:
+        await session1.close()
+        await session2.close()
