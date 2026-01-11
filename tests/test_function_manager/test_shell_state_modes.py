@@ -1,0 +1,410 @@
+"""
+Tests for shell function state modes in FunctionManager.
+
+This test file covers the integration of ShellPool with FunctionManager,
+enabling stateful execution of shell functions via execute_function().
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests.helpers import _handle_project
+from unity.function_manager.function_manager import FunctionManager
+from unity.function_manager.shell_pool import ShellPool
+from unity.common.context_registry import ContextRegistry
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Sample Shell Functions
+# ────────────────────────────────────────────────────────────────────────────
+
+SHELL_SET_VAR = """#!/bin/bash
+# @name: set_shell_var
+# @args: ()
+# @description: Sets MY_SHELL_VAR to a value
+MY_SHELL_VAR="stateful_value"
+echo "Set MY_SHELL_VAR to $MY_SHELL_VAR"
+""".strip()
+
+SHELL_GET_VAR = """#!/bin/bash
+# @name: get_shell_var
+# @args: ()
+# @description: Gets the current value of MY_SHELL_VAR
+echo "MY_SHELL_VAR=$MY_SHELL_VAR"
+""".strip()
+
+SHELL_DEFINE_FUNC = """#!/bin/bash
+# @name: define_greeter
+# @args: ()
+# @description: Defines a greet function
+greet() {
+    echo "Hello, $1!"
+}
+echo "Defined greet function"
+""".strip()
+
+SHELL_CALL_FUNC = """#!/bin/bash
+# @name: call_greeter
+# @args: ()
+# @description: Calls the greet function
+greet "World"
+""".strip()
+
+SHELL_INCREMENT = """#!/bin/bash
+# @name: increment_counter
+# @args: ()
+# @description: Increments and prints a counter
+COUNTER=$((COUNTER + 1))
+echo "Counter is now $COUNTER"
+""".strip()
+
+SHELL_SIMPLE = """#!/bin/bash
+# @name: simple_echo
+# @args: ()
+# @description: Simple echo command
+echo "Hello from shell function"
+""".strip()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Fixtures
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def function_manager_factory():
+    """Factory fixture that creates FunctionManager instances."""
+    managers = []
+
+    def _create():
+        ContextRegistry.forget(FunctionManager, "Functions/VirtualEnvs")
+        ContextRegistry.forget(FunctionManager, "Functions/Compositional")
+        ContextRegistry.forget(FunctionManager, "Functions/Primitives")
+        ContextRegistry.forget(FunctionManager, "Functions/Meta")
+        fm = FunctionManager()
+        managers.append(fm)
+        return fm
+
+    yield _create
+
+    for fm in managers:
+        try:
+            fm.clear()
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def shell_pool_factory():
+    """Factory fixture that creates ShellPool instances."""
+    pools = []
+
+    def _create():
+        pool = ShellPool()
+        pools.append(pool)
+        return pool
+
+    yield _create
+
+    # Cleanup is handled in tests since we need async
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Stateless Mode Tests (Backward Compatibility)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_stateless_mode_basic(function_manager_factory):
+    """Shell functions execute in stateless mode by default."""
+    fm = function_manager_factory()
+
+    fm.add_functions(implementations=SHELL_SIMPLE, language="bash")
+
+    result = await fm.execute_function(
+        function_name="simple_echo",
+        state_mode="stateless",
+    )
+
+    assert result["error"] is None
+    assert "Hello from shell function" in result["stdout"]
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_stateless_mode_no_persistence(function_manager_factory):
+    """Stateless mode does not persist state between calls."""
+    fm = function_manager_factory()
+
+    fm.add_functions(implementations=SHELL_SET_VAR, language="bash")
+    fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
+
+    # Set variable
+    await fm.execute_function(
+        function_name="set_shell_var",
+        state_mode="stateless",
+    )
+
+    # Get variable - should be empty (fresh process)
+    result = await fm.execute_function(
+        function_name="get_shell_var",
+        state_mode="stateless",
+    )
+
+    assert result["error"] is None
+    # Variable should NOT be set (stateless = fresh process)
+    assert "stateful_value" not in result["stdout"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Stateful Mode Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_stateful_mode_persists_variables(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Shell variables persist across stateful executions."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_SET_VAR, language="bash")
+        fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
+
+        # Set variable
+        result1 = await fm.execute_function(
+            function_name="set_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result1["error"] is None
+
+        # Get variable in same session - should be set
+        result2 = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result2["error"] is None
+        assert "stateful_value" in result2["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_stateful_mode_persists_functions(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Shell functions defined in one call persist to later calls."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_DEFINE_FUNC, language="bash")
+        fm.add_functions(implementations=SHELL_CALL_FUNC, language="bash")
+
+        # Define the function
+        result1 = await fm.execute_function(
+            function_name="define_greeter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result1["error"] is None
+        assert "Defined greet function" in result1["stdout"]
+
+        # Call it
+        result2 = await fm.execute_function(
+            function_name="call_greeter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert result2["error"] is None
+        assert "Hello, World!" in result2["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_stateful_mode_accumulates_state(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """State accumulates across multiple stateful calls."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_INCREMENT, language="bash")
+
+        # Initialize counter
+        await pool.execute(language="bash", command="COUNTER=0")
+
+        # Increment multiple times
+        result1 = await fm.execute_function(
+            function_name="increment_counter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "Counter is now 1" in result1["stdout"]
+
+        result2 = await fm.execute_function(
+            function_name="increment_counter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "Counter is now 2" in result2["stdout"]
+
+        result3 = await fm.execute_function(
+            function_name="increment_counter",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "Counter is now 3" in result3["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_stateful_requires_pool(function_manager_factory):
+    """Stateful mode raises error if shell_pool not provided."""
+    fm = function_manager_factory()
+    fm.add_functions(implementations=SHELL_SIMPLE, language="bash")
+
+    with pytest.raises(ValueError, match="shell_pool"):
+        await fm.execute_function(
+            function_name="simple_echo",
+            state_mode="stateful",
+            shell_pool=None,
+        )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Session Independence Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_different_sessions_independent(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Different session_ids have independent state."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
+
+        # Set different values in different sessions via direct pool access
+        await pool.execute(
+            language="bash",
+            command="MY_SHELL_VAR=session0_value",
+            session_id=0,
+        )
+        await pool.execute(
+            language="bash",
+            command="MY_SHELL_VAR=session1_value",
+            session_id=1,
+        )
+
+        # Read from each session
+        result0 = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+            session_id=0,
+        )
+        result1 = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+            session_id=1,
+        )
+
+        assert "session0_value" in result0["stdout"]
+        assert "session1_value" in result1["stdout"]
+    finally:
+        await pool.close()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Read-Only Mode Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_read_only_not_implemented(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Read-only mode is not yet implemented for shell functions."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_SIMPLE, language="bash")
+
+        with pytest.raises(NotImplementedError, match="read_only"):
+            await fm.execute_function(
+                function_name="simple_echo",
+                state_mode="read_only",
+                shell_pool=pool,
+            )
+    finally:
+        await pool.close()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Mixed Python/Shell Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_mixed_python_and_shell_functions(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Can have both Python and shell functions, executed appropriately."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        # Add a Python function
+        fm.add_functions(
+            implementations="def py_hello():\n    return 'Hello from Python'\n",
+            language="python",
+        )
+
+        # Add a shell function
+        fm.add_functions(implementations=SHELL_SIMPLE, language="bash")
+
+        # Execute Python function
+        py_result = await fm.execute_function(
+            function_name="py_hello",
+            state_mode="stateless",
+        )
+        assert py_result["error"] is None
+        assert py_result["result"] == "Hello from Python"
+
+        # Execute shell function
+        sh_result = await fm.execute_function(
+            function_name="simple_echo",
+            state_mode="stateless",
+        )
+        assert sh_result["error"] is None
+        assert "Hello from shell function" in sh_result["stdout"]
+    finally:
+        await pool.close()

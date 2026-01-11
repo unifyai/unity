@@ -366,6 +366,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
         session_id: int = 0,
         venv_pool: Optional[Any] = None,
+        shell_pool: Optional[Any] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
     ) -> Dict[str, Any]:
@@ -382,6 +383,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
             session_id: int = 0,
             venv_pool: VenvPool | None = None,
+            shell_pool: ShellPool | None = None,
             primitives: Any | None = None,
             computer_primitives: Any | None = None,
         ) -> dict[str, Any]
@@ -391,9 +393,11 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         function_name : str
             Name of the function to execute (must exist in the function table).
         call_kwargs : dict[str, Any] | None, default ``None``
-            Keyword arguments to pass to the function.
+            Keyword arguments to pass to the function. For Python functions, these
+            are passed as keyword arguments. For shell functions, they may be converted
+            to positional arguments or environment variables depending on the argspec.
         target_venv_id : int | None, default ``USE_FUNCTION_DEFAULT``
-            Override the execution environment:
+            Override the execution environment (Python functions only):
             - ``USE_FUNCTION_DEFAULT`` (``...``): Use the function's stored ``venv_id``
               from the function table. This is the default behavior.
             - ``None``: Execute in the default Python environment (no custom venv).
@@ -403,31 +407,36 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             This allows running simple/compatible functions in a different venv
             than they were originally associated with. The caller is responsible
             for ensuring the target venv has the required packages.
+            Ignored for shell functions.
         state_mode : Literal["stateful", "read_only", "stateless"], default ``"stateless"``
             Controls how global state is handled during execution:
             - ``"stateless"``: Executes in a fresh subprocess with no inherited state.
-              Every execution starts with a clean globals dict. This is the default
+              Every execution starts with a clean environment. This is the default
               for backward compatibility and is useful for pure functions that should
               not depend on or affect session state.
-            - ``"stateful"``: Uses a persistent subprocess connection (via VenvPool).
-              Variables defined in previous executions persist. Enables Jupyter-
-              notebook-style incremental development. Requires ``venv_pool``.
-            - ``"read_only"``: Reads the current global state from the persistent
-              connection but executes in an ephemeral subprocess. Changes are not
-              persisted. Useful for "what-if" exploration. Requires ``venv_pool``.
+            - ``"stateful"``: Uses a persistent subprocess connection. Variables and
+              state from previous executions persist. Enables Jupyter-notebook-style
+              incremental development. Requires ``venv_pool`` for Python functions
+              or ``shell_pool`` for shell functions.
+            - ``"read_only"``: Reads the current state from the persistent connection
+              but executes in an ephemeral subprocess. Changes are not persisted.
+              Useful for "what-if" exploration. Requires the appropriate pool.
 
-            Note: For functions without a venv (``venv_id=None``), state_mode has no
+            For Python functions without a venv (``venv_id=None``), state_mode has no
             effect as these run in-process with fresh globals each time.
         session_id : int, default ``0``
-            The session ID within the venv. Multiple sessions allow independent
-            stateful execution contexts within the same venv. Each session has its
-            own subprocess and globals dict, enabling concurrent "notebook panes"
-            that share packages but have isolated state. Only applies to
-            ``state_mode="stateful"`` or ``state_mode="read_only"``.
+            The session ID within the execution environment. Multiple sessions allow
+            independent stateful execution contexts. Each session has its own process
+            and state, enabling concurrent "notebook panes" with isolated state.
+            Only applies to ``state_mode="stateful"`` or ``state_mode="read_only"``.
         venv_pool : VenvPool | None, default ``None``
-            The VenvPool instance for stateful execution. Required when
+            The VenvPool instance for stateful Python execution. Required when
             ``state_mode="stateful"`` or ``state_mode="read_only"`` and the function
-            has a venv. If not provided for these modes, an error is raised.
+            is Python with a venv. If not provided for these modes, an error is raised.
+        shell_pool : ShellPool | None, default ``None``
+            The ShellPool instance for stateful shell execution. Required when
+            ``state_mode="stateful"`` or ``state_mode="read_only"`` and the function
+            is a shell script. If not provided for these modes, an error is raised.
         primitives : Any | None, default ``None``
             The Primitives instance for RPC access to state managers.
         computer_primitives : Any | None, default ``None``
@@ -437,7 +446,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         -------
         dict[str, Any]
             Execution result with keys:
-            - ``result``: The return value of the function (JSON-serializable).
+            - ``result``: The return value (Python) or exit code (shell).
             - ``error``: Error message if execution failed, ``None`` otherwise.
             - ``stdout``: Captured stdout from the function.
             - ``stderr``: Captured stderr from the function.
@@ -447,36 +456,28 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         ValueError
             If the function does not exist or has no implementation.
         ValueError
-            If state_mode requires a VenvPool but none is provided.
+            If state_mode requires a pool but none is provided.
 
         Examples
         --------
-        >>> # Execute statefully - state persists across calls
+        >>> # Execute Python function statefully
         >>> result = await fm.execute_function(
         ...     function_name="my_func",
         ...     call_kwargs={"x": 1},
         ...     state_mode="stateful",
-        ...     venv_pool=pool,
+        ...     venv_pool=venv_pool,
         ... )
 
-        >>> # Execute in a different session (independent state)
+        >>> # Execute shell function statefully
         >>> result = await fm.execute_function(
-        ...     function_name="my_func",
+        ...     function_name="my_shell_func",
         ...     state_mode="stateful",
-        ...     session_id=1,  # Different session, independent globals
-        ...     venv_pool=pool,
-        ... )
-
-        >>> # Execute read-only - see result without persisting state changes
-        >>> result = await fm.execute_function(
-        ...     function_name="exploratory_func",
-        ...     state_mode="read_only",
-        ...     venv_pool=pool,
+        ...     shell_pool=shell_pool,
         ... )
 
         >>> # Execute statelessly - fresh environment every time
         >>> result = await fm.execute_function(
-        ...     function_name="pure_python_func",
+        ...     function_name="pure_func",
         ...     state_mode="stateless",
         ... )
         """
