@@ -630,7 +630,60 @@ class VenvPool:
 
 
 class _VenvFunctionProxy:
-    """Proxy that wraps a venv-backed function as an awaitable callable."""
+    """Proxy that wraps a venv-backed function as an awaitable callable.
+
+    This proxy enables venv-isolated functions to be called transparently from
+    the CodeActActor sandbox. It supports three execution modes for fine-grained
+    control over state management:
+
+    Execution Modes
+    ---------------
+    **stateful** (default):
+        Executes in a persistent subprocess connection via VenvPool. Variables
+        defined in previous calls persist across executions. Use this for
+        iterative workflows where you want to build up state incrementally
+        (e.g., loading data once, then running multiple analyses).
+
+    **stateless**:
+        Executes in a fresh subprocess with no inherited state. Each call starts
+        with a clean globals dict. Use this for pure functions that should not
+        depend on or affect any global state - guarantees reproducible results
+        regardless of prior execution history.
+
+    **read_only**:
+        Reads the current global state from the persistent connection but executes
+        in an ephemeral subprocess. Changes made during execution are NOT persisted
+        back to the session. Use this for "what-if" exploration - you can inspect
+        or transform session state without side effects.
+
+    Usage Examples
+    --------------
+    ```python
+    # Stateful (default) - state persists between calls
+    # First call: loads data into session globals
+    await load_dataset(path="data.csv")
+    # Second call: can access the loaded data
+    await analyze_dataset()
+
+    # Stateless - fresh environment each time, no side effects
+    # Useful for pure computations that shouldn't depend on session state
+    result = await my_func.stateless(x=1, y=2)
+
+    # Read-only - see current state but don't modify it
+    # Useful for exploratory queries without affecting the main session
+    preview = await transform_data.read_only(sample_size=100)
+    ```
+
+    When to Use Each Mode
+    ---------------------
+    - **stateful**: Default for most use cases. Enables Jupyter-notebook-style
+      workflows where you iteratively build up state.
+    - **stateless**: When you need guaranteed isolation - the function's behavior
+      depends only on its explicit arguments, never on hidden global state.
+    - **read_only**: When you want to "peek" at what a transformation would do
+      without committing the changes, or run exploratory analysis without
+      polluting the session namespace.
+    """
 
     def __init__(
         self,
@@ -703,7 +756,27 @@ class _VenvFunctionProxy:
             mapped[k] = v
         return mapped
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    async def _execute_with_mode(
+        self,
+        state_mode: Literal["stateful", "read_only", "stateless"],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Execute the function with the specified state mode.
+
+        Args:
+            state_mode: How to handle global state during execution.
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            The function's return value.
+
+        Raises:
+            ValueError: If venv_id is missing or implementation is invalid.
+            RuntimeError: If execution fails (error from subprocess).
+        """
         venv_id = self._func_data.get("venv_id")
         if venv_id is None:
             raise ValueError(f"Venv proxy '{self.__name__}' missing venv_id")
@@ -715,7 +788,7 @@ class _VenvFunctionProxy:
         # Strip @custom_function decorators (not available in subprocess runner).
         implementation = _strip_custom_function_decorators(implementation)
 
-        # Determine async-ness based on source (consistent with existing HierarchicalActor proxy).
+        # Determine async-ness based on source.
         is_async = "async def" in implementation
 
         # Resolve RPC targets from the injected namespace (caller-controlled).
@@ -731,20 +804,60 @@ class _VenvFunctionProxy:
 
         # Check if a persistent venv pool is available (injected by CodeExecutionSandbox)
         venv_pool = self._namespace.get("__venv_pool__")
-        if venv_pool is not None:
-            result = await venv_pool.execute_in_venv(
-                venv_id=int(venv_id),
+        venv_id_int = int(venv_id)
+
+        if state_mode == "stateful":
+            # Use persistent connection via VenvPool - state persists across calls
+            if venv_pool is not None:
+                result = await venv_pool.execute_in_venv(
+                    venv_id=venv_id_int,
+                    implementation=implementation,
+                    call_kwargs=call_kwargs,
+                    is_async=is_async,
+                    primitives=primitives,
+                    computer_primitives=computer_primitives,
+                    function_manager=self._function_manager,
+                )
+            else:
+                # No pool available - fall back to stateless (one-shot) execution
+                # This maintains backward compatibility when VenvPool isn't injected
+                result = await self._function_manager.execute_in_venv(
+                    venv_id=venv_id_int,
+                    implementation=implementation,
+                    call_kwargs=call_kwargs,
+                    is_async=is_async,
+                    primitives=primitives,
+                    computer_primitives=computer_primitives,
+                )
+
+        elif state_mode == "read_only":
+            # Read current state from persistent connection, execute in ephemeral subprocess
+            # Changes are NOT persisted back to the session
+            if venv_pool is None:
+                raise ValueError(
+                    f"read_only mode for '{self.__name__}' requires a VenvPool to read "
+                    f"existing state. Use stateless mode if you don't need to read session state.",
+                )
+            # Get current state from the persistent connection
+            initial_state = await venv_pool.get_connection_state(
+                venv_id=venv_id_int,
+                function_manager=self._function_manager,
+            )
+            # Execute in fresh subprocess with that state (not modifying persistent state)
+            result = await self._function_manager.execute_in_venv(
+                venv_id=venv_id_int,
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,
+                initial_state=initial_state,
                 primitives=primitives,
                 computer_primitives=computer_primitives,
-                function_manager=self._function_manager,
             )
-        else:
-            # Fallback to one-shot execution (backward compatibility)
+
+        else:  # state_mode == "stateless"
+            # Fresh subprocess with no inherited state - pure function behavior
             result = await self._function_manager.execute_in_venv(
-                venv_id=int(venv_id),
+                venv_id=venv_id_int,
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,
@@ -755,6 +868,103 @@ class _VenvFunctionProxy:
         if result.get("error"):
             raise RuntimeError(str(result.get("error")))
         return result.get("result")
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Execute the function in stateful mode (default).
+
+        State persists across calls within the same VenvPool session. Variables
+        defined in previous executions remain accessible. This is the default
+        behavior, suitable for iterative/interactive workflows.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            The function's return value.
+
+        Example:
+            ```python
+            # First call - defines 'data' in session globals
+            await load_data(path="input.csv")
+            # Second call - can access 'data' from previous call
+            await process_data()
+            ```
+        """
+        return await self._execute_with_mode("stateful", *args, **kwargs)
+
+    def stateless(self, *args: Any, **kwargs: Any):
+        """
+        Execute the function in stateless mode (fresh environment).
+
+        Each call executes in a fresh subprocess with no inherited global state.
+        The function cannot see or modify any variables from previous executions.
+        Use this for pure functions that should produce identical results
+        regardless of execution history.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            Awaitable that resolves to the function's return value.
+
+        Example:
+            ```python
+            # Each call is completely independent - no shared state
+            result1 = await compute_score.stateless(data=[1, 2, 3])
+            result2 = await compute_score.stateless(data=[4, 5, 6])
+            # result1 and result2 computed in isolated environments
+            ```
+
+        When to use:
+            - Pure computations that shouldn't depend on hidden state
+            - Functions where reproducibility is critical
+            - Avoiding accidental state pollution from prior calls
+        """
+        return self._execute_with_mode("stateless", *args, **kwargs)
+
+    def read_only(self, *args: Any, **kwargs: Any):
+        """
+        Execute the function in read-only mode (sees state, no persistence).
+
+        Reads the current global state from the persistent VenvPool session but
+        executes in an ephemeral subprocess. Any modifications to globals during
+        execution are discarded - the persistent session state remains unchanged.
+
+        This is useful for "what-if" exploration: you can inspect or transform
+        the current session state without committing changes.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            Awaitable that resolves to the function's return value.
+
+        Raises:
+            ValueError: If no VenvPool is available (read_only requires existing state).
+
+        Example:
+            ```python
+            # Session has 'df' DataFrame from prior stateful calls
+            await load_data(path="sales.csv")  # stateful: df now in session
+
+            # Preview a transformation without modifying the session
+            preview = await filter_data.read_only(min_value=100)
+            # 'df' in session is unchanged - filter was applied to a copy
+
+            # If the preview looks good, run it statefully to persist
+            await filter_data(min_value=100)  # now session 'df' is filtered
+            ```
+
+        When to use:
+            - Exploratory analysis without side effects
+            - Previewing transformations before committing
+            - Running queries against session state without modification
+        """
+        return self._execute_with_mode("read_only", *args, **kwargs)
 
 
 class FunctionManager(BaseFunctionManager):
