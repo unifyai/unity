@@ -1,6 +1,6 @@
 """
-Tests for VenvPool state inspection methods and CodeActActor's
-inspect_execution_states tool.
+Tests for VenvPool state inspection methods (used by CodeActActor's
+inspect_state tool).
 
 Covers:
 1. VenvPool.list_active_sessions() - lists active venv sessions

@@ -296,9 +296,9 @@ schema = await primitives.files.schema_explain(...)  # Unnecessary!
 - Functions accepting `tools: FileTools` need: `tools = primitives.files.get_tools()`
 - For direct data operations, use: `await primitives.files.reduce(...)`
 
-### Function Execution Modes (Venv Functions)
+### Function Execution Modes
 
-Venv-backed functions support three **execution modes** for fine-grained state control.
+Functions support three **execution modes** for fine-grained state control.
 By default, functions execute **statefully** (state persists across calls), but you can
 override this on a per-call basis:
 
@@ -318,13 +318,13 @@ override this on a per-call basis:
   Example: running a deterministic computation multiple times with different inputs.
 
 - **read_only**: Use for "what-if" exploration without side effects. Inspect or transform
-  current session state without committing changes.
+  current state without committing changes.
   Example: preview a data transformation before deciding whether to apply it permanently.
 
 **Example usage:**
 ```python
 # Stateful (default) - state persists
-await load_dataset(path="data.csv")  # First call: loads 'df' into session
+await load_dataset(path="data.csv")  # First call: loads 'df' into context
 await analyze_dataset()               # Second call: can access 'df'
 
 # Stateless - isolated execution, no side effects
@@ -339,16 +339,15 @@ await transform_data(sample_size=100)  # Now 'df' is transformed
 ### Inspecting Execution State
 
 Before deciding how to call a function (stateful/stateless/read_only), you can inspect
-what state currently exists using the `inspect_execution_states` tool:
+what state currently exists using the `inspect_state` tool:
 
 ```
-inspect_execution_states(include_sandbox=True, include_venvs=True)
+inspect_state()
 ```
 
 This returns:
-- **sandbox**: Variables in the in-process Python sandbox (where `execute_python_code` runs)
-- **venv_sessions**: State from each active venv session (e.g., `venv_1_session_0`)
-- **summary**: Human-readable overview
+- **contexts**: Dict mapping context names to their variables (e.g., `default`, `venv_1`, `bash_0`)
+- **summary**: Human-readable overview of active contexts and variables
 
 **When to inspect state:**
 - Before calling a function that might depend on prior state
@@ -357,9 +356,9 @@ This returns:
 - Before using read_only mode (to see what state you'll be reading)
 
 **Example workflow:**
-1. Call `inspect_execution_states()` to see current state
-2. If venv session has data you need → use default stateful call
-3. If venv session has state you want to avoid → use `.stateless()`
+1. Call `inspect_state()` to see current state across all contexts
+2. If a context has data you need → use default stateful call
+3. If a context has state you want to avoid → use `.stateless()`
 4. If you want to preview without modifying → use `.read_only()`
 """
 
@@ -368,13 +367,14 @@ This returns:
 
 class CodeExecutionSandbox:
     """
-    A stateful sandbox for executing Python code asynchronously.
+    A stateful execution environment for running Python code asynchronously.
 
     This class maintains a persistent global state across multiple executions,
     capturing stdout, stderr, return values, and exceptions in a structured format.
 
-    It can optionally use a VenvPool for persistent venv subprocess connections,
-    enabling state to be preserved across multiple calls to venv-backed functions.
+    It can optionally use pools for persistent subprocess connections (VenvPool
+    for Python venvs, ShellPool for shell sessions), enabling state to be
+    preserved across multiple function calls.
     """
 
     def __init__(
@@ -382,27 +382,32 @@ class CodeExecutionSandbox:
         computer_primitives: Optional[ComputerPrimitives] = None,
         environments: Optional[Dict[str, "BaseEnvironment"]] = None,
         venv_pool: Optional[Any] = None,
+        shell_pool: Optional[Any] = None,
     ):
         """
-        Initializes the sandbox.
+        Initializes the execution environment.
 
         Args:
             computer_primitives: An instance of ComputerPrimitives to be injected into the
-                             sandbox's global state, making browser tools available.
+                             global state, making browser tools available.
             environments: Optional mapping of environment namespaces to environments. If
-                provided, each environment instance is injected into the sandbox globals.
-            venv_pool: Optional VenvPool for persistent venv subprocess connections.
+                provided, each environment instance is injected into globals.
+            venv_pool: Optional VenvPool for persistent Python venv connections.
                 If provided, venv-backed functions will use persistent connections
                 that maintain state across calls.
+            shell_pool: Optional ShellPool for persistent shell session connections.
+                If provided, shell functions will use persistent sessions.
         """
         from unity.function_manager.execution_env import create_execution_globals
 
         self.global_state: Dict[str, Any] = create_execution_globals()
         self._browser_used: bool = False
 
-        # Inject venv pool into namespace if provided (for _VenvFunctionProxy to use)
+        # Inject pools into namespace (for function proxies to use)
         if venv_pool is not None:
             self.global_state["__venv_pool__"] = venv_pool
+        if shell_pool is not None:
+            self.global_state["__shell_pool__"] = shell_pool
 
         class _UsageTrackingProxy:
             def __init__(self, target: Any, on_use: Callable[[], None]):
@@ -640,15 +645,18 @@ class CodeActActor(BaseActor):
             agent_server_url=agent_server_url,
         )
 
-        # Create a persistent venv pool that survives across act() calls
+        # Create persistent pools that survive across act() calls
         from unity.function_manager.function_manager import VenvPool
+        from unity.function_manager.shell_pool import ShellPool
 
         self._venv_pool = VenvPool()
+        self._shell_pool = ShellPool()
 
         self._sandbox = CodeExecutionSandbox(
             computer_primitives=self._computer_primitives,
             environments=self.environments,
             venv_pool=self._venv_pool,
+            shell_pool=self._shell_pool,
         )
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
@@ -803,106 +811,94 @@ class CodeActActor(BaseActor):
             tools["FunctionManager_search_functions"] = FunctionManager_search_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
 
-            async def inspect_execution_states(
-                include_sandbox: bool = True,
-                include_venvs: bool = True,
-            ) -> dict:
+            async def inspect_state() -> dict:
                 """
-                Inspect the current state of all execution contexts (sandbox and venv sessions).
+                Inspect persistent state across all execution contexts.
 
-                Use this tool to understand what variables and state exist before deciding
+                Use this tool to understand what variables exist before deciding
                 how to call a function (stateful vs stateless vs read_only).
-
-                Args:
-                    include_sandbox: Include the in-process Python sandbox state (default True).
-                    include_venvs: Include state from active venv sessions (default True).
 
                 Returns:
                     Dict with keys:
-                    - sandbox: Variables in the in-process sandbox (if include_sandbox=True)
-                    - venv_sessions: Dict mapping "venv_{id}_session_{sid}" to state (if include_venvs=True)
-                    - summary: Human-readable summary of what's available
+                    - contexts: Dict mapping context names to their variables
+                      - "default": The main Python execution environment
+                      - "venv_{id}": Python venv contexts (session 0 implicit)
+                      - "venv_{id}_session_{n}": Additional venv sessions (n > 0)
+                      - "{shell}_0": Shell contexts (bash, zsh, sh, powershell)
+                    - summary: Human-readable overview of active contexts
 
                 Notes:
-                    - Sandbox state is the in-process namespace where execute_python_code runs.
-                    - Venv sessions are persistent subprocess connections for venv-backed functions.
-                    - Each venv session maintains independent state across function calls.
-                    - Use this to decide: should the next function call be stateful (extend state),
-                      stateless (fresh environment), or read_only (see state without modifying)?
+                    - Each context maintains independent state across function calls.
+                    - Use this to decide: should the next function call be stateful
+                      (extend state), stateless (fresh), or read_only (preview)?
                 """
-                result: dict = {}
+                contexts: dict[str, dict] = {}
                 summary_parts: list[str] = []
 
-                if include_sandbox:
-                    # Filter sandbox state to exclude internal/builtin names
-                    sandbox_state = {}
-                    for name, value in self._sandbox.global_state.items():
-                        # Skip internal names and common injected infrastructure
-                        if name.startswith("_"):
-                            continue
-                        if name in (
-                            "asyncio",
-                            "typing",
-                            "pydantic",
-                            "json",
-                            "re",
-                            "os",
-                            "sys",
-                            "math",
-                            "datetime",
-                            "collections",
-                            "itertools",
-                            "functools",
-                            "pathlib",
-                            "primitives",
-                            "computer_primitives",
-                        ):
-                            continue
-                        # Skip modules, classes, and functions (show only data)
-                        if isinstance(value, type) or callable(value):
-                            # But include function proxies (venv functions) - show their names
-                            if hasattr(value, "__name__") and not isinstance(
-                                value,
-                                type,
-                            ):
-                                sandbox_state[name] = f"<callable: {value.__name__}>"
-                            continue
-                        # Try to represent the value
-                        try:
-                            # For large objects, truncate representation
-                            repr_val = repr(value)
-                            if len(repr_val) > 500:
-                                repr_val = repr_val[:500] + "..."
-                            sandbox_state[name] = repr_val
-                        except Exception:
-                            sandbox_state[name] = f"<{type(value).__name__}>"
+                # Default context (in-process Python execution environment)
+                default_state = {}
+                for name, value in self._sandbox.global_state.items():
+                    # Skip internal names and infrastructure
+                    if name.startswith("_"):
+                        continue
+                    if name in (
+                        "asyncio",
+                        "typing",
+                        "pydantic",
+                        "json",
+                        "re",
+                        "os",
+                        "sys",
+                        "math",
+                        "datetime",
+                        "collections",
+                        "itertools",
+                        "functools",
+                        "pathlib",
+                        "primitives",
+                        "computer_primitives",
+                    ):
+                        continue
+                    # Skip modules, classes, and functions (show only data)
+                    if isinstance(value, type) or callable(value):
+                        # But include function proxies - show their names
+                        if hasattr(value, "__name__") and not isinstance(value, type):
+                            default_state[name] = f"<callable: {value.__name__}>"
+                        continue
+                    # Try to represent the value
+                    try:
+                        repr_val = repr(value)
+                        if len(repr_val) > 500:
+                            repr_val = repr_val[:500] + "..."
+                        default_state[name] = repr_val
+                    except Exception:
+                        default_state[name] = f"<{type(value).__name__}>"
 
-                    result["sandbox"] = sandbox_state
-                    summary_parts.append(
-                        (
-                            f"Sandbox: {len(sandbox_state)} user variables"
-                            if sandbox_state
-                            else "Sandbox: empty (no user variables)"
-                        ),
-                    )
+                contexts["default"] = default_state
+                if default_state:
+                    summary_parts.append(f"default: {len(default_state)} variables")
 
-                if include_venvs and self._venv_pool is not None:
-                    venv_states: dict[str, dict] = {}
-                    active_sessions = self._venv_pool.list_active_sessions()
+                # Python venv contexts
+                if self._venv_pool is not None:
+                    active_venv_sessions = self._venv_pool.list_active_sessions()
 
-                    if active_sessions:
-                        all_states = await self._venv_pool.get_all_states(
+                    if active_venv_sessions:
+                        all_venv_states = await self._venv_pool.get_all_states(
                             function_manager=self.function_manager,
                             timeout=10.0,
                         )
-                        for (venv_id, session_id), state in all_states.items():
-                            key = f"venv_{venv_id}_session_{session_id}"
-                            # Filter state similar to sandbox
+                        for (venv_id, session_id), state in all_venv_states.items():
+                            # Use simplified key: venv_{id} for session 0, venv_{id}_session_{n} for others
+                            if session_id == 0:
+                                key = f"venv_{venv_id}"
+                            else:
+                                key = f"venv_{venv_id}_session_{session_id}"
+
+                            # Filter state
                             filtered_state = {}
                             for name, value in state.items():
                                 if name.startswith("_"):
                                     continue
-                                # Truncate large values
                                 try:
                                     repr_val = (
                                         repr(value)
@@ -913,24 +909,38 @@ class CodeActActor(BaseActor):
                                         repr_val = str(repr_val)[:500] + "..."
                                     filtered_state[name] = repr_val
                                 except Exception:
-                                    filtered_state[name] = f"<unserializable>"
-                            venv_states[key] = filtered_state
+                                    filtered_state[name] = "<unserializable>"
+                            contexts[key] = filtered_state
+                            if filtered_state:
+                                summary_parts.append(
+                                    f"{key}: {len(filtered_state)} variables",
+                                )
 
-                        result["venv_sessions"] = venv_states
-                        summary_parts.append(
-                            f"Venv sessions: {len(venv_states)} active "
-                            f"({', '.join(venv_states.keys())})",
-                        )
-                    else:
-                        result["venv_sessions"] = {}
-                        summary_parts.append("Venv sessions: none active")
+                # Shell contexts
+                if self._shell_pool is not None:
+                    active_shell_sessions = self._shell_pool.get_active_sessions()
 
-                result["summary"] = (
-                    "; ".join(summary_parts) if summary_parts else "No state to report"
-                )
-                return result
+                    for language, session_id in active_shell_sessions:
+                        # Use simplified key: {lang}_0 for session 0, {lang}_{n} for others
+                        key = f"{language}_{session_id}"
+                        # Shell state is not easily inspectable like Python state
+                        # Just indicate the context exists
+                        contexts[key] = {
+                            "_note": "Shell session active (state not inspectable)",
+                        }
+                        summary_parts.append(f"{key}: active")
 
-            tools["inspect_execution_states"] = inspect_execution_states
+                return {
+                    "contexts": contexts,
+                    "summary": (
+                        f"{len(contexts)} contexts"
+                        + (f" ({', '.join(summary_parts)})" if summary_parts else "")
+                        if contexts
+                        else "No active contexts"
+                    ),
+                }
+
+            tools["inspect_state"] = inspect_state
 
         return tools
 
@@ -987,11 +997,12 @@ class CodeActActor(BaseActor):
 
         # Recreate sandbox so injected globals (e.g. `primitives`) use get_sandbox_instance()
         # with the updated clarification queue injector wrapper.
-        # Note: We preserve the same venv_pool so persistent venv state survives across act() calls.
+        # Note: We preserve the same pools so persistent state survives across act() calls.
         self._sandbox = CodeExecutionSandbox(
             computer_primitives=self._computer_primitives,
             environments=self.environments,
             venv_pool=self._venv_pool,
+            shell_pool=self._shell_pool,
         )
 
         # If an explicit FunctionManager entrypoint is provided (e.g., TaskScheduler task execution),
@@ -1067,8 +1078,9 @@ class CodeActActor(BaseActor):
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
-        # Close the venv pool (terminates persistent subprocess connections)
+        # Close the pools (terminates persistent subprocess/session connections)
         await self._venv_pool.close()
+        await self._shell_pool.close()
 
         if self._computer_primitives:
             self._computer_primitives.browser.stop()
