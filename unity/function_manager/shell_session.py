@@ -376,19 +376,28 @@ class ShellSession:
         return state
 
     async def _snapshot_sh_state(self) -> Dict[str, str]:
-        """Capture POSIX sh state (limited capabilities)."""
+        """Capture POSIX sh state (limited capabilities).
+
+        Note: POSIX sh has limited introspection compared to bash/zsh:
+        - Only exported variables are captured (via `export -p`)
+        - Shell-local variables (VAR=value without export) are NOT captured
+        - Functions are not supported in snapshot/restore
+        - Aliases may or may not work depending on sh implementation
+
+        For full state persistence, use bash or zsh instead.
+        """
         state: Dict[str, str] = {}
 
         # Capture working directory
         result = await self.execute("pwd", timeout=5.0)
         state["cwd"] = result.stdout.strip() if result.error is None else ""
 
-        # POSIX sh has limited introspection - use set to get variables
-        # This is less precise than bash's declare -p
-        result = await self.execute("set 2>/dev/null", timeout=10.0)
+        # Use export -p which gives properly quoted, executable output
+        # Note: This only captures exported variables, not shell-local variables
+        result = await self.execute("export -p 2>/dev/null", timeout=10.0)
         state["variables"] = result.stdout if result.error is None else ""
 
-        # sh typically doesn't have declare -f, functions are limited
+        # POSIX sh doesn't have a standard way to export functions
         state["functions"] = ""
 
         # Aliases may or may not be supported
@@ -530,7 +539,11 @@ class ShellSession:
         )
 
     async def _restore_sh_state(self, state: Dict[str, str]) -> ShellExecutionResult:
-        """Restore POSIX sh state (limited)."""
+        """Restore POSIX sh state (limited).
+
+        Note: Only exported variables and cwd are restored. Shell-local
+        variables and functions are not supported for POSIX sh.
+        """
         errors: List[str] = []
 
         if state.get("cwd"):
@@ -538,8 +551,13 @@ class ShellSession:
             if result.error:
                 errors.append(f"Failed to restore cwd: {result.error}")
 
-        # sh's set output isn't directly executable, skip variables
-        # Aliases might work
+        # export -p output is executable (e.g., export VAR="value")
+        if state.get("variables"):
+            result = await self.execute(state["variables"], timeout=30.0)
+            if result.error:
+                errors.append(f"Failed to restore variables: {result.error}")
+
+        # Aliases might work depending on sh implementation
         if state.get("aliases"):
             result = await self.execute(state["aliases"], timeout=10.0)
             if result.error:
