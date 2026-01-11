@@ -295,6 +295,46 @@ schema = await primitives.files.schema_explain(...)  # Unnecessary!
 **When passing tools to functions:**
 - Functions accepting `tools: FileTools` need: `tools = primitives.files.get_tools()`
 - For direct data operations, use: `await primitives.files.reduce(...)`
+
+### Function Execution Modes (Venv Functions)
+
+Venv-backed functions support three **execution modes** for fine-grained state control.
+By default, functions execute **statefully** (state persists across calls), but you can
+override this on a per-call basis:
+
+| Mode | Syntax | State Behavior |
+|------|--------|----------------|
+| **stateful** (default) | `await func(...)` | Variables persist across calls |
+| **stateless** | `await func.stateless(...)` | Fresh environment, no inherited state |
+| **read_only** | `await func.read_only(...)` | Sees current state, but changes are discarded |
+
+**When to use each mode:**
+
+- **stateful** (default): Use for iterative workflows where you build up state incrementally.
+  Example: load data once, then run multiple analyses that reference the loaded data.
+
+- **stateless**: Use for pure functions that should produce identical results regardless of
+  execution history. Guarantees reproducibility and prevents accidental state pollution.
+  Example: running a deterministic computation multiple times with different inputs.
+
+- **read_only**: Use for "what-if" exploration without side effects. Inspect or transform
+  current session state without committing changes.
+  Example: preview a data transformation before deciding whether to apply it permanently.
+
+**Example usage:**
+```python
+# Stateful (default) - state persists
+await load_dataset(path="data.csv")  # First call: loads 'df' into session
+await analyze_dataset()               # Second call: can access 'df'
+
+# Stateless - isolated execution, no side effects
+result = await compute_score.stateless(values=[1, 2, 3])
+
+# Read-only - see state without modifying it
+preview = await transform_data.read_only(sample_size=100)  # 'df' unchanged
+# If preview looks good, run statefully to persist:
+await transform_data(sample_size=100)  # Now 'df' is transformed
+```
 """
 
     return prompt
