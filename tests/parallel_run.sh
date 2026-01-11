@@ -340,7 +340,9 @@ while (( "$#" )); do
       ;;
     -*)
       echo "Error: Unknown option: $1" >&2
-      echo "Run with -h for usage information." >&2
+      echo "To pass pytest options (like -k, -v, -x), use -- before them:" >&2
+      echo "  Example: parallel_run.sh tests/foo.py -- -k 'pattern'" >&2
+      echo "Run with -h for all options." >&2
       exit 2
       ;;
     *)
