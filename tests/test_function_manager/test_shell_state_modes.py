@@ -345,23 +345,166 @@ async def test_shell_different_sessions_independent(
 
 @_handle_project
 @pytest.mark.asyncio
-async def test_shell_read_only_not_implemented(
+async def test_shell_read_only_sees_stateful_state(
     function_manager_factory,
     shell_pool_factory,
 ):
-    """Read-only mode is not yet implemented for shell functions."""
+    """Read-only mode sees state from stateful session."""
     fm = function_manager_factory()
     pool = shell_pool_factory()
 
     try:
-        fm.add_functions(implementations=SHELL_SIMPLE, language="bash")
+        fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
 
-        with pytest.raises(NotImplementedError, match="read_only"):
-            await fm.execute_function(
-                function_name="simple_echo",
-                state_mode="read_only",
-                shell_pool=pool,
-            )
+        # Set variable in stateful mode
+        await pool.execute(
+            language="bash",
+            command="MY_SHELL_VAR=read_only_test_value",
+        )
+
+        # Read in read_only mode - should see the variable
+        result = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "read_only_test_value" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_read_only_does_not_persist_changes(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Read-only mode does not persist state changes."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_SET_VAR, language="bash")
+        fm.add_functions(implementations=SHELL_GET_VAR, language="bash")
+
+        # Set initial value in stateful mode
+        await pool.execute(
+            language="bash",
+            command="MY_SHELL_VAR=original_value",
+        )
+
+        # Execute set_shell_var in read_only - modifies ephemeral session
+        result = await fm.execute_function(
+            function_name="set_shell_var",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "stateful_value" in result["stdout"]
+
+        # Stateful session should still have original value
+        result = await fm.execute_function(
+            function_name="get_shell_var",
+            state_mode="stateful",
+            shell_pool=pool,
+        )
+        assert "original_value" in result["stdout"]
+        assert "stateful_value" not in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_read_only_sees_functions(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Read-only mode can use functions defined in stateful session."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        fm.add_functions(implementations=SHELL_CALL_FUNC, language="bash")
+
+        # Define function in stateful mode
+        await pool.execute(
+            language="bash",
+            command='greet() { echo "Hello, $1!"; }',
+        )
+
+        # Call function in read_only mode
+        result = await fm.execute_function(
+            function_name="call_greeter",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert result["error"] is None
+        assert "Hello, World!" in result["stdout"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_read_only_requires_pool(function_manager_factory):
+    """Read-only mode raises error if shell_pool not provided."""
+    fm = function_manager_factory()
+    fm.add_functions(implementations=SHELL_SIMPLE, language="bash")
+
+    with pytest.raises(ValueError, match="shell_pool"):
+        await fm.execute_function(
+            function_name="simple_echo",
+            state_mode="read_only",
+            shell_pool=None,
+        )
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_read_only_independent_of_each_other(
+    function_manager_factory,
+    shell_pool_factory,
+):
+    """Multiple read_only executions don't affect each other."""
+    fm = function_manager_factory()
+    pool = shell_pool_factory()
+
+    try:
+        # Define a function that modifies and reads a variable
+        modify_and_read = """#!/bin/bash
+# @name: modify_and_read
+# @args: ()
+# @description: Modify a var and read it
+TEMP_VAR=$((TEMP_VAR + 1))
+echo "TEMP_VAR=$TEMP_VAR"
+""".strip()
+
+        fm.add_functions(implementations=modify_and_read, language="bash")
+
+        # Set initial value
+        await pool.execute(language="bash", command="TEMP_VAR=10")
+
+        # Each read_only execution should see 11 (10 + 1)
+        # because they all start from the same stateful snapshot
+        result1 = await fm.execute_function(
+            function_name="modify_and_read",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert "TEMP_VAR=11" in result1["stdout"]
+
+        result2 = await fm.execute_function(
+            function_name="modify_and_read",
+            state_mode="read_only",
+            shell_pool=pool,
+        )
+        assert "TEMP_VAR=11" in result2["stdout"]
+
+        # Stateful session should still have 10
+        result = await pool.execute(language="bash", command="echo $TEMP_VAR")
+        assert "10" in result.stdout
     finally:
         await pool.close()
 
