@@ -102,6 +102,7 @@ def create_base_globals() -> Dict[str, Any]:
             "RuntimeError",
             "StopIteration",
             "AssertionError",
+            "NameError",
             "OSError",
             # Class-related
             "super",

@@ -410,20 +410,22 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             Ignored for shell functions.
         state_mode : Literal["stateful", "read_only", "stateless"], default ``"stateless"``
             Controls how global state is handled during execution:
-            - ``"stateless"``: Executes in a fresh subprocess with no inherited state.
+            - ``"stateless"``: Executes with fresh globals/no inherited state.
               Every execution starts with a clean environment. This is the default
               for backward compatibility and is useful for pure functions that should
               not depend on or affect session state.
-            - ``"stateful"``: Uses a persistent subprocess connection. Variables and
-              state from previous executions persist. Enables Jupyter-notebook-style
-              incremental development. Requires ``venv_pool`` for Python functions
-              or ``shell_pool`` for shell functions.
-            - ``"read_only"``: Reads the current state from the persistent connection
-              but executes in an ephemeral subprocess. Changes are not persisted.
-              Useful for "what-if" exploration. Requires the appropriate pool.
+            - ``"stateful"``: Uses a persistent globals dict (in-process) or subprocess
+              connection (venv). Variables and state from previous executions persist.
+              Enables Jupyter-notebook-style incremental development. Requires
+              ``venv_pool`` for venv functions, ``shell_pool`` for shell functions.
+              For in-process Python functions (no venv), state is stored internally.
+            - ``"read_only"``: Reads the current state from the persistent session
+              but executes in a fresh environment. Changes are not persisted.
+              Useful for "what-if" exploration. Requires the appropriate pool for
+              venv/shell functions.
 
-            For Python functions without a venv (``venv_id=None``), state_mode has no
-            effect as these run in-process with fresh globals each time.
+            All three modes are supported for both in-process (no venv) and
+            subprocess (venv) Python function execution.
         session_id : int, default ``0``
             The session ID within the execution environment. Multiple sessions allow
             independent stateful execution contexts. Each session has its own process
