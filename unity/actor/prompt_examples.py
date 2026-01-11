@@ -1037,7 +1037,7 @@ def get_function_first_pattern_example() -> str:
 # BEFORE writing custom logic with raw primitives.
 #
 # Step 1 (JSON TOOL CALL): search for an existing function
-#   FunctionManager_search_functions_by_similarity(query="contacts prefer phone", n=5)
+#   FunctionManager_search_functions(query="contacts prefer phone", n=5)
 #
 # Step 2 (PYTHON): call the injected function by name (it becomes available automatically)
 #   result = await ask_contacts_question("Which of our contacts prefers phone contact?")
@@ -1062,7 +1062,7 @@ def get_function_first_anti_pattern_example() -> str:
 #   result = await handle.result()
 #
 # ✅ CORRECT:
-#   1) Call FunctionManager_search_functions_by_similarity(...) as a JSON tool call
+#   1) Call FunctionManager_search_functions(...) as a JSON tool call
 #   2) Call the injected function in Python (e.g. ask_contacts_question(...))
 """
 
@@ -1082,7 +1082,7 @@ def get_function_parameter_exploration_example() -> str:
 #
 # Example:
 # 1) JSON tool call:
-#    FunctionManager_search_functions_by_similarity(query="update guidance runbook", n=5)
+#    FunctionManager_search_functions(query="update guidance runbook", n=5)
 #
 # 2) Inspect returned `argspec`/docstring (mentally), then in Python:
 #    result = await update_guidance("Create a runbook titled 'Runbook: DB Failover' ...")

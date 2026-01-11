@@ -255,8 +255,8 @@ You have access to a catalogue of **pre-stored reusable functions** via the Func
 **🎯 FUNCTION-FIRST WORKFLOW:**
 
 1. **ALWAYS search first** using FunctionManager tools (structured JSON tool calls, NOT Python code):
-   - `FunctionManager_search_functions_by_similarity` - semantic search for functions
-   - `FunctionManager_search_functions` - filter-based search
+   - `FunctionManager_search_functions` - semantic search for functions
+   - `FunctionManager_filter_functions` - filter-based search
    - `FunctionManager_list_functions` - list all available functions
 
    **Important**: Do this **before** you call `execute_python_code` for a new user request.
@@ -277,7 +277,7 @@ You have access to a catalogue of **pre-stored reusable functions** via the Func
 5. **Execute found functions** in your Python code (after the JSON tool call).
 
 Example workflow:
-- Tool call (JSON): `FunctionManager_search_functions_by_similarity(query="contacts prefer phone", n=5)`
+- Tool call (JSON): `FunctionManager_search_functions(query="contacts prefer phone", n=5)`
 - Python code (after search): `result = await ask_contacts_question("Which contacts prefer phone?"); print(result)`
 
 **❌ ANTI-PATTERN (AVOID THIS):**
@@ -288,7 +288,7 @@ schema = await primitives.files.schema_explain(...)  # Unnecessary!
 ```
 
 **✅ CORRECT WORKFLOW:**
-1. Call `FunctionManager_search_functions_by_similarity` tool with your query
+1. Call `FunctionManager_search_functions` tool with your query
 2. Review the returned functions and their `argspec`
 3. Execute the function in Python code with appropriate parameters
 
@@ -631,7 +631,7 @@ class CodeActActor(BaseActor):
             environments: Optional list of execution environments. If None, defaults to
                 [ComputerEnvironment, StateManagerEnvironment].
             function_manager: Manages a library of reusable functions. Exposes read-only tools
-                (list_functions, search_functions, search_functions_by_similarity) to the LLM.
+                (list_functions, search_functions, filter_functions) to the LLM.
                 The LLM can call these tools to discover and retrieve reusable function implementations.
         """
         super().__init__(
@@ -748,7 +748,7 @@ class CodeActActor(BaseActor):
         # sandbox global namespace so they can be executed immediately in Python code.
         if self.function_manager:
 
-            async def FunctionManager_search_functions_by_similarity(
+            async def FunctionManager_search_functions(
                 query: str,
                 n: int = 5,
             ) -> Any:
@@ -758,7 +758,7 @@ class CodeActActor(BaseActor):
                 Functions are automatically injected into your Python sandbox namespace,
                 so you can execute them immediately after searching.
                 """
-                result = self.function_manager.search_functions_by_similarity(
+                result = self.function_manager.search_functions(
                     query=query,
                     n=n,
                     return_callable=True,
@@ -767,18 +767,18 @@ class CodeActActor(BaseActor):
                 )
                 return result["metadata"]
 
-            async def FunctionManager_search_functions(
+            async def FunctionManager_filter_functions(
                 filter: Optional[str] = None,
                 offset: int = 0,
                 limit: int = 100,
             ) -> Any:
                 """
-                Search for functions using a Python-like filter expression.
+                Filter functions using a Python-like filter expression.
 
                 Functions are automatically injected into your Python sandbox namespace,
-                so you can execute them immediately after searching.
+                so you can execute them immediately after filtering.
                 """
-                result = self.function_manager.search_functions(
+                result = self.function_manager.filter_functions(
                     filter=filter,
                     offset=offset,
                     limit=limit,
@@ -805,10 +805,8 @@ class CodeActActor(BaseActor):
                 )
                 return result["metadata"]
 
-            tools["FunctionManager_search_functions_by_similarity"] = (
-                FunctionManager_search_functions_by_similarity
-            )
             tools["FunctionManager_search_functions"] = FunctionManager_search_functions
+            tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
 
             async def inspect_state() -> dict:
@@ -1019,7 +1017,7 @@ class CodeActActor(BaseActor):
                         "CodeActActor cannot execute entrypoint: function_manager is None",
                     )
 
-                out = fm.search_functions(
+                out = fm.filter_functions(
                     filter=f"function_id == {entrypoint_id}",
                     return_callable=True,
                     namespace=self._sandbox.global_state,

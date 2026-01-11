@@ -2628,12 +2628,10 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
                     self.action_log.append(
                         f"Searching for best matching function for goal: '{self.goal}'",
                     )
-                    search_results = (
-                        self.actor.function_manager.search_functions_by_similarity(
-                            query=self.goal,
-                            n=1,
-                            include_primitives=False,
-                        )
+                    search_results = self.actor.function_manager.search_functions(
+                        query=self.goal,
+                        n=1,
+                        include_primitives=False,
                     )
                     if not search_results:
                         raise ValueError(
@@ -2657,7 +2655,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
                             "Entrypoint was provided, but no FunctionManager is available to fetch the function.",
                         )
 
-                    search_results = self.actor.function_manager.search_functions(
+                    search_results = self.actor.function_manager.filter_functions(
                         filter=f"function_id == {resolved_entrypoint}",
                         limit=1,
                     )
@@ -6255,7 +6253,7 @@ class HierarchicalActor(BaseActor):
 
         try:
             # Query all venv functions
-            venv_functions = self.function_manager.search_functions(
+            venv_functions = self.function_manager.filter_functions(
                 filter="venv_id != None",
                 limit=1000,
             )
@@ -6881,9 +6879,9 @@ class HierarchicalActor(BaseActor):
             logger.info(
                 "Pre-fetching all functions from FunctionManager for fast injection...",
             )
-            all_functions_data = self.function_manager.search_functions(
+            all_functions_data = self.function_manager.filter_functions(
                 limit=1000,
-            )  # TODO: use `search_functions_by_similarity`
+            )
             all_functions_map = {
                 func_data["name"]: func_data for func_data in all_functions_data
             }
@@ -6993,7 +6991,7 @@ class HierarchicalActor(BaseActor):
             else:
                 # Fallback to individual query if pre-fetch failed
                 try:
-                    search_results = self.function_manager.search_functions(
+                    search_results = self.function_manager.filter_functions(
                         filter=f"name == '{function_name}'",
                         limit=1,
                     )
@@ -7080,12 +7078,10 @@ class HierarchicalActor(BaseActor):
             try:
                 if self.function_manager:
                     try:
-                        relevant_functions = (
-                            self.function_manager.search_functions_by_similarity(
-                                query=goal,
-                                n=20,
-                                include_primitives=False,
-                            )
+                        relevant_functions = self.function_manager.search_functions(
+                            query=goal,
+                            n=20,
+                            include_primitives=False,
                         )
                         existing_functions = {f["name"]: f for f in relevant_functions}
                     except Exception as e:
@@ -7198,12 +7194,10 @@ class HierarchicalActor(BaseActor):
             if self.function_manager:
                 try:
                     query = f"{function_name} {docstring}"
-                    relevant_functions = (
-                        self.function_manager.search_functions_by_similarity(
-                            query=query,
-                            n=3,
-                            include_primitives=False,
-                        )
+                    relevant_functions = self.function_manager.search_functions(
+                        query=query,
+                        n=3,
+                        include_primitives=False,
                     )
                     existing_functions = {f["name"]: f for f in relevant_functions}
                     if existing_functions:

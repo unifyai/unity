@@ -149,12 +149,12 @@ def test_search_functions_filter_by_language():
     fm.add_functions(implementations=SIMPLE_SH_SCRIPT, language="sh")
 
     # Search for shell functions only
-    shell_funcs = fm.search_functions(filter="language == 'sh'")
+    shell_funcs = fm.filter_functions(filter="language == 'sh'")
     assert len(shell_funcs) == 1
     assert shell_funcs[0]["name"] == "hello_world"
 
     # Search for Python functions only
-    py_funcs = fm.search_functions(filter="language == 'python'")
+    py_funcs = fm.filter_functions(filter="language == 'python'")
     assert len(py_funcs) == 2
     assert {f["name"] for f in py_funcs} == {"alpha", "beta"}
 

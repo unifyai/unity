@@ -224,7 +224,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
-    def search_functions(
+    def filter_functions(
         self,
         *,
         filter: Optional[str] = None,
@@ -240,7 +240,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Signature
         ---------
-        search_functions(
+        filter_functions(
             *,
             filter: str | None = None,
             offset: int = 0,
@@ -299,12 +299,12 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Examples
         --------
-        >>> mgr.search_functions(filter="'price' in docstring and 'sum' in depends_on")
-        >>> mgr.search_functions(filter="name.startswith('get_')")
+        >>> mgr.filter_functions(filter="'price' in docstring and 'sum' in depends_on")
+        >>> mgr.filter_functions(filter="name.startswith('get_')")
         """
 
     @abstractmethod
-    def search_functions_by_similarity(
+    def search_functions(
         self,
         *,
         query: str,
@@ -319,7 +319,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Signature
         ---------
-        search_functions_by_similarity(
+        search_functions(
             *,
             query: str,
             n: int = 5,

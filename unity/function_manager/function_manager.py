@@ -2944,10 +2944,10 @@ class FunctionManager(BaseFunctionManager):
 
         return results
 
-    # 4. Search --------------------------------------------------------- #
+    # 4. Filter --------------------------------------------------------- #
 
-    @functools.wraps(BaseFunctionManager.search_functions, updated=())
-    def search_functions(
+    @functools.wraps(BaseFunctionManager.filter_functions, updated=())
+    def filter_functions(
         self,
         *,
         filter: Optional[str] = None,
@@ -3124,8 +3124,8 @@ class FunctionManager(BaseFunctionManager):
         return updated
 
     # 5. Semantic Search ------------------------------------------------ #
-    @functools.wraps(BaseFunctionManager.search_functions_by_similarity, updated=())
-    def search_functions_by_similarity(
+    @functools.wraps(BaseFunctionManager.search_functions, updated=())
+    def search_functions(
         self,
         *,
         query: str,

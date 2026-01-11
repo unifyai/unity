@@ -32,7 +32,7 @@ def mock_function_manager():
     fm = MagicMock(spec=FunctionManager)
     fm.list_functions = MagicMock(return_value={})
     fm.add_functions = MagicMock()
-    fm.search_functions_by_similarity = MagicMock(return_value=[])
+    fm.search_functions = MagicMock(return_value=[])
     fm.search_functions = MagicMock(return_value=[])
     return fm
 
@@ -140,7 +140,7 @@ async def send_email_task():
     """Sends an email to someone."""
     return "Email sent"
 '''
-    mock_function_manager.search_functions_by_similarity.return_value = [
+    mock_function_manager.search_functions.return_value = [
         {
             "function_id": 42,
             "name": "send_email_task",
@@ -194,8 +194,8 @@ async def send_email_task():
     await asyncio.sleep(0.1)
 
     # Verify semantic search was called with the goal
-    mock_function_manager.search_functions_by_similarity.assert_called_once()
-    call_args = mock_function_manager.search_functions_by_similarity.call_args
+    mock_function_manager.search_functions.assert_called_once()
+    call_args = mock_function_manager.search_functions.call_args
     assert call_args.kwargs["query"] == "Send an email to John"
 
     # Verify plan generation was NOT called
@@ -221,7 +221,7 @@ async def test_semantic_search_fails_when_no_functions_match(
     functions, an appropriate error is raised.
     """
     # Return empty results from semantic search
-    mock_function_manager.search_functions_by_similarity.return_value = []
+    mock_function_manager.search_functions.return_value = []
 
     # Create actor with can_compose=False
     monkeypatch.setattr(

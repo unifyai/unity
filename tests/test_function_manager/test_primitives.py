@@ -272,11 +272,11 @@ def test_primitives_have_stable_ids_in_database(function_manager_factory):
 
 @_handle_project
 def test_search_includes_primitives_by_default(function_manager_factory):
-    """search_functions_by_similarity should include primitives by default."""
+    """search_functions should include primitives by default."""
     function_manager = function_manager_factory()
 
     # Search for something that should match a primitive
-    results = function_manager.search_functions_by_similarity(
+    results = function_manager.search_functions(
         query="ask a question to the contact manager",
         n=5,
     )
@@ -291,7 +291,7 @@ def test_search_includes_primitives_by_default(function_manager_factory):
 
 @_handle_project
 def test_search_can_exclude_primitives(function_manager_factory):
-    """search_functions_by_similarity can exclude primitives."""
+    """search_functions can exclude primitives."""
     function_manager = function_manager_factory()
 
     # First sync primitives so they exist
@@ -306,7 +306,7 @@ def ask_contact_question(question: str) -> str:
     function_manager.add_functions(implementations=[implementation])
 
     # Search excluding primitives
-    results = function_manager.search_functions_by_similarity(
+    results = function_manager.search_functions(
         query="ask question about contacts",
         n=10,
         include_primitives=False,
@@ -331,7 +331,7 @@ def update_contact_email(contact_id: int, email: str) -> str:
     function_manager.add_functions(implementations=[implementation])
 
     # Search for contact-related functionality
-    results = function_manager.search_functions_by_similarity(
+    results = function_manager.search_functions(
         query="update contact information",
         n=10,
     )

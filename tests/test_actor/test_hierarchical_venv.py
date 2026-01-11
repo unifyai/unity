@@ -267,7 +267,7 @@ async def test_inject_venv_function_proxies(
 
     # Add the function and associate it with the venv
     fm.add_functions(implementations=[SIMPLE_VENV_FUNCTION])
-    func = fm.search_functions(filter="name == 'simple_add'", limit=1)[0]
+    func = fm.filter_functions(filter="name == 'simple_add'", limit=1)[0]
     fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Create a mock actor and plan
@@ -314,7 +314,7 @@ async def test_inject_library_functions_skips_venv_functions(
 
     # Add both functions and associate the venv function with the venv
     fm.add_functions(implementations=[SIMPLE_VENV_FUNCTION, NORMAL_ADD_FUNCTION])
-    func = fm.search_functions(filter="name == 'simple_add'", limit=1)[0]
+    func = fm.filter_functions(filter="name == 'simple_add'", limit=1)[0]
     fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Create a mock actor
@@ -366,11 +366,11 @@ async def test_venv_functions_listed_in_search(function_manager_factory):
 
     venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
     fm.add_functions(implementations=[VENV_FUNC_IMPL])
-    func = fm.search_functions(filter="name == 'venv_func'", limit=1)[0]
+    func = fm.filter_functions(filter="name == 'venv_func'", limit=1)[0]
     fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Search for venv functions specifically
-    venv_functions = fm.search_functions(filter="venv_id != None", limit=100)
+    venv_functions = fm.filter_functions(filter="venv_id != None", limit=100)
 
     assert len(venv_functions) == 1
     assert venv_functions[0]["name"] == "venv_func"
@@ -401,7 +401,7 @@ async def test_proxy_call_with_mock_execute_in_venv(
 
     venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
     fm.add_functions(implementations=[MULTIPLY_IMPL])
-    func = fm.search_functions(filter="name == 'multiply'", limit=1)[0]
+    func = fm.filter_functions(filter="name == 'multiply'", limit=1)[0]
     fm.set_function_venv(function_id=func["function_id"], venv_id=venv_id)
 
     # Create a mock plan
@@ -409,7 +409,7 @@ async def test_proxy_call_with_mock_execute_in_venv(
     mock_plan.action_log = []
 
     # Get the function data
-    funcs = fm.search_functions(filter="venv_id != None", limit=1)
+    funcs = fm.filter_functions(filter="venv_id != None", limit=1)
     func_data = funcs[0]
 
     # Mock execute_in_venv

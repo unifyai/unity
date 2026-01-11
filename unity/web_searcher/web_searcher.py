@@ -123,7 +123,7 @@ class WebSearcher(BaseWebSearcher):
                 verify={"search_website_for_info": False},
             )
             # Re-check presence and set id if now present
-            check = fm.search_functions(
+            check = fm.filter_functions(
                 filter="name == 'search_website_for_info'",
                 limit=1,
             )
