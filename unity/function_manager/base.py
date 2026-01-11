@@ -230,6 +230,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        include_implementations: bool = True,
         return_callable: bool = False,
         namespace: Optional[Dict[str, Any]] = None,
         also_return_metadata: bool = False,
@@ -244,6 +245,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             filter: str | None = None,
             offset: int = 0,
             limit: int = 100,
+            include_implementations: bool = True,
             return_callable: bool = False,
             namespace: dict[str, Any] | None = None,
             also_return_metadata: bool = False,
@@ -260,6 +262,10 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             Zero‑based index of the first result to return.
         limit : int, default ``100``
             Maximum number of results to return. Must be <= 1000.
+        include_implementations : bool, default ``True``
+            When ``True``, results include the full source code in the
+            ``implementation`` field. When ``False``, implementations are
+            omitted to reduce payload size.
         return_callable : bool, default ``False``
             When ``True``, return Python callables instead of metadata dicts.
             Implementations SHOULD inject the resulting callables (and any of their
@@ -276,7 +282,9 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         -------
         list[Function] | list[Callable[..., Any]] | dict[str, Any]
             - When ``return_callable=False``: list of records conforming to the
-              ``Function`` schema (as dicts or Function objects).
+              ``Function`` schema (as dicts or Function objects). When
+              ``include_implementations=False``, the ``implementation`` field
+              is omitted.
             - When ``return_callable=True``: list of callables corresponding to the
               returned records.
             - When ``also_return_metadata=True``: a dict with keys ``callables`` and
@@ -301,6 +309,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         query: str,
         n: int = 5,
+        include_implementations: bool = True,
         return_callable: bool = False,
         namespace: Optional[Dict[str, Any]] = None,
         also_return_metadata: bool = False,
@@ -314,6 +323,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             *,
             query: str,
             n: int = 5,
+            include_implementations: bool = True,
             return_callable: bool = False,
             namespace: dict[str, Any] | None = None,
             also_return_metadata: bool = False,
@@ -325,6 +335,10 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             Natural‑language text describing the desired function(s).
         n : int, default ``5``
             Number of similar results to return.
+        include_implementations : bool, default ``True``
+            When ``True``, results include the full source code in the
+            ``implementation`` field. When ``False``, implementations are
+            omitted to reduce payload size.
         return_callable : bool, default ``False``
             When ``True``, return Python callables instead of metadata dicts.
             Implementations SHOULD inject the resulting callables (and any of their
@@ -343,6 +357,8 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             - When ``return_callable=False``: up to ``n`` results ordered by similarity.
               Each element SHOULD include the fields of the ``Function`` model and MAY
               include an additional ``score`` field (``float``) representing similarity.
+              When ``include_implementations=False``, the ``implementation`` field
+              is omitted.
             - When ``return_callable=True``: list of callables corresponding to the
               returned records.
             - When ``also_return_metadata=True``: a dict with keys ``callables`` and

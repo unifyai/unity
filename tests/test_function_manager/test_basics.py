@@ -459,6 +459,53 @@ def test_search_filtering_across_columns():
     assert {h["name"] for h in hits} == {"square"}
 
 
+@_handle_project
+def test_search_functions_include_implementations():
+    """search_functions respects include_implementations parameter."""
+    fm = FunctionManager()
+    fm.add_functions(implementations="def foo(x):\n    return x * 2\n")
+
+    # Default (True): includes implementation
+    hits = fm.search_functions(filter="name == 'foo'")
+    assert len(hits) == 1
+    assert "implementation" in hits[0]
+
+    # Explicit False: excludes implementation
+    hits = fm.search_functions(filter="name == 'foo'", include_implementations=False)
+    assert len(hits) == 1
+    assert "implementation" not in hits[0]
+    assert "name" in hits[0]  # Other fields still present
+
+
+@_handle_project
+def test_search_by_similarity_include_implementations():
+    """search_functions_by_similarity respects include_implementations parameter."""
+    fm = FunctionManager()
+    fm.add_functions(implementations="def double_value(x):\n    return x * 2\n")
+
+    # Default (True): includes implementation
+    hits = fm.search_functions_by_similarity(
+        query="double a number",
+        n=5,
+        include_primitives=False,
+    )
+    user_funcs = [h for h in hits if h.get("name") == "double_value"]
+    assert len(user_funcs) == 1
+    assert "implementation" in user_funcs[0]
+
+    # Explicit False: excludes implementation
+    hits = fm.search_functions_by_similarity(
+        query="double a number",
+        n=5,
+        include_implementations=False,
+        include_primitives=False,
+    )
+    user_funcs = [h for h in hits if h.get("name") == "double_value"]
+    assert len(user_funcs) == 1
+    assert "implementation" not in user_funcs[0]
+    assert "name" in user_funcs[0]  # Other fields still present
+
+
 # --------------------------------------------------------------------------- #
 #  8.  clear                                                                  #
 # --------------------------------------------------------------------------- #
