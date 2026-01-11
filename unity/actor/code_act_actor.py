@@ -335,6 +335,32 @@ preview = await transform_data.read_only(sample_size=100)  # 'df' unchanged
 # If preview looks good, run statefully to persist:
 await transform_data(sample_size=100)  # Now 'df' is transformed
 ```
+
+### Inspecting Execution State
+
+Before deciding how to call a function (stateful/stateless/read_only), you can inspect
+what state currently exists using the `inspect_execution_states` tool:
+
+```
+inspect_execution_states(include_sandbox=True, include_venvs=True)
+```
+
+This returns:
+- **sandbox**: Variables in the in-process Python sandbox (where `execute_python_code` runs)
+- **venv_sessions**: State from each active venv session (e.g., `venv_1_session_0`)
+- **summary**: Human-readable overview
+
+**When to inspect state:**
+- Before calling a function that might depend on prior state
+- When debugging unexpected behavior (is the state what you expect?)
+- When deciding whether to use stateless (isolation) vs stateful (extend existing state)
+- Before using read_only mode (to see what state you'll be reading)
+
+**Example workflow:**
+1. Call `inspect_execution_states()` to see current state
+2. If venv session has data you need → use default stateful call
+3. If venv session has state you want to avoid → use `.stateless()`
+4. If you want to preview without modifying → use `.read_only()`
 """
 
     return prompt
@@ -776,6 +802,135 @@ class CodeActActor(BaseActor):
             )
             tools["FunctionManager_search_functions"] = FunctionManager_search_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
+
+            async def inspect_execution_states(
+                include_sandbox: bool = True,
+                include_venvs: bool = True,
+            ) -> dict:
+                """
+                Inspect the current state of all execution contexts (sandbox and venv sessions).
+
+                Use this tool to understand what variables and state exist before deciding
+                how to call a function (stateful vs stateless vs read_only).
+
+                Args:
+                    include_sandbox: Include the in-process Python sandbox state (default True).
+                    include_venvs: Include state from active venv sessions (default True).
+
+                Returns:
+                    Dict with keys:
+                    - sandbox: Variables in the in-process sandbox (if include_sandbox=True)
+                    - venv_sessions: Dict mapping "venv_{id}_session_{sid}" to state (if include_venvs=True)
+                    - summary: Human-readable summary of what's available
+
+                Notes:
+                    - Sandbox state is the in-process namespace where execute_python_code runs.
+                    - Venv sessions are persistent subprocess connections for venv-backed functions.
+                    - Each venv session maintains independent state across function calls.
+                    - Use this to decide: should the next function call be stateful (extend state),
+                      stateless (fresh environment), or read_only (see state without modifying)?
+                """
+                result: dict = {}
+                summary_parts: list[str] = []
+
+                if include_sandbox:
+                    # Filter sandbox state to exclude internal/builtin names
+                    sandbox_state = {}
+                    for name, value in self._sandbox.global_state.items():
+                        # Skip internal names and common injected infrastructure
+                        if name.startswith("_"):
+                            continue
+                        if name in (
+                            "asyncio",
+                            "typing",
+                            "pydantic",
+                            "json",
+                            "re",
+                            "os",
+                            "sys",
+                            "math",
+                            "datetime",
+                            "collections",
+                            "itertools",
+                            "functools",
+                            "pathlib",
+                            "primitives",
+                            "computer_primitives",
+                        ):
+                            continue
+                        # Skip modules, classes, and functions (show only data)
+                        if isinstance(value, type) or callable(value):
+                            # But include function proxies (venv functions) - show their names
+                            if hasattr(value, "__name__") and not isinstance(
+                                value,
+                                type,
+                            ):
+                                sandbox_state[name] = f"<callable: {value.__name__}>"
+                            continue
+                        # Try to represent the value
+                        try:
+                            # For large objects, truncate representation
+                            repr_val = repr(value)
+                            if len(repr_val) > 500:
+                                repr_val = repr_val[:500] + "..."
+                            sandbox_state[name] = repr_val
+                        except Exception:
+                            sandbox_state[name] = f"<{type(value).__name__}>"
+
+                    result["sandbox"] = sandbox_state
+                    summary_parts.append(
+                        (
+                            f"Sandbox: {len(sandbox_state)} user variables"
+                            if sandbox_state
+                            else "Sandbox: empty (no user variables)"
+                        ),
+                    )
+
+                if include_venvs and self._venv_pool is not None:
+                    venv_states: dict[str, dict] = {}
+                    active_sessions = self._venv_pool.list_active_sessions()
+
+                    if active_sessions:
+                        all_states = await self._venv_pool.get_all_states(
+                            function_manager=self.function_manager,
+                            timeout=10.0,
+                        )
+                        for (venv_id, session_id), state in all_states.items():
+                            key = f"venv_{venv_id}_session_{session_id}"
+                            # Filter state similar to sandbox
+                            filtered_state = {}
+                            for name, value in state.items():
+                                if name.startswith("_"):
+                                    continue
+                                # Truncate large values
+                                try:
+                                    repr_val = (
+                                        repr(value)
+                                        if not isinstance(value, str)
+                                        else value
+                                    )
+                                    if len(str(repr_val)) > 500:
+                                        repr_val = str(repr_val)[:500] + "..."
+                                    filtered_state[name] = repr_val
+                                except Exception:
+                                    filtered_state[name] = f"<unserializable>"
+                            venv_states[key] = filtered_state
+
+                        result["venv_sessions"] = venv_states
+                        summary_parts.append(
+                            f"Venv sessions: {len(venv_states)} active "
+                            f"({', '.join(venv_states.keys())})",
+                        )
+                    else:
+                        result["venv_sessions"] = {}
+                        summary_parts.append("Venv sessions: none active")
+
+                result["summary"] = (
+                    "; ".join(summary_parts) if summary_parts else "No state to report"
+                )
+                return result
+
+            tools["inspect_execution_states"] = inspect_execution_states
 
         return tools
 
