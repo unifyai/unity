@@ -24,21 +24,21 @@ def test_invalid_parameter_combinations_raise():
     fm = FunctionManager()
 
     with pytest.raises(ValueError, match="also_return_metadata"):
-        fm.search_functions(filter=None, also_return_metadata=True)
+        fm.filter_functions(filter=None, also_return_metadata=True)
 
     with pytest.raises(ValueError, match="namespace"):
-        fm.search_functions(filter=None, return_callable=True)
+        fm.filter_functions(filter=None, return_callable=True)
 
     with pytest.raises(ValueError, match="also_return_metadata"):
-        fm.search_functions_by_similarity(query="anything", also_return_metadata=True)
+        fm.search_functions(query="anything", also_return_metadata=True)
 
     with pytest.raises(ValueError, match="namespace"):
-        fm.search_functions_by_similarity(query="anything", return_callable=True)
+        fm.search_functions(query="anything", return_callable=True)
 
 
 @_handle_project
 @pytest.mark.asyncio
-async def test_search_return_callable_injects_dependency_chain():
+async def test_filter_return_callable_injects_dependency_chain():
     fm = FunctionManager()
 
     c_src = "async def c(x: int) -> int:\n    return x + 1\n"
@@ -48,7 +48,7 @@ async def test_search_return_callable_injects_dependency_chain():
     fm.add_functions(implementations=[a_src, b_src, c_src])
 
     ns = create_base_globals()
-    callables = fm.search_functions(
+    callables = fm.filter_functions(
         filter="name == 'a'",
         limit=1,
         return_callable=True,
@@ -87,7 +87,7 @@ async def test_dependency_injection_supports_indirect_calls_and_returned_functio
     fm.add_functions(implementations=[leaf_src, factory_src, use_src])
 
     ns = create_base_globals()
-    callables = fm.search_functions(
+    callables = fm.filter_functions(
         filter="name == 'use'",
         limit=1,
         return_callable=True,
@@ -109,7 +109,7 @@ def test_search_return_callable_also_returns_metadata():
     )
 
     ns = create_base_globals()
-    res = fm.search_functions(
+    res = fm.filter_functions(
         filter="name == 'add_numbers'",
         limit=1,
         return_callable=True,
@@ -135,7 +135,7 @@ def test_circular_dependency_injection_does_not_loop():
     fm.add_functions(implementations=[a_src, b_src])
 
     ns = create_base_globals()
-    callables = fm.search_functions(
+    callables = fm.filter_functions(
         filter="name == 'a'",
         limit=1,
         return_callable=True,
@@ -163,7 +163,7 @@ async def test_search_return_callable_venv_proxy_executes():
         assert fm.set_function_venv(function_id=function_id, venv_id=venv_id) is True
 
         ns = create_base_globals()
-        callables = fm.search_functions(
+        callables = fm.filter_functions(
             filter="name == 'add_numbers'",
             limit=1,
             return_callable=True,
@@ -205,7 +205,7 @@ async def test_similarity_search_return_callable_monkeypatched(monkeypatch):
     )
 
     ns = create_base_globals()
-    res = fm.search_functions_by_similarity(
+    res = fm.search_functions(
         query="irrelevant",
         n=1,
         return_callable=True,
@@ -293,7 +293,7 @@ async def test_dependency_injection_handles_custom_decorators_and_annotations(
     ns = create_base_globals()
 
     # (1) Decorator dependency resolution
-    callables = fm.search_functions(
+    callables = fm.filter_functions(
         filter="name == 'decorated'",
         limit=1,
         return_callable=True,
@@ -305,7 +305,7 @@ async def test_dependency_injection_handles_custom_decorators_and_annotations(
     assert getattr(ns["decorated"], "_decorated_marker", False) is True
 
     # (2) Annotation dependency resolution
-    callables = fm.search_functions(
+    callables = fm.filter_functions(
         filter="name == 'annotated'",
         limit=1,
         return_callable=True,
@@ -316,7 +316,7 @@ async def test_dependency_injection_handles_custom_decorators_and_annotations(
     assert await ns["annotated"](x=5) == 5
 
     # (3) Nested injection for custom functions (outer -> inner -> leaf, via alias)
-    callables = fm.search_functions(
+    callables = fm.filter_functions(
         filter="name == 'outer'",
         limit=1,
         return_callable=True,
@@ -377,7 +377,7 @@ async def test_dependency_injection_supports_user_defined_forward_ref_string_ann
     ns["TimePeriod"] = TimePeriod
     ns["MetricResult"] = MetricResult
 
-    callables = fm.search_functions(
+    callables = fm.filter_functions(
         filter="name == 'metric'",
         limit=1,
         return_callable=True,
@@ -401,7 +401,7 @@ async def test_similarity_search_return_callable_forward_ref_annotations_just_wo
 ):
     """
     Validate the CodeActActor-style flow:
-      fm.search_functions_by_similarity(..., return_callable=True)
+      fm.search_functions(..., return_callable=True)
 
     Caller provides only `create_base_globals()` (no manual injection of
     GroupBy/TimePeriod/MetricResult), and the returned callable should still
@@ -442,7 +442,7 @@ async def test_similarity_search_return_callable_forward_ref_annotations_just_wo
     )
 
     ns = create_base_globals()
-    res = fm.search_functions_by_similarity(
+    res = fm.search_functions(
         query="irrelevant",
         n=1,
         return_callable=True,

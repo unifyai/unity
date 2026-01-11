@@ -541,7 +541,7 @@ async def test_nested_manager_clarification_in_delegate_mode(monkeypatch):
         verify={"ask_contact_question": False},
         overwrite=True,
     )
-    fn_rows = fm.search_functions(filter="name == 'ask_contact_question'", limit=1)
+    fn_rows = fm.filter_functions(filter="name == 'ask_contact_question'", limit=1)
     assert fn_rows and fn_rows[0].get("function_id") is not None
     entrypoint_id = int(fn_rows[0]["function_id"])
 

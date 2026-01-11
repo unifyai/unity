@@ -6,7 +6,7 @@ Coverage
 ✓ add_functions                           (existing happy-path + validation)
 ✓ list_functions                          (with / without implementations)
 ✓ delete_function                         (single, cascading, non-cascading)
-✓ search_functions                        (flexible Python-expr filtering)
+✓ filter_functions                        (flexible Python-expr filtering)
 
 The tests introduce a *minimal* stub of the `unify` API so that they remain
 fully hermetic.  Nothing outside this file is required.
@@ -433,7 +433,7 @@ def test_batch_delete_nonexistent():
 
 
 # --------------------------------------------------------------------------- #
-#  7.  search_functions                                                       #
+#  7.  filter_functions                                                       #
 # --------------------------------------------------------------------------- #
 
 
@@ -450,41 +450,41 @@ def test_search_filtering_across_columns():
     fm.add_functions(implementations=[price_src, square_src, use_src])
 
     # filter on docstring contents
-    hits = fm.search_functions(filter="'price' in docstring")
+    hits = fm.filter_functions(filter="'price' in docstring")
     names = {h["name"] for h in hits}
     assert names == {"price_total"}
 
     # filter by Python predicate on the `name` column
-    hits = fm.search_functions(filter="name[0:2] == 'sq'")
+    hits = fm.filter_functions(filter="name[0:2] == 'sq'")
     assert {h["name"] for h in hits} == {"square"}
 
 
 @_handle_project
-def test_search_functions_include_implementations():
-    """search_functions respects include_implementations parameter."""
+def test_filter_functions_include_implementations():
+    """filter_functions respects include_implementations parameter."""
     fm = FunctionManager()
     fm.add_functions(implementations="def foo(x):\n    return x * 2\n")
 
     # Default (True): includes implementation
-    hits = fm.search_functions(filter="name == 'foo'")
+    hits = fm.filter_functions(filter="name == 'foo'")
     assert len(hits) == 1
     assert "implementation" in hits[0]
 
     # Explicit False: excludes implementation
-    hits = fm.search_functions(filter="name == 'foo'", include_implementations=False)
+    hits = fm.filter_functions(filter="name == 'foo'", include_implementations=False)
     assert len(hits) == 1
     assert "implementation" not in hits[0]
     assert "name" in hits[0]  # Other fields still present
 
 
 @_handle_project
-def test_search_by_similarity_include_implementations():
-    """search_functions_by_similarity respects include_implementations parameter."""
+def test_search_functions_include_implementations():
+    """search_functions respects include_implementations parameter."""
     fm = FunctionManager()
     fm.add_functions(implementations="def double_value(x):\n    return x * 2\n")
 
     # Default (True): includes implementation
-    hits = fm.search_functions_by_similarity(
+    hits = fm.search_functions(
         query="double a number",
         n=5,
         include_primitives=False,
@@ -494,7 +494,7 @@ def test_search_by_similarity_include_implementations():
     assert "implementation" in user_funcs[0]
 
     # Explicit False: excludes implementation
-    hits = fm.search_functions_by_similarity(
+    hits = fm.search_functions(
         query="double a number",
         n=5,
         include_implementations=False,
@@ -537,5 +537,5 @@ def test_clear():
     assert post["gamma"]["function_id"] == 0
 
     fm.add_functions(implementations="def square(x):\n    return x * x\n")
-    hits = fm.search_functions(filter="'return x * x' in implementation")
+    hits = fm.filter_functions(filter="'return x * x' in implementation")
     assert {h["name"] for h in hits} == {"square"}

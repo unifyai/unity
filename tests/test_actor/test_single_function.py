@@ -233,7 +233,7 @@ async def test_semantic_search_finds_primitive():
     )
 
     # Search for a primitive by describing what it does
-    results = fm.search_functions_by_similarity(
+    results = fm.search_functions(
         query="ask questions about my contacts",
         n=5,
         include_primitives=True,
@@ -272,7 +272,7 @@ def list_my_contacts() -> str:
     )
 
     # Search with primitives excluded
-    results = fm.search_functions_by_similarity(
+    results = fm.search_functions(
         query="ask questions about my contacts",
         n=10,
         include_primitives=False,
@@ -299,7 +299,7 @@ async def test_semantic_search_with_no_user_functions():
     )
 
     # Search with only primitives available (no user functions added)
-    results = fm.search_functions_by_similarity(
+    results = fm.search_functions(
         query="manage my tasks and schedule",
         n=5,
         include_primitives=True,
@@ -366,7 +366,7 @@ async def test_function_not_found_by_description(monkeypatch):
     def mock_search(*args, **kwargs):
         return []
 
-    monkeypatch.setattr(fm, "search_functions_by_similarity", mock_search)
+    monkeypatch.setattr(fm, "search_functions", mock_search)
 
     with pytest.raises(ValueError, match="No function found matching"):
         await actor.act(description="anything")

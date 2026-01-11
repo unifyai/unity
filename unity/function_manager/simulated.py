@@ -321,8 +321,8 @@ class SimulatedFunctionManager(BaseFunctionManager):
             maybe_tool_log_completed(label, cid, "delete_function", result, t0)
         return result
 
-    @functools.wraps(BaseFunctionManager.search_functions, updated=())
-    def search_functions(
+    @functools.wraps(BaseFunctionManager.filter_functions, updated=())
+    def filter_functions(
         self,
         *,
         filter: Optional[str] = None,
@@ -341,12 +341,12 @@ class SimulatedFunctionManager(BaseFunctionManager):
 
         guidance = self._guidance_hint()
         sched = maybe_tool_log_scheduled(
-            "SimulatedFunctionManager.search_functions",
-            "search_functions",
+            "SimulatedFunctionManager.filter_functions",
+            "filter_functions",
             {"filter": filter, "offset": offset, "limit": limit},
         )
         prompt = (
-            "Simulate FunctionManager.search_functions. Return ONLY a JSON array of objects "
+            "Simulate FunctionManager.filter_functions. Return ONLY a JSON array of objects "
             "with fields name, function_id, argspec, docstring. "
             f"Limit to {limit} starting at {offset}. "
             f"Filter expression: {filter!r}. "
@@ -363,7 +363,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 sched[0]
                 if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
                 else SimulatedLineage.make_label(
-                    "SimulatedFunctionManager.search_functions",
+                    "SimulatedFunctionManager.filter_functions",
                 )
             )
             return self._run_async_sync(
@@ -378,14 +378,14 @@ class SimulatedFunctionManager(BaseFunctionManager):
         data = self._extract_json(raw)
         if not isinstance(data, list):
             raise ValueError(
-                "search_functions: expected a JSON array of function records",
+                "filter_functions: expected a JSON array of function records",
             )
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(
                 label,
                 cid,
-                "search_functions",
+                "filter_functions",
                 {"total": len(data)},
                 t0,
             )
@@ -429,8 +429,8 @@ class SimulatedFunctionManager(BaseFunctionManager):
 
         return callables_list  # type: ignore[return-value]
 
-    @functools.wraps(BaseFunctionManager.search_functions_by_similarity, updated=())
-    def search_functions_by_similarity(
+    @functools.wraps(BaseFunctionManager.search_functions, updated=())
+    def search_functions(
         self,
         *,
         query: str,
@@ -448,12 +448,12 @@ class SimulatedFunctionManager(BaseFunctionManager):
 
         guidance = self._guidance_hint()
         sched = maybe_tool_log_scheduled(
-            "SimulatedFunctionManager.search_functions_by_similarity",
-            "search_functions_by_similarity",
+            "SimulatedFunctionManager.search_functions",
+            "search_functions",
             {"query": query, "n": n},
         )
         prompt = (
-            "Simulate FunctionManager.search_functions_by_similarity. Given the natural-language query, "
+            "Simulate FunctionManager.search_functions. Given the natural-language query, "
             "invent up to n plausible functions that would exist in the current catalogue. "
             "Return ONLY a JSON array of objects with keys name, function_id, argspec, score. "
             "Bias the inventions to align with the high-level guidance if present.\n\n"
@@ -469,7 +469,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 sched[0]
                 if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
                 else SimulatedLineage.make_label(
-                    "SimulatedFunctionManager.search_functions_by_similarity",
+                    "SimulatedFunctionManager.search_functions",
                 )
             )
             return self._run_async_sync(
@@ -484,14 +484,14 @@ class SimulatedFunctionManager(BaseFunctionManager):
         data = self._extract_json(raw)
         if not isinstance(data, list):
             raise ValueError(
-                "search_functions_by_similarity: expected a JSON array of function records with scores",
+                "search_functions: expected a JSON array of function records with scores",
             )
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(
                 label,
                 cid,
-                "search_functions_by_similarity",
+                "search_functions",
                 {"total": len(data)},
                 t0,
             )

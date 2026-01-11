@@ -325,7 +325,7 @@ class SingleFunctionActor(BaseActor):
         include_primitives: bool = True,
     ) -> Dict[str, Any]:
         """Search for the best matching function or primitive by description."""
-        results = self._function_manager.search_functions_by_similarity(
+        results = self._function_manager.search_functions(
             query=description,
             n=1,
             include_primitives=include_primitives,

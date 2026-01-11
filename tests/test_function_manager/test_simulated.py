@@ -114,7 +114,7 @@ def test_delete_function_acknowledges():
 @_handle_project
 def test_search_functions_returns_list_of_dicts():
     fm = SimulatedFunctionManager()
-    hits = fm.search_functions(filter="'price' in docstring")
+    hits = fm.filter_functions(filter="'price' in docstring")
     assert isinstance(hits, list) and hits
     first = hits[0]
     assert isinstance(first, dict)
@@ -123,15 +123,15 @@ def test_search_functions_returns_list_of_dicts():
 
 
 # --------------------------------------------------------------------------- #
-#  search_functions_by_similarity                                             #
+#  search_functions                                             #
 # --------------------------------------------------------------------------- #
 
 
 @_handle_project
-def test_search_functions_by_similarity_bounds_and_shape():
+def test_search_functions_bounds_and_shape():
     fm = SimulatedFunctionManager()
     n = 2
-    sims = fm.search_functions_by_similarity(query="add numbers", n=n)
+    sims = fm.search_functions(query="add numbers", n=n)
     assert isinstance(sims, list) and 1 <= len(sims) <= n
     first = sims[0]
     assert isinstance(first, dict)

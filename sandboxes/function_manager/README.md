@@ -11,7 +11,7 @@ The manager provides comprehensive function lifecycle management with built-in s
 
 * **`add_functions(implementations)`** – Validates, compiles, and stores one or more Python functions with security checks
 * **`list_functions()`** – Retrieves all stored functions with optional implementation details
-* **`search_functions_by_similarity(query)`** – Finds functions using semantic search via embeddings
+* **`search_functions(query)`** – Finds functions using semantic search via embeddings
 * **`search_functions(filter)`** – Performs structured filtering using Python expressions
 * **`delete_function(function_id)`** – Removes functions with optional dependency cascade deletion
 * **`get_precondition(function_name)`** – Retrieves stored preconditions for function execution

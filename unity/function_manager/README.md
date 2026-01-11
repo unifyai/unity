@@ -88,7 +88,7 @@ In practice, use `computer_primitives` when your function runs via an Actor – 
 
 Primitives are lazily synchronized to the database:
 
-1. On first access (e.g., `list_primitives()`, `search_functions_by_similarity()`), the manager calls `sync_primitives()`
+1. On first access (e.g., `list_primitives()`, `search_functions()`), the manager calls `sync_primitives()`
 2. A hash of all primitive signatures/docstrings is compared against the stored hash
 3. If changed, all primitives are deleted and re-inserted with their stable IDs
 4. The hash is stored in `Functions/Meta` for future comparisons
@@ -290,7 +290,7 @@ The sandbox includes `__import__`, so any package installed in the environment c
 
 ### Best Practice: Domain Types & Type Hints (Avoid Surprise `NameError`s)
 
-Compositional functions are often used by the Actor/CodeActActor by **retrieving a callable** (e.g. via `search_functions_by_similarity(..., return_callable=True)`) and executing it in a fresh sandbox namespace.
+Compositional functions are often used by the Actor/CodeActActor by **retrieving a callable** (e.g. via `search_functions(..., return_callable=True)`) and executing it in a fresh sandbox namespace.
 
 Here’s the simple rule:
 - If you reference a symbol in the **function body**, **import/define it** in the function (don’t assume it exists in globals).
@@ -388,7 +388,7 @@ fm.sync_primitives()
 fm.list_primitives()
 
 # Search includes primitives by default
-fm.search_functions_by_similarity(query="navigate browser", include_primitives=True)
+fm.search_functions(query="navigate browser", include_primitives=True)
 ```
 
 ### Compositional Functions
@@ -401,7 +401,7 @@ fm.add_functions(implementations=["async def foo(): pass"])
 fm.list_functions(include_implementations=False)
 
 # Search by similarity
-fm.search_functions_by_similarity(query="contact management", n=5)
+fm.search_functions(query="contact management", n=5)
 
 # Delete
 fm.delete_function(function_id=1)

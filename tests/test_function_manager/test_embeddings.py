@@ -34,17 +34,17 @@ def send_plain_text_email(recipient: str, subject: str, body: str):
     fm.add_functions(implementations=[pay_bill_src, search_docs_src, send_email_src])
 
     # 2. Check that a keyword search for a non-existent term fails
-    keyword_hits = fm.search_functions(filter="'gas' in docstring")
+    keyword_hits = fm.filter_functions(filter="'gas' in docstring")
     assert not keyword_hits
 
     # 3. Use semantic search to find the most similar function
     query = "pay gas bill online"
-    similar_funcs = fm.search_functions_by_similarity(query=query, n=1)
+    similar_funcs = fm.search_functions(query=query, n=1)
 
     assert len(similar_funcs) == 1
     assert similar_funcs[0]["name"] == "pay_utility_bill_via_console"
 
     # 4. Test the 'n' parameter
-    similar_funcs_2 = fm.search_functions_by_similarity(query=query, n=2)
+    similar_funcs_2 = fm.search_functions(query=query, n=2)
     assert len(similar_funcs_2) == 2
     assert similar_funcs_2[0]["name"] == "pay_utility_bill_via_console"

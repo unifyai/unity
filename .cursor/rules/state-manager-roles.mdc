@@ -140,7 +140,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 
 ### FunctionManager
 - **Role**: Catalogue of user‑supplied Python functions and metadata.
-- **Scope**: add/list/get_precondition/delete/search/search_by_similarity over functions.
+- **Scope**: add/list/get_precondition/delete/filter/search over functions.
 - **Connections**:
   - **Steered by**: `Actor` (loads/executes functions during actions). `GuidanceManager` reads function rows via the shared "Functions" context (no direct API calls).
   - **Steers**: —
