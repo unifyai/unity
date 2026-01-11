@@ -71,6 +71,35 @@ apt-get install -y --no-install-recommends locales
 sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 
 # =============================================================================
+# POWERSHELL CORE (for shell function testing)
+# =============================================================================
+# Detect distro to use correct Microsoft repository
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    case "$ID-$VERSION_CODENAME" in
+        ubuntu-jammy)   MSFT_REPO="microsoft-ubuntu-jammy-prod jammy" ;;
+        ubuntu-noble)   MSFT_REPO="microsoft-ubuntu-noble-prod noble" ;;
+        debian-bookworm) MSFT_REPO="microsoft-debian-bookworm-prod bookworm" ;;
+        debian-bullseye) MSFT_REPO="microsoft-debian-bullseye-prod bullseye" ;;
+        *)
+            echo "Warning: Unknown distro $ID-$VERSION_CODENAME, skipping PowerShell installation"
+            MSFT_REPO=""
+            ;;
+    esac
+else
+    echo "Warning: Cannot detect distro, skipping PowerShell installation"
+    MSFT_REPO=""
+fi
+
+if [ -n "$MSFT_REPO" ]; then
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/$MSFT_REPO main" | tee /etc/apt/sources.list.d/microsoft.list > /dev/null
+    apt-get update
+    apt-get install -y --no-install-recommends powershell
+    echo "PowerShell installed: $(pwsh --version)"
+fi
+
+# =============================================================================
 # FULL PRODUCTION DEPENDENCIES (skipped with --minimal)
 # =============================================================================
 if [ "$MINIMAL" = false ]; then
