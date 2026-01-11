@@ -664,6 +664,154 @@ class VenvPool:
                     pass
 
 
+class _InProcessFunctionProxy:
+    """Proxy that wraps an in-process function with state mode support.
+
+    This proxy enables in-process functions (no venv) to be called with the same
+    state mode API as venv-backed functions. It supports three execution modes
+    for fine-grained control over state management:
+
+    Execution Modes
+    ---------------
+    **stateful** (default):
+        Executes in a persistent in-process session. Variables defined in previous
+        calls persist across executions within the same session_id. Use this for
+        iterative workflows where you want to build up state incrementally.
+
+    **stateless**:
+        Executes in a fresh globals dict with no inherited state. Each call starts
+        with a clean environment. Use this for pure functions that should not
+        depend on or affect any global state - guarantees reproducible results.
+
+    **read_only**:
+        Reads the current global state from the persistent session but executes
+        in a fresh globals dict. Changes made during execution are NOT persisted
+        back to the session. Use this for "what-if" exploration.
+
+    Usage Examples
+    --------------
+    ```python
+    # Stateful (default) - state persists between calls
+    await set_config(key="debug", value=True)
+    await run_analysis()  # can access 'config' from previous call
+
+    # Stateless - fresh environment each time
+    result = await compute.stateless(x=1, y=2)
+
+    # Read-only - see current state but don't modify it
+    preview = await transform.read_only(factor=2)
+    ```
+    """
+
+    def __init__(
+        self,
+        *,
+        function_manager: "FunctionManager",
+        func_data: Dict[str, Any],
+        namespace: Dict[str, Any],
+        raw_callable: Callable[..., Any],
+    ):
+        self._function_manager = function_manager
+        self._func_data = func_data
+        self._namespace = namespace
+        self._raw_callable = raw_callable
+
+        self.__name__ = str(func_data.get("name") or "unknown")
+        self.__doc__ = str(func_data.get("docstring") or "")
+
+    async def _execute_with_mode(
+        self,
+        state_mode: Literal["stateful", "read_only", "stateless"],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Execute the function with the specified state mode.
+
+        Args:
+            state_mode: How to handle global state during execution.
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            The function's return value.
+        """
+        if state_mode == "stateful":
+            # Execute directly using the raw callable in the shared namespace.
+            # This is the existing behavior - state naturally persists in the namespace.
+            result = self._raw_callable(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return result
+
+        # For stateless and read_only, use execute_function with appropriate mode
+        result = await self._function_manager.execute_function(
+            function_name=self.__name__,
+            call_kwargs=kwargs,
+            target_venv_id=None,  # Force in-process execution
+            state_mode=state_mode,
+            session_id=0,  # Default session for read_only state source
+            primitives=self._namespace.get("primitives"),
+            computer_primitives=self._namespace.get("computer_primitives"),
+        )
+
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return result.get("result")
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Execute the function in stateful mode (default).
+
+        State persists across calls within the shared namespace. Variables
+        defined in previous executions remain accessible. This is the default
+        behavior, suitable for iterative/interactive workflows.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            The function's return value.
+        """
+        return await self._execute_with_mode("stateful", *args, **kwargs)
+
+    def stateless(self, *args: Any, **kwargs: Any):
+        """
+        Execute the function in stateless mode (fresh environment).
+
+        Each call executes with fresh globals and no inherited state.
+        The function cannot see or modify any variables from previous executions.
+        Use this for pure functions that should produce identical results
+        regardless of execution history.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            Awaitable that resolves to the function's return value.
+        """
+        return self._execute_with_mode("stateless", *args, **kwargs)
+
+    def read_only(self, *args: Any, **kwargs: Any):
+        """
+        Execute the function in read-only mode (sees state, no persistence).
+
+        Reads the current global state from the persistent in-process session but
+        executes in a fresh globals dict. Any modifications during execution are
+        discarded - the persistent session state remains unchanged.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            Awaitable that resolves to the function's return value.
+        """
+        return self._execute_with_mode("read_only", *args, **kwargs)
+
+
 class _VenvFunctionProxy:
     """Proxy that wraps a venv-backed function as an awaitable callable.
 
@@ -2494,11 +2642,13 @@ class FunctionManager(BaseFunctionManager):
         func_data: Dict[str, Any],
         *,
         namespace: Dict[str, Any],
-    ) -> Callable[..., Any]:
-        """Create an in-process callable by exec()'ing the stored implementation.
+    ) -> _InProcessFunctionProxy:
+        """Create an in-process callable wrapped in a proxy with state mode support.
 
         The function is defined directly into the provided ``namespace`` so that it
-        can reference injected dependencies and injected environment globals.
+        can reference injected dependencies and injected environment globals. The
+        returned proxy supports `.stateless()` and `.read_only()` methods for
+        alternative execution modes.
         """
         func_name = func_data.get("name")
         if not isinstance(func_name, str) or not func_name:
@@ -2518,12 +2668,19 @@ class FunctionManager(BaseFunctionManager):
         )
 
         exec(implementation, namespace)
-        fn = namespace.get(func_name)
-        if not callable(fn):
+        raw_fn = namespace.get(func_name)
+        if not callable(raw_fn):
             raise ValueError(
                 f"Function '{func_name}' not found after exec() into namespace",
             )
-        return fn
+
+        # Wrap in proxy to provide state mode API (.stateless(), .read_only())
+        return _InProcessFunctionProxy(
+            function_manager=self,
+            func_data=func_data,
+            namespace=namespace,
+            raw_callable=raw_fn,
+        )
 
     @staticmethod
     def _inject_forward_ref_annotation_placeholders(
