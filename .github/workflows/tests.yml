@@ -182,18 +182,23 @@ jobs:
         # Sources (priority order):
         # 1. [parallel_run.sh ...] from commit/PR → parse paths and flags
         # 2. workflow_dispatch inputs → test_path + parallel_run_args
-        # 3. Default (test_path=".") → discover leaf test folders
+        # 3. Default (no paths) → discover all leaf test folders
         #
-        # Leaf discovery (Option A):
+        # ALL paths (explicit or discovered) are expanded to leaf directories:
+        # - Files are kept as-is
+        # - Directories are expanded to their leaf sub-folders
+        #
+        # Leaf discovery (Option A algorithm):
         # - Leaf directories (test files, no test subdirs) → one job per directory
         # - Non-leaf directories with test files → one job per individual test file
-        # This maximizes parallelism while keeping each job focused.
+        # This maximizes parallelism regardless of how paths are specified.
 
         PARALLEL_CMD="${{ needs.should-run-tests.outputs.parallel_run_cmd }}"
         INPUT_PATH="${{ inputs.test_path }}"
         INPUT_ARGS="${{ inputs.parallel_run_args }}"
 
         # Initialize
+        declare -a RAW_PATHS=()
         declare -a PATHS=()
         declare -a FLAGS=()
 
@@ -212,25 +217,28 @@ jobs:
               FLAGS+=("$token")
               LAST_FLAG=""
             else
-              # It's a path
-              PATHS+=("$token")
+              # It's a path - collect for expansion
+              RAW_PATHS+=("$token")
               LAST_FLAG=""
             fi
           done
         elif [[ -n "$INPUT_PATH" && "$INPUT_PATH" != "." ]]; then
           # workflow_dispatch with specific path(s)
           # Split space-separated paths into array
-          read -ra PATHS <<< "$INPUT_PATH"
+          read -ra RAW_PATHS <<< "$INPUT_PATH"
           # Flags come from parallel_run_args input
           if [[ -n "$INPUT_ARGS" ]]; then
             read -ra FLAGS <<< "$INPUT_ARGS"
           fi
-          echo "Using test_path input: ${PATHS[*]}" >&2
-        else
-          # Default: discover leaf test folders using Option A algorithm
-          # - Leaf directories (have test files, no test subdirs) → add directory
-          # - Non-leaf directories with direct test files → add individual files
-          # This ensures maximum parallelism at the CI level.
+          echo "Using test_path input: ${RAW_PATHS[*]}" >&2
+        fi
+
+        # Expand paths to leaf directories using discover_test_paths.py
+        # - If RAW_PATHS is empty, discover all test paths from tests/
+        # - If RAW_PATHS has entries, expand each directory to its leaf sub-folders
+        # This ensures maximum parallelism regardless of how paths are specified.
+        if (( ${#RAW_PATHS[@]} == 0 )); then
+          # No explicit paths - discover all
           while IFS= read -r path; do
             PATHS+=("$path")
           done < <(python3 .github/scripts/discover_test_paths.py)
@@ -239,6 +247,12 @@ jobs:
             read -ra FLAGS <<< "$INPUT_ARGS"
           fi
           echo "Discovered ${#PATHS[@]} test paths (leaf dirs + individual files)" >&2
+        else
+          # Expand explicit paths to their leaf directories
+          while IFS= read -r path; do
+            PATHS+=("$path")
+          done < <(python3 .github/scripts/discover_test_paths.py "${RAW_PATHS[@]}")
+          echo "Expanded ${#RAW_PATHS[@]} path(s) to ${#PATHS[@]} leaf test paths" >&2
         fi
 
         # Build JSON array of paths for matrix
