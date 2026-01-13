@@ -83,10 +83,10 @@ class TestModelSelection:
 
         # The client should use the default model when not specified
         client = new_llm_client(model=None)
-        # The Unify client may normalize the model name (strip provider suffix)
-        # So we check that the model base name matches
+        # The Unify client stores the model in _model (private attribute)
+        # It may normalize the model name (strip provider suffix)
         expected_base = SETTINGS.UNIFY_MODEL.split("@")[0]
-        assert client.model == expected_base or client.model == SETTINGS.UNIFY_MODEL
+        assert client._model == expected_base or client._model == SETTINGS.UNIFY_MODEL
 
     def test_llm_client_explicit_model_override(self):
         """new_llm_client() respects explicit model parameter."""
@@ -94,9 +94,10 @@ class TestModelSelection:
 
         explicit_model = "gpt-4o-mini@openai"
         client = new_llm_client(model=explicit_model)
-        # The Unify client may normalize the model name (strip provider suffix)
+        # The Unify client stores the model in _model (private attribute)
+        # It may normalize the model name (strip provider suffix)
         expected_base = explicit_model.split("@")[0]
-        assert client.model == expected_base or client.model == explicit_model
+        assert client._model == expected_base or client._model == explicit_model
 
     def test_main_cm_brain_model_configuration(self):
         """
