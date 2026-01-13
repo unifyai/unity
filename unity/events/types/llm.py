@@ -1,4 +1,4 @@
-"""Payload model for LLM request/response events."""
+"""Payload model for LLM completion events."""
 
 from __future__ import annotations
 
@@ -8,33 +8,30 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LLMPayload(BaseModel):
-    """Payload for LLM request/response events.
+    """Payload for LLM completion events.
 
-    Published when an LLM call is made through unillm. Events are emitted
-    twice per call: once at request time (phase="request") and once when
-    the response is received (phase="response").
+    Published when an LLM call completes through unillm. A single event is
+    emitted per LLM call, containing both request and response information.
 
-    For non-streaming calls, the response event includes cache status and
-    token usage. For streaming calls, cache_status is None and token counts
-    may be unavailable.
+    For non-streaming calls, the event includes cache status and token usage.
+    For streaming calls, cache_status is None and token counts may be unavailable.
     """
 
     model_config = ConfigDict(extra="allow")
 
     # Core event metadata
-    phase: str = Field(description="Event phase: 'request' or 'response'")
     endpoint: str = Field(description="LLM endpoint (e.g., 'gpt-4o@openai')")
     model: str = Field(description="Model name extracted from endpoint")
     provider: str = Field(description="Provider name extracted from endpoint")
     stream: bool = Field(
         default=False,
-        description="Whether this is a streaming request",
+        description="Whether this was a streaming request",
     )
 
-    # Cache status (response phase only, non-streaming)
+    # Cache status (non-streaming only)
     cache_status: Optional[str] = Field(
         default=None,
-        description="'hit', 'miss', or 'error' (response phase, non-streaming only)",
+        description="'hit', 'miss', or 'error' (non-streaming only)",
     )
 
     # Request summary (to avoid storing large message arrays)
@@ -75,4 +72,14 @@ class LLMPayload(BaseModel):
     content_preview: Optional[str] = Field(
         default=None,
         description="Truncated preview of response content (first 200 chars)",
+    )
+
+    # Cost information (only for cache misses)
+    provider_cost: Optional[float] = Field(
+        default=None,
+        description="Raw cost charged by the LLM provider (USD)",
+    )
+    billed_cost: Optional[float] = Field(
+        default=None,
+        description="Cost charged to the user (provider_cost × margin, USD)",
     )

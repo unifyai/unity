@@ -1,7 +1,7 @@
 """Tests for LLM event integration with EventBus.
 
 These tests verify that:
-1. The LLMPayload model correctly captures LLM request/response metadata
+1. The LLMPayload model correctly captures LLM completion metadata
 2. The hook converts unillm LLMEvent to EventBus events
 3. LLM events are published to EventBus during actual LLM calls
 4. The payload extracts useful information from responses (tokens, preview, etc.)
@@ -30,9 +30,8 @@ from unity.events.llm_event_hook import _llm_event_to_eventbus, install_llm_even
 class TestLLMPayloadModel:
     """Tests for the LLMPayload Pydantic model."""
 
-    def test_create_request_payload(self):
+    def test_create_basic_payload(self):
         payload = LLMPayload(
-            phase="request",
             endpoint="gpt-4o@openai",
             model="gpt-4o",
             provider="openai",
@@ -40,21 +39,19 @@ class TestLLMPayloadModel:
             messages_count=3,
             tools_count=5,
         )
-        assert payload.phase == "request"
         assert payload.endpoint == "gpt-4o@openai"
         assert payload.model == "gpt-4o"
         assert payload.provider == "openai"
         assert payload.stream is False
         assert payload.messages_count == 3
         assert payload.tools_count == 5
-        # Response fields should be None for request phase
+        # Optional fields should be None by default
         assert payload.cache_status is None
         assert payload.response_model is None
         assert payload.prompt_tokens is None
 
-    def test_create_response_payload(self):
+    def test_create_full_payload(self):
         payload = LLMPayload(
-            phase="response",
             endpoint="claude-4@anthropic",
             model="claude-4",
             provider="anthropic",
@@ -68,7 +65,6 @@ class TestLLMPayloadModel:
             total_tokens=200,
             content_preview="Hello, how can I help...",
         )
-        assert payload.phase == "response"
         assert payload.cache_status == "miss"
         assert payload.response_model == "claude-4-20260115"
         assert payload.prompt_tokens == 150
@@ -78,7 +74,6 @@ class TestLLMPayloadModel:
 
     def test_create_error_payload(self):
         payload = LLMPayload(
-            phase="response",
             endpoint="gpt-4o@openai",
             model="gpt-4o",
             provider="openai",
@@ -93,7 +88,6 @@ class TestLLMPayloadModel:
 
     def test_streaming_payload(self):
         payload = LLMPayload(
-            phase="request",
             endpoint="gpt-4o@openai",
             model="gpt-4o",
             provider="openai",
@@ -103,10 +97,35 @@ class TestLLMPayloadModel:
         )
         assert payload.stream is True
 
+    def test_payload_with_costs(self):
+        """LLMPayload should include provider_cost and billed_cost."""
+        payload = LLMPayload(
+            endpoint="gpt-4o@openai",
+            model="gpt-4o",
+            provider="openai",
+            stream=False,
+            cache_status="miss",
+            messages_count=1,
+            tools_count=0,
+            provider_cost=0.001,
+            billed_cost=0.005,
+        )
+        assert payload.provider_cost == 0.001
+        assert payload.billed_cost == 0.005
+
+    def test_payload_costs_default_to_none(self):
+        """Cost fields should default to None."""
+        payload = LLMPayload(
+            endpoint="gpt-4o@openai",
+            model="gpt-4o",
+            provider="openai",
+        )
+        assert payload.provider_cost is None
+        assert payload.billed_cost is None
+
     def test_payload_allows_extra_fields(self):
         """LLMPayload should accept extra fields for forward compatibility."""
         payload = LLMPayload(
-            phase="request",
             endpoint="gpt-4o@openai",
             model="gpt-4o",
             provider="openai",
@@ -125,11 +144,10 @@ class TestLLMEventToEventBusConversion:
 
     @pytest.mark.asyncio
     @_handle_project
-    async def test_request_event_conversion(self):
-        """Request events should be converted and published to EventBus."""
+    async def test_basic_event_conversion(self):
+        """LLM events should be converted and published to EventBus."""
         async with capture_events("LLM") as captured:
             llm_event = LLMEvent(
-                phase="request",
                 endpoint="gpt-4o@openai",
                 model="gpt-4o",
                 provider="openai",
@@ -141,6 +159,7 @@ class TestLLMEventToEventBusConversion:
                     "tools": [{"type": "function", "function": {"name": "search"}}],
                 },
                 stream=False,
+                cache_status="miss",
             )
             _llm_event_to_eventbus(llm_event)
 
@@ -150,18 +169,18 @@ class TestLLMEventToEventBusConversion:
         assert len(captured) == 1
         evt = captured[0]
         assert evt.type == "LLM"
-        assert evt.payload["phase"] == "request"
         assert evt.payload["endpoint"] == "gpt-4o@openai"
         assert evt.payload["model"] == "gpt-4o"
         assert evt.payload["provider"] == "openai"
         assert evt.payload["messages_count"] == 2
         assert evt.payload["tools_count"] == 1
         assert evt.payload["stream"] is False
+        assert evt.payload["cache_status"] == "miss"
 
     @pytest.mark.asyncio
     @_handle_project
-    async def test_response_event_conversion(self):
-        """Response events should include cache status and token usage."""
+    async def test_event_with_response_metadata(self):
+        """Events should include token usage from response."""
         # Create a mock response with usage info
         mock_response = MagicMock()
         mock_response.model = "gpt-4o-2024-08-06"
@@ -175,7 +194,6 @@ class TestLLMEventToEventBusConversion:
 
         async with capture_events("LLM") as captured:
             llm_event = LLMEvent(
-                phase="response",
                 endpoint="gpt-4o@openai",
                 model="gpt-4o",
                 provider="openai",
@@ -190,7 +208,6 @@ class TestLLMEventToEventBusConversion:
 
         assert len(captured) == 1
         evt = captured[0]
-        assert evt.payload["phase"] == "response"
         assert evt.payload["cache_status"] == "miss"
         assert evt.payload["response_model"] == "gpt-4o-2024-08-06"
         assert evt.payload["prompt_tokens"] == 100
@@ -213,7 +230,6 @@ class TestLLMEventToEventBusConversion:
 
         async with capture_events("LLM") as captured:
             llm_event = LLMEvent(
-                phase="response",
                 endpoint="gpt-4o@openai",
                 model="gpt-4o",
                 provider="openai",
@@ -237,7 +253,6 @@ class TestLLMEventToEventBusConversion:
         """Error events should capture the error message."""
         async with capture_events("LLM") as captured:
             llm_event = LLMEvent(
-                phase="response",
                 endpoint="gpt-4o@openai",
                 model="gpt-4o",
                 provider="openai",
@@ -262,7 +277,6 @@ class TestLLMEventToEventBusConversion:
         """Streaming events should be marked appropriately."""
         async with capture_events("LLM") as captured:
             llm_event = LLMEvent(
-                phase="response",
                 endpoint="gpt-4o@openai",
                 model="gpt-4o",
                 provider="openai",
@@ -279,6 +293,55 @@ class TestLLMEventToEventBusConversion:
         evt = captured[0]
         assert evt.payload["stream"] is True
         assert evt.payload["cache_status"] is None
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_event_with_costs(self):
+        """Events should include provider_cost and billed_cost."""
+        async with capture_events("LLM") as captured:
+            llm_event = LLMEvent(
+                endpoint="gpt-4o@openai",
+                model="gpt-4o",
+                provider="openai",
+                request_kw={"messages": [{"role": "user", "content": "Hi"}]},
+                cache_status="miss",
+                stream=False,
+                provider_cost=0.001,
+                billed_cost=0.005,
+            )
+            _llm_event_to_eventbus(llm_event)
+
+            await asyncio.sleep(0.05)
+
+        assert len(captured) == 1
+        evt = captured[0]
+        assert evt.payload["provider_cost"] == 0.001
+        assert evt.payload["billed_cost"] == 0.005
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_cache_hit_has_no_costs(self):
+        """Cache hit events should have None costs."""
+        async with capture_events("LLM") as captured:
+            llm_event = LLMEvent(
+                endpoint="gpt-4o@openai",
+                model="gpt-4o",
+                provider="openai",
+                request_kw={"messages": []},
+                cache_status="hit",
+                stream=False,
+                provider_cost=None,
+                billed_cost=None,
+            )
+            _llm_event_to_eventbus(llm_event)
+
+            await asyncio.sleep(0.05)
+
+        assert len(captured) == 1
+        evt = captured[0]
+        assert evt.payload["cache_status"] == "hit"
+        assert evt.payload["provider_cost"] is None
+        assert evt.payload["billed_cost"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -315,8 +378,8 @@ class TestHookInstallation:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_llm_call_publishes_events():
-    """A real LLM call should publish both request and response events to EventBus."""
+async def test_llm_call_publishes_event():
+    """A real LLM call should publish an event to EventBus."""
     # Ensure the hook is installed (unity.init() should have done this)
     install_llm_event_hook()
 
@@ -332,34 +395,23 @@ async def test_llm_call_publishes_events():
         await asyncio.sleep(0.1)
         EVENT_BUS.join_published()
 
-    # Should have both request and response events
-    assert len(captured) >= 2
+    # Should have one event per LLM call
+    assert len(captured) >= 1
 
-    # Find request and response events
-    request_events = [e for e in captured if e.payload.get("phase") == "request"]
-    response_events = [e for e in captured if e.payload.get("phase") == "response"]
-
-    assert len(request_events) >= 1
-    assert len(response_events) >= 1
-
-    # Check request event
-    req = request_events[-1]
-    assert req.payload["endpoint"] == "gpt-4.1-nano@openai"
-    assert req.payload["model"] == "gpt-4.1-nano"
-    assert req.payload["provider"] == "openai"
-    assert req.payload["messages_count"] == 1
-    assert req.payload["stream"] is False
-
-    # Check response event
-    resp = response_events[-1]
-    assert resp.payload["endpoint"] == "gpt-4.1-nano@openai"
-    assert resp.payload["cache_status"] in ("hit", "miss")
+    # Check the event
+    evt = captured[-1]
+    assert evt.payload["endpoint"] == "gpt-4.1-nano@openai"
+    assert evt.payload["model"] == "gpt-4.1-nano"
+    assert evt.payload["provider"] == "openai"
+    assert evt.payload["messages_count"] == 1
+    assert evt.payload["stream"] is False
+    assert evt.payload["cache_status"] in ("hit", "miss")
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_llm_call_captures_token_usage():
-    """Response events should include token usage from the LLM response."""
+    """LLM events should include token usage from the response."""
     install_llm_event_hook()
 
     async with capture_events("LLM") as captured:
@@ -371,24 +423,23 @@ async def test_llm_call_captures_token_usage():
         await asyncio.sleep(0.1)
         EVENT_BUS.join_published()
 
-    response_events = [e for e in captured if e.payload.get("phase") == "response"]
-    assert len(response_events) >= 1
+    assert len(captured) >= 1
 
-    resp = response_events[-1]
+    evt = captured[-1]
     # Token counts should be present (at least for cache miss)
     # For cache hits, the cached response should also have usage info
-    if resp.payload["cache_status"] == "miss":
+    if evt.payload["cache_status"] == "miss":
         # Fresh calls should have token usage
         assert (
-            resp.payload.get("prompt_tokens") is not None
-            or resp.payload.get("total_tokens") is not None
+            evt.payload.get("prompt_tokens") is not None
+            or evt.payload.get("total_tokens") is not None
         )
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_llm_call_with_tools_captures_tool_count():
-    """Request events should capture the number of tools provided."""
+    """LLM events should capture the number of tools provided."""
     install_llm_event_hook()
 
     tools = [
@@ -420,11 +471,10 @@ async def test_llm_call_with_tools_captures_tool_count():
         await asyncio.sleep(0.1)
         EVENT_BUS.join_published()
 
-    request_events = [e for e in captured if e.payload.get("phase") == "request"]
-    assert len(request_events) >= 1
+    assert len(captured) >= 1
 
-    req = request_events[-1]
-    assert req.payload["tools_count"] == 2
+    evt = captured[-1]
+    assert evt.payload["tools_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -450,14 +500,8 @@ async def test_multiple_sequential_llm_calls():
         await asyncio.sleep(0.15)
         EVENT_BUS.join_published()
 
-    # Should have 6 events (2 per call: request + response)
-    assert len(captured) >= 6
-
-    request_events = [e for e in captured if e.payload.get("phase") == "request"]
-    response_events = [e for e in captured if e.payload.get("phase") == "response"]
-
-    assert len(request_events) >= 3
-    assert len(response_events) >= 3
+    # Should have 3 events (1 per call)
+    assert len(captured) >= 3
 
 
 @pytest.mark.asyncio
@@ -480,9 +524,56 @@ async def test_llm_events_searchable_in_eventbus():
         limit=10,
     )
 
-    assert len(events) >= 2
+    assert len(events) >= 1
     llm_events = [e for e in events if e.type == "LLM"]
-    assert len(llm_events) >= 2
+    assert len(llm_events) >= 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_llm_event_includes_cost_fields():
+    """LLM events should include provider_cost and billed_cost for cache misses."""
+    install_llm_event_hook()
+
+    # Use a unique prompt to force a cache miss
+    import uuid
+
+    unique_id = str(uuid.uuid4())[:8]
+
+    async with capture_events("LLM") as captured:
+        client = unillm.AsyncUnify("gpt-4.1-nano@openai", cache=True)
+        await client.generate(
+            messages=[{"role": "user", "content": f"Say 'cost test' [{unique_id}]"}],
+        )
+
+        await asyncio.sleep(0.1)
+        EVENT_BUS.join_published()
+
+    # Should have captured the LLM event
+    assert len(captured) >= 1
+    evt = captured[-1]
+
+    # Verify event structure
+    assert evt.type == "LLM"
+    assert evt.payload["endpoint"] == "gpt-4.1-nano@openai"
+
+    # For cache misses, costs should be present and positive
+    if evt.payload["cache_status"] == "miss":
+        # Provider cost should be present and positive
+        assert evt.payload["provider_cost"] is not None
+        assert evt.payload["provider_cost"] > 0
+
+        # Billed cost should be provider_cost × margin (default 5)
+        assert evt.payload["billed_cost"] is not None
+        assert evt.payload["billed_cost"] > 0
+
+        # Billed cost should be higher than provider cost (with default 5x margin)
+        assert evt.payload["billed_cost"] >= evt.payload["provider_cost"]
+
+    # For cache hits, costs should be None (free)
+    elif evt.payload["cache_status"] == "hit":
+        assert evt.payload["provider_cost"] is None
+        assert evt.payload["billed_cost"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +591,6 @@ async def test_llm_event_type_registered():
     event = Event(
         type="LLM",
         payload=LLMPayload(
-            phase="request",
             endpoint="test@provider",
             model="test",
             provider="provider",
@@ -528,7 +618,6 @@ async def test_llm_events_in_search_by_type():
             Event(
                 type="LLM",
                 payload=LLMPayload(
-                    phase="request" if i % 2 == 0 else "response",
                     endpoint="test@provider",
                     model="test",
                     provider="provider",
@@ -556,7 +645,6 @@ async def test_hook_handles_missing_response_gracefully():
     """Hook should handle None response without crashing."""
     async with capture_events("LLM") as captured:
         llm_event = LLMEvent(
-            phase="response",
             endpoint="gpt-4o@openai",
             model="gpt-4o",
             provider="openai",
@@ -581,7 +669,6 @@ async def test_hook_handles_empty_request_kw():
     """Hook should handle empty request_kw without crashing."""
     async with capture_events("LLM") as captured:
         llm_event = LLMEvent(
-            phase="request",
             endpoint="gpt-4o@openai",
             model="gpt-4o",
             provider="openai",
@@ -609,7 +696,6 @@ async def test_hook_handles_malformed_response():
 
     async with capture_events("LLM") as captured:
         llm_event = LLMEvent(
-            phase="response",
             endpoint="gpt-4o@openai",
             model="gpt-4o",
             provider="openai",

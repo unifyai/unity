@@ -23,9 +23,9 @@ _HOOK_INSTALLED = False
 def _llm_event_to_eventbus(event: "LLMEvent") -> None:
     """Convert a unillm LLMEvent to an EventBus event and publish it.
 
-    This hook is called synchronously by unillm for each LLM request and
-    response. We convert the event to our LLMPayload format and publish
-    it asynchronously to avoid blocking the LLM call.
+    This hook is called synchronously by unillm after each LLM call completes.
+    We convert the event to our LLMPayload format and publish it asynchronously
+    to avoid blocking the LLM call.
 
     The hook is designed to be resilient - any errors are silently ignored
     to ensure LLM calls are never disrupted by logging failures.
@@ -39,57 +39,53 @@ def _llm_event_to_eventbus(event: "LLMEvent") -> None:
         messages = request_kw.get("messages", [])
         tools = request_kw.get("tools", [])
 
-        # Build the payload with request info
+        # Build the payload with both request and response info
         payload_data = {
-            "phase": event.phase,
             "endpoint": event.endpoint,
             "model": event.model,
             "provider": event.provider,
             "stream": event.stream,
             "messages_count": len(messages) if isinstance(messages, list) else 0,
             "tools_count": len(tools) if isinstance(tools, list) else 0,
+            "cache_status": event.cache_status,
+            "provider_cost": event.provider_cost,
+            "billed_cost": event.billed_cost,
         }
 
-        # Add response-specific fields
-        if event.phase == "response":
-            payload_data["cache_status"] = event.cache_status
+        # Extract error message if present
+        if event.error is not None:
+            payload_data["error"] = str(event.error)
 
-            # Extract error message if present
-            if event.error is not None:
-                payload_data["error"] = str(event.error)
+        # Extract response metadata if available
+        if event.response is not None:
+            # Response model
+            if hasattr(event.response, "model"):
+                payload_data["response_model"] = event.response.model
 
-            # Extract response metadata if available
-            if event.response is not None:
-                # Response model
-                if hasattr(event.response, "model"):
-                    payload_data["response_model"] = event.response.model
+            # Token usage
+            if hasattr(event.response, "usage") and event.response.usage:
+                usage = event.response.usage
+                if hasattr(usage, "prompt_tokens"):
+                    payload_data["prompt_tokens"] = usage.prompt_tokens
+                if hasattr(usage, "completion_tokens"):
+                    payload_data["completion_tokens"] = usage.completion_tokens
+                if hasattr(usage, "total_tokens"):
+                    payload_data["total_tokens"] = usage.total_tokens
 
-                # Token usage
-                if hasattr(event.response, "usage") and event.response.usage:
-                    usage = event.response.usage
-                    if hasattr(usage, "prompt_tokens"):
-                        payload_data["prompt_tokens"] = usage.prompt_tokens
-                    if hasattr(usage, "completion_tokens"):
-                        payload_data["completion_tokens"] = usage.completion_tokens
-                    if hasattr(usage, "total_tokens"):
-                        payload_data["total_tokens"] = usage.total_tokens
-
-                # Content preview (truncated for storage efficiency)
-                try:
-                    choices = getattr(event.response, "choices", None)
-                    if choices and len(choices) > 0:
-                        message = getattr(choices[0], "message", None)
-                        if message:
-                            content = getattr(message, "content", None)
-                            if content:
-                                preview = (
-                                    content[:200] + "..."
-                                    if len(content) > 200
-                                    else content
-                                )
-                                payload_data["content_preview"] = preview
-                except Exception:
-                    pass
+            # Content preview (truncated for storage efficiency)
+            try:
+                choices = getattr(event.response, "choices", None)
+                if choices and len(choices) > 0:
+                    message = getattr(choices[0], "message", None)
+                    if message:
+                        content = getattr(message, "content", None)
+                        if content:
+                            preview = (
+                                content[:200] + "..." if len(content) > 200 else content
+                            )
+                            payload_data["content_preview"] = preview
+            except Exception:
+                pass
 
         payload = LLMPayload(**payload_data)
         llm_event = Event(type="LLM", payload=payload)
