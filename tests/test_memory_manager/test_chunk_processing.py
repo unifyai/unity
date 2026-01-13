@@ -24,6 +24,9 @@ from tests.helpers import _handle_project
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.events.event_bus import EVENT_BUS, Event
 
+# This test publishes events to verify MemoryManager chunk processing
+pytestmark = pytest.mark.enable_eventbus
+
 # Simulated manager test-doubles (no external I/O) ---------------------------
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.transcript_manager.simulated import SimulatedTranscriptManager

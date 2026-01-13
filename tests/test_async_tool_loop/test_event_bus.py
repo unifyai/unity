@@ -20,6 +20,9 @@ from unity.common._async_tool.loop import async_tool_loop_inner
 from tests.helpers import _handle_project, capture_events
 from unity.common.llm_client import new_llm_client
 
+# All tests in this file require EventBus publishing to verify event behavior
+pytestmark = pytest.mark.enable_eventbus
+
 
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
     # Avoid time-based sleeping; just return immediately

@@ -314,6 +314,10 @@ class Subscription(BaseModel):
 class EventBus:
     _LOGGER = unify.AsyncLoggerManager(name="EventBus", num_consumers=16)
 
+    # Class-level flag to control event publishing. Defaults to True for production.
+    # Tests disable this by default and opt-in via @pytest.mark.enable_eventbus.
+    _publishing_enabled: bool = True
+
     def __init__(self):
 
         # private attributes
@@ -699,6 +703,10 @@ class EventBus:
             self._next_row_ids.setdefault(event_type, 0)
 
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
+        # Skip publishing if disabled (e.g., during tests)
+        if not EventBus._publishing_enabled:
+            return
+
         self._lazy_start_hydration_if_needed()
         # Guarantee that local row_id counters are initialised before use
         await self.join_initialization()

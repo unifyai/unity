@@ -165,6 +165,23 @@ def _clear_singletons_between_tests():
     ContextRegistry.clear()  # Clear the context handler after each test
 
 
+@pytest.fixture(autouse=True)
+def _enable_eventbus_for_marked_tests(request):
+    """Enable EventBus publishing for tests marked with @pytest.mark.enable_eventbus.
+
+    By default, EventBus publishing is disabled during tests (via SETTINGS).
+    Tests that need to verify event publishing behavior opt-in via the marker.
+    """
+    from unity.events.event_bus import EventBus
+
+    if request.node.get_closest_marker("enable_eventbus"):
+        EventBus._publishing_enabled = True
+        yield
+        EventBus._publishing_enabled = SETTINGS.EVENTBUS_PUBLISHING_ENABLED
+    else:
+        yield
+
+
 # --------------------------------------------------------------------------- #
 # 4. Command-line options                                                     #
 # --------------------------------------------------------------------------- #
@@ -332,6 +349,13 @@ def pytest_sessionstart(session):
         unity.init()
 
     # ------------------------------------------------------------------
+    #  Configure EventBus publishing (disabled by default in tests)
+    # ------------------------------------------------------------------
+    from unity.events.event_bus import EventBus
+
+    EventBus._publishing_enabled = SETTINGS.EVENTBUS_PUBLISHING_ENABLED
+
+    # ------------------------------------------------------------------
     #  Parse and store session-level test tags for duration logging
     #  Priority: CLI --test-tags > env var UNIFY_TEST_TAGS
     # ------------------------------------------------------------------
@@ -408,6 +432,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "eval: mark a test as a fuzzy evaluation test for English language APIs",
+    )
+    config.addinivalue_line(
+        "markers",
+        "enable_eventbus: enable EventBus publishing for this test",
     )
 
     # Required to disable explicit log level if set from pytest.ini or command line options

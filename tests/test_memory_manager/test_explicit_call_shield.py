@@ -7,6 +7,9 @@ import pytest
 from tests.helpers import _handle_project
 
 from unity.events.event_bus import EVENT_BUS, Event
+
+# This test publishes events to verify MemoryManager behavior
+pytestmark = pytest.mark.enable_eventbus
 from unity.events.manager_event_logging import publish_manager_method_event, new_call_id
 from unity.memory_manager.memory_manager import MemoryManager
 
