@@ -227,7 +227,6 @@ class TestPromptBuilders:
             phone_number="+15551234567",
             email_address="test@example.com",
             is_voice_call=False,
-            active_tasks={},
         )
 
         # Basic structure checks
@@ -252,7 +251,6 @@ class TestPromptBuilders:
             phone_number="+15551234567",
             email_address="test@example.com",
             is_voice_call=True,
-            active_tasks={},
         )
 
         # Stage 2: All voice modes use guidance-based architecture
@@ -293,7 +291,6 @@ class TestPromptBuilders:
             first_name="Test",
             surname="User",
             is_voice_call=False,  # TTS mode
-            active_tasks={},
         )
 
         # Stage 2 complete: TTS mode uses call_guidance
