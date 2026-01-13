@@ -196,6 +196,11 @@ def init(
 
     _event_bus_mod._initialize_event_bus()
 
+    # 4. Wire up LLM event hook to publish unillm events to EventBus
+    from .events.llm_event_hook import install_llm_event_hook
+
+    install_llm_event_hook()
+
     _INITIALISED = True
 
 
