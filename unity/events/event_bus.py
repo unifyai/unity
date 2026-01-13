@@ -42,6 +42,7 @@ from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.log_utils import _derive_all_contexts, _inject_private_fields
 from ..common.model_to_fields import model_to_fields
 
 # ---------------------------------------------------------------------------
@@ -424,11 +425,15 @@ class EventBus:
         1. Creates the context if it doesn't exist
         2. Creates fields from the Pydantic payload model using model_to_fields
         3. Registers the context in _specific_ctxs
+        4. Creates aggregation contexts for multi-assistant/multi-user views
 
         This ensures fields exist before any logs are written, preventing
         type inference issues from the first log value.
         """
         from .types import PAYLOAD_REGISTRY
+
+        # Create aggregation contexts for the global Events context
+        self._ensure_aggregation_contexts(self._global_ctx)
 
         for event_type, payload_model in PAYLOAD_REGISTRY.items():
             ctx_name = f"{self._global_ctx}/{event_type}"
@@ -452,6 +457,62 @@ class EventBus:
             # Register in our tracking dicts
             self._specific_ctxs[event_type] = ctx_name
             self._window_sizes.setdefault(event_type, self._default_window)
+
+            # Create aggregation contexts for this event type
+            self._ensure_aggregation_contexts(ctx_name)
+
+    def _ensure_aggregation_contexts(self, context: str) -> None:
+        """Create aggregation contexts for multi-assistant and multi-user views.
+
+        For a context like {User}/{Assistant}/Events or {User}/{Assistant}/Events/LLM,
+        this creates:
+        - {User}/All/Events (or {User}/All/Events/LLM) for user-level aggregation
+        - All/Events (or All/Events/LLM) for global aggregation
+
+        These contexts store references to the same logs (not copies), enabling
+        cross-assistant and cross-user queries.
+        """
+        all_ctxs = _derive_all_contexts(context)
+        for all_ctx in all_ctxs:
+            try:
+                unify.create_context(all_ctx)
+            except Exception:
+                pass  # Context may already exist; proceed
+
+    def _add_aggregation_callback(self, future: Any, context: str) -> None:
+        """Add a callback to mirror the created log to aggregation contexts.
+
+        When the log is successfully created (future completes with log_id),
+        the callback adds it by reference to:
+        - {User}/All/{suffix} for user-level aggregation
+        - All/{suffix} for global aggregation
+
+        This is best-effort and fire-and-forget - failures are silently ignored
+        to avoid blocking the main event publishing flow.
+        """
+        all_ctxs = _derive_all_contexts(context)
+        if not all_ctxs:
+            return  # No aggregation contexts to mirror to
+
+        project = unify.active_project()
+
+        def _on_log_created(fut: Any) -> None:
+            try:
+                log_id = fut.result()
+                if log_id:
+                    for all_ctx in all_ctxs:
+                        try:
+                            unify.add_logs_to_context(
+                                [log_id],
+                                context=all_ctx,
+                                project=project,
+                            )
+                        except Exception:
+                            pass  # Best-effort: don't fail the main operation
+            except Exception:
+                pass  # Log creation failed; nothing to mirror
+
+        future.add_done_callback(_on_log_created)
 
     # ------------------------------------------------------------------
     # Public readonly state helpers
@@ -743,35 +804,51 @@ class EventBus:
             else Event._to_python(event.payload)
         )
 
+        # Base entries for both log calls (before private field injection)
+        base_entries = {
+            "row_id": event.row_id,
+            "event_id": event.event_id,
+            "calling_id": event.calling_id,
+            "event_timestamp": event.timestamp.isoformat(),
+            "payload_cls": event.payload_cls,
+        }
+
         # Log to global event table (payload stored as single JSON column to avoid
         # cross-type schema conflicts when different event types have fields with
         # the same name but different types)
-        self._get_logger().log_create(
-            project=unify.active_project(),
-            context=self._global_ctx,
-            entries={
-                "row_id": event.row_id,
-                "event_id": event.event_id,
-                "calling_id": event.calling_id,
-                "event_timestamp": event.timestamp.isoformat(),
-                "payload_cls": event.payload_cls,
+        global_entries = _inject_private_fields(
+            {
+                **base_entries,
                 "type": event.type,
                 "payload_json": json.dumps(payload_dict),
             },
         )
+        global_future = self._get_logger().log_create(
+            project=unify.active_project(),
+            context=self._global_ctx,
+            entries=global_entries,
+        )
+
+        # Add callback to mirror to aggregation contexts (best-effort, async)
+        self._add_aggregation_callback(global_future, self._global_ctx)
 
         # Log to specific event table
-        self._get_logger().log_create(
-            project=unify.active_project(),
-            context=self._specific_ctxs[event.type],
-            entries={
-                "row_id": event.row_id,
-                "event_id": event.event_id,
-                "calling_id": event.calling_id,
-                "event_timestamp": event.timestamp.isoformat(),
-                "payload_cls": event.payload_cls,
+        specific_entries = _inject_private_fields(
+            {
+                **base_entries,
                 **payload_dict,
             },
+        )
+        specific_future = self._get_logger().log_create(
+            project=unify.active_project(),
+            context=self._specific_ctxs[event.type],
+            entries=specific_entries,
+        )
+
+        # Add callback to mirror to aggregation contexts (best-effort, async)
+        self._add_aggregation_callback(
+            specific_future,
+            self._specific_ctxs[event.type],
         )
 
         # ── Evaluate subscriptions *after* persistence ──────────────────────
