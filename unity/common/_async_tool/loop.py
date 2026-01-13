@@ -423,15 +423,21 @@ async def async_tool_loop_inner(
                         # Check 2: Seeded messages without thinking blocks (those
                         # passed in initially via the message parameter). These
                         # are manually constructed and lack Claude's thinking.
+                        #
+                        # IMPORTANT: Check if loop-generated FIRST. Loop-generated
+                        # messages should never be transformed
+                        idx = msg_indices.get(id(m), 999999)
+                        if idx >= _seeded_msg_count:
+                            return False  # Loop-generated message - never transform
+
+                        # Only for seeded messages: transform if no thinking blocks
                         provider_fields = m.get("provider_specific_fields") or {}
                         thinking_blocks = provider_fields.get("thinking_blocks")
 
                         if thinking_blocks is None:
                             return True
 
-                        idx = msg_indices.get(id(m), 999999)
-                        if idx >= _seeded_msg_count:
-                            return False  # Not a seeded message
+                        return False  # Seeded message but has thinking blocks
 
                     msgs = transform_tool_calls_to_context(
                         msgs,
