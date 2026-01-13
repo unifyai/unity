@@ -5,6 +5,9 @@ import pytest
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project, capture_events
 
+# All tests in this file require EventBus publishing to verify event behavior
+pytestmark = pytest.mark.enable_eventbus
+
 
 # ─────────────────────────  ask() logging  ──────────────────────────
 

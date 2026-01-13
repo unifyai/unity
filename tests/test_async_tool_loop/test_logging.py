@@ -11,6 +11,9 @@ from unity.common.async_tool_loop import (
 from unity.events.event_bus import EVENT_BUS
 from tests.helpers import _handle_project, capture_events
 from unity.common.llm_client import new_llm_client
+
+# All tests in this file require EventBus publishing to verify event behavior
+pytestmark = pytest.mark.enable_eventbus
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
