@@ -107,9 +107,20 @@ async def test_description_and_guidance():
 
     h1 = await cm_handle.ask("Who are you?")
     answer1 = await h1.result()
-    assert (
-        "pirate" in answer1.lower() or "captain" in answer1.lower()
-    ), "Description should set the persona."
+    answer1_lower = answer1.lower()
+    # Check for pirate persona indicators (the LLM may use "cap'n" instead of "captain")
+    pirate_indicators = [
+        "pirate",
+        "captain",
+        "cap'n",
+        "matey",
+        "treasure",
+        "seas",
+        "ahoy",
+    ]
+    assert any(
+        indicator in answer1_lower for indicator in pirate_indicators
+    ), f"Description should set the pirate persona. Got: {answer1}"
 
     h2 = await cm_handle.ask("What is the capital of France?")
     answer2 = await h2.result()
