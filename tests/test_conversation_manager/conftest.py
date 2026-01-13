@@ -16,19 +16,15 @@ TranscriptManager, TaskScheduler, etc.) to avoid connecting to real backends.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import pytest
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List, Type
+from typing import TYPE_CHECKING
 
 import pytest_asyncio
 
-from unity.conversation_manager.events import Event
-
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
-    from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
 
 # Fixed datetime for LLM cache consistency - must match tests/conftest.py
@@ -148,113 +144,3 @@ def initialized_cm(
     # Clear any conversation state from previous tests
     conversation_manager.contact_index.clear_conversations()
     return conversation_manager
-
-
-# =============================================================================
-# Event Capture Helper (for tests that need event inspection)
-# =============================================================================
-
-
-class EventCapture:
-    """
-    Captures events from the in-memory event broker for test assertions.
-
-    Used by tests that need to verify specific events were published.
-    """
-
-    def __init__(self, event_broker: "InMemoryEventBroker"):
-        self._broker = event_broker
-        self._captured_events: List[Event] = []
-        self._pubsub = None
-        self._capture_task = None
-        self._running = False
-
-    async def start_capturing(self, patterns: List[str]):
-        """Start capturing events matching the given patterns."""
-        self._pubsub = await self._broker.pubsub().__aenter__()
-        await self._pubsub.psubscribe(*patterns)
-        self._running = True
-        self._capture_task = asyncio.create_task(self._capture_loop())
-
-    async def _capture_loop(self):
-        """Background task that captures all published events."""
-        while self._running:
-            try:
-                msg = await self._pubsub.get_message(
-                    timeout=0.1,
-                    ignore_subscribe_messages=True,
-                )
-                if msg and msg["type"] == "pmessage":
-                    try:
-                        event = Event.from_json(msg["data"])
-                        self._captured_events.append(event)
-                    except Exception:
-                        pass  # Skip unparseable events
-            except asyncio.TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                if self._running:
-                    break
-
-    def get_events(
-        self,
-        event_type: Type[Event] | None = None,
-        **attributes,
-    ) -> List[Event]:
-        """Get all captured events, optionally filtered."""
-        events = self._captured_events
-        if event_type:
-            events = [e for e in events if isinstance(e, event_type)]
-        if attributes:
-            events = [
-                e
-                for e in events
-                if all(getattr(e, k, None) == v for k, v in attributes.items())
-            ]
-        return events
-
-    def clear(self):
-        """Clear all captured events."""
-        self._captured_events.clear()
-
-    async def stop(self):
-        """Stop capturing events."""
-        self._running = False
-        if self._capture_task:
-            self._capture_task.cancel()
-            try:
-                await self._capture_task
-            except asyncio.CancelledError:
-                pass
-        if self._pubsub:
-            await self._pubsub.aclose()
-
-
-@pytest_asyncio.fixture
-async def event_capture(initialized_cm: "ConversationManager") -> EventCapture:
-    """
-    EventCapture instance that listens to all conversation manager events.
-
-    Uses the in-memory event broker directly - no Redis needed.
-    """
-    capture = EventCapture(initialized_cm.event_broker)
-    await capture.start_capturing(["app:comms:*", "app:actor:*", "app:managers:*"])
-    yield capture
-    await capture.stop()
-
-
-# =============================================================================
-# Convenience Fixtures
-# =============================================================================
-
-
-@pytest.fixture
-def event_broker(initialized_cm: "ConversationManager") -> "InMemoryEventBroker":
-    """
-    Direct access to the in-memory event broker.
-
-    Useful for tests that need to publish/subscribe directly.
-    """
-    return initialized_cm.event_broker
