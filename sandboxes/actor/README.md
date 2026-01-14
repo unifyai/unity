@@ -30,8 +30,12 @@ The repo uses Unity's modified `magnitude-core` for the agent service (see `agen
 git clone <unity-repo-url>
 cd unity
 
-# Clone Unity's magnitude fork into the magnitude/ subdirectory
-git clone https://github.com/unifyai/magnitude.git magnitude
+# Clone Unity's magnitude fork into the magnitude/ subdirectory (private repo - requires auth)
+# Option 1: Using CLONE_TOKEN environment variable
+git clone https://x-access-token:${CLONE_TOKEN}@github.com/unifyai/magnitude.git magnitude
+# Option 2: Using gh CLI (if authenticated)
+gh repo clone unifyai/magnitude magnitude
+
 cd magnitude
 git checkout unity-modifications  # Our branch with Unity enhancements
 
@@ -104,7 +108,8 @@ Here's a complete setup workflow:
 ```bash
 # Terminal 1: Build core and start the agent service
 git clone <unity-repo-url> && cd unity
-git clone https://github.com/unifyai/magnitude.git magnitude
+# magnitude is private - use CLONE_TOKEN or gh CLI
+git clone https://x-access-token:${CLONE_TOKEN}@github.com/unifyai/magnitude.git magnitude
 cd magnitude && git checkout unity-modifications
 cd packages/magnitude-core && npm i && npm run build
 cd ../..  # Back to repo root
@@ -268,6 +273,7 @@ The actor sandbox supports full project lifecycle management through Unify's ver
 * **Agent service not running** – Many actors require the Magnitude service. Start it with `cd agent-service && npx ts-node src/index.ts`.
 * **Agent service environment** – Ensure `.env` file in `agent-service/` has valid `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL`, and `UNIFY_KEY`.
 * **Magnitude branch** – Ensure you're on the `unity-modifications` branch in the `magnitude/` directory for Unity-specific enhancements.
+* **Magnitude clone fails** – The magnitude repo is private; ensure `CLONE_TOKEN` is set or use `gh repo clone unifyai/magnitude` with authenticated gh CLI.
 * **Headless mode issues** – Try running without `--headless` first to see if browser automation is working.
 
 **Performance & Logging:**
