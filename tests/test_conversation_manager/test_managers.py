@@ -6,7 +6,7 @@ Tests for task-related conversation flows through the ConversationManager.
 
 Uses the ConversationManager "single-step" API:
 - Construct an input Event (typically SMSReceived)
-- Call `await cm.step(event)`
+- Call `await cm._step(event)`
 - Assert on state changes and output events
 
 These tests verify that the LLM processes various request types correctly.
@@ -51,7 +51,7 @@ async def test_task_request_processed(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm.step(
+    result = await cm._step(
         SMSReceived(
             contact=contact,
             content="Show me all my contacts with their names and phone numbers.",
@@ -72,7 +72,7 @@ async def test_stop_request_processed(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Start a task first
-    await cm.step(
+    await cm._step(
         SMSReceived(
             contact=contact,
             content="Show me all my contacts with their names and phone numbers.",
@@ -80,7 +80,7 @@ async def test_stop_request_processed(initialized_cm):
     )
 
     # Then send stop request
-    stop_result = await cm.step(
+    stop_result = await cm._step(
         SMSReceived(
             contact=contact,
             content="Stop that task, I don't need it anymore",
@@ -100,7 +100,7 @@ async def test_status_query_processed(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Start a task
-    await cm.step(
+    await cm._step(
         SMSReceived(
             contact=contact,
             content="Show me all my contacts with their names and phone numbers.",
@@ -108,7 +108,7 @@ async def test_status_query_processed(initialized_cm):
     )
 
     # Ask about status
-    status_result = await cm.step(
+    status_result = await cm._step(
         SMSReceived(
             contact=contact,
             content="What's the status of that task you're working on?",
@@ -128,7 +128,7 @@ async def test_modification_request_processed(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Start a task
-    await cm.step(
+    await cm._step(
         SMSReceived(
             contact=contact,
             content="Show me all my contacts with their names and phone numbers.",
@@ -136,7 +136,7 @@ async def test_modification_request_processed(initialized_cm):
     )
 
     # Modify the task
-    modify_result = await cm.step(
+    modify_result = await cm._step(
         SMSReceived(
             contact=contact,
             content="Actually, for that task, please exclude my own contact from the list",
@@ -156,7 +156,7 @@ async def test_pause_request_processed(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Start a task
-    await cm.step(
+    await cm._step(
         SMSReceived(
             contact=contact,
             content="Show me all my contacts with their names and phone numbers.",
@@ -164,7 +164,7 @@ async def test_pause_request_processed(initialized_cm):
     )
 
     # Pause request
-    pause_result = await cm.step(
+    pause_result = await cm._step(
         SMSReceived(
             contact=contact,
             content="Pause that task for now",
@@ -184,7 +184,7 @@ async def test_resume_request_processed(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Start a task
-    await cm.step(
+    await cm._step(
         SMSReceived(
             contact=contact,
             content="Show me all my contacts with their names and phone numbers.",
@@ -192,7 +192,7 @@ async def test_resume_request_processed(initialized_cm):
     )
 
     # Resume request
-    resume_result = await cm.step(
+    resume_result = await cm._step(
         SMSReceived(
             contact=contact,
             content="Resume that task please",
@@ -220,7 +220,7 @@ async def test_llm_asks_clarification_for_ambiguous_request(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Send an ambiguous request
-    result = await cm.step(
+    result = await cm._step(
         SMSReceived(
             contact=contact,
             content="I need help with a contact",  # Ambiguous: which? what help?
@@ -256,7 +256,7 @@ async def test_llm_processes_clarification_response(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Send an ambiguous request
-    await cm.step(
+    await cm._step(
         SMSReceived(
             contact=contact,
             content="I need help with a contact",
@@ -264,7 +264,7 @@ async def test_llm_processes_clarification_response(initialized_cm):
     )
 
     # Provide clarification
-    result = await cm.step(
+    result = await cm._step(
         SMSReceived(
             contact=contact,
             content="Show me only contacts that have email addresses.",
@@ -292,7 +292,7 @@ async def test_multi_turn_task_conversation(initialized_cm):
     contact = TEST_CONTACTS[1]
 
     # Turn 1: Request a task
-    result1 = await cm.step(
+    result1 = await cm._step(
         SMSReceived(
             contact=contact,
             content="List all my contacts",
@@ -301,7 +301,7 @@ async def test_multi_turn_task_conversation(initialized_cm):
     assert result1.llm_ran, "Expected LLM to run for task request"
 
     # Turn 2: Ask about status
-    result2 = await cm.step(
+    result2 = await cm._step(
         SMSReceived(
             contact=contact,
             content="How's that task going?",
@@ -310,7 +310,7 @@ async def test_multi_turn_task_conversation(initialized_cm):
     assert result2.llm_ran, "Expected LLM to run for status query"
 
     # Turn 3: Stop the task
-    result3 = await cm.step(
+    result3 = await cm._step(
         SMSReceived(
             contact=contact,
             content="Stop that task please",
