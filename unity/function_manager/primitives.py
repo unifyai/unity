@@ -37,6 +37,7 @@ from unity.common.llm_client import new_llm_client
 
 # Direct class imports - IDE refactoring will track renames
 from unity.contact_manager.contact_manager import ContactManager
+from unity.data_manager.data_manager import DataManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.task_scheduler.task_scheduler import TaskScheduler
@@ -315,6 +316,7 @@ class ComputerPrimitives:
 PRIMITIVE_CLASSES: List[Type] = [
     # State managers
     ContactManager,
+    DataManager,
     TranscriptManager,
     KnowledgeManager,
     TaskScheduler,
@@ -375,6 +377,27 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
         "use_when": "Questions about specific people, contact info, 'who is X?', 'find contact in Y location'",
         "examples": "'Who is our contact at Acme Corp?', 'Find Alice's email', 'Contacts in Berlin?'",
         "priority": 3,
+    },
+    "data": {
+        "domain": "Data Operations & Pipelines",
+        "description": "Low-level data operations on any Unify context (filter, search, reduce, join, vectorize, plot)",
+        "methods": {
+            "filter": "Query rows with exact-match filter expressions",
+            "search": "Semantic search over embedded columns",
+            "reduce": "Aggregate metrics (count, sum, mean, min, max, etc.)",
+            "join": "Join two contexts on specified columns",
+            "insert_rows": "Insert new rows into a context",
+            "update_rows": "Update existing rows matching a filter",
+            "delete_rows": "Delete rows matching a filter",
+            "vectorize": "Create embeddings for a column",
+            "plot": "Generate visualizations from context data",
+            "create_table": "Create a new table context with schema",
+            "describe_table": "Get metadata and schema for a context",
+        },
+        "use_when": "Direct data operations on any context, pipeline transformations, cross-context joins",
+        "examples": "'Filter rows where amount > 1000', 'Join repairs with telematics', 'Sum revenue by region'",
+        "priority": 9,
+        "special_note": "DataManager operates on ANY Unify context. For file-specific operations with file_path resolution, use FileManager instead.",
     },
     "tasks": {
         "domain": "Durable Work & Tracking",
@@ -720,6 +743,7 @@ def compute_primitives_hash(primitives: Dict[str, Dict[str, Any]]) -> str:
 # Mapping from class names to ManagerRegistry getter method names
 _CLASS_TO_GETTER: Dict[str, str] = {
     "ContactManager": "get_contact_manager",
+    "DataManager": "get_data_manager",
     "TranscriptManager": "get_transcript_manager",
     "KnowledgeManager": "get_knowledge_manager",
     "TaskScheduler": "get_task_scheduler",
@@ -1063,6 +1087,7 @@ class Primitives:
     def __init__(self):
         # All managers lazily initialized via ManagerRegistry
         self._contacts: Optional["ContactManager"] = None
+        self._data: Optional["DataManager"] = None
         self._transcripts: Optional["TranscriptManager"] = None
         self._knowledge: Optional["KnowledgeManager"] = None
         self._tasks: Optional["TaskScheduler"] = None
@@ -1080,6 +1105,33 @@ class Primitives:
 
             self._contacts = ManagerRegistry.get_contact_manager()
         return self._contacts
+
+    @property
+    def data(self) -> "DataManager":
+        """
+        Data operations primitives for any Unify context.
+
+        Provides canonical data operations (filter, search, reduce, join,
+        vectorize, plot) that work on any context including Data/* and Files/*.
+
+        Methods are synchronous (no await needed):
+        - filter(context, filter=...) - Exact-match filtering
+        - search(context, references=...) - Semantic search
+        - reduce(context, metric=..., column=...) - Aggregations
+        - join(left, right, on=...) - Cross-context joins
+        - insert_rows(context, rows=...) - Insert data
+        - update_rows(context, filter=..., updates=...) - Update data
+        - delete_rows(context, filter=...) - Delete data
+        - vectorize(context, column=...) - Create embeddings
+        - plot(context, config=...) - Generate visualizations
+
+        For file-specific operations with path resolution, use primitives.files instead.
+        """
+        if self._data is None:
+            from unity.manager_registry import ManagerRegistry
+
+            self._data = ManagerRegistry.get_data_manager()
+        return self._data
 
     @property
     def transcripts(self) -> "TranscriptManager":
