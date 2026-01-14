@@ -3,10 +3,30 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel, Field
 
 from tests.helpers import _handle_project
 from unity.common.single_shot import single_shot_tool_decision, SingleShotResult
 from unity.common.llm_client import new_llm_client
+
+
+# --------------------------------------------------------------------------- #
+#  Test fixtures: response format models                                       #
+# --------------------------------------------------------------------------- #
+
+
+class ThoughtsResponse(BaseModel):
+    """Simple structured output with just thoughts."""
+
+    thoughts: str = Field(..., description="Your reasoning about the request")
+
+
+class DecisionResponse(BaseModel):
+    """Structured output for decisions."""
+
+    thoughts: str = Field(..., description="Your reasoning about the decision")
+    decision: str = Field(..., description="Your decision: 'approve' or 'reject'")
+    confidence: int = Field(..., description="Confidence level from 1-10")
 
 
 # --------------------------------------------------------------------------- #
@@ -109,6 +129,21 @@ def test_single_shot_result_no_tool():
     assert result.tool_name is None
     assert result.tool_result is None
     assert result.text_response is not None
+
+
+def test_single_shot_result_with_structured_output():
+    """SingleShotResult can include structured_output."""
+    structured = ThoughtsResponse(thoughts="This is my reasoning")
+    result = SingleShotResult(
+        tool_name="greet",
+        tool_args={"name": "Alice"},
+        tool_result="Hello, Alice!",
+        text_response='{"thoughts": "This is my reasoning"}',
+        structured_output=structured,
+    )
+    assert result.tool_name == "greet"
+    assert result.structured_output is not None
+    assert result.structured_output.thoughts == "This is my reasoning"
 
 
 # --------------------------------------------------------------------------- #
@@ -231,3 +266,92 @@ async def test_single_shot_no_tools():
     assert result.tool_result is None
     # Should have some text response
     assert result.text_response is not None or True  # May vary by model
+
+
+# --------------------------------------------------------------------------- #
+#  Integration tests: response_format (structured output)                      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_single_shot_structured_output_no_tools():
+    """With response_format and no tools, LLM returns structured output."""
+    client = new_llm_client()
+    client.set_system_message(
+        "You are a decision assistant. Always provide your reasoning.",
+    )
+
+    result = await single_shot_tool_decision(
+        client,
+        "Should I approve this expense report for $50?",
+        {},  # No tools
+        response_format=DecisionResponse,
+    )
+
+    # No tools, so no tool call
+    assert result.tool_name is None
+    assert result.tool_result is None
+
+    # Should have structured output
+    assert result.structured_output is not None
+    assert isinstance(result.structured_output, DecisionResponse)
+    assert result.structured_output.thoughts  # Non-empty
+    assert result.structured_output.decision in ("approve", "reject")
+    assert 1 <= result.structured_output.confidence <= 10
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_single_shot_structured_output_with_tools():
+    """With response_format AND tools, LLM returns structured output AND calls tool."""
+    client = new_llm_client()
+    client.set_system_message(
+        "You are a helpful assistant. First think about the request, then use "
+        "the appropriate tool. Your response must include your thoughts as JSON.",
+    )
+
+    tools = {
+        "greet": greet,
+        "add_numbers": add_numbers,
+    }
+
+    result = await single_shot_tool_decision(
+        client,
+        "Please greet Bob. Think about why this is a good greeting.",
+        tools,
+        response_format=ThoughtsResponse,
+    )
+
+    # Should call the greet tool
+    assert result.tool_name == "greet"
+    assert result.tool_args == {"name": "Bob"}
+    assert result.tool_result == "Hello, Bob!"
+
+    # May or may not have structured output depending on model behavior
+    # (some models only return tool calls, some return both)
+    # We don't assert on structured_output here as behavior varies
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_single_shot_structured_output_complex():
+    """Test structured output with a more complex model."""
+    client = new_llm_client()
+    client.set_system_message(
+        "You are a sentiment analyzer. Analyze the sentiment and provide your "
+        "decision with confidence.",
+    )
+
+    result = await single_shot_tool_decision(
+        client,
+        "The product is absolutely amazing and I love it!",
+        {},  # No tools
+        response_format=DecisionResponse,
+    )
+
+    assert result.structured_output is not None
+    assert isinstance(result.structured_output, DecisionResponse)
+    # Should be a positive sentiment, likely "approve"
+    assert result.structured_output.decision in ("approve", "reject")
+    assert result.structured_output.thoughts  # Non-empty reasoning
