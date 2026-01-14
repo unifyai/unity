@@ -291,6 +291,151 @@ class FileManager(BaseFileManager):
 
         return _storage_file_info(self, identifier=identifier)
 
+    # ------------------------- Describe helper ------------------------------ #
+    @manager_tool
+    @read_only
+    def describe(
+        self,
+        *,
+        file_path: Optional[str] = None,
+        file_id: Optional[int] = None,
+    ) -> "FileStorageMap":
+        """
+        Return a complete storage representation of a file in the Unify backend.
+
+        This is the primary discovery tool for understanding how a file's data
+        is stored. It returns all context paths, schemas, and identifiers needed
+        for accurate filter/search/reduce operations.
+
+        Use describe() BEFORE calling filter_files(), search_files(), or reduce()
+        to obtain the exact context paths for your queries.
+
+        Parameters
+        ----------
+        file_path : str, optional
+            The filesystem path of the file as used in FileRecords.
+            Either file_path or file_id must be provided.
+
+        file_id : int, optional
+            The stable unique identifier from FileRecords. Either file_path or
+            file_id must be provided. Using file_id is preferred when available
+            as it's more efficient and survives file renames.
+
+        Returns
+        -------
+        FileStorageMap
+            Complete storage representation including:
+
+            - **file_id** (int): Stable identifier for cross-referencing and joins.
+            - **file_path** (str): Original filesystem path.
+            - **source_uri** (str | None): Canonical provider URI.
+            - **source_provider** (str | None): Provider/adapter name.
+            - **document** (DocumentInfo | None): Info about /Content context including:
+              - context_path: Full path for filter/search/reduce operations
+              - schema: Columns with types and searchability info
+            - **tables** (list[TableInfo]): List of /Tables/<name> contexts including:
+              - name: Logical table name (e.g., 'Sheet1')
+              - context_path: Full path for filter/search/reduce operations
+              - schema: Columns with types and searchability info
+            - **index_context** (str): Path to FileRecords index.
+            - **has_document** (bool): Quick check if /Content exists.
+            - **has_tables** (bool): Quick check if any /Tables exist.
+
+        Raises
+        ------
+        ValueError
+            If neither file_path nor file_id is provided, or if the file is not found.
+
+        Usage Examples
+        --------------
+        Basic discovery by file path:
+
+        >>> storage = file_manager.describe(file_path="/reports/Q4.csv")
+        >>> print(f"File ID: {storage.file_id}")
+        File ID: 42
+        >>> print(f"Has tables: {storage.has_tables}")
+        Has tables: True
+        >>> print(f"Table names: {storage.table_names}")
+        Table names: ['Sheet1']
+
+        Get context path for querying:
+
+        >>> storage = file_manager.describe(file_path="/reports/Q4.csv")
+        >>> # Use the exact context path from describe()
+        >>> results = file_manager.filter_files(
+        ...     context=storage.tables[0].context_path,
+        ...     filter="revenue > 1000000",
+        ...     columns=["region", "revenue"]
+        ... )
+
+        Check schema before building queries:
+
+        >>> storage = file_manager.describe(file_path="/docs/report.pdf")
+        >>> if storage.has_document:
+        ...     print("Searchable columns:", storage.document.column_schema.searchable_columns)
+        ...     # Use semantic search on document content
+        ...     results = file_manager.search_files(
+        ...         context=storage.document.context_path,
+        ...         references="quarterly performance metrics"
+        ...     )
+
+        Describe by file_id (faster, no resolution needed):
+
+        >>> storage = file_manager.describe(file_id=42)
+
+        Anti-patterns
+        -------------
+        - WRONG: Guessing context paths without calling describe()
+
+          >>> # Don't do this - path format may vary
+          >>> filter_files(context="Files/Local/reports/Q4.csv/Tables/Sheet1")
+
+          CORRECT: Always use describe() to get exact paths
+
+          >>> storage = describe(file_path="/reports/Q4.csv")
+          >>> filter_files(context=storage.tables[0].context_path)
+
+        - WRONG: Assuming all files have both document and tables
+
+          >>> # Will fail if file has no tables
+          >>> storage.tables[0].context_path
+
+          CORRECT: Check has_tables/has_document first
+
+          >>> if storage.has_tables:
+          ...     # Safe to access tables
+          ...     storage.tables[0].context_path
+
+        - WRONG: Using file_path in context paths directly
+
+          >>> # Unstable - breaks if file is renamed
+          >>> "Files/Local/" + file_path + "/Content"
+
+          CORRECT: Context paths use file_id internally for stability
+
+          >>> storage.document.context_path  # Uses file_id
+
+        Notes
+        -----
+        - Context paths use file_id (not file_path) for stability across renames.
+        - The describe() method queries the backend live for fresh schema information.
+        - Row counts are not included by default; use reduce(metric='count', ...) when needed.
+        - For CSV/spreadsheet files, primary data is in tables (has_document may be False).
+        - For PDF/DOCX files, primary data is in document with extracted tables optional.
+        - Schema includes searchability info - check column_schema.searchable_columns before
+          using search_files() to ensure the columns you need are embedded.
+
+        See Also
+        --------
+        filter_files : Filter rows from a context path obtained from describe()
+        search_files : Semantic search on a context path obtained from describe()
+        reduce : Aggregate data from a context path obtained from describe()
+        file_info : Get file status without full storage map (lighter weight)
+        """
+        from .utils.storage import describe_file as _storage_describe_file
+
+        return _storage_describe_file(self, file_path=file_path, file_id=file_id)
+
     # ------------------------- Sync helper ---------------------------------- #
     def _sync(self, *, file_path: str) -> Dict[str, Any]:
         """
