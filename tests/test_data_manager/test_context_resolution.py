@@ -65,7 +65,7 @@ def test_foreign_context_for_search():
 
     results = dm.search(
         "Files/Local/456/Tables/Sheet1",
-        query="ML algorithms",
+        references={"description": "ML algorithms"},
         k=5,
     )
 
@@ -87,12 +87,12 @@ def test_context_resolution_for_reduce():
         ],
     )
 
-    # Query with relative path
-    total = dm.reduce("analytics/metrics", metric="sum", column="value")
+    # Query with relative path (columns= not column=)
+    total = dm.reduce("analytics/metrics", metric="sum", columns="value")
     assert total == 60.0
 
     # Query with absolute path
-    total2 = dm.reduce("Data/analytics/metrics", metric="sum", column="value")
+    total2 = dm.reduce("Data/analytics/metrics", metric="sum", columns="value")
     assert total2 == 60.0
 
 
