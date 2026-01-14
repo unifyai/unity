@@ -8,7 +8,7 @@ These are called by DataManager methods and should not be used directly.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import unify
 
@@ -30,25 +30,41 @@ def create_table_impl(
     Implementation of create_table operation.
 
     Creates a Unify context with optional schema definition.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    description : str | None
+        Human-readable description of the table purpose.
+    fields : dict[str, str] | None
+        Mapping of field names to Unify types.
+    unique_keys : dict[str, str] | None
+        Mapping of unique key columns to their types.
+    auto_counting : dict[str, str | None] | None
+        Columns with auto-increment behavior.
+
+    Returns
+    -------
+    str
+        The context path that was created.
+
+    Raises
+    ------
+    Exception
+        If context creation fails.
     """
     logger.debug("Creating table context: %s", context)
 
-    try:
-        unify.create_context(
-            context,
-            description=description,
-            unique_keys=unique_keys,
-            auto_counting=auto_counting,
-        )
-    except Exception as e:
-        # Context may already exist - log and continue
-        logger.debug("Context creation note: %s", e)
+    unify.create_context(
+        context,
+        description=description,
+        unique_keys=unique_keys,
+        auto_counting=auto_counting,
+    )
 
     if fields:
-        try:
-            unify.create_fields(fields, context=context)
-        except Exception as e:
-            logger.debug("Fields creation note: %s", e)
+        unify.create_fields(fields, context=context)
 
     return context
 
@@ -57,7 +73,22 @@ def describe_table_impl(context: str) -> "TableDescription":
     """
     Implementation of describe_table operation.
 
-    Fetches schema, row count, and metadata for a table.
+    Fetches schema and metadata for a table.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+
+    Returns
+    -------
+    TableDescription
+        Schema and metadata for the table.
+
+    Notes
+    -----
+    - row_count is NOT included (expensive to compute).
+    - Private columns (starting with "_") are excluded from the schema.
     """
     from unity.data_manager.types.table import (
         TableDescription,
@@ -68,46 +99,22 @@ def describe_table_impl(context: str) -> "TableDescription":
     logger.debug("Describing table: %s", context)
 
     # Get context info
-    ctx_info: Any = None
-    try:
-        ctx_info = unify.get_context(context)
-    except Exception as e:
-        logger.debug("Could not get context info: %s", e)
+    ctx_info = unify.get_context(context)
 
     # Get fields/columns
-    columns_raw: Dict[str, Any] = {}
-    try:
-        columns_raw = unify.get_fields(context=context) or {}
-    except Exception as e:
-        logger.debug("Could not get fields: %s", e)
-
-    # Get row count via metric
-    row_count = 0
-    try:
-        count_result = unify.get_logs_metric(
-            metric="count",
-            key="id",
-            context=context,
-        )
-        if isinstance(count_result, (int, float)):
-            row_count = int(count_result)
-    except Exception as e:
-        logger.debug("Could not get row count: %s", e)
+    columns_raw = unify.get_fields(context=context) or {}
 
     # Detect embedding columns (pattern: _<name>_emb)
     embedding_cols = [
         c for c in columns_raw.keys() if c.startswith("_") and c.endswith("_emb")
     ]
 
-    # Build column info list
+    # Build column info list (excluding private columns)
     columns: List[ColumnInfo] = []
     for name, info in columns_raw.items():
         if name.startswith("_"):
-            # Skip internal/private columns
+            # Skip internal/private columns (like _id, _*_emb, etc.)
             continue
-
-        # Check if this column has an embedding sibling
-        searchable = f"_{name}_emb" in columns_raw
 
         # Extract type info
         dtype = "unknown"
@@ -122,7 +129,6 @@ def describe_table_impl(context: str) -> "TableDescription":
             ColumnInfo(
                 name=name,
                 dtype=dtype,
-                searchable=searchable,
                 description=col_desc,
             ),
         )
@@ -145,8 +151,7 @@ def describe_table_impl(context: str) -> "TableDescription":
     return TableDescription(
         context=context,
         description=description,
-        schema=schema,
-        row_count=row_count,
+        table_schema=schema,
         has_embeddings=len(embedding_cols) > 0,
         embedding_columns=embedding_cols,
     )
@@ -157,15 +162,26 @@ def list_tables_impl(*, prefix: Optional[str] = None) -> List[str]:
     Implementation of list_tables operation.
 
     Lists all table contexts, optionally filtered by prefix.
+
+    Parameters
+    ----------
+    prefix : str | None
+        Context prefix to filter by.
+
+    Returns
+    -------
+    list[str]
+        Sorted list of context paths.
+
+    Raises
+    ------
+    Exception
+        If context listing fails.
     """
     logger.debug("Listing tables with prefix: %s", prefix)
 
-    try:
-        all_contexts = unify.get_contexts() or {}
-        context_names = list(all_contexts.keys())
-    except Exception as e:
-        logger.warning("Could not list contexts: %s", e)
-        return []
+    all_contexts = unify.get_contexts() or {}
+    context_names = list(all_contexts.keys())
 
     if prefix:
         context_names = [c for c in context_names if c.startswith(prefix)]
@@ -173,21 +189,26 @@ def list_tables_impl(*, prefix: Optional[str] = None) -> List[str]:
     return sorted(context_names)
 
 
-def delete_table_impl(
-    context: str,
-    *,
-    dangerous_ok: bool = False,
-) -> None:
+def delete_table_impl(context: str) -> None:
     """
     Implementation of delete_table operation.
 
     Deletes a table context and all its data.
-    """
-    if not dangerous_ok:
-        raise ValueError(
-            "delete_table is a destructive operation. "
-            "Set dangerous_ok=True to confirm.",
-        )
 
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+
+    Raises
+    ------
+    Exception
+        If context deletion fails.
+
+    Notes
+    -----
+    The dangerous_ok check is performed at the DataManager level,
+    not in this implementation function.
+    """
     logger.info("Deleting table context: %s", context)
     unify.delete_context(context)
