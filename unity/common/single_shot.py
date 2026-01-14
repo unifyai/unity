@@ -141,7 +141,10 @@ async def single_shot_tool_decision(
 
     # The client appends the assistant response to client.messages
     # Extract it from there (this is how async_tool_loop does it)
-    msg = client.messages[-1]
+    messages = client.messages
+    if not messages:
+        raise RuntimeError("LLM client returned no messages")
+    msg = messages[-1]
 
     # Extract text response (if any)
     text_response = None
@@ -171,7 +174,8 @@ async def single_shot_tool_decision(
         )
 
     # Execute the first tool call only (single-shot = one action)
-    call = tool_calls[0]
+    tool_calls_list = list(tool_calls)
+    call = tool_calls_list[0]
     fn_info = call.get("function", {})
     fn_name = fn_info.get("name")
     fn_args_raw = fn_info.get("arguments", "{}")
