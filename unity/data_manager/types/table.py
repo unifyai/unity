@@ -22,16 +22,12 @@ class ColumnInfo(BaseModel):
         Column name as it appears in queries.
     dtype : str
         Data type string (e.g., "str", "int", "float", "bool", "datetime", "list", "dict").
-    searchable : bool
-        True if this column has an associated embedding column (``_<name>_emb``),
-        enabling semantic search via ``search()`` method.
     description : str | None
         Optional human-readable description of the column's purpose.
     """
 
     name: str
     dtype: str
-    searchable: bool = False
     description: Optional[str] = None
 
 
@@ -44,7 +40,7 @@ class TableSchema(BaseModel):
     Attributes
     ----------
     columns : list[ColumnInfo]
-        List of column definitions with type and searchability info.
+        List of column definitions with type info.
     unique_keys : dict[str, str] | None
         Mapping of unique key column names to their types.
         These columns enforce uniqueness constraints during inserts.
@@ -63,11 +59,6 @@ class TableSchema(BaseModel):
         return [c.name for c in self.columns]
 
     @property
-    def searchable_columns(self) -> List[str]:
-        """List of column names that have vector embeddings (searchable)."""
-        return [c.name for c in self.columns if c.searchable]
-
-    @property
     def column_types(self) -> Dict[str, str]:
         """Mapping of column names to their data types."""
         return {c.name: c.dtype for c in self.columns}
@@ -78,7 +69,7 @@ class TableDescription(BaseModel):
     Complete metadata for a Unify table context.
 
     This model is returned by ``DataManager.describe_table()`` and provides
-    everything needed to understand a table's structure and current state.
+    everything needed to understand a table's structure.
 
     Attributes
     ----------
@@ -88,30 +79,30 @@ class TableDescription(BaseModel):
         Human-readable description of the table's purpose.
     table_schema : TableSchema
         Column definitions and constraints.
-    row_count : int
-        Current number of rows in the table.
     has_embeddings : bool
         True if any column has associated vector embeddings.
     embedding_columns : list[str]
-        Names of columns that have embeddings (pattern: ``_<name>_emb``).
+        Names of embedding columns present (pattern: ``_<name>_emb``).
+
+    Notes
+    -----
+    row_count is intentionally NOT included as it's expensive to compute.
+    Use ``dm.reduce(context, metric="count", columns="id")`` if needed.
 
     Usage Examples
     --------------
     >>> desc = dm.describe_table("Data/MH/arrears")
     >>> print(f"Table: {desc.context}")
-    >>> print(f"Rows: {desc.row_count}")
     >>> print(f"Columns: {desc.table_schema.column_names}")
-    >>> print(f"Searchable: {desc.table_schema.searchable_columns}")
     """
 
     context: str
     description: Optional[str] = None
     table_schema: TableSchema = Field(default_factory=TableSchema)
-    row_count: int = 0
     has_embeddings: bool = False
     embedding_columns: List[str] = Field(default_factory=list)
 
-    # Convenience aliases for backward compatibility with spec
+    # Convenience aliases
     @property
     def columns(self) -> Dict[str, str]:
         """Column name to type mapping (convenience accessor)."""
