@@ -373,13 +373,11 @@ class ManagerRegistry:
         _force_new: bool = False,
         **kwargs: Any,
     ) -> "BaseDataManager":
-        """Get the DataManager singleton.
+        """Get the DataManager singleton (respects IMPL settings).
 
         DataManager provides canonical data operations (filter, search, reduce,
         join, vectorize, plot) that work on any Unify context. It owns the
         Data/* namespace but can operate on any context including Files/*.
-
-        Note: DataManager only has a 'real' implementation - no simulated mode.
         """
         return cls.get(
             "data",
@@ -719,9 +717,10 @@ def _populate_registry() -> None:
     # DataManager implementations
     # ─────────────────────────────────────────────────────────────────────────
     from .data_manager.data_manager import DataManager
+    from .data_manager.simulated import SimulatedDataManager
 
     ManagerRegistry.register_class("data", "real", DataManager)
-    # Note: DataManager has no simulated implementation - it's a foundational layer
+    ManagerRegistry.register_class("data", "simulated", SimulatedDataManager)
 
     # ─────────────────────────────────────────────────────────────────────────
     # FileManager implementations
