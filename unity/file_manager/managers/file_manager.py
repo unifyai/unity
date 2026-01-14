@@ -4,7 +4,7 @@ import json
 import functools
 import logging
 import warnings
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,10 @@ from .utils.viz_utils import (
     PlotResult as _VizPlotResult,
     generate_plots_batch as _viz_generate_plots_batch,
 )
+
+
+if TYPE_CHECKING:
+    from unity.file_manager.types.describe import FileStorageMap
 
 
 class FileManager(BaseFileManager):

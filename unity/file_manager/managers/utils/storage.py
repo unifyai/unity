@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import unify
 
@@ -11,6 +11,9 @@ from ....common.context_store import TableStore
 from ....common.model_to_fields import model_to_fields
 from ...types.file import FileRecord as FileRow, FileContent as _PerFileContent
 from ...types.config import TableBusinessContextSpec
+
+if TYPE_CHECKING:
+    from ...types.describe import ColumnInfo, FileStorageMap
 
 
 def provision_storage(self) -> None:
@@ -870,7 +873,7 @@ def describe_file(
                 source_provider = entry.get("source_provider")
         except Exception as e:
             logger.warning(
-                f"Failed to lookup file_path for file_id={resolved_file_id}: {e}"
+                f"Failed to lookup file_path for file_id={resolved_file_id}: {e}",
             )
 
     if resolved_file_id is None:
