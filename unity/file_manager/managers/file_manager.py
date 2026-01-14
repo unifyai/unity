@@ -1736,122 +1736,160 @@ class FileManager(BaseFileManager):
     def reduce(
         self,
         *,
-        table: Optional[str] = None,
+        context: Optional[str] = None,
         metric: str,
-        keys: str | List[str],
-        filter: Optional[str | Dict[str, str]] = None,
-        group_by: Optional[str | List[str]] = None,
+        column: str,
+        filter: Optional[str] = None,
+        group_by: Optional[Union[str, List[str]]] = None,
     ) -> Any:
         """
-        Compute reduction metrics over the FileRecords index or a resolved table.
+        Compute aggregation metrics over a context.
 
         This is the PRIMARY tool for any quantitative question (counts, sums,
         averages, statistics). Always use reduce instead of fetching rows and
         computing aggregates in-memory.
 
+        IMPORTANT: Use describe() first to get the exact context path:
+
+        >>> storage = describe(file_path="/reports/sales.xlsx")
+        >>> count = reduce(
+        ...     context=storage.tables[0].context_path,
+        ...     metric='count',
+        ...     column='id'
+        ... )
+
         Parameters
         ----------
-        table : str | None, default None
-            Table reference to aggregate. Accepted forms:
-            - Path-first (preferred): "<file_path>" for per-file Content,
-              "<file_path>.Tables.<label>" for per-file tables
-            - Logical names: "FileRecords" for index
-            When None, aggregates over the main FileRecords index.
+        context : str, optional
+            Full Unify context path to aggregate. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
+            When None, aggregates over the FileRecords index.
+
         metric : str
             Reduction metric to compute. Supported values (case-insensitive):
             "count", "sum", "mean", "min", "max", "median", "mode", "var", "std".
-        keys : str | list[str]
-            Column(s) to aggregate. A single column returns a scalar; multiple
-            columns return a dict mapping each key to its computed value.
-        filter : str | dict[str, str] | None, default None
-            Optional row-level filter expression(s). Supports arbitrary Python
-            expressions evaluated per row. Apply filters here to narrow the
-            dataset BEFORE aggregation for efficiency.
-        group_by : str | list[str] | None, default None
-            Optional column(s) to group by. Single column for one grouping level,
+
+        column : str
+            Column to aggregate. Check column_schema.column_names from describe()
+            for available columns.
+
+        filter : str, optional
+            Optional row-level filter expression to narrow the dataset
+            BEFORE aggregation. Supports Python expressions evaluated per row.
+
+        group_by : str | list[str], optional
+            Column(s) to group by. Single column for one grouping level,
             or a list for hierarchical grouping. Result becomes a nested dict
             keyed by group values.
 
         Returns
         -------
         Any
-            Metric value(s) computed over the resolved context:
-            - Single key, no grouping  → scalar (float/int/str/bool)
-            - Multiple keys, no grouping → dict[key -> scalar]
-            - With grouping → nested dict keyed by group values
+            Metric value(s) computed over the context:
+            - No grouping → scalar (float/int)
+            - With group_by → dict keyed by group values
+            - Hierarchical grouping → nested dict
 
         Usage Examples
         --------------
-        # Count all files in the index:
-        reduce(metric='count', keys='file_id')
-        # Returns: 42
+        First, always call describe() to get context paths:
 
-        # Count with filter:
-        reduce(
-            metric='count',
-            keys='file_id',
-            filter="status == 'success'"
-        )
-        # Returns: 38
+        >>> storage = describe(file_path="/reports/sales.xlsx")
+        >>> table_ctx = storage.tables[0].context_path
 
-        # Sum a numeric column in a per-file table:
-        reduce(
-            table='/path/to/data.xlsx.Tables.Orders',
-            metric='sum',
-            keys='amount',
-            filter="status == 'complete'"
-        )
-        # Returns: 15420.50
+        Count rows in a table:
 
-        # Average with grouping (breakdown by category):
-        reduce(
-            table='/path/to/data.xlsx.Tables.Orders',
-            metric='mean',
-            keys='amount',
-            group_by='category'
-        )
-        # Returns: {'Electronics': 245.00, 'Furniture': 890.50, ...}
+        >>> count = reduce(context=table_ctx, metric='count', column='id')
+        >>> # Returns: 42
 
-        # Multiple metrics on same table (call reduce multiple times):
-        count = reduce(table='...', metric='count', keys='id')
-        total = reduce(table='...', metric='sum', keys='amount')
-        avg = reduce(table='...', metric='mean', keys='amount')
+        Count with filter:
 
-        # Hierarchical grouping:
-        reduce(
-            table='/path/to/data.xlsx.Tables.Sales',
-            metric='sum',
-            keys='revenue',
-            group_by=['region', 'quarter']
-        )
-        # Returns: {'North': {'Q1': 1000, 'Q2': 1200}, 'South': {'Q1': 800, ...}}
+        >>> count = reduce(
+        ...     context=table_ctx,
+        ...     metric='count',
+        ...     column='id',
+        ...     filter="status == 'complete'"
+        ... )
+        >>> # Returns: 38
+
+        Sum a numeric column:
+
+        >>> total = reduce(
+        ...     context=table_ctx,
+        ...     metric='sum',
+        ...     column='amount',
+        ...     filter="status == 'complete'"
+        ... )
+        >>> # Returns: 15420.50
+
+        Average with grouping:
+
+        >>> avg_by_category = reduce(
+        ...     context=table_ctx,
+        ...     metric='mean',
+        ...     column='amount',
+        ...     group_by='category'
+        ... )
+        >>> # Returns: {'Electronics': 245.00, 'Furniture': 890.50, ...}
+
+        Hierarchical grouping:
+
+        >>> breakdown = reduce(
+        ...     context=table_ctx,
+        ...     metric='sum',
+        ...     column='revenue',
+        ...     group_by=['region', 'quarter']
+        ... )
+        >>> # Returns: {'North': {'Q1': 1000, 'Q2': 1200}, 'South': {...}}
+
+        Count files in FileRecords index (no context needed):
+
+        >>> total_files = reduce(metric='count', column='file_id')
 
         Anti-patterns
         -------------
+        - WRONG: Guessing context paths
+
+          >>> reduce(context="Files/Local/sales.xlsx/Tables/Orders", ...)
+
+          CORRECT: Always use describe() to get exact paths
+
+          >>> storage = describe(file_path="/sales.xlsx")
+          >>> reduce(context=storage.tables[0].context_path, ...)
+
         - WRONG: filter_files(...) then count rows in Python
-          CORRECT: reduce(metric='count', keys='id', filter=...)
+
+          CORRECT: reduce(metric='count', column='id', filter=...)
 
         - WRONG: filter_files(...) then sum values in Python
-          CORRECT: reduce(metric='sum', keys='amount', filter=...)
 
-        - WRONG: Calling reduce without specifying the table when you need a per-file table
-          CORRECT: Always specify table='/path/to/file.xlsx.Tables.TableName'
+          CORRECT: reduce(metric='sum', column='amount', filter=...)
 
         - WRONG: Using reduce for text/categorical analysis
-          CORRECT: Use search_files for semantic queries, filter_files for exact matches
+
+          CORRECT: Use search_files for semantic queries
+
+        Notes
+        -----
+        - Context paths use file_id internally for stability across renames.
+        - Check column_schema.column_names from describe() for available columns.
+        - Use filter to narrow the dataset BEFORE aggregation for efficiency.
+
+        See Also
+        --------
+        describe : Get context paths and schema for a file
+        filter_files : Fetch rows with exact match filters
+        search_files : Semantic search for meaning-based queries
         """
-        if table is None:
-            ctx = self._ctx
-        else:
-            try:
-                ctx = self._resolve_table_ref(table)
-            except Exception:
-                ctx = table
+        # Resolve context
+        ctx = context if context else self._ctx
 
         return reduce_logs(
             context=ctx,
             metric=metric,
-            keys=keys,
+            keys=column,
             filter=filter,
             group_by=group_by,
         )
@@ -2125,38 +2163,54 @@ class FileManager(BaseFileManager):
     def filter_files(
         self,
         *,
+        context: Optional[str] = None,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        tables: Optional[Union[str, List[str]]] = None,
+        columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Filter files (index) or resolve-and-filter per-file Content/Tables.
+        Filter rows from a context using exact match expressions.
 
         Use this tool for exact matches on structured fields (ids, statuses, dates).
+        For semantic/meaning-based search, use search_files() instead.
+
+        IMPORTANT: Use describe() first to get the exact context path:
+
+        >>> storage = describe(file_path="/reports/Q4.csv")
+        >>> results = filter_files(
+        ...     context=storage.tables[0].context_path,
+        ...     filter="revenue > 1000000"
+        ... )
 
         Parameters
         ----------
-        filter : str | None
-            Arbitrary Python expression evaluated with column names in scope.
-            The expression is evaluated per row; any valid Python syntax that
-            returns a boolean is supported. String values must be quoted.
-            Use .get() for safe dict access on fields like content_id.
-        offset : int
-            Zero-based pagination offset per context.
-        limit : int
-            Maximum rows per context.
-        tables : list[str] | str | None
-            Table references to filter. Accepted forms:
-            - Path-first: "<file_path>" for per-file Content,
-              "<file_path>.Tables.<label>" for per-file tables
-            - "FileRecords" for the global index
-            When None, only the FileRecords index is scanned.
+        context : str, optional
+            Full Unify context path to filter. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
+            When None, defaults to the FileRecords index.
+
+        filter : str, optional
+            Python expression evaluated per row with column names in scope.
+            Any valid Python syntax returning a boolean is supported.
+            String values must be quoted. Use .get() for safe dict access.
+
+        offset : int, default 0
+            Zero-based pagination offset.
+
+        limit : int, default 100
+            Maximum rows to return.
+
+        columns : list[str], optional
+            Specific columns to return. When None, returns all columns.
+            Use this to reduce response size when only specific fields are needed.
 
         Returns
         -------
         list[dict]
-            Flat list of rows from the resolved contexts.
+            Flat list of matching rows from the context.
 
         Per-file Content: content_id structure
         --------------------------------------
@@ -2174,54 +2228,86 @@ class FileManager(BaseFileManager):
 
         Usage Examples
         --------------
-        # Filter FileRecords index by status:
-        filter_files(filter="status == 'success'")
+        First, always call describe() to get context paths:
 
-        # Filter per-file table with date range:
-        filter_files(
-            filter="created_at >= '2024-01-01' and created_at < '2024-02-01'",
-            tables=['/path/to/file.xlsx.Tables.Orders']
-        )
+        >>> storage = describe(file_path="/reports/data.xlsx")
 
-        # Paginate through results:
-        filter_files(filter="...", offset=0, limit=30)
-        filter_files(filter="...", offset=30, limit=30)
+        Filter a table from the file:
 
-        # Filter per-file Content by hierarchy:
-        filter_files(
-            filter="content_type == 'table' and content_id.get('section') == 2",
-            tables=['/path/to/file.pdf']
-        )
+        >>> results = filter_files(
+        ...     context=storage.tables[0].context_path,
+        ...     filter="created_at >= '2024-01-01' and created_at < '2024-02-01'",
+        ...     columns=["id", "name", "created_at"]
+        ... )
 
-        # Get all images from a document:
-        filter_files(
-            filter="content_type == 'image'",
-            tables=['/path/to/doc.pdf']
-        )
+        Filter document content by hierarchy:
+
+        >>> storage = describe(file_path="/docs/report.pdf")
+        >>> results = filter_files(
+        ...     context=storage.document.context_path,
+        ...     filter="content_type == 'paragraph' and content_id.get('section') == 2"
+        ... )
+
+        Filter the FileRecords index (no context needed):
+
+        >>> results = filter_files(filter="status == 'success'")
+
+        Paginate through results:
+
+        >>> page1 = filter_files(context=ctx, filter="...", offset=0, limit=30)
+        >>> page2 = filter_files(context=ctx, filter="...", offset=30, limit=30)
 
         Anti-patterns
         -------------
-        - WRONG: filter="visit_date == '2024-01'" (partial date equality fails)
-          CORRECT: filter="visit_date >= '2024-01-01' and visit_date < '2024-02-01'"
+        - WRONG: Guessing context paths
 
-        - WRONG: filter="description.contains('budget')" (substring for meaning)
-          CORRECT: Use search_files(references={'description': 'budget'}) instead
+          >>> filter_files(context="Files/Local/reports/Q4.csv/Tables/Sheet1")
 
-        - WRONG: filter="content_id['section'] == 2" (direct dict indexing fails)
-          CORRECT: filter="content_id.get('section') == 2"
+          CORRECT: Always use describe() to get exact paths
+
+          >>> storage = describe(file_path="/reports/Q4.csv")
+          >>> filter_files(context=storage.tables[0].context_path, ...)
+
+        - WRONG: Using filter for meaning-based search
+
+          >>> filter_files(filter="description.contains('budget')")
+
+          CORRECT: Use search_files(references={'description': 'budget'})
 
         - WRONG: Fetching rows just to count them
+
           CORRECT: Use reduce(metric='count', keys='id') instead
+
+        - WRONG: filter="content_id['section'] == 2" (direct dict indexing fails)
+
+          CORRECT: filter="content_id.get('section') == 2"
+
+        Notes
+        -----
+        - Context paths use file_id internally (e.g., Files/Local/42/Tables/Sheet1)
+          for stability across file renames. Always use describe() to get paths.
+        - For large result sets, use pagination (offset/limit) to avoid memory issues.
+        - Check column_schema.column_names from describe() to see available columns.
+
+        See Also
+        --------
+        describe : Get context paths and schema for a file
+        search_files : Semantic search (for meaning-based queries)
+        reduce : Aggregate metrics without fetching rows
         """
         normalized = normalize_filter_expr(filter)
         from .utils.search import filter_files as _srch_filter_files
+
+        # Resolve context
+        ctx = context if context else self._ctx
 
         rows = _srch_filter_files(
             self,
             filter=normalized,
             offset=offset,
             limit=limit,
-            tables=tables,
+            tables=[ctx] if ctx != self._ctx else None,
+            columns=columns,
         )
         return rows
 
@@ -2229,101 +2315,168 @@ class FileManager(BaseFileManager):
     def search_files(
         self,
         *,
+        context: Optional[str] = None,
         references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-        table: Optional[str] = None,
+        limit: int = 10,
         filter: Optional[str] = None,
+        columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Semantic search over a resolved context using one or more reference texts.
+        Semantic search over a context using reference texts for similarity matching.
 
         Use this tool when searching by meaning, topics, or concepts in text fields.
         For exact matches on structured fields (ids, statuses), use filter_files instead.
 
+        IMPORTANT: Use describe() first to get the exact context path and check
+        which columns are searchable (have embeddings):
+
+        >>> storage = describe(file_path="/docs/report.pdf")
+        >>> print(storage.document.column_schema.searchable_columns)
+        ['summary', 'content_text']
+        >>> results = search_files(
+        ...     context=storage.document.context_path,
+        ...     references={'summary': 'fire safety regulations'}
+        ... )
+
         Parameters
         ----------
-        references : dict[str, str] | None
+        context : str, optional
+            Full Unify context path to search. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
+            When None, defaults to the FileRecords index.
+
+        references : dict[str, str], optional
             Mapping of column_name → reference_text for semantic matching.
-            When omitted, returns recent files without semantic ranking.
-        k : int
+            Only use columns that are searchable (have embeddings) - check
+            column_schema.searchable_columns from describe().
+            When omitted, returns recent rows without semantic ranking.
+
+        limit : int, default 10
             Number of results to return. Start with 10, increase if needed.
             Maximum 100, but prefer smaller values to avoid context overflow.
-        table : str | None
-            Table reference to search. Accepted forms:
-            - Path-first (preferred): "<file_path>" for per-file Content,
-              "<file_path>.Tables.<label>" for per-file tables
-            - Logical names: "FileRecords" for index
-            When None, defaults to the global FileRecords index.
-        filter : str | None
+
+        filter : str, optional
             Optional row-level predicate to narrow results before semantic ranking.
             Supports arbitrary Python expressions evaluated per row.
+
+        columns : list[str], optional
+            Specific columns to return. When None, returns all columns.
+            Use this to reduce response size when only specific fields are needed.
 
         Returns
         -------
         list[dict]
-            Up to k rows ranked by similarity from the resolved context.
+            Up to `limit` rows ranked by similarity from the context.
 
         Usage Examples
         --------------
-        # Semantic search over FileRecords index by summary:
-        search_files(references={'summary': 'fire safety regulations'}, k=10)
+        First, always call describe() to get context paths and check searchability:
 
-        # Search per-file Content for paragraphs about a topic:
-        search_files(
-            references={'content_text': 'payment terms and conditions'},
-            table='/path/to/contract.pdf',
-            k=5
-        )
+        >>> storage = describe(file_path="/docs/report.pdf")
+        >>> print(storage.document.column_schema.searchable_columns)
 
-        # Combine semantic search with exact filter:
-        search_files(
-            references={'description': 'heating system repair'},
-            filter="status == 'success'",
-            k=10
-        )
+        Search document content:
 
-        # Search a specific per-file table:
-        search_files(
-            references={'Vehicle': 'Stuart Birks'},
-            table='/path/to/telematics.xlsx.Tables.July_2025',
-            k=20
-        )
+        >>> results = search_files(
+        ...     context=storage.document.context_path,
+        ...     references={'summary': 'fire safety regulations'},
+        ...     limit=10
+        ... )
 
-        # Tiered search strategy for documents:
-        # 1. Paragraphs first (highest precision):
-        search_files(
-            references={'summary': '<query>'},
-            filter="content_type == 'paragraph'",
-            table='/path/to/doc.pdf',
-            k=10
-        )
-        # 2. Sections if paragraphs insufficient:
-        search_files(
-            references={'summary': '<query>'},
-            filter="content_type == 'section'",
-            table='/path/to/doc.pdf',
-            k=5
-        )
+        Search a specific table (check searchable columns first):
+
+        >>> storage = describe(file_path="/data/telematics.xlsx")
+        >>> table = storage.get_table("July_2025")
+        >>> results = search_files(
+        ...     context=table.context_path,
+        ...     references={'Vehicle': 'Stuart Birks'},
+        ...     limit=20
+        ... )
+
+        Combine semantic search with exact filter:
+
+        >>> results = search_files(
+        ...     context=storage.document.context_path,
+        ...     references={'content_text': 'payment terms'},
+        ...     filter="content_type == 'paragraph'",
+        ...     limit=5
+        ... )
+
+        Tiered search strategy for documents:
+
+        >>> # 1. Paragraphs first (highest precision):
+        >>> results = search_files(
+        ...     context=storage.document.context_path,
+        ...     references={'summary': 'quarterly metrics'},
+        ...     filter="content_type == 'paragraph'",
+        ...     limit=10
+        ... )
+        >>> # 2. Sections if paragraphs insufficient:
+        >>> results = search_files(
+        ...     context=storage.document.context_path,
+        ...     references={'summary': 'quarterly metrics'},
+        ...     filter="content_type == 'section'",
+        ...     limit=5
+        ... )
+
+        Search FileRecords index (no context needed):
+
+        >>> results = search_files(references={'summary': 'fire safety'}, limit=10)
 
         Anti-patterns
         -------------
-        - WRONG: references={'id': 'search term'} (id is not a text column)
-          CORRECT: Only use text columns in references
+        - WRONG: Guessing context paths
+
+          >>> search_files(context="Files/Local/docs/report.pdf/Content", ...)
+
+          CORRECT: Always use describe() to get exact paths
+
+          >>> storage = describe(file_path="/docs/report.pdf")
+          >>> search_files(context=storage.document.context_path, ...)
+
+        - WRONG: Using non-searchable columns in references
+
+          >>> search_files(references={'id': 'search term'})  # id has no embeddings
+
+          CORRECT: Check searchable_columns first
+
+          >>> storage.document.column_schema.searchable_columns
 
         - WRONG: Using search_files for exact id/status lookup
+
           CORRECT: Use filter_files(filter="id == 123") for exact matches
 
-        - WRONG: k=500 (too many results flood context)
-          CORRECT: Start with k=10, increase only if needed
+        - WRONG: limit=500 (too many results flood context)
+
+          CORRECT: Start with limit=10, increase only if needed
+
+        Notes
+        -----
+        - Only columns with embeddings can be used in references. Check
+          column_schema.searchable_columns from describe() before searching.
+        - Context paths use file_id internally for stability across renames.
+        - For best results, combine with filter to narrow the search scope.
+
+        See Also
+        --------
+        describe : Get context paths, schema, and searchable columns
+        filter_files : Exact match filtering (for structured fields)
+        reduce : Aggregate metrics without fetching rows
         """
         from .utils.search import search_files as _srch_search_files
+
+        # Resolve context
+        ctx = context if context else self._ctx
 
         return _srch_search_files(
             self,
             references=references,
-            k=k,
-            table=table,
+            k=limit,
+            table=ctx if ctx != self._ctx else None,
             filter=filter,
+            columns=columns,
         )
 
     # ---------- Per-file join and multi-join tools (read-only) -------------- #
