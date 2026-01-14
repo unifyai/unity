@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Union
+from typing import Any, Callable, Dict, Type, Union
 
 import unillm
+from pydantic import BaseModel
 
 from .llm_helpers import method_to_schema
+from .llm_client import pydantic_to_json_schema_response_format
 from .tool_spec import ToolSpec, normalise_tools
 
 
@@ -37,12 +39,15 @@ class SingleShotResult:
     text_response : str | None
         Text content from the LLM response (if any). This is populated when the
         LLM returns content alongside or instead of tool calls.
+    structured_output : BaseModel | None
+        Parsed structured output when response_format was provided.
     """
 
     tool_name: str | None
     tool_args: dict[str, Any] | None
     tool_result: Any
     text_response: str | None
+    structured_output: BaseModel | None = None
 
 
 async def single_shot_tool_decision(
@@ -52,6 +57,7 @@ async def single_shot_tool_decision(
     *,
     tool_choice: str = "auto",
     include_class_name: bool = False,
+    response_format: Type[BaseModel] | None = None,
 ) -> SingleShotResult:
     """Make a single LLM call, optionally execute one tool, return the result.
 
@@ -80,6 +86,11 @@ async def single_shot_tool_decision(
     include_class_name : bool, default False
         Whether to include the class name prefix in tool schemas (e.g.,
         "ContactManager_filter_contacts" vs "filter_contacts").
+    response_format : Type[BaseModel] | None, default None
+        Optional Pydantic model for structured output. When provided, the LLM
+        response content will be parsed into this model and returned in
+        `structured_output`. This can be combined with tools - the model can
+        return structured JSON AND call a tool in the same turn.
 
     Returns
     -------
@@ -89,6 +100,7 @@ async def single_shot_tool_decision(
         - tool_args: arguments passed to the tool (or None)
         - tool_result: return value from the tool (or None)
         - text_response: any text content from the LLM response
+        - structured_output: parsed response_format model (or None)
     """
     # Normalise tools to ToolSpec for consistent handling
     normalised = normalise_tools(tools)
@@ -111,13 +123,21 @@ async def single_shot_tool_decision(
     else:
         messages = list(message)
 
-    # Single LLM call with stateful=True so the response is appended to client.messages
-    await client.generate(
-        messages=messages,
-        tools=schemas if schemas else None,
-        tool_choice=tool_choice if schemas else None,
-        stateful=True,
-    )
+    # Build generate kwargs
+    gen_kwargs: dict[str, Any] = {
+        "messages": messages,
+        "stateful": True,
+    }
+    if schemas:
+        gen_kwargs["tools"] = schemas
+        gen_kwargs["tool_choice"] = tool_choice
+    if response_format is not None:
+        gen_kwargs["response_format"] = pydantic_to_json_schema_response_format(
+            response_format,
+        )
+
+    # Single LLM call
+    await client.generate(**gen_kwargs)
 
     # The client appends the assistant response to client.messages
     # Extract it from there (this is how async_tool_loop does it)
@@ -125,9 +145,18 @@ async def single_shot_tool_decision(
 
     # Extract text response (if any)
     text_response = None
+    structured_output = None
     content = msg.get("content")
     if isinstance(content, str) and content.strip():
         text_response = content
+        # Parse as structured output if response_format was provided
+        if response_format is not None:
+            try:
+                parsed = json.loads(content)
+                structured_output = response_format.model_validate(parsed)
+            except (json.JSONDecodeError, Exception):
+                # If parsing fails, leave structured_output as None
+                pass
 
     # Check for tool calls
     tool_calls = msg.get("tool_calls")
@@ -138,6 +167,7 @@ async def single_shot_tool_decision(
             tool_args=None,
             tool_result=None,
             text_response=text_response,
+            structured_output=structured_output,
         )
 
     # Execute the first tool call only (single-shot = one action)
@@ -172,4 +202,5 @@ async def single_shot_tool_decision(
         tool_args=fn_args,
         tool_result=result,
         text_response=text_response,
+        structured_output=structured_output,
     )
