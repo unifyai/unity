@@ -1,7 +1,10 @@
 from collections.abc import Callable
+from typing import Type
+
+from pydantic import BaseModel
 
 from unity.common.llm_client import new_llm_client
-from unity.common.async_tool_loop import start_async_tool_loop
+from unity.common.single_shot import single_shot_tool_decision, SingleShotResult
 
 
 class LLM:
@@ -12,80 +15,95 @@ class LLM:
     async def run(
         self,
         system_prompt: str,
-        messages: str,
-        response_model,
+        messages: str | dict | list,
+        response_model: Type[BaseModel],
         *,
         _tools: dict[str, Callable] | None = None,
-        _tool_policy: Callable | None = None,
-        _on_handle_created: Callable[[object], None] | None = None,
-        _on_handle_finished: Callable[[object], None] | None = None,
-        _interrupt_llm_with_interjections: bool = True,
-    ):
-        """Run the Main CM Brain and return structured output.
+    ) -> SingleShotResult:
+        """Run the Main CM Brain and return the result.
+
+        This is a single-shot LLM call that:
+        1. Receives the current state as a message
+        2. Returns structured output (thoughts, call_guidance)
+        3. Optionally executes ONE action tool (send_sms, make_call, etc.)
 
         The Main CM Brain always runs in non-streaming mode. The Voice Agent
         (fast brain) handles all speech generation independently.
+
+        Parameters
+        ----------
+        system_prompt : str
+            The system prompt for the LLM.
+        messages : str | dict | list
+            The user message(s) representing current state.
+        response_model : Type[BaseModel]
+            Pydantic model for structured output (e.g., thoughts, call_guidance).
+        _tools : dict[str, Callable] | None
+            Optional tools for the LLM to call (send_sms, make_call, etc.).
+
+        Returns
+        -------
+        SingleShotResult
+            Contains structured_output (parsed response_model) and any tool execution result.
         """
         client = new_llm_client(self.model, reasoning_effort="low")
         client.set_system_message(system_prompt)
 
-        def _preprocess_msgs(msgs: list[dict]) -> list[dict]:
-            """
-            Keep the engineered state representation *transient*.
+        # Preprocess messages: keep only the latest state snapshot
+        processed_messages = self._preprocess_messages(messages)
 
-            ConversationManager renders a full state snapshot each turn. We keep only the
-            latest snapshot when calling the model, while preserving any system messages
-            (runtime context, response format hint) and any user interjections.
-            """
-            try:
-                state_indices = [
-                    i
-                    for i, m in enumerate(msgs)
-                    if isinstance(m, dict) and m.get("_cm_state_snapshot") is True
-                ]
-                if not state_indices:
-                    return msgs
-
-                last_state = msgs[state_indices[-1]]
-                kept: list[dict] = []
-                for m in msgs:
-                    if not isinstance(m, dict):
-                        continue
-                    role = m.get("role")
-                    if role == "system":
-                        kept.append(m)
-                    elif role == "user" and not m.get("_cm_state_snapshot"):
-                        kept.append(m)
-
-                kept.append(last_state)
-                return kept
-            except Exception:
-                return msgs
-
-        # Use the async tool loop even for single-step structured output.
-        # This provides a consistent execution model and enables incremental
-        # rollout of interjections/tooling later.
-        handle = start_async_tool_loop(
+        # Use tool_choice="required" to ensure the model always takes an action.
+        # Even if there's nothing to do, it should call the "wait" tool.
+        result = await single_shot_tool_decision(
             client,
-            messages,
+            processed_messages,
             _tools or {},
-            loop_id="ConversationManager._run_llm",
+            tool_choice="required" if _tools else "auto",
             response_format=response_model,
-            preprocess_msgs=_preprocess_msgs if isinstance(messages, list) else None,
-            interrupt_llm_with_interjections=_interrupt_llm_with_interjections,
-            tool_policy=_tool_policy,
-            log_steps=False,
         )
+
+        return result
+
+    def _preprocess_messages(
+        self,
+        messages: str | dict | list,
+    ) -> str | dict | list:
+        """Keep only the latest state snapshot from message history.
+
+        ConversationManager renders a full state snapshot each turn. We keep only the
+        latest snapshot when calling the model, while preserving any system messages
+        and user interjections.
+        """
+        if isinstance(messages, str):
+            return messages
+        if isinstance(messages, dict):
+            return messages
+        if not isinstance(messages, list):
+            return messages
+
         try:
-            if _on_handle_created is not None:
-                _on_handle_created(handle)
+            # Find all state snapshot messages
+            state_indices = [
+                i
+                for i, m in enumerate(messages)
+                if isinstance(m, dict) and m.get("_cm_state_snapshot") is True
+            ]
+            if not state_indices:
+                return messages
+
+            # Keep only the latest state snapshot and non-state messages
+            last_state = messages[state_indices[-1]]
+            kept: list[dict] = []
+            for m in messages:
+                if not isinstance(m, dict):
+                    continue
+                role = m.get("role")
+                if role == "system":
+                    kept.append(m)
+                elif role == "user" and not m.get("_cm_state_snapshot"):
+                    kept.append(m)
+
+            kept.append(last_state)
+            return kept
         except Exception:
-            pass
-        try:
-            return await handle.result()
-        finally:
-            try:
-                if _on_handle_finished is not None:
-                    _on_handle_finished(handle)
-            except Exception:
-                pass
+            return messages

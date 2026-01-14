@@ -170,11 +170,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
 
-        # ask handles
+        # ask handles (for Actor tasks)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
-        # Main CM Brain handle (async tool loop) while an LLM run is in-flight.
-        # This enables mid-flight interjections to interrupt/restart generation.
-        self.active_brain_handle: Optional["SteerableToolHandle"] = None
 
         # LLM run requests recorded during event handling (production path).
         # In step() mode, requests are recorded via a contextvar instead.
@@ -210,14 +207,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 icon_override="🔀",
             )
             await self.active_ask_handle.interject(content)
-        elif self.active_brain_handle and not self.active_brain_handle.done():
-            self._session_logger.info(
-                "event",
-                "Routing to active main brain handle",
-                icon_override="🔀",
-            )
-            await self.active_brain_handle.interject(content)
         else:
+            # With single-shot LLM, there's no ongoing brain loop to interject.
+            # Just trigger a new LLM run.
             self._session_logger.info(
                 "llm_thinking",
                 "Triggering main CM brain",
@@ -356,72 +348,57 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_task_steering_tools(),
         }
 
-        def _brain_tool_policy(step_index: int, tools: dict) -> tuple[str, dict]:
-            # Keep the tool surface conservative: allow inspection tools on the first turn
-            # only, then encourage immediate completion via final_answer.
-            if step_index > 0:
-                return "auto", {}
-            return "auto", tools
-
-        def _set_brain_handle(h: object) -> None:
-            # Store as SteerableToolHandle (protocol-like) for interjection routing.
-            try:
-                self.active_brain_handle = h  # type: ignore[assignment]
-            except Exception:
-                pass
-
-        def _clear_brain_handle(h: object) -> None:
-            try:
-                if self.active_brain_handle is h:
-                    self.active_brain_handle = None
-            except Exception:
-                pass
-
-        out = await self.llm.run(
+        # Single-shot LLM call: one decision, one action
+        result = await self.llm.run(
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
             response_model=response_model,
             _tools=tools,
-            _tool_policy=_brain_tool_policy,
-            _on_handle_created=_set_brain_handle,
-            _on_handle_finished=_clear_brain_handle,
         )
-        parsed_out = json.loads(out)
-        if self.mode in ["call", "unify_meet"]:
-            # Both TTS and Realtime modes use call_guidance - publish guidance events
-            # The Voice Agent (fast brain) handles conversational responses independently
-            if parsed_out.get("call_guidance"):
-                contact = (
-                    self.call_manager.call_contact
-                    or self.contact_index.get_contact(contact_id=1)
-                )
-                event = CallGuidance(
-                    contact,
-                    parsed_out["call_guidance"],
-                )
-                await self.event_broker.publish(
-                    "app:call:call_guidance",
-                    event.to_json(),
-                )
-                await self.event_broker.publish(
-                    "app:comms:assistant_call_guidance",
-                    event.to_json(),
-                )
 
-        # Log LLM response (actions are now tool calls, handled by the async tool loop)
-        thoughts = parsed_out.get("thoughts", "")
+        # Extract structured output (thoughts, call_guidance)
+        structured = result.structured_output
+        thoughts = ""
+        if structured is not None:
+            thoughts = getattr(structured, "thoughts", "")
+
+            # Handle call_guidance for voice modes
+            if self.mode in ["call", "unify_meet"]:
+                call_guidance = getattr(structured, "call_guidance", "")
+                if call_guidance:
+                    contact = (
+                        self.call_manager.call_contact
+                        or self.contact_index.get_contact(contact_id=1)
+                    )
+                    event = CallGuidance(contact, call_guidance)
+                    await self.event_broker.publish(
+                        "app:call:call_guidance",
+                        event.to_json(),
+                    )
+                    await self.event_broker.publish(
+                        "app:comms:assistant_call_guidance",
+                        event.to_json(),
+                    )
+
+        # Log LLM response
         self._session_logger.log_llm_response(
             (
                 f"thoughts: {thoughts[:100]}..."
                 if len(thoughts) > 100
                 else f"thoughts: {thoughts}"
-            ),
+            )
+            + (f" | action: {result.tool_name}" if result.tool_name else ""),
         )
 
         self.commit()
         print("commiting...")
+
+        # Build assistant message for chat history
+        assistant_content = (
+            structured.model_dump_json() if structured else result.text_response or ""
+        )
         self.chat_history.append(input_message)
-        self.chat_history.append({"role": "assistant", "content": out})
+        self.chat_history.append({"role": "assistant", "content": assistant_content})
 
         if (
             len(self.chat_history) >= int(0.7 * self.max_messages)
