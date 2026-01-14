@@ -531,21 +531,20 @@ class BaseDataManager(BaseStateManager):
         self,
         context: str,
         *,
-        query: str,
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
         filter: Optional[str] = None,
-        vector_column: Optional[str] = None,
         columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Semantic search over embedded column.
+        Semantic search over embedded columns using reference text.
 
         Use this tool when searching by **meaning, topics, or concepts** in text fields.
         For **exact matches** on structured fields, use ``filter()`` instead.
 
         This performs vector similarity search using embeddings. The table must
-        have an embedding column (``_<name>_emb``) for the column being searched.
-        Use ``describe_table()`` to check which columns are searchable.
+        have embedding columns (``_<name>_emb``) for the columns being searched.
+        Use ``describe_table()`` to check which columns have embeddings.
 
         Parameters
         ----------
@@ -553,14 +552,22 @@ class BaseDataManager(BaseStateManager):
             Target context path. Accepts relative, absolute owned, or foreign paths.
             See ``filter()`` for full context resolution documentation.
 
-        query : str
-            Natural language query to embed and match against the vector column.
-            The query is embedded using the same model as the column embeddings.
+        references : dict[str, str] | None, default ``None``
+            Mapping of source_column/expression → reference_text for semantic matching.
 
-            Good queries are:
-            - Descriptive: "budget allocation for Q4 marketing"
-            - Conceptual: "customer complaints about delivery"
-            - Topic-based: "renewable energy initiatives"
+            The keys specify WHICH columns to search (must have embeddings).
+            The values are the reference text to match against.
+
+            Examples:
+            - ``{"text": "budget allocation"}`` — search the ``text`` column
+            - ``{"description": "eco-friendly"}`` — search the ``description`` column
+            - ``{"content": "Q4 priorities", "summary": "budget planning"}`` — multi-column search
+
+            For multi-column search, results are ranked by average similarity across
+            all specified columns.
+
+            When ``None`` or empty, returns rows without semantic ranking (equivalent
+            to ``filter()`` with backfill).
 
         k : int, default ``10``
             Number of results to return. Results are ranked by similarity score.
@@ -571,13 +578,6 @@ class BaseDataManager(BaseStateManager):
 
             Example: ``filter="year == 2024"`` to only search 2024 documents.
 
-        vector_column : str | None, default ``None``
-            Specific embedding column to search. If ``None``, uses the default
-            searchable column (usually ``text`` or the first embedded column).
-
-            Use ``describe_table()`` to find available embedding columns:
-            ``desc.schema.searchable_columns``
-
         columns : list[str] | None, default ``None``
             Columns to return in results. When ``None``, all columns returned.
 
@@ -585,65 +585,70 @@ class BaseDataManager(BaseStateManager):
         -------
         list[dict]
             List of row dictionaries ranked by semantic similarity.
-            Each dict includes a ``_similarity`` score (0-1, higher is better).
-            Results are sorted by similarity descending.
-
-        Raises
-        ------
-        ValueError
-            If the context has no embedding columns (not searchable).
+            Each dict may include a ``_similarity`` score (0-1, higher is better).
+            Results are sorted by similarity descending (best match first).
 
         Usage Examples
         --------------
-        # Basic semantic search
+        # Basic semantic search on single column
         results = dm.search(
             "Data/documents",
-            query="budget planning for next fiscal year",
+            references={"text": "budget planning for next fiscal year"},
             k=5
         )
 
         # Search with filter to narrow scope
         results = dm.search(
             "Data/support_tickets",
-            query="delivery problems",
+            references={"description": "delivery problems"},
             k=10,
             filter="status == 'open'"
         )
 
-        # Search specific embedded column
+        # Multi-column semantic search
         results = dm.search(
             "Data/products",
-            query="eco-friendly materials",
-            vector_column="description"
+            references={
+                "name": "eco-friendly",
+                "description": "sustainable materials"
+            },
+            k=10
         )
 
         # Cross-namespace search (file content)
         results = dm.search(
             "Files/Local/120/Content",
-            query="executive summary recommendations",
+            references={"text": "executive summary recommendations"},
             k=5
+        )
+
+        # Search with derived expression (combine columns)
+        results = dm.search(
+            "Data/articles",
+            references={"str({title}) + ' ' + str({abstract})": "machine learning"},
+            k=10
         )
 
         Anti-patterns
         -------------
-        - WRONG: Using search for exact matches like ``query="status:active"``
+        - WRONG: Using search for exact matches like ``references={"status": "active"}``
           CORRECT: Use ``filter(filter="status == 'active'")`` instead
 
-        - WRONG: Very short queries like ``query="budget"``
-          CORRECT: Use descriptive queries: ``query="Q4 marketing budget allocation"``
+        - WRONG: Very short references like ``references={"text": "budget"}``
+          CORRECT: Use descriptive text: ``references={"text": "Q4 marketing budget allocation"}``
 
         - WRONG: Assuming embeddings exist without checking
-          CORRECT: Use ``describe_table()`` to verify searchable columns
+          CORRECT: Use ``describe_table()`` to verify embedding columns exist
 
         - WRONG: Large k values (k=1000) for exhaustive retrieval
           CORRECT: Use reasonable k; combine with filter for large datasets
 
         Notes
         -----
-        - Requires the column to have embeddings (``ensure_vector_column`` + ``vectorize_rows``)
-        - Similarity scores are normalized 0-1; higher is more similar
-        - Performance depends on embedding index; large tables may have latency
+        - Requires columns to have embeddings (``ensure_vector_column`` + ``vectorize_rows``)
+        - For multi-column search, similarity is averaged across all specified columns
         - Combine filter + search for best results: filter narrows, search ranks
+        - The ``references`` keys can be plain column names or derived expressions
         """
 
     @abstractmethod
@@ -652,7 +657,7 @@ class BaseDataManager(BaseStateManager):
         context: str,
         *,
         metric: str,
-        column: Optional[str] = None,
+        columns: Union[str, List[str]],
         filter: Optional[str] = None,
         group_by: Optional[Union[str, List[str]]] = None,
     ) -> Any:
@@ -671,16 +676,28 @@ class BaseDataManager(BaseStateManager):
         metric : str
             Aggregation function to apply. Supported values:
 
-            - ``"count"``: Number of rows (column optional)
+            - ``"count"``: Number of rows (counts non-null values in column)
             - ``"count_distinct"``: Number of unique values in column
             - ``"sum"``: Sum of numeric column values
-            - ``"avg"`` or ``"mean"``: Average of numeric column values
+            - ``"mean"`` or ``"avg"``: Average of numeric column values
+            - ``"var"``: Variance of numeric column values
+            - ``"std"``: Standard deviation of numeric column values
             - ``"min"``: Minimum value in column
             - ``"max"``: Maximum value in column
+            - ``"median"``: Median value in column
+            - ``"mode"``: Most frequent value in column
 
-        column : str | None, default ``None``
-            Column to aggregate. Required for sum/avg/min/max.
-            For ``count``, if provided, counts non-null values in that column.
+        columns : str | list[str]
+            Column(s) to aggregate. **Required parameter**.
+
+            - **Single column** (str): Returns a single aggregate value.
+              Example: ``columns="amount"``
+
+            - **Multiple columns** (list[str]): Returns dict mapping column → aggregate.
+              Example: ``columns=["amount", "quantity"]``
+
+            For ``count``, use any column (e.g., ``"id"``).
+            For ``sum``/``avg``/``min``/``max``, must be numeric columns.
 
         filter : str | None, default ``None``
             Filter expression to apply BEFORE aggregation.
@@ -693,39 +710,72 @@ class BaseDataManager(BaseStateManager):
         Returns
         -------
         Any
-            - **Scalar** if no ``group_by``: int for count, float for avg/sum, etc.
-            - **List of dicts** if ``group_by``: Each dict has group columns + metric result.
+            Depends on ``columns`` and ``group_by``:
+
+            - **Single column, no group_by**: Scalar (int for count, float for avg/sum)
+            - **Multiple columns, no group_by**: Dict mapping column_name → aggregate_value
+            - **Single column, with group_by**: List of dicts with group columns + metric
+            - **Multiple columns, with group_by**: List of dicts with group columns + all metrics
+
+        Raises
+        ------
+        ValueError
+            If metric is not supported.
+        ValueError
+            If columns is empty.
 
         Usage Examples
         --------------
-        # Count all rows
-        total = dm.reduce("MH/arrears", metric="count")
+        # Count all rows (single column)
+        total = dm.reduce("MH/arrears", metric="count", columns="id")
 
-        # Sum with filter
+        # Sum single column with filter
         total_overdue = dm.reduce(
             "MH/arrears",
             metric="sum",
-            column="amount",
+            columns="amount",
             filter="status == 'overdue'"
         )
 
-        # Average
-        avg_amount = dm.reduce("MH/arrears", metric="avg", column="amount")
+        # Sum multiple columns at once
+        totals = dm.reduce(
+            "MH/arrears",
+            metric="sum",
+            columns=["amount", "fees", "penalties"]
+        )
+        # Returns: {"amount": 150000, "fees": 5000, "penalties": 2000}
 
-        # Group by aggregation
+        # Average multiple columns
+        averages = dm.reduce(
+            "Data/orders",
+            metric="mean",
+            columns=["quantity", "price", "discount"]
+        )
+        # Returns: {"quantity": 5.2, "price": 99.50, "discount": 0.15}
+
+        # Group by aggregation (single column)
         by_region = dm.reduce(
             "Data/sales",
             metric="sum",
-            column="revenue",
+            columns="revenue",
             group_by="region"
         )
         # Returns: [{"region": "East", "sum": 150000}, {"region": "West", "sum": 200000}]
+
+        # Group by with multiple columns
+        by_region = dm.reduce(
+            "Data/sales",
+            metric="sum",
+            columns=["revenue", "units"],
+            group_by="region"
+        )
+        # Returns: [{"region": "East", "revenue": 150000, "units": 500}, ...]
 
         # Multiple group-by columns
         by_region_quarter = dm.reduce(
             "Data/sales",
             metric="sum",
-            column="revenue",
+            columns="revenue",
             group_by=["region", "quarter"]
         )
 
@@ -733,25 +783,26 @@ class BaseDataManager(BaseStateManager):
         unique_categories = dm.reduce(
             "Data/products",
             metric="count_distinct",
-            column="category"
+            columns="category"
         )
 
         Anti-patterns
         -------------
         - WRONG: ``dm.filter(ctx, limit=10000)`` then ``len(results)`` for counting
-          CORRECT: ``dm.reduce(ctx, metric="count")``
+          CORRECT: ``dm.reduce(ctx, metric="count", columns="id")``
 
         - WRONG: Fetching all rows to compute average in Python
-          CORRECT: ``dm.reduce(ctx, metric="avg", column="value")``
+          CORRECT: ``dm.reduce(ctx, metric="mean", columns="value")``
 
-        - WRONG: Using metric="count" with column for row count
-          CORRECT: Use column=None for total row count
+        - WRONG: Calling reduce multiple times for different columns
+          CORRECT: ``dm.reduce(ctx, metric="sum", columns=["a", "b", "c"])``
 
         Notes
         -----
         - Aggregations are computed server-side for efficiency
         - For ``group_by``, results are not guaranteed sorted; sort in Python if needed
         - ``count_distinct`` may be approximate for very large datasets
+        - Multiple columns are aggregated in a single query for efficiency
         """
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -762,249 +813,421 @@ class BaseDataManager(BaseStateManager):
     def filter_join(
         self,
         *,
-        left_context: str,
-        right_context: str,
-        join_column: str,
-        filter: Optional[str] = None,
-        columns: Optional[List[str]] = None,
-        limit: Optional[int] = None,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """
         Join two tables and filter the result.
 
-        Use this to combine data from two related tables based on a shared column.
-        This is an inner join: only rows with matching values in both tables are returned.
+        Use this to combine data from two related tables with full control over
+        join expression, column selection, pre/post filters, and join mode.
+
+        This follows the same pattern as KnowledgeManager's join implementation.
 
         Parameters
         ----------
-        left_context : str
-            Left table context path. Columns from this table are included first.
+        tables : str | list[str]
+            Exactly TWO table names/context paths to join.
+            Example: ``["Orders", "Customers"]`` or ``["Data/orders", "Data/customers"]``
 
-        right_context : str
-            Right table context path. Columns from this table are appended.
+        join_expr : str
+            Join condition expression using table names as prefixes.
+            Example: ``"Orders.customer_id == Customers.id"``
 
-        join_column : str
-            Column name to join on. Must exist in BOTH tables with compatible types.
+            The table names in the expression are automatically rewritten to
+            fully-qualified context paths.
 
-        filter : str | None, default ``None``
-            Filter expression applied AFTER the join. Can reference columns
-            from either table. Same syntax as ``filter()`` method.
+        select : dict[str, str]
+            Mapping of source columns to output column names.
+            Keys use table names as prefixes; values are the output alias.
 
-        columns : list[str] | None, default ``None``
-            Columns to return. Can include columns from either table.
-            When ``None``, all columns from both tables are returned.
+            Example::
 
-        limit : int | None, default ``None``
-            Maximum rows to return. When ``None``, all matching rows returned.
+                {
+                    "Orders.id": "order_id",
+                    "Orders.amount": "amount",
+                    "Customers.name": "customer_name",
+                    "Customers.email": "email"
+                }
+
+        mode : str, default ``"inner"``
+            Join mode: ``"inner"``, ``"left"``, ``"right"``, or ``"outer"``.
+
+        left_where : str | None, default ``None``
+            Filter expression applied to LEFT table BEFORE the join.
+            Uses left table's column names without prefix.
+            Example: ``"status == 'active'"``
+
+        right_where : str | None, default ``None``
+            Filter expression applied to RIGHT table BEFORE the join.
+            Uses right table's column names without prefix.
+            Example: ``"created_at >= '2024-01-01'"``
+
+        result_where : str | None, default ``None``
+            Filter expression applied AFTER the join on the result.
+            Must use column names from ``select`` values (the output aliases).
+            Example: ``"amount > 100"``
+
+        result_limit : int, default ``100``
+            Maximum rows to return. Must be <= 1000.
+
+        result_offset : int, default ``0``
+            Pagination offset for results.
 
         Returns
         -------
         list[dict]
-            Joined rows containing columns from both tables.
+            Joined rows with columns as specified in ``select``.
 
         Usage Examples
         --------------
-        # Join orders with customers
+        # Basic inner join
         results = dm.filter_join(
-            left_context="Data/orders",
-            right_context="Data/customers",
-            join_column="customer_id",
-            filter="amount > 100"
+            tables=["Data/orders", "Data/customers"],
+            join_expr="Data/orders.customer_id == Data/customers.id",
+            select={
+                "Data/orders.id": "order_id",
+                "Data/orders.amount": "amount",
+                "Data/customers.name": "customer_name"
+            },
+            result_where="amount > 100"
+        )
+
+        # Left join with pre-filters
+        results = dm.filter_join(
+            tables=["Data/orders", "Data/products"],
+            join_expr="Data/orders.product_id == Data/products.id",
+            select={
+                "Data/orders.id": "order_id",
+                "Data/products.name": "product_name",
+                "Data/products.price": "price"
+            },
+            mode="left",
+            left_where="status == 'completed'",
+            right_where="category == 'Electronics'",
+            result_limit=50
         )
 
         # Cross-namespace join (file table + data table)
         results = dm.filter_join(
-            left_context="Files/Local/120/Tables/Orders",
-            right_context="Data/MH/properties",
-            join_column="property_id"
-        )
-
-        # Select specific columns
-        results = dm.filter_join(
-            left_context="Data/orders",
-            right_context="Data/products",
-            join_column="product_id",
-            columns=["order_id", "product_name", "quantity", "price"]
+            tables=["Files/Local/120/Tables/Sheet1", "Data/MH/properties"],
+            join_expr="Files/Local/120/Tables/Sheet1.property_ref == Data/MH/properties.id",
+            select={
+                "Files/Local/120/Tables/Sheet1.amount": "arrears_amount",
+                "Data/MH/properties.address": "property_address"
+            }
         )
 
         Anti-patterns
         -------------
-        - WRONG: Joining on columns with different types
-          CORRECT: Ensure join columns have compatible types (e.g., both int)
+        - WRONG: Using output aliases in ``join_expr``
+          CORRECT: Use source table.column references in ``join_expr``
 
-        - WRONG: Joining very large tables without filter
-          CORRECT: Add filter to limit result size
+        - WRONG: Using source references in ``result_where``
+          CORRECT: Use output column names (values from ``select``) in ``result_where``
+
+        - WRONG: ``result_where`` references columns not in ``select``
+          CORRECT: Add all referenced columns to ``select``
 
         Notes
         -----
-        - This is an INNER join; rows without matches in both tables are excluded
-        - Column name conflicts: right table columns may be prefixed
-        - For outer joins or complex logic, fetch separately and join in Python
+        - Pre-filters (``left_where``, ``right_where``) are applied before joining,
+          which can significantly improve performance on large tables.
+        - The temporary join context is created, queried, and cleaned up automatically.
+        - Column references in ``join_expr`` and ``select`` keys use table/context prefixes.
         """
 
     @abstractmethod
     def search_join(
         self,
         *,
-        left_context: str,
-        right_context: str,
-        join_column: str,
-        query: str,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
         filter: Optional[str] = None,
-        vector_column: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Join two tables and perform semantic search on the result.
 
-        Combines a join operation with semantic search. Useful when you need
-        to find semantically similar rows across related data.
+        Combines a join operation with semantic search. The join is performed first,
+        then results are ranked by semantic similarity to the reference text.
 
         Parameters
         ----------
-        left_context : str
-            Left table context path.
+        tables : str | list[str]
+            Exactly TWO table names/context paths to join.
 
-        right_context : str
-            Right table context path.
+        join_expr : str
+            Join condition expression using table names as prefixes.
+            Example: ``"Orders.product_id == Products.id"``
 
-        join_column : str
-            Column to join on (must exist in both tables).
+        select : dict[str, str]
+            Mapping of source columns to output column names.
+            Example: ``{"Products.description": "description", "Orders.id": "order_id"}``
 
-        query : str
-            Natural language query for semantic search.
+        mode : str, default ``"inner"``
+            Join mode: ``"inner"``, ``"left"``, ``"right"``, or ``"outer"``.
+
+        left_where : str | None, default ``None``
+            Filter expression applied to LEFT table BEFORE the join.
+
+        right_where : str | None, default ``None``
+            Filter expression applied to RIGHT table BEFORE the join.
+
+        references : dict[str, str] | None, default ``None``
+            Mapping of column → reference_text for semantic similarity.
+            Keys must be columns that exist in the joined result (output aliases from ``select``).
+
+            Example: ``{"description": "eco-friendly sustainable materials"}``
 
         k : int, default ``10``
-            Number of results to return.
+            Number of top results to return (1 to 1000).
 
         filter : str | None, default ``None``
-            Filter expression applied after join, before search.
-
-        vector_column : str | None, default ``None``
-            Embedding column to search (must exist in one of the tables).
+            Filter expression applied after join, before semantic ranking.
+            Uses output column names (values from ``select``).
 
         Returns
         -------
         list[dict]
-            Joined rows ranked by semantic similarity.
+            Top-k joined rows ranked by semantic similarity.
 
         Usage Examples
         --------------
         # Search products with order info
         results = dm.search_join(
-            left_context="Data/orders",
-            right_context="Data/products",
-            join_column="product_id",
-            query="eco-friendly sustainable materials",
+            tables=["Data/orders", "Data/products"],
+            join_expr="Data/orders.product_id == Data/products.id",
+            select={
+                "Data/orders.id": "order_id",
+                "Data/orders.quantity": "quantity",
+                "Data/products.name": "product_name",
+                "Data/products.description": "description"
+            },
+            references={"description": "eco-friendly sustainable materials"},
+            k=10
+        )
+
+        # With pre-filters and post-filter
+        results = dm.search_join(
+            tables=["Data/support_tickets", "Data/customers"],
+            join_expr="Data/support_tickets.customer_id == Data/customers.id",
+            select={
+                "Data/support_tickets.id": "ticket_id",
+                "Data/support_tickets.description": "issue_description",
+                "Data/customers.name": "customer_name",
+                "Data/customers.tier": "customer_tier"
+            },
+            left_where="status == 'open'",
+            references={"issue_description": "payment processing errors"},
+            filter="customer_tier == 'enterprise'",
             k=5
         )
 
         Notes
         -----
-        - The embedding column must exist in one of the joined tables
-        - Results are ranked by similarity after the join
+        - The embedding column must exist in the joined result for semantic search
+        - Results are ranked by similarity after the join and filter are applied
         """
 
     @abstractmethod
     def filter_multi_join(
         self,
         *,
-        contexts: List[str],
-        join_columns: List[str],
-        filter: Optional[str] = None,
-        columns: Optional[List[str]] = None,
-        limit: Optional[int] = None,
+        joins: List[Dict[str, Any]],
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """
-        Chain multiple joins across several tables and filter the result.
+        Execute a sequence of joins and filter the final result.
 
-        Use this for complex queries spanning 3+ related tables.
+        Use this for complex queries spanning 3+ tables. Each join step is
+        performed in sequence, with the result of each step available to the next.
 
         Parameters
         ----------
-        contexts : list[str]
-            Ordered list of context paths to join. First is leftmost table.
-            Example: ``["orders", "products", "categories"]``
+        joins : list[dict]
+            Ordered list of join steps. Each step is a dict with:
 
-        join_columns : list[str]
-            List of columns to join on (one per join, so ``len = len(contexts) - 1``).
-            Example: ``["product_id", "category_id"]`` for the above contexts.
+            - ``"tables"`` (list[str], required): Exactly TWO table names.
+              Use ``"$prev"``, ``"__prev__"``, or ``"_"`` to reference the
+              previous join result.
+            - ``"join_expr"`` (str, required): Join condition expression.
+            - ``"select"`` (dict[str, str], required): Column mapping.
+            - ``"mode"`` (str, optional): Join mode (default: ``"inner"``).
+            - ``"left_where"`` (str | None, optional): Pre-join filter on left.
+            - ``"right_where"`` (str | None, optional): Pre-join filter on right.
 
-        filter : str | None, default ``None``
-            Filter expression applied after all joins.
+        result_where : str | None, default ``None``
+            Filter expression applied to the FINAL joined result.
+            Must use column names from the final step's ``select`` values.
 
-        columns : list[str] | None, default ``None``
-            Columns to return from any of the joined tables.
+        result_limit : int, default ``100``
+            Maximum rows to return. Must be <= 1000.
 
-        limit : int | None, default ``None``
-            Maximum rows to return.
+        result_offset : int, default ``0``
+            Pagination offset for results.
 
         Returns
         -------
         list[dict]
-            Joined and filtered rows.
+            Joined and filtered rows from the final result.
 
         Usage Examples
         --------------
-        # Join three tables: orders → products → categories
+        # Three-table join: Orders → Products → Categories
         results = dm.filter_multi_join(
-            contexts=[
-                "Data/orders",
-                "Data/products",
-                "Data/categories"
+            joins=[
+                {
+                    "tables": ["Data/orders", "Data/products"],
+                    "join_expr": "Data/orders.product_id == Data/products.id",
+                    "select": {
+                        "Data/orders.id": "order_id",
+                        "Data/orders.quantity": "quantity",
+                        "Data/products.name": "product_name",
+                        "Data/products.category_id": "category_id"
+                    }
+                },
+                {
+                    "tables": ["$prev", "Data/categories"],
+                    "join_expr": "$prev.category_id == Data/categories.id",
+                    "select": {
+                        "$prev.order_id": "order_id",
+                        "$prev.quantity": "quantity",
+                        "$prev.product_name": "product_name",
+                        "Data/categories.name": "category_name"
+                    }
+                }
             ],
-            join_columns=["product_id", "category_id"],
-            filter="category_name == 'Electronics'"
+            result_where="category_name == 'Electronics'",
+            result_limit=50
+        )
+
+        # Four-table join with mode variations
+        results = dm.filter_multi_join(
+            joins=[
+                {
+                    "tables": ["Data/employees", "Data/departments"],
+                    "join_expr": "Data/employees.dept_id == Data/departments.id",
+                    "select": {
+                        "Data/employees.id": "emp_id",
+                        "Data/employees.name": "emp_name",
+                        "Data/departments.name": "dept_name",
+                        "Data/departments.location_id": "location_id"
+                    },
+                    "mode": "left"
+                },
+                {
+                    "tables": ["$prev", "Data/locations"],
+                    "join_expr": "$prev.location_id == Data/locations.id",
+                    "select": {
+                        "$prev.emp_id": "emp_id",
+                        "$prev.emp_name": "emp_name",
+                        "$prev.dept_name": "dept_name",
+                        "Data/locations.city": "city"
+                    }
+                }
+            ],
+            result_where="city == 'London'"
         )
 
         Notes
         -----
-        For contexts [A, B, C] with join_columns [j1, j2], this performs:
-        A JOIN B ON j1 JOIN C ON j2
-
-        The joins are performed left-to-right in sequence.
+        - ``$prev`` references the result of the previous join step
+        - Column names in ``$prev`` references use the output aliases from that step
+        - Intermediate join results are stored in temporary contexts and cleaned up
+        - ``result_where`` must only reference columns from the final ``select``
         """
 
     @abstractmethod
     def search_multi_join(
         self,
         *,
-        contexts: List[str],
-        join_columns: List[str],
-        query: str,
+        joins: List[Dict[str, Any]],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
         filter: Optional[str] = None,
-        vector_column: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Chain multiple joins and perform semantic search.
+        Execute a sequence of joins and perform semantic search.
 
-        Combines multi-table join with semantic ranking.
+        Combines multi-table join with semantic ranking. The joins are performed
+        first, then results are ranked by semantic similarity.
 
         Parameters
         ----------
-        contexts : list[str]
-            Ordered list of context paths to join.
+        joins : list[dict]
+            Ordered list of join steps. Same format as ``filter_multi_join``:
 
-        join_columns : list[str]
-            Columns to join on (one per join).
+            - ``"tables"`` (list[str], required): Exactly TWO table names.
+              Use ``"$prev"`` to reference previous join result.
+            - ``"join_expr"`` (str, required): Join condition.
+            - ``"select"`` (dict[str, str], required): Column mapping.
+            - ``"mode"`` (str, optional): Join mode.
+            - ``"left_where"``, ``"right_where"`` (str | None, optional): Pre-filters.
 
-        query : str
-            Semantic search query.
+        references : dict[str, str] | None, default ``None``
+            Mapping of column → reference_text for semantic similarity.
+            Keys must be columns from the final step's ``select`` output.
 
         k : int, default ``10``
-            Number of results to return.
+            Number of top results to return (1 to 1000).
 
         filter : str | None, default ``None``
-            Filter expression applied after joins, before search.
-
-        vector_column : str | None, default ``None``
-            Embedding column for search (must exist in one of the contexts).
+            Filter expression applied after all joins, before semantic ranking.
 
         Returns
         -------
         list[dict]
-            Joined rows ranked by semantic similarity.
+            Top-k joined rows ranked by semantic similarity.
+
+        Usage Examples
+        --------------
+        # Search across three tables
+        results = dm.search_multi_join(
+            joins=[
+                {
+                    "tables": ["Data/tickets", "Data/customers"],
+                    "join_expr": "Data/tickets.customer_id == Data/customers.id",
+                    "select": {
+                        "Data/tickets.id": "ticket_id",
+                        "Data/tickets.description": "issue",
+                        "Data/customers.name": "customer",
+                        "Data/customers.product_id": "product_id"
+                    }
+                },
+                {
+                    "tables": ["$prev", "Data/products"],
+                    "join_expr": "$prev.product_id == Data/products.id",
+                    "select": {
+                        "$prev.ticket_id": "ticket_id",
+                        "$prev.issue": "issue",
+                        "$prev.customer": "customer",
+                        "Data/products.name": "product_name"
+                    }
+                }
+            ],
+            references={"issue": "login authentication failures"},
+            k=10
+        )
+
+        Notes
+        -----
+        - Embeddings must exist on the searched column in the final result
+        - Results are ranked by similarity after all joins complete
         """
 
     # ──────────────────────────────────────────────────────────────────────────

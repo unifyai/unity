@@ -212,19 +212,17 @@ class DataManager(BaseDataManager):
         self,
         context: str,
         *,
-        query: str,
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
         filter: Optional[str] = None,
-        vector_column: Optional[str] = None,
         columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         resolved = self._resolve_context(context)
         return search_impl(
             resolved,
-            query=query,
+            references=references,
             k=k,
             filter=filter,
-            vector_column=vector_column,
             columns=columns,
         )
 
@@ -234,7 +232,7 @@ class DataManager(BaseDataManager):
         context: str,
         *,
         metric: str,
-        column: Optional[str] = None,
+        columns: Union[str, List[str]],
         filter: Optional[str] = None,
         group_by: Optional[Union[str, List[str]]] = None,
     ) -> Any:
@@ -242,7 +240,7 @@ class DataManager(BaseDataManager):
         return reduce_impl(
             resolved,
             metric=metric,
-            column=column,
+            columns=columns,
             filter=filter,
             group_by=group_by,
         )
@@ -255,86 +253,100 @@ class DataManager(BaseDataManager):
     def filter_join(
         self,
         *,
-        left_context: str,
-        right_context: str,
-        join_column: str,
-        filter: Optional[str] = None,
-        columns: Optional[List[str]] = None,
-        limit: Optional[int] = None,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        left_resolved = self._resolve_context(left_context)
-        right_resolved = self._resolve_context(right_context)
+        # Resolve table contexts
+        if isinstance(tables, str):
+            tables = [tables]
+        resolved_tables = [self._resolve_context(t) for t in tables]
+
         return filter_join_impl(
-            left_context=left_resolved,
-            right_context=right_resolved,
-            join_column=join_column,
-            filter=filter,
-            columns=columns,
-            limit=limit,
+            tables=resolved_tables,
+            join_expr=join_expr,
+            select=select,
+            mode=mode,
+            left_where=left_where,
+            right_where=right_where,
+            result_where=result_where,
+            result_limit=result_limit,
+            result_offset=result_offset,
+            tmp_context_prefix=self._base_ctx,
         )
 
     @functools.wraps(BaseDataManager.search_join, updated=())
     def search_join(
         self,
         *,
-        left_context: str,
-        right_context: str,
-        join_column: str,
-        query: str,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
         filter: Optional[str] = None,
-        vector_column: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        left_resolved = self._resolve_context(left_context)
-        right_resolved = self._resolve_context(right_context)
+        # Resolve table contexts
+        if isinstance(tables, str):
+            tables = [tables]
+        resolved_tables = [self._resolve_context(t) for t in tables]
+
         return search_join_impl(
-            left_context=left_resolved,
-            right_context=right_resolved,
-            join_column=join_column,
-            query=query,
+            tables=resolved_tables,
+            join_expr=join_expr,
+            select=select,
+            mode=mode,
+            left_where=left_where,
+            right_where=right_where,
+            references=references,
             k=k,
             filter=filter,
-            vector_column=vector_column,
+            tmp_context_prefix=self._base_ctx,
         )
 
     @functools.wraps(BaseDataManager.filter_multi_join, updated=())
     def filter_multi_join(
         self,
         *,
-        contexts: List[str],
-        join_columns: List[str],
-        filter: Optional[str] = None,
-        columns: Optional[List[str]] = None,
-        limit: Optional[int] = None,
+        joins: List[Dict[str, Any]],
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        resolved_contexts = [self._resolve_context(c) for c in contexts]
         return filter_multi_join_impl(
-            contexts=resolved_contexts,
-            join_columns=join_columns,
-            filter=filter,
-            columns=columns,
-            limit=limit,
+            joins=joins,
+            context_resolver=self._resolve_context,
+            result_where=result_where,
+            result_limit=result_limit,
+            result_offset=result_offset,
+            tmp_context_prefix=self._base_ctx,
         )
 
     @functools.wraps(BaseDataManager.search_multi_join, updated=())
     def search_multi_join(
         self,
         *,
-        contexts: List[str],
-        join_columns: List[str],
-        query: str,
+        joins: List[Dict[str, Any]],
+        references: Optional[Dict[str, str]] = None,
         k: int = 10,
         filter: Optional[str] = None,
-        vector_column: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        resolved_contexts = [self._resolve_context(c) for c in contexts]
         return search_multi_join_impl(
-            contexts=resolved_contexts,
-            join_columns=join_columns,
-            query=query,
+            joins=joins,
+            context_resolver=self._resolve_context,
+            references=references,
             k=k,
             filter=filter,
-            vector_column=vector_column,
+            tmp_context_prefix=self._base_ctx,
         )
 
     # ──────────────────────────────────────────────────────────────────────────
