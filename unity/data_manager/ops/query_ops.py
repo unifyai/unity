@@ -13,6 +13,9 @@ from typing import Any, Dict, List, Optional, Union
 import unify
 
 from unity.common.filter_utils import normalize_filter_expr
+from unity.common.search_utils import table_search_top_k
+from unity.common.metrics_utils import reduce_logs
+from unity.common.embed_utils import list_private_fields
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +27,38 @@ def filter_impl(
     columns: Optional[List[str]] = None,
     limit: int = 100,
     offset: int = 0,
-    order_by: Optional[str] = None,
-    descending: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Implementation of filter operation.
 
-    Filters rows from a table by expression.
+    Filters rows from a context by expression.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    filter : str | None
+        Python boolean expression evaluated with column names in scope.
+    columns : list[str] | None
+        Specific columns to return. When None, returns all non-private columns.
+    limit : int, default 100
+        Maximum rows to return (must be <= 1000).
+    offset : int, default 0
+        Pagination offset.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        List of row dictionaries.
+
+    Raises
+    ------
+    ValueError
+        If limit > 1000.
     """
+    if limit > 1000:
+        raise ValueError("Limit must be <= 1000")
+
     logger.debug(
         "Filtering context=%s filter=%s limit=%d offset=%d",
         context,
@@ -40,20 +67,24 @@ def filter_impl(
         offset,
     )
 
-    # Normalize filter expression
-    filter_expr = normalize_filter_expr(filter) if filter else None
+    filter_expr = normalize_filter_expr(filter)
 
-    try:
-        logs = unify.get_logs(
-            context=context,
-            filter=filter_expr,
-            from_fields=columns,
-            limit=limit,
-            offset=offset,
-        )
-    except Exception as e:
-        logger.warning("Filter query failed: %s", e)
-        return []
+    # Determine fields to exclude (private fields) or include (specific columns)
+    exclude_fields = None
+    from_fields = None
+    if columns is not None:
+        from_fields = columns
+    else:
+        exclude_fields = list_private_fields(context)
+
+    logs = unify.get_logs(
+        context=context,
+        filter=filter_expr,
+        from_fields=from_fields,
+        exclude_fields=exclude_fields,
+        limit=limit,
+        offset=offset,
+    )
 
     # Extract entries from Log objects
     results = []
@@ -63,121 +94,146 @@ def filter_impl(
         elif isinstance(log, dict):
             results.append(log)
 
-    # Apply ordering if specified (post-query since Unify may not support it directly)
-    if order_by and results:
-        try:
-            results = sorted(
-                results,
-                key=lambda r: r.get(order_by, ""),
-                reverse=descending,
-            )
-        except Exception as e:
-            logger.debug("Could not sort results: %s", e)
-
     return results
 
 
 def search_impl(
     context: str,
     *,
-    query: str,
+    references: Optional[Dict[str, str]] = None,
     k: int = 10,
     filter: Optional[str] = None,
-    vector_column: Optional[str] = None,
     columns: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Implementation of search operation.
 
-    Performs semantic search over embedded column.
+    Performs semantic search over embedded columns using common search utilities.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    references : dict[str, str] | None
+        Mapping of source_column/expression → reference_text for semantic matching.
+        Keys specify which columns to search (must have embeddings).
+        Values are the reference text to match against.
+
+        Examples:
+        - ``{"text": "budget allocation"}`` — search the ``text`` column
+        - ``{"content": "Q4 priorities", "summary": "budget"}`` — multi-column search
+
+        When ``None`` or empty, returns rows without semantic ranking.
+    k : int, default 10
+        Number of rows to return (1..1000).
+    filter : str | None
+        Row-level predicate to filter before/during search.
+    columns : list[str] | None
+        Specific columns to return. When None, returns all non-private columns.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Up to k rows ranked by semantic similarity (best match first).
+
+    Raises
+    ------
+    ValueError
+        If k < 1 or k > 1000.
     """
+    if k < 1 or k > 1000:
+        raise ValueError("k must be between 1 and 1000")
+
     logger.debug(
-        "Searching context=%s query=%s k=%d vector_column=%s",
+        "Searching context=%s references=%s k=%d",
         context,
-        query[:50] if query else None,
+        {
+            k: v[:30] + "..." if len(v) > 30 else v
+            for k, v in (references or {}).items()
+        },
         k,
-        vector_column,
     )
 
-    filter_expr = normalize_filter_expr(filter) if filter else None
+    filter_expr = normalize_filter_expr(filter)
 
-    # Build references dict for semantic search
-    # The vector_column determines which embedding to search
-    ref_column = vector_column or "text"
-    references = {ref_column: query}
+    # Use the common semantic search utility which handles:
+    # - Embedding column creation/lookup
+    # - Cosine similarity ranking
+    # - Backfilling if similarity results are insufficient
+    rows = table_search_top_k(
+        context=context,
+        references=references,
+        k=k,
+        row_filter=filter_expr,
+        allowed_fields=columns,
+    )
 
-    try:
-        logs = unify.get_logs(
-            context=context,
-            references=references,
-            k=k,
-            filter=filter_expr,
-            from_fields=columns,
-        )
-    except Exception as e:
-        logger.warning("Search query failed: %s", e)
-        return []
-
-    # Extract entries from Log objects
-    results = []
-    for log in logs or []:
-        if hasattr(log, "entries") and isinstance(log.entries, dict):
-            entry = dict(log.entries)
-            # Include similarity score if available
-            if hasattr(log, "similarity"):
-                entry["_similarity"] = log.similarity
-            results.append(entry)
-        elif isinstance(log, dict):
-            results.append(log)
-
-    return results
+    return rows
 
 
 def reduce_impl(
     context: str,
     *,
     metric: str,
-    column: Optional[str] = None,
+    columns: Union[str, List[str]],
     filter: Optional[str] = None,
     group_by: Optional[Union[str, List[str]]] = None,
 ) -> Any:
     """
     Implementation of reduce operation.
 
-    Computes aggregate metrics over rows.
+    Computes aggregate metrics over rows using common metrics utilities.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    metric : str
+        Reduction metric: "count", "sum", "mean", "var", "std",
+        "min", "max", "median", "mode", "count_distinct".
+    columns : str | list[str]
+        Column(s) to compute the metric on. **Required parameter**.
+
+        - Single column (str): Returns scalar or grouped list
+        - Multiple columns (list[str]): Returns dict mapping column → value,
+          or grouped list with all column values per group
+    filter : str | None
+        Row-level filter expression.
+    group_by : str | list[str] | None
+        Column(s) to group by. Results become list of dicts keyed by group values.
+
+    Returns
+    -------
+    Any
+        Metric value depends on columns and group_by:
+
+        - Single column, no grouping → scalar (int for count, float for avg/sum)
+        - Multiple columns, no grouping → dict {column_name: value}
+        - Single column, with grouping → list of dicts [{group_col: val, metric: result}]
+        - Multiple columns, with grouping → list of dicts with all metrics
+
+    Raises
+    ------
+    ValueError
+        If metric is not supported.
     """
     logger.debug(
-        "Reducing context=%s metric=%s column=%s group_by=%s",
+        "Reducing context=%s metric=%s columns=%s group_by=%s",
         context,
         metric,
-        column,
+        columns,
         group_by,
     )
 
-    filter_expr = normalize_filter_expr(filter) if filter else None
-
-    # Normalize group_by to list
-    group_by_list = None
-    if group_by:
-        group_by_list = [group_by] if isinstance(group_by, str) else list(group_by)
-
-    # For count without column, use "id" as the default key
-    key = column or "id"
-
-    try:
-        result = unify.get_logs_metric(
-            metric=metric,
-            key=key,
-            context=context,
-            filter=filter_expr,
-            group_by=group_by_list,
-        )
-        return result
-    except Exception as e:
-        logger.warning("Reduce query failed: %s", e)
-        # Return sensible default based on metric
-        if metric == "count":
-            return 0
-        elif metric in ("sum", "avg", "mean"):
-            return 0.0
-        return None
+    # Use the common reduce_logs utility which handles:
+    # - Metric validation
+    # - Filter normalization
+    # - Grouped vs ungrouped results
+    # - Multiple column aggregation
+    return reduce_logs(
+        context=context,
+        metric=metric,
+        keys=columns,  # reduce_logs accepts str or list[str] for keys
+        filter=filter,
+        group_by=group_by,
+    )
