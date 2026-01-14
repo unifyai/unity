@@ -258,10 +258,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._pending_llm_requests.clear()
         await self.run_llm(delay=delay, cancel_running=cancel_running)
 
-    async def step(self, event: "Event", *, publish: bool = False) -> StepResult:
+    async def _step(self, event: "Event", *, publish: bool = False) -> StepResult:
         """Process one event deterministically and return produced output events.
 
-        This method is intended for synchronous-style testing and orchestration.
+        This is a TEST-ONLY method that bypasses the normal async event-driven flow.
         It avoids relying on background tasks by:
         - recording any requested LLM runs during event handling
         - running the LLM immediately (if requested)
