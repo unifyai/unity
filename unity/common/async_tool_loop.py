@@ -2833,6 +2833,7 @@ def start_async_tool_loop(
     evented: Optional[bool] = None,
     resume_children: Optional[list[dict]] = None,
     replay_origin: Optional[str] = None,
+    persist: bool = False,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2858,6 +2859,14 @@ def start_async_tool_loop(
         If ``True``, raises ``asyncio.TimeoutError`` or ``RuntimeError``
         when the timeout or max_steps limit is exceeded. If ``False``,
         the loop terminates gracefully with a summary message.
+
+    persist : bool, default False
+        If ``True``, the loop does not terminate when the LLM produces content
+        without tool calls. Instead, it blocks waiting for the next interjection
+        via ``handle.interject()``. When an interjection arrives, the LLM is
+        granted another turn. This enables a single persistent loop that can
+        process multiple events over time. The loop only terminates when
+        explicitly stopped via ``handle.stop()`` or cancelled.
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
     loop_id = loop_id if loop_id is not None else short_id()
@@ -2913,6 +2922,7 @@ def start_async_tool_loop(
                 images=images,
                 resume_children=resume_children,
                 replay_origin=replay_origin,
+                persist=persist,
             )
         except asyncio.CancelledError:
             raise
