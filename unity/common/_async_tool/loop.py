@@ -219,6 +219,7 @@ async def async_tool_loop_inner(
     images: "ImageRefs | None" = None,
     resume_children: Optional[list[dict]] = None,
     replay_origin: Optional[str] = None,
+    persist: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -334,6 +335,15 @@ async def async_tool_loop_inner(
         If ``True``, raises ``asyncio.TimeoutError`` or ``RuntimeError``
         when the timeout or max_steps limit is exceeded. If ``False``,
         the loop terminates gracefully with a summary message.
+
+    persist : ``bool``, default ``False``
+        If ``True``, the loop does not terminate when the LLM produces content
+        without tool calls. Instead, it blocks waiting for the next interjection
+        via the ``interject_queue``. When an interjection arrives, the LLM is
+        granted another turn. This enables a single persistent loop that can
+        process multiple events over time, rather than terminating after each
+        "final answer". The loop only terminates when explicitly stopped via
+        ``cancel_event`` or ``stop_event``.
 
     Returns
     -------
@@ -3470,6 +3480,50 @@ async def async_tool_loop_inner(
                 )
 
             final_answer = msg["content"]
+
+            # ── persist mode: wait for next interjection instead of returning ──
+            if persist:
+                logger.info(
+                    "Persist mode: waiting for next interjection...",
+                    prefix="⏸️",
+                )
+                # Block until an interjection arrives or cancellation is requested
+                cancel_waiter = asyncio.create_task(
+                    cancel_event.wait(),
+                    name="PersistCancelWait",
+                )
+                interject_waiter = asyncio.create_task(
+                    interject_queue.get(),
+                    name="PersistInterjectWait",
+                )
+                done, pending = await asyncio.wait(
+                    {cancel_waiter, interject_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                # Clean up the waiter that didn't finish
+                for p in pending:
+                    p.cancel()
+                    await asyncio.gather(p, return_exceptions=True)
+
+                # Check if we were cancelled
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
+
+                # An interjection arrived - put it back in the queue for normal processing
+                # at the top of the loop
+                if interject_waiter in done:
+                    try:
+                        interjection = interject_waiter.result()
+                        await interject_queue.put(interjection)
+                        logger.info(
+                            "Persist mode: interjection received, resuming loop",
+                            prefix="▶️",
+                        )
+                    except Exception:
+                        pass
+                # Reset timer for the new "turn"
+                timer.reset()
+                continue  # Back to top of loop to process the interjection
 
             return final_answer  # DONE!
 
