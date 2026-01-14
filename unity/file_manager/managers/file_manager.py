@@ -43,16 +43,9 @@ from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.events.manager_event_logging import log_manager_call
 from unity.common.context_store import TableStore
 from unity.common.model_to_fields import model_to_fields
-from unity.common.filter_utils import normalize_filter_expr
 from unity.common.llm_client import new_llm_client
-from unity.common.metrics_utils import reduce_logs
 from .utils.search import (
     resolve_table_ref as _srch_resolve_table_ref,
-    create_join as _srch_create_join,
-    filter_join as _srch_filter_join,
-    search_join as _srch_search_join,
-    filter_multi_join as _srch_filter_multi_join,
-    search_multi_join as _srch_search_multi_join,
 )
 from .utils.storage import (
     provision_storage as _storage_provision,
@@ -63,14 +56,13 @@ from .utils.storage import (
     ctx_for_file_table as _storage_ctx_for_file_table,
 )
 from .utils.viz_utils import (
-    PlotConfig as _VizPlotConfig,
     PlotResult as _VizPlotResult,
-    generate_plots_batch as _viz_generate_plots_batch,
 )
 
 
 if TYPE_CHECKING:
     from unity.file_manager.types.describe import FileStorageMap
+    from unity.data_manager.base import BaseDataManager
 
 
 class FileManager(BaseFileManager):
@@ -87,6 +79,7 @@ class FileManager(BaseFileManager):
         *,
         parser: Optional[FileParser] = None,
         rolling_summary_in_prompts: bool = True,
+        data_manager: Optional["BaseDataManager"] = None,
     ) -> None:
         """
         Construct a FileManager bound to a single filesystem adapter.
@@ -101,12 +94,16 @@ class FileManager(BaseFileManager):
             to ``DoclingParser`` with table and image extraction enabled.
         rolling_summary_in_prompts : bool, default True
             Whether to include the rolling activity summary in prompts.
+        data_manager : BaseDataManager | None, default None
+            Optional DataManager instance for data operations delegation.
+            If None, a DataManager will be lazily instantiated when needed.
         """
         super().__init__()
         self.include_in_multi_assistant_table = False
         self._adapter = adapter
         self.__parser: Optional[FileParser] = parser
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self.__data_manager: Optional["BaseDataManager"] = data_manager
 
         # Derive a stable alias and context
         try:
@@ -202,6 +199,96 @@ class FileManager(BaseFileManager):
         if self.__parser is None:
             self.__parser = FileParser()
         return self.__parser
+
+    @property
+    def _data_manager(self) -> "BaseDataManager":
+        """
+        Lazily instantiated DataManager for data operations delegation.
+
+        When FileManager delegates filter, search, reduce, join, and plot
+        operations, it routes through this DataManager instance.
+
+        Returns
+        -------
+        BaseDataManager
+            The DataManager instance (real or simulated based on settings).
+        """
+        if self.__data_manager is None:
+            from unity.manager_registry import ManagerRegistry
+
+            self.__data_manager = ManagerRegistry.get_data_manager()
+        return self.__data_manager
+
+    def _resolve_table_refs(
+        self,
+        tables: Union[str, List[str]],
+    ) -> List[str]:
+        """
+        Resolve FileManager table references to full Unify context paths.
+
+        Handles various input formats:
+        - Full context paths (unchanged)
+        - File path references: "/reports/Q4.csv" → Files/Local/{file_id}/Content
+        - Table references: "/reports/Q4.csv.Tables.Sheet1" → Files/Local/{file_id}/Tables/Sheet1
+
+        Parameters
+        ----------
+        tables : str | list[str]
+            Table reference(s) to resolve.
+
+        Returns
+        -------
+        list[str]
+            List of resolved full context paths.
+        """
+        if isinstance(tables, str):
+            tables = [tables]
+
+        resolved = []
+        for t in tables:
+            # If it's already a full context path, use it directly
+            if t.startswith(("Files/", "Data/", "Knowledge/")):
+                resolved.append(t)
+            else:
+                # Resolve using the existing table ref resolution logic
+                resolved.append(_srch_resolve_table_ref(self, t))
+        return resolved
+
+    def _resolve_joins_table_refs(
+        self,
+        joins: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Resolve table references in a list of join step definitions.
+
+        Handles $prev references specially - they should not be resolved.
+
+        Parameters
+        ----------
+        joins : list[dict]
+            List of join step definitions with 'tables' keys.
+
+        Returns
+        -------
+        list[dict]
+            Join steps with resolved table references.
+        """
+        resolved_joins = []
+        for step in joins:
+            resolved_step = dict(step)  # Copy to avoid mutation
+            if "tables" in step:
+                tables = step["tables"]
+                resolved_tables = []
+                for t in tables:
+                    if t == "$prev":
+                        resolved_tables.append(t)  # Keep $prev as-is
+                    elif t.startswith(("Files/", "Data/", "Knowledge/")):
+                        resolved_tables.append(t)  # Already resolved
+                    else:
+                        resolved_tables.append(_srch_resolve_table_ref(self, t))
+                resolved_step["tables"] = resolved_tables
+            resolved_joins.append(resolved_step)
+        return resolved_joins
 
     def _provision_storage(self) -> None:
         """
@@ -1910,13 +1997,14 @@ class FileManager(BaseFileManager):
         filter_files : Fetch rows with exact match filters
         search_files : Semantic search for meaning-based queries
         """
-        # Resolve context
+        # Resolve context - default to FileRecords index
         ctx = context if context else self._ctx
 
-        return reduce_logs(
+        # Delegate to DataManager for the actual reduction
+        return self._data_manager.reduce(
             context=ctx,
             metric=metric,
-            keys=column,
+            columns=column,
             filter=filter,
             group_by=group_by,
         )
@@ -2075,6 +2163,9 @@ class FileManager(BaseFileManager):
         - WRONG: histogram with y_axis (histogram uses x_axis distribution)
           CORRECT: For histogram, only specify x_axis
         """
+        # Import DataManager types for compatibility
+        from unity.data_manager.types import PlotConfig as DMPlotConfig
+
         # Normalize tables to list
         table_list: List[str] = []
         if isinstance(tables, str):
@@ -2100,8 +2191,8 @@ class FileManager(BaseFileManager):
                     table=tbl,
                 )
 
-        # Build plot config
-        config = _VizPlotConfig(
+        # Build plot config using DataManager types
+        dm_config = DMPlotConfig(
             plot_type=plot_type,
             x_axis=x_axis,
             y_axis=y_axis,
@@ -2113,14 +2204,25 @@ class FileManager(BaseFileManager):
             bin_count=bin_count,
             show_regression=show_regression,
             title=title,
+            filter=filter,
         )
 
-        # Generate plots (project_name=None uses active project inside batch fn)
-        results = _viz_generate_plots_batch(
-            contexts=contexts,
-            config=config,
-            filter_expr=filter,
-        )
+        # Delegate to DataManager for plot generation
+        dm_results = self._data_manager.plot_batch(contexts=contexts, config=dm_config)
+
+        # Convert DataManager results to FileManager result type for backward compat
+        results: List[_VizPlotResult] = []
+        for dm_res in dm_results:
+            results.append(
+                _VizPlotResult(
+                    url=dm_res.url,
+                    token=dm_res.token,
+                    expires_in_hours=dm_res.expires_in_hours,
+                    title=dm_res.title,
+                    error=dm_res.error,
+                    table=dm_res.context,
+                ),
+            )
 
         # Return PlotResult directly (single) or list of PlotResult (multiple)
         if len(results) == 1:
@@ -2322,21 +2424,17 @@ class FileManager(BaseFileManager):
         search_files : Semantic search (for meaning-based queries)
         reduce : Aggregate metrics without fetching rows
         """
-        normalized = normalize_filter_expr(filter)
-        from .utils.search import filter_files as _srch_filter_files
-
-        # Resolve context
+        # Resolve context - default to FileRecords index
         ctx = context if context else self._ctx
 
-        rows = _srch_filter_files(
-            self,
-            filter=normalized,
-            offset=offset,
-            limit=limit,
-            tables=[ctx] if ctx != self._ctx else None,
+        # Delegate to DataManager for the actual filtering
+        return self._data_manager.filter(
+            context=ctx,
+            filter=filter,
             columns=columns,
+            limit=limit,
+            offset=offset,
         )
-        return rows
 
     @read_only
     def search_files(
@@ -2492,16 +2590,14 @@ class FileManager(BaseFileManager):
         filter_files : Exact match filtering (for structured fields)
         reduce : Aggregate metrics without fetching rows
         """
-        from .utils.search import search_files as _srch_search_files
-
-        # Resolve context
+        # Resolve context - default to FileRecords index
         ctx = context if context else self._ctx
 
-        return _srch_search_files(
-            self,
-            references=references,
+        # Delegate to DataManager for the actual search
+        return self._data_manager.search(
+            context=ctx,
+            references=references or {},
             k=limit,
-            table=ctx if ctx != self._ctx else None,
             filter=filter,
             columns=columns,
         )
@@ -2616,9 +2712,12 @@ class FileManager(BaseFileManager):
         - WRONG: result_limit=500 (too many rows)
           CORRECT: Start with result_limit=30, paginate with result_offset
         """
-        return _srch_filter_join(
-            self,
-            tables=tables,
+        # Resolve table references to full context paths
+        resolved_tables = self._resolve_table_refs(tables)
+
+        # Delegate to DataManager for the actual join
+        return self._data_manager.filter_join(
+            tables=resolved_tables,
             join_expr=join_expr,
             select=select,
             mode=mode,
@@ -2720,15 +2819,18 @@ class FileManager(BaseFileManager):
         - WRONG: filter="Jobs.status == 'complete'" (uses original column)
           CORRECT: Include status in select, then filter="status == 'complete'"
         """
-        return _srch_search_join(
-            self,
-            tables=tables,
+        # Resolve table references to full context paths
+        resolved_tables = self._resolve_table_refs(tables)
+
+        # Delegate to DataManager for the actual search join
+        return self._data_manager.search_join(
+            tables=resolved_tables,
             join_expr=join_expr,
             select=select,
             mode=mode,
             left_where=left_where,
             right_where=right_where,
-            references=references,
+            references=references or {},
             k=k,
             filter=filter,
         )
@@ -2831,9 +2933,12 @@ class FileManager(BaseFileManager):
         - WRONG: Not propagating needed columns through each step's select
           CORRECT: Each step's select must include columns needed by later steps
         """
-        return _srch_filter_multi_join(
-            self,
-            joins=joins,
+        # Resolve table references in all join steps
+        resolved_joins = self._resolve_joins_table_refs(joins)
+
+        # Delegate to DataManager for the actual multi-join
+        return self._data_manager.filter_multi_join(
+            joins=resolved_joins,
             result_where=result_where,
             result_limit=result_limit,
             result_offset=result_offset,
@@ -2921,10 +3026,13 @@ class FileManager(BaseFileManager):
         - WRONG: Not including semantic target column in final step's select
           CORRECT: Ensure the column you want to search is in the last select
         """
-        return _srch_search_multi_join(
-            self,
-            joins=joins,
-            references=references,
+        # Resolve table references in all join steps
+        resolved_joins = self._resolve_joins_table_refs(joins)
+
+        # Delegate to DataManager for the actual semantic multi-join
+        return self._data_manager.search_multi_join(
+            joins=resolved_joins,
+            references=references or {},
             k=k,
             filter=filter,
         )
