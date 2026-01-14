@@ -134,6 +134,7 @@ def filter_files(
     offset: int = 0,
     limit: int = 100,
     tables: Optional[Union[str, List[str]]] = None,
+    columns: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Filter rows from one or more contexts (index by default).
 
@@ -147,12 +148,14 @@ def filter_files(
         Maximum rows per context (<= 1000).
     tables : list[str] | str | None
         Table references to filter. Accepted forms:
-        - Path-first (preferred): "<file_path>" for per-file Content,
+        - Full context path (preferred): Use describe() to get exact paths
+        - Path-first: "<file_path>" for per-file Content,
           "<file_path>.Tables.<label>" for per-file tables
-        - Logical names from `tables_overview()`: "FileRecords" for index,
-          or legacy refs like "<root>" (deprecated)
-        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - Logical names from `tables_overview()`: "FileRecords" for index
         When None, only the FileRecords index is scanned.
+    columns : list[str] | None
+        Specific columns to return. When None, returns all columns
+        (excluding private fields).
 
     Returns
     -------
@@ -162,13 +165,14 @@ def filter_files(
     """
     normalized = normalize_filter_expr(filter)
     if tables is None:
-        excl = list_private_fields(self._ctx)
+        excl = list_private_fields(self._ctx) if columns is None else None
         logs = unify.get_logs(
             context=self._ctx,
             filter=normalized,
             offset=offset,
             limit=limit,
             exclude_fields=excl,
+            from_fields=columns,
         )
         return [lg.entries for lg in logs]
 
@@ -190,7 +194,7 @@ def filter_files(
     results: List[Dict[str, Any]] = []
 
     def _fetch(_ctx: str) -> List[Dict[str, Any]]:
-        excl = list_private_fields(_ctx)
+        excl = list_private_fields(_ctx) if columns is None else None
         rows = [
             lg.entries
             for lg in unify.get_logs(
@@ -199,6 +203,7 @@ def filter_files(
                 offset=offset,
                 limit=limit,
                 exclude_fields=excl,
+                from_fields=columns,
             )
         ]
         return rows
@@ -228,6 +233,7 @@ def search_files(
     k: int = 10,
     table: Optional[str] = None,
     filter: Optional[str] = None,
+    columns: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Semantic search over a resolved context and return entry dicts.
 
@@ -239,14 +245,17 @@ def search_files(
         Number of rows to return (1..1000).
     table: str | None
         Table reference to search. Accepted forms:
-        - Path-first (preferred): "<file_path>" for per-file Content,
+        - Full context path (preferred): Use describe() to get exact paths
+        - Path-first: "<file_path>" for per-file Content,
           "<file_path>.Tables.<label>" for per-file tables
-        - Logical names: "FileRecords" for index, or legacy refs like "<root>" (deprecated)
-        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - Logical names: "FileRecords" for index
         When None, defaults to the global FileRecords index.
     filter: str | None
         Row-level predicate (evaluated with column names as variables).
         *None* returns all rows.
+    columns : list[str] | None
+        Specific columns to return. When None, returns all columns
+        (excluding private fields).
     """
     normalized = normalize_filter_expr(filter)
 
@@ -268,6 +277,7 @@ def search_files(
         k=k,
         row_filter=normalized,
         unique_id_field=unique_id_field,  # type: ignore[arg-type]
+        allowed_fields=columns,
     )
     return rows
 
