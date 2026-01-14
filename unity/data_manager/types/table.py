@@ -86,7 +86,7 @@ class TableDescription(BaseModel):
         Fully-qualified context path (e.g., "Data/MH/arrears").
     description : str | None
         Human-readable description of the table's purpose.
-    schema : TableSchema
+    table_schema : TableSchema
         Column definitions and constraints.
     row_count : int
         Current number of rows in the table.
@@ -100,13 +100,13 @@ class TableDescription(BaseModel):
     >>> desc = dm.describe_table("Data/MH/arrears")
     >>> print(f"Table: {desc.context}")
     >>> print(f"Rows: {desc.row_count}")
-    >>> print(f"Columns: {desc.schema.column_names}")
-    >>> print(f"Searchable: {desc.schema.searchable_columns}")
+    >>> print(f"Columns: {desc.table_schema.column_names}")
+    >>> print(f"Searchable: {desc.table_schema.searchable_columns}")
     """
 
     context: str
     description: Optional[str] = None
-    schema: TableSchema = Field(default_factory=TableSchema)
+    table_schema: TableSchema = Field(default_factory=TableSchema)
     row_count: int = 0
     has_embeddings: bool = False
     embedding_columns: List[str] = Field(default_factory=list)
@@ -115,9 +115,9 @@ class TableDescription(BaseModel):
     @property
     def columns(self) -> Dict[str, str]:
         """Column name to type mapping (convenience accessor)."""
-        return self.schema.column_types
+        return self.table_schema.column_types
 
     @property
     def unique_keys(self) -> Optional[Dict[str, str]]:
         """Unique key constraints (convenience accessor)."""
-        return self.schema.unique_keys
+        return self.table_schema.unique_keys
