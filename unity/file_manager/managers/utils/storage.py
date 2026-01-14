@@ -100,6 +100,10 @@ def ctx_for_file(self, *, file_path: str) -> str:
     """Return the fully-qualified per-file Content context.
 
     Shape: <base>/Files/<alias>/<safe(file_path)>/Content
+
+    .. deprecated::
+        Use ctx_for_file_by_id for new code. file_path-based paths
+        are being replaced with file_id-based paths for stability.
     """
     safe = getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
     base = getattr(self, "_per_file_root")
@@ -110,10 +114,91 @@ def ctx_for_file_table(self, *, file_path: str, table: str) -> str:
     """Return the fully-qualified per-file table context.
 
     Shape: <base>/Files/<alias>/<safe(file_path)>/Tables/<safe(table)>
+
+    .. deprecated::
+        Use ctx_for_file_table_by_id for new code. file_path-based paths
+        are being replaced with file_id-based paths for stability.
     """
     safe = getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
     base = getattr(self, "_per_file_root")
     return f"{base}/{safe(file_path)}/Tables/{safe(table)}"
+
+
+# ----------------------- file_id-based context getters ----------------------- #
+
+
+def ctx_for_file_by_id(self, *, file_id: int) -> str:
+    """Return the fully-qualified per-file Content context using file_id.
+
+    Shape: <base>/Files/<alias>/<file_id>/Content
+
+    Parameters
+    ----------
+    file_id : int
+        The stable unique identifier for the file from FileRecords.
+
+    Returns
+    -------
+    str
+        Full Unify context path for the file's document content.
+
+    Notes
+    -----
+    Using file_id instead of file_path provides:
+    - Stable references that survive file renames
+    - Shorter, LLM-friendly context paths
+    - Direct join capability with FileRecords.file_id
+    """
+    base = getattr(self, "_per_file_root")
+    return f"{base}/{file_id}/Content"
+
+
+def ctx_for_file_table_by_id(self, *, file_id: int, table: str) -> str:
+    """Return the fully-qualified per-file table context using file_id.
+
+    Shape: <base>/Files/<alias>/<file_id>/Tables/<safe(table)>
+
+    Parameters
+    ----------
+    file_id : int
+        The stable unique identifier for the file from FileRecords.
+    table : str
+        The logical table name (e.g., 'Sheet1', 'extracted_table_1').
+
+    Returns
+    -------
+    str
+        Full Unify context path for the file's table.
+
+    Notes
+    -----
+    Using file_id instead of file_path provides:
+    - Stable references that survive file renames
+    - Shorter, LLM-friendly context paths
+    - Direct join capability with FileRecords.file_id
+    """
+    safe = getattr(self, "safe") if hasattr(self, "safe") else (lambda x: x)
+    base = getattr(self, "_per_file_root")
+    return f"{base}/{file_id}/Tables/{safe(table)}"
+
+
+def ctx_tables_prefix_by_id(self, *, file_id: int) -> str:
+    """Return the prefix for all table contexts under a file.
+
+    Shape: <base>/Files/<alias>/<file_id>/Tables/
+
+    Parameters
+    ----------
+    file_id : int
+        The stable unique identifier for the file from FileRecords.
+
+    Returns
+    -------
+    str
+        Prefix path for listing/discovering table contexts.
+    """
+    base = getattr(self, "_per_file_root")
+    return f"{base}/{file_id}/Tables/"
 
 
 # ------------------------ Context provisioners (ensure) ---------------------- #
@@ -673,3 +758,234 @@ def schema_explain(
         pass
 
     return "\n".join(parts)
+
+
+# ----------------------- describe() implementation ----------------------- #
+
+
+def describe_file(
+    self,
+    *,
+    file_path: Optional[str] = None,
+    file_id: Optional[int] = None,
+) -> "FileStorageMap":
+    """
+    Return a complete storage representation of a file in the Unify backend.
+
+    This is the primary discovery tool for understanding how a file's data
+    is stored. It returns all context paths, schemas, and identifiers needed
+    for accurate filter/search/reduce operations.
+
+    Parameters
+    ----------
+    file_path : str, optional
+        The filesystem path of the file. Either file_path or file_id must be provided.
+    file_id : int, optional
+        The stable unique identifier from FileRecords. Either file_path or file_id
+        must be provided.
+
+    Returns
+    -------
+    FileStorageMap
+        Complete storage representation including:
+        - file_id: Stable identifier for cross-referencing
+        - file_path: Original filesystem path
+        - document: Info about /Content context (if present)
+        - tables: List of /Tables/<name> contexts with schemas
+        - index_context: Path to FileRecords index
+
+    Raises
+    ------
+    ValueError
+        If neither file_path nor file_id is provided, or if the file is not found.
+
+    Examples
+    --------
+    >>> # Describe by file path
+    >>> storage = file_manager.describe(file_path="/reports/Q4.csv")
+    >>> print(storage.file_id)  # 42
+    >>> print(storage.tables[0].context_path)
+    'Files/Local/42/Tables/Sheet1'
+
+    >>> # Use the context path for queries
+    >>> results = data_manager.filter(
+    ...     context=storage.tables[0].context_path,
+    ...     filter="revenue > 1000000"
+    ... )
+
+    >>> # Describe by file_id (faster, no path resolution needed)
+    >>> storage = file_manager.describe(file_id=42)
+
+    Notes
+    -----
+    - The describe() method queries the backend live for fresh schema information.
+    - Context paths use file_id (not file_path) for stability across renames.
+    - Row counts are not included by default; use reduce(metric='count') when needed.
+    """
+    from ...types.describe import (
+        FileStorageMap,
+        DocumentInfo,
+        TableInfo,
+        ContextSchema,
+    )
+
+    if file_path is None and file_id is None:
+        raise ValueError("Either file_path or file_id must be provided")
+
+    resolved_file_id: Optional[int] = file_id
+    resolved_file_path: Optional[str] = file_path
+    source_uri: Optional[str] = None
+    source_provider: Optional[str] = None
+
+    # Resolve file_id from file_path if needed
+    if resolved_file_id is None and file_path is not None:
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"file_path == {file_path!r}",
+                limit=1,
+                from_fields=["file_id", "source_uri", "source_provider"],
+            )
+            if rows:
+                entry = rows[0].entries
+                resolved_file_id = entry.get("file_id")
+                source_uri = entry.get("source_uri")
+                source_provider = entry.get("source_provider")
+        except Exception as e:
+            logger.warning(f"Failed to lookup file_id for {file_path}: {e}")
+
+    # Resolve file_path from file_id if needed
+    if resolved_file_path is None and resolved_file_id is not None:
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"file_id == {resolved_file_id}",
+                limit=1,
+                from_fields=["file_path", "source_uri", "source_provider"],
+            )
+            if rows:
+                entry = rows[0].entries
+                resolved_file_path = entry.get("file_path")
+                source_uri = entry.get("source_uri")
+                source_provider = entry.get("source_provider")
+        except Exception as e:
+            logger.warning(
+                f"Failed to lookup file_path for file_id={resolved_file_id}: {e}"
+            )
+
+    if resolved_file_id is None:
+        raise ValueError(
+            f"File not found in index: file_path={file_path!r}, file_id={file_id}",
+        )
+
+    # Build context paths using file_id
+    base = getattr(self, "_per_file_root")
+    content_ctx = f"{base}/{resolved_file_id}/Content"
+    tables_prefix = f"{base}/{resolved_file_id}/Tables/"
+
+    # Check if document context exists and get its schema
+    document_info: Optional[DocumentInfo] = None
+    try:
+        content_fields = unify.get_fields(context=content_ctx)
+        if content_fields:
+            columns = _fields_to_column_info(content_fields)
+            document_info = DocumentInfo(
+                context_path=content_ctx,
+                column_schema=ContextSchema(columns=columns),
+                row_count=None,  # Fetch on-demand with reduce()
+            )
+    except Exception:
+        # Content context doesn't exist
+        pass
+
+    # Discover table contexts
+    table_infos: List[TableInfo] = []
+    try:
+        # List all contexts under the tables prefix
+        all_contexts = unify.get_contexts(prefix=tables_prefix)
+        for ctx_path, ctx_info in all_contexts.items():
+            if ctx_path == tables_prefix:
+                continue  # Skip the prefix itself
+            # Extract table name from path
+            table_name = ctx_path.replace(tables_prefix, "").split("/")[0]
+            if not table_name:
+                continue
+
+            # Get table schema
+            try:
+                table_fields = unify.get_fields(context=ctx_path)
+                columns = _fields_to_column_info(table_fields)
+                table_infos.append(
+                    TableInfo(
+                        name=table_name,
+                        context_path=ctx_path,
+                        column_schema=ContextSchema(columns=columns),
+                        row_count=None,  # Fetch on-demand with reduce()
+                    ),
+                )
+            except Exception:
+                # Include table even without schema
+                table_infos.append(
+                    TableInfo(
+                        name=table_name,
+                        context_path=ctx_path,
+                        column_schema=ContextSchema(columns=[]),
+                        row_count=None,
+                    ),
+                )
+    except Exception as e:
+        logger.warning(f"Failed to discover tables for file_id={resolved_file_id}: {e}")
+
+    return FileStorageMap(
+        file_id=resolved_file_id,
+        file_path=resolved_file_path or "",
+        source_uri=source_uri,
+        source_provider=source_provider,
+        document=document_info,
+        tables=table_infos,
+        index_context=self._ctx,
+        has_document=document_info is not None,
+        has_tables=len(table_infos) > 0,
+    )
+
+
+def _fields_to_column_info(fields: Dict[str, Any]) -> List["ColumnInfo"]:
+    """Convert Unify fields dict to list of ColumnInfo."""
+    from ...types.describe import ColumnInfo
+
+    columns: List[ColumnInfo] = []
+    embedding_columns: Dict[str, str] = {}
+
+    # First pass: identify embedding columns
+    for fname, finfo in fields.items():
+        if fname.startswith("_") and fname.endswith("_emb"):
+            # This is an embedding column for the source column
+            source_col = fname[1:-4]  # Strip leading _ and trailing _emb
+            embedding_columns[source_col] = fname
+
+    # Second pass: build column info
+    for fname, finfo in fields.items():
+        if fname.startswith("_"):
+            continue  # Skip internal columns
+
+        data_type = "unknown"
+        description = None
+
+        if isinstance(finfo, dict):
+            data_type = finfo.get("data_type", finfo.get("type", "unknown"))
+            description = finfo.get("description")
+
+        is_searchable = fname in embedding_columns
+        embedding_col = embedding_columns.get(fname)
+
+        columns.append(
+            ColumnInfo(
+                name=fname,
+                data_type=str(data_type),
+                description=description,
+                is_searchable=is_searchable,
+                embedding_column=embedding_col,
+            ),
+        )
+
+    return columns

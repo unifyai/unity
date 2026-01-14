@@ -34,6 +34,13 @@ from .ingest import (
     PipelineStatistics,
     IngestPipelineResult,
 )
+from .describe import (
+    ColumnInfo,
+    ContextSchema,
+    DocumentInfo,
+    TableInfo,
+    FileStorageMap,
+)
 
 __all__ = [
     "FileRecord",
@@ -71,4 +78,10 @@ __all__ = [
     "FileMetrics",
     "PipelineStatistics",
     "IngestPipelineResult",
+    # Describe API types
+    "ColumnInfo",
+    "ContextSchema",
+    "DocumentInfo",
+    "TableInfo",
+    "FileStorageMap",
 ]
