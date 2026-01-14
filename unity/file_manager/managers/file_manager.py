@@ -46,6 +46,7 @@ from unity.common.model_to_fields import model_to_fields
 from unity.common.llm_client import new_llm_client
 from .utils.search import (
     resolve_table_ref as _srch_resolve_table_ref,
+    create_join as _srch_create_join,
 )
 from .utils.storage import (
     provision_storage as _storage_provision,
@@ -2234,24 +2235,30 @@ class FileManager(BaseFileManager):
         self,
         *,
         include_types: bool = True,
-        table: Optional[str] = None,
+        context: Optional[str] = None,
     ) -> Dict[str, Any] | List[str]:
         """
-        List columns for the FileRecords index or a resolved logical table.
+        List columns for the FileRecords index or a specific context.
 
-        Use this to inspect a table's schema before writing filter expressions
+        Use this to inspect a context's schema before writing filter expressions
         or selecting columns for retrieval.
+
+        IMPORTANT: Use describe() first to get the exact context path, then use
+        list_columns() for detailed schema inspection if needed:
+
+        >>> storage = describe(file_path="/reports/Q4.csv")
+        >>> columns = list_columns(context=storage.tables[0].context_path)
 
         Parameters
         ----------
         include_types : bool, default True
             When True, return a mapping of column → type (e.g., {"name": "str"}).
             When False, return just the list of column names.
-        table : str | None, default None
-            Table reference to inspect. Accepted forms:
-            - Path-first: "<file_path>" for per-file Content,
-              "<file_path>.Tables.<label>" for per-file tables
-            - Logical names: "FileRecords" for global index
+        context : str | None, default None
+            Full Unify context path to inspect. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
             When None, returns the FileRecords index columns.
 
         Returns
@@ -2265,27 +2272,25 @@ class FileManager(BaseFileManager):
         list_columns()
         # Returns: {"file_id": "int", "file_path": "str", "status": "str", ...}
 
-        # Get per-file Content columns:
-        list_columns(table="/path/to/document.pdf")
+        # Get columns for a context from describe():
+        storage = describe(file_path="/path/to/document.pdf")
+        list_columns(context=storage.document.context_path)
         # Returns: {"content_id": "dict", "content_type": "str", "content_text": "str", ...}
 
-        # Get per-file table columns:
-        list_columns(table="/path/to/data.xlsx.Tables.Orders")
+        # Get columns for a table context:
+        storage = describe(file_path="/path/to/data.xlsx")
+        list_columns(context=storage.tables[0].context_path)
         # Returns: {"order_id": "str", "amount": "float", "customer": "str", ...}
 
         # Get just column names (no types):
-        list_columns(table="/path/to/data.xlsx.Tables.Orders", include_types=False)
+        list_columns(context=storage.tables[0].context_path, include_types=False)
         # Returns: ["order_id", "amount", "customer", ...]
         """
-        if table is None:
+        if context is None:
             cols = self._get_columns()
             return cols if include_types else list(cols)
-        # Resolve logical name → fully-qualified context then fetch
-        try:
-            ctx = self._resolve_table_ref(table)
-        except Exception:
-            ctx = table
-        cols = _storage_get_columns(self, table=ctx)
+        # Use context path directly (already resolved via describe())
+        cols = _storage_get_columns(self, table=context)
         return cols if include_types else list(cols)
 
     @read_only
