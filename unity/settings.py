@@ -10,7 +10,7 @@ All settings can be overridden via environment variables or .env file.
 
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from unity.actor.settings import ActorSettings
@@ -67,14 +67,14 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # LLM Provider Credentials
     # ─────────────────────────────────────────────────────────────────────────
-    OPENAI_API_KEY: str = ""
-    ANTHROPIC_API_KEY: str = ""
+    OPENAI_API_KEY: SecretStr = SecretStr("")
+    ANTHROPIC_API_KEY: SecretStr = SecretStr("")
     UNITY_VALIDATE_LLM_PROVIDERS: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
-    ORCHESTRA_ADMIN_KEY: str = ""
+    ORCHESTRA_ADMIN_KEY: SecretStr = SecretStr("")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
