@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import functools
 import logging
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,11 @@ class FileManager(BaseFileManager):
         """
         Return comprehensive information about a file's status and ingest identity.
 
+        .. deprecated::
+            Use describe(file_path=...) or describe(file_id=...) instead for
+            comprehensive file discovery. describe() returns FileStorageMap with
+            exact context paths, schemas, and stable file_id for cross-referencing.
+
         Use this to get a complete picture of a file including filesystem presence,
         index status, parse status, and ingest layout (per_file vs unified mode).
 
@@ -287,6 +293,12 @@ class FileManager(BaseFileManager):
         - WRONG: Querying per-file Content for a unified-mode file
           CORRECT: Check ingest_mode and use unified_label context if unified
         """
+        warnings.warn(
+            "file_info() is deprecated. Use describe(file_path=...) or describe(file_id=...) "
+            "instead for comprehensive file discovery with exact context paths and schemas.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from .utils.storage import file_info as _storage_file_info
 
         return _storage_file_info(self, identifier=identifier)
@@ -1614,6 +1626,11 @@ class FileManager(BaseFileManager):
         """
         Return an overview of available tables/contexts managed by this FileManager.
 
+        .. deprecated::
+            Use describe(file_path=...) instead for file-specific discovery.
+            describe() returns FileStorageMap with exact context paths, schemas,
+            and file_id for stable cross-referencing.
+
         Use this for discovery when you need to understand what data is available.
         Returns logical table names that can be passed to other tools.
 
@@ -1666,6 +1683,12 @@ class FileManager(BaseFileManager):
         overview = tables_overview(file="/path/to/data.xlsx")
         # Then: filter_files(tables=["/path/to/data.xlsx.Tables.Sheet1"])
         """
+        warnings.warn(
+            "tables_overview() is deprecated. Use describe(file_path=...) instead for "
+            "file-specific discovery with exact context paths, schemas, and file_id.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return _storage_tables_overview(
             self,
             include_column_info=include_column_info,
