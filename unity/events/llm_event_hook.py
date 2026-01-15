@@ -65,6 +65,11 @@ def install_llm_event_hook() -> None:
     after the first successful installation.
 
     Should be called during unity.init() after the EventBus is initialized.
+
+    Uses set_global_llm_event_hook() to ensure the hook is process-wide and
+    works across all threads. This is critical because unity.init() may be
+    called from a worker thread (via asyncio.to_thread in managers_utils.py)
+    while LLM calls happen from the main async context.
     """
     global _HOOK_INSTALLED
 
@@ -74,7 +79,10 @@ def install_llm_event_hook() -> None:
     try:
         import unillm
 
-        unillm.set_llm_event_hook(_llm_event_to_eventbus)
+        # Use global hook to ensure it works across all threads/contexts.
+        # This is essential because unity.init() may run in a thread pool
+        # worker while LLM calls happen from the main async context.
+        unillm.set_global_llm_event_hook(_llm_event_to_eventbus)
         _HOOK_INSTALLED = True
     except ImportError:
         # unillm not available - skip hook installation

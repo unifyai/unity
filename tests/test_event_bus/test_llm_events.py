@@ -414,7 +414,107 @@ async def test_llm_events_in_search_by_type():
 
 
 # ---------------------------------------------------------------------------
-#  6. Edge case and resilience tests
+#  6. Cross-thread hook installation (production scenario)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_hook_works_when_installed_from_different_thread():
+    """LLM events should be captured when hook is installed from a worker thread.
+
+    This mimics the production scenario where:
+    - unity.init() is called from a thread pool worker (via asyncio.to_thread)
+    - LLM calls happen from the main async context
+
+    The global hook mechanism ensures events are captured regardless of which
+    thread installed the hook vs which thread makes the LLM call.
+    """
+    import concurrent.futures
+
+    # Clear any existing hook
+    unillm.set_llm_event_hook(None)
+    try:
+        unillm.set_global_llm_event_hook(None)
+    except AttributeError:
+        pass  # Function doesn't exist yet
+
+    # Install hook from a worker thread (mimicking asyncio.to_thread behavior)
+    def install_hook_in_thread():
+        try:
+            # Use global hook (the fix)
+            unillm.set_global_llm_event_hook(_llm_event_to_eventbus)
+        except AttributeError:
+            # Fall back to context hook (current broken behavior)
+            unillm.set_llm_event_hook(_llm_event_to_eventbus)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.submit(install_hook_in_thread).result()
+
+    # Now make LLM call from main thread and verify event is captured
+    async with capture_events("LLM") as captured:
+        client = unillm.AsyncUnify("gpt-4.1-nano@openai", cache=True)
+        await client.generate(
+            messages=[{"role": "user", "content": "Cross-thread test [xthread]"}],
+        )
+
+        await asyncio.sleep(0.1)
+        EVENT_BUS.join_published()
+
+    # This test will FAIL until the global hook is implemented
+    assert len(captured) >= 1, (
+        "No LLM events captured! This indicates the hook installed from a worker thread "
+        "is not visible to the main thread. The fix is to use set_global_llm_event_hook() "
+        "which uses a module-level global instead of a ContextVar."
+    )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_hook_works_when_installed_via_asyncio_to_thread():
+    """LLM events should be captured when hook is installed via asyncio.to_thread.
+
+    This directly mimics the production code path in managers_utils.py:
+        await asyncio.to_thread(_init_managers, cm, loop)
+
+    Where _init_managers calls unity.init() which installs the LLM event hook.
+    """
+
+    # Clear any existing hook
+    unillm.set_llm_event_hook(None)
+    try:
+        unillm.set_global_llm_event_hook(None)
+    except AttributeError:
+        pass  # Function doesn't exist yet
+
+    # Install hook via asyncio.to_thread (exactly like production)
+    def install_hook_sync():
+        try:
+            unillm.set_global_llm_event_hook(_llm_event_to_eventbus)
+        except AttributeError:
+            unillm.set_llm_event_hook(_llm_event_to_eventbus)
+
+    await asyncio.to_thread(install_hook_sync)
+
+    # Make LLM call from main async context
+    async with capture_events("LLM") as captured:
+        client = unillm.AsyncUnify("gpt-4.1-nano@openai", cache=True)
+        await client.generate(
+            messages=[{"role": "user", "content": "asyncio.to_thread test [tothread]"}],
+        )
+
+        await asyncio.sleep(0.1)
+        EVENT_BUS.join_published()
+
+    assert len(captured) >= 1, (
+        "No LLM events captured when hook was installed via asyncio.to_thread! "
+        "This is the production bug - hook is installed in thread pool worker "
+        "but LLM calls happen in main async context."
+    )
+
+
+# ---------------------------------------------------------------------------
+#  7. Edge case and resilience tests
 # ---------------------------------------------------------------------------
 
 
