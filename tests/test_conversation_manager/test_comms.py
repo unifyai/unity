@@ -48,8 +48,12 @@ def _only(events, typ):
     return [e for e in events if isinstance(e, typ)]
 
 
-def _has_any(events, typ):
-    return len(_only(events, typ)) >= 1
+def _has_one(events, typ):
+    """Assert exactly one event of the given type exists."""
+    matches = _only(events, typ)
+    count = len(matches)
+    assert count == 1, f"Expected exactly 1 {typ.__name__}, got {count}"
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +75,8 @@ async def test_sms_to_sms(initialized_cm):
         ),
     )
 
-    # Should have at least one SMS sent (the reply)
-    assert _has_any(result.output_events, SMSSent)
+    # Should have exactly one SMS sent (the reply)
+    _has_one(result.output_events, SMSSent)
     sms = _only(result.output_events, SMSSent)[0]
     assert sms.contact["phone_number"] == contact["phone_number"]
     assert sms.content
@@ -92,8 +96,8 @@ async def test_sms_to_email(initialized_cm):
         ),
     )
 
-    # Must have email sent (the target)
-    assert _has_any(result.output_events, EmailSent)
+    # Must have exactly one email sent (the target)
+    _has_one(result.output_events, EmailSent)
     email = _only(result.output_events, EmailSent)[0]
     assert email.contact["email_address"] == contact["email_address"]
     assert email.body
@@ -113,8 +117,8 @@ async def test_sms_to_unify_message(initialized_cm):
         ),
     )
 
-    # Must have unify message sent (the target)
-    assert _has_any(result.output_events, UnifyMessageSent)
+    # Must have exactly one unify message sent (the target)
+    _has_one(result.output_events, UnifyMessageSent)
     msg = _only(result.output_events, UnifyMessageSent)[0]
     assert msg.contact["contact_id"] == contact["contact_id"]
     assert msg.content
@@ -134,8 +138,8 @@ async def test_sms_to_phone_call(initialized_cm):
         ),
     )
 
-    # Must have phone call initiated (the target)
-    assert _has_any(result.output_events, PhoneCallSent)
+    # Must have exactly one phone call initiated (the target)
+    _has_one(result.output_events, PhoneCallSent)
     call = _only(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
 
@@ -156,8 +160,8 @@ async def test_email_to_email(initialized_cm):
         ),
     )
 
-    # Should have at least one email sent (the reply)
-    assert _has_any(result.output_events, EmailSent)
+    # Should have exactly one email sent (the reply)
+    _has_one(result.output_events, EmailSent)
     email = _only(result.output_events, EmailSent)[0]
     assert email.contact["email_address"] == contact["email_address"]
     assert email.subject
@@ -181,7 +185,7 @@ async def test_email_to_sms(initialized_cm):
     )
 
     # Must have SMS sent (the target)
-    assert _has_any(result.output_events, SMSSent)
+    _has_one(result.output_events, SMSSent)
     sms = _only(result.output_events, SMSSent)[0]
     assert sms.contact["phone_number"] == contact["phone_number"]
     assert sms.content
@@ -203,8 +207,8 @@ async def test_email_to_unify_message(initialized_cm):
         ),
     )
 
-    # Must have unify message sent (the target)
-    assert _has_any(result.output_events, UnifyMessageSent)
+    # Must have exactly one unify message sent (the target)
+    _has_one(result.output_events, UnifyMessageSent)
     msg = _only(result.output_events, UnifyMessageSent)[0]
     assert msg.contact["contact_id"] == contact["contact_id"]
     assert msg.content
@@ -226,8 +230,8 @@ async def test_email_to_phone_call(initialized_cm):
         ),
     )
 
-    # Must have phone call initiated (the target)
-    assert _has_any(result.output_events, PhoneCallSent)
+    # Must have exactly one phone call initiated (the target)
+    _has_one(result.output_events, PhoneCallSent)
     call = _only(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
 
@@ -246,8 +250,8 @@ async def test_unify_message_to_unify_message(initialized_cm):
         ),
     )
 
-    # Should have at least one unify message sent (the reply)
-    assert _has_any(result.output_events, UnifyMessageSent)
+    # Should have exactly one unify message sent (the reply)
+    _has_one(result.output_events, UnifyMessageSent)
     msg = _only(result.output_events, UnifyMessageSent)[0]
     assert msg.contact["contact_id"] == contact["contact_id"]
     assert msg.content
@@ -268,7 +272,7 @@ async def test_unify_message_to_sms(initialized_cm):
     )
 
     # Must have SMS sent (the target)
-    assert _has_any(result.output_events, SMSSent)
+    _has_one(result.output_events, SMSSent)
     sms = _only(result.output_events, SMSSent)[0]
     assert sms.contact["phone_number"] == contact["phone_number"]
     assert sms.content
@@ -288,8 +292,8 @@ async def test_unify_message_to_email(initialized_cm):
         ),
     )
 
-    # Must have email sent (the target)
-    assert _has_any(result.output_events, EmailSent)
+    # Must have exactly one email sent (the target)
+    _has_one(result.output_events, EmailSent)
     email = _only(result.output_events, EmailSent)[0]
     assert email.contact["email_address"] == contact["email_address"]
     assert email.body
@@ -309,8 +313,8 @@ async def test_unify_message_to_phone_call(initialized_cm):
         ),
     )
 
-    # Must have phone call initiated (the target)
-    assert _has_any(result.output_events, PhoneCallSent)
+    # Must have exactly one phone call initiated (the target)
+    _has_one(result.output_events, PhoneCallSent)
     call = _only(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
 
@@ -367,7 +371,7 @@ async def test_phone_call_to_sms(initialized_cm):
     )
 
     # Must have SMS sent
-    assert _has_any(result.output_events, SMSSent)
+    _has_one(result.output_events, SMSSent)
 
     await cm._step(PhoneCallEnded(contact=contact))
 
@@ -394,8 +398,8 @@ async def test_phone_call_to_email(initialized_cm):
         ),
     )
 
-    # Must have email sent
-    assert _has_any(result.output_events, EmailSent)
+    # Must have exactly one email sent
+    _has_one(result.output_events, EmailSent)
 
     await cm._step(PhoneCallEnded(contact=contact))
 
@@ -422,8 +426,8 @@ async def test_phone_call_to_unify_message(initialized_cm):
         ),
     )
 
-    # Must have unify message sent
-    assert _has_any(result.output_events, UnifyMessageSent)
+    # Must have exactly one unify message sent
+    _has_one(result.output_events, UnifyMessageSent)
 
     await cm._step(PhoneCallEnded(contact=contact))
 
@@ -475,7 +479,7 @@ async def test_unify_meet_to_sms(initialized_cm):
     )
 
     # Must have SMS sent
-    assert _has_any(result.output_events, SMSSent)
+    _has_one(result.output_events, SMSSent)
 
     await cm._step(UnifyMeetEnded(contact=contact))
 
@@ -497,8 +501,8 @@ async def test_unify_meet_to_email(initialized_cm):
         ),
     )
 
-    # Must have email sent
-    assert _has_any(result.output_events, EmailSent)
+    # Must have exactly one email sent
+    _has_one(result.output_events, EmailSent)
 
     await cm._step(UnifyMeetEnded(contact=contact))
 
@@ -520,7 +524,7 @@ async def test_unify_meet_to_unify_message(initialized_cm):
         ),
     )
 
-    # Must have unify message sent
-    assert _has_any(result.output_events, UnifyMessageSent)
+    # Must have exactly one unify message sent
+    _has_one(result.output_events, UnifyMessageSent)
 
     await cm._step(UnifyMeetEnded(contact=contact))
