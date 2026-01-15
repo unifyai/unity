@@ -604,7 +604,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
         )
 
     # Record in contact_index for transcript access
-    contact = cm.call_manager.call_contact or cm.contact_index.get_contact(contact_id=1)
+    contact = cm.get_active_contact()
     cm.contact_index.push_message(
         contact,
         "voice",

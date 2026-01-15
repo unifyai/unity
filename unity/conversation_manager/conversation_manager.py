@@ -198,6 +198,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """The hierarchical session logger for this ConversationManager instance."""
         return self._session_logger
 
+    def get_active_contact(self) -> dict | None:
+        """Get the contact for the current active call, or fall back to the boss contact."""
+        return self.call_manager.call_contact or self.contact_index.get_contact(
+            contact_id=1,
+        )
+
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
@@ -458,10 +464,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if self.mode in ["call", "unify_meet"]:
                 call_guidance = getattr(structured, "call_guidance", "")
                 if call_guidance:
-                    contact = (
-                        self.call_manager.call_contact
-                        or self.contact_index.get_contact(contact_id=1)
-                    )
+                    contact = self.get_active_contact()
                     event = CallGuidance(contact, call_guidance)
                     await self.event_broker.publish(
                         "app:call:call_guidance",
@@ -689,9 +692,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             conversation_turns = []
             last_message_timestamp = None
 
-            contact = self.call_manager.call_contact or self.contact_index.get_contact(
-                contact_id=1,
-            )
+            contact = self.get_active_contact()
             if (
                 contact
                 and contact["contact_id"] in self.contact_index.active_conversations
@@ -763,9 +764,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(decision.delay)
 
             # Record in contact_index
-            contact = self.call_manager.call_contact or self.contact_index.get_contact(
-                contact_id=1,
-            )
+            contact = self.get_active_contact()
             if contact:
                 self.contact_index.push_message(
                     contact,
