@@ -6,19 +6,7 @@ from dataclasses import dataclass, asdict, field
 
 from pydantic import BaseModel
 
-from unity.settings import SETTINGS
-
-
-def _get_now() -> datetime:
-    """Return current datetime.
-
-    In test mode (when UNITY_FIXED_DATETIME is set in SETTINGS), returns the
-    fixed datetime to ensure LLM cache hits across test runs. The value should
-    be an ISO format datetime string (e.g., "2025-06-13T12:00:00+00:00").
-    """
-    if SETTINGS.UNITY_FIXED_DATETIME:
-        return datetime.fromisoformat(SETTINGS.UNITY_FIXED_DATETIME)
-    return datetime.now()
+from unity.common.prompt_helpers import now as prompt_now
 
 
 def custom_dict_factory(kv):
@@ -46,9 +34,14 @@ class _TruncatedReprMixin:
         raise NotImplementedError
 
 
+def _now_datetime() -> datetime:
+    """Wrapper for prompt_now that returns datetime for dataclass default_factory."""
+    return prompt_now(as_string=False)
+
+
 @dataclass(kw_only=True)
 class Event:
-    timestamp: datetime = field(default_factory=_get_now)
+    timestamp: datetime = field(default_factory=_now_datetime)
 
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
