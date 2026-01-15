@@ -173,7 +173,9 @@ def build_system_prompt(
             </format>
 
             You will receive <notifications> indicating what events have happened, <active_tasks> showing any ongoing tasks with their available actions listed, and the current <active_conversations>, across mediums.
-            New messages will have **NEW** tag prepended to them.
+            Messages from the current turn have **NEW** tag prepended:
+            - **NEW** on incoming messages = a new message you should consider responding to
+            - **NEW** on your own messages (from "You") = you just sent this; do NOT send the same content again
         </input_format>
 
         <output_format>
@@ -251,8 +253,14 @@ def build_system_prompt(
             - NEW message from user → respond once, then `wait`
             - No new messages → `wait`
             - Just sent a message → `wait`
+            - Just made a call → `wait` (the call is in progress)
             - Completed a task → `wait` (do not announce completion unless asked)
             - Unsure → `wait`
+
+            **Recognizing actions you just took**:
+            - `**NEW** [You @ ...]: <message>` = you just sent this message
+            - `**NEW** [You @ ...]: <Sending Call...>` = you just initiated a call
+            - If you see these, the action is DONE - call `wait`, do NOT repeat the action
         </conversational_restraint>
 
         <communication_guidelines>
