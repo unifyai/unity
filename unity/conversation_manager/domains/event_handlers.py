@@ -374,16 +374,6 @@ async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwar
     # print(cm.contact_index.contacts)
 
 
-@EventHandler.register(StoreChatHistory)
-async def _(
-    event: StoreChatHistory,
-    cm: "ConversationManager",
-    *args,
-    **kwargs,
-):
-    cm._session_logger.debug("state_update", "Received store chat history")
-
-
 @EventHandler.register(GetChatHistory)
 async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.debug(
