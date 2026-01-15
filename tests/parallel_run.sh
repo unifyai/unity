@@ -453,73 +453,6 @@ _create_orchestra_log_symlinks() {
 _orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$REPO_ROOT/../orchestra}"
 _local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
 
-# Unity-specific seeding: models and endpoints needed for tests
-_seed_unity_models_and_endpoints() {
-  local db_port="${ORCHESTRA_DB_PORT:-5432}"
-  local db_container
-  db_container=$(docker ps --filter "publish=${db_port}" --format "{{.Names}}" 2>/dev/null | head -1)
-
-  if [[ -z "$db_container" ]]; then
-    echo "Warning: No PostgreSQL container found, skipping model seeding" >&2
-    return 1
-  fi
-
-  # Check if models already seeded
-  local model_exists
-  model_exists=$(docker exec "$db_container" psql -U orchestra -d orchestra -tAc \
-    "SELECT 1 FROM model WHERE mdl_code = 'gpt-5.2'" 2>/dev/null || echo "")
-
-  if [[ "$model_exists" == "1" ]]; then
-    return 0
-  fi
-
-  echo "Seeding models and endpoints for Unity tests..."
-  docker exec "$db_container" psql -U orchestra -d orchestra -c "
--- Task and modality (required for models)
-INSERT INTO modality (name) VALUES ('text_generation')
-ON CONFLICT (name) DO NOTHING;
-
-INSERT INTO task (name, modality) VALUES ('chat', 'text_generation')
-ON CONFLICT (name) DO NOTHING;
-
--- Providers (id, name, image_url, display_name)
-INSERT INTO provider (id, name, image_url, display_name) VALUES
-  (1, 'openai', '', 'OpenAI'),
-  (12, 'anthropic', '', 'Anthropic'),
-  (36, 'vertex-ai', '', 'Google Vertex AI'),
-  (37, 'deepseek', '', 'DeepSeek')
-ON CONFLICT (id) DO NOTHING;
-
--- Models used by Unity tests (id, mdl_code, uploaded_at, task, active)
-INSERT INTO model (id, mdl_code, uploaded_at, task, active) VALUES
-  (100, 'gpt-5.2', NOW(), 'chat', true),
-  (101, 'gpt-4o', NOW(), 'chat', true),
-  (102, 'gpt-4o-mini', NOW(), 'chat', true),
-  (103, 'gpt-3.5-turbo', NOW(), 'chat', true),
-  (104, 'claude-3-5-sonnet', NOW(), 'chat', true),
-  (105, 'claude-3-haiku', NOW(), 'chat', true),
-  (106, 'claude-4.5-sonnet', NOW(), 'chat', true),
-  (107, 'gemini-1.5-flash', NOW(), 'chat', true),
-  (108, 'gemini-1.5-pro', NOW(), 'chat', true),
-  (109, 'deepseek-v3', NOW(), 'chat', true)
-ON CONFLICT (id) DO NOTHING;
-
--- Endpoints (id, mdl_id, provider_id, created_at, active)
-INSERT INTO endpoint (id, mdl_id, provider_id, created_at, active) VALUES
-  (100, 100, 1, NOW(), true),   -- gpt-5.2@openai
-  (101, 101, 1, NOW(), true),   -- gpt-4o@openai
-  (102, 102, 1, NOW(), true),   -- gpt-4o-mini@openai
-  (103, 103, 1, NOW(), true),   -- gpt-3.5-turbo@openai
-  (104, 104, 12, NOW(), true),  -- claude-3-5-sonnet@anthropic
-  (105, 105, 12, NOW(), true),  -- claude-3-haiku@anthropic
-  (106, 106, 12, NOW(), true),  -- claude-4.5-sonnet@anthropic
-  (107, 107, 36, NOW(), true),  -- gemini-1.5-flash@vertex-ai
-  (108, 108, 36, NOW(), true),  -- gemini-1.5-pro@vertex-ai
-  (109, 109, 37, NOW(), true)   -- deepseek-v3@deepseek
-ON CONFLICT (id) DO NOTHING;
-" >/dev/null 2>&1
-}
-
 if _is_local_url "${UNIFY_BASE_URL:-}"; then
   if [[ -x "$_local_orchestra_script" ]]; then
     # Set up orchestra configuration for tests
@@ -564,7 +497,6 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
           echo "Worktree detected: Using existing orchestra, creating log symlinks..."
           _create_orchestra_log_symlinks
           export UNIFY_BASE_URL="$_local_url"
-          _seed_unity_models_and_endpoints
         else
           # MAIN REPO MODE: Restart to pick up logging config. The restart wipes
           # the database, which is intentional for test runs to ensure isolation.
@@ -574,11 +506,9 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
           if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
             echo "Using local orchestra: $_local_url"
             export UNIFY_BASE_URL="$_local_url"
-            _seed_unity_models_and_endpoints
           else
             echo "Warning: Orchestra restart failed, using existing instance (logging may not work)" >&2
             export UNIFY_BASE_URL="$_original_url"
-            _seed_unity_models_and_endpoints
           fi
           unset _original_url
         fi
@@ -588,7 +518,6 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
         export ORCHESTRA_LOG_DIR="$_current_log_dir"
         echo "Local orchestra already running with logging enabled: $_local_url"
         export UNIFY_BASE_URL="$_local_url"
-        _seed_unity_models_and_endpoints
       fi
       unset _config_file _needs_restart _current_log_dir _current_otel_dir
     else
@@ -622,8 +551,6 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
         if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
           echo "Using local orchestra: $_local_url"
           export UNIFY_BASE_URL="$_local_url"
-          # Seed Unity-specific models and endpoints
-          _seed_unity_models_and_endpoints
         else
           echo "Warning: Local orchestra started but not responding" >&2
         fi
