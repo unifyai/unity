@@ -114,6 +114,8 @@ class PlotResult(BaseModel):
         Hours until the plot URL expires.
     title : str | None
         Title of the generated plot.
+    table : str | None
+        Alias for context (backward compatibility with viz_utils).
     context : str | None
         Source context path for the plot data.
     error : str | None
@@ -139,6 +141,7 @@ class PlotResult(BaseModel):
     token: Optional[str] = None
     expires_in_hours: Optional[int] = None
     title: Optional[str] = None
+    table: Optional[str] = None  # Backward compat alias for context
     context: Optional[str] = None
     error: Optional[str] = None
     traceback_str: Optional[str] = Field(default=None, alias="traceback")
@@ -147,3 +150,22 @@ class PlotResult(BaseModel):
     def succeeded(self) -> bool:
         """True if the plot was generated successfully."""
         return self.url is not None and self.error is None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API response (backward compat)."""
+        result: dict = {}
+        if self.url is not None:
+            result["url"] = self.url
+        if self.token is not None:
+            result["token"] = self.token
+        if self.expires_in_hours is not None:
+            result["expires_in_hours"] = self.expires_in_hours
+        if self.title is not None:
+            result["title"] = self.title
+        if self.table is not None:
+            result["table"] = self.table
+        if self.context is not None:
+            result["context"] = self.context
+        if self.error is not None:
+            result["error"] = self.error
+        return result

@@ -1,17 +1,13 @@
 """
 Visualization utilities for FileManager.
 
-This module provides low-level functions for generating plot visualizations
-via the Console Plot API. It handles API communication, error handling, and
-result formatting.
+.. deprecated::
+    This module is deprecated. Import types directly from unity.data_manager.types:
+    - from unity.data_manager.types import PlotType, PlotConfig, PlotResult
 
-Architecture Note:
-    Currently uses Console API (POST {CONSOLE_BASE_URL}/api/plot/create).
-    This is the integration path until the Plot API is migrated to Orchestra.
+    For plotting operations, use DataManager.plot() or DataManager.plot_batch().
 
-Usage:
-    These utilities are called by FileManager.visualize() and should not be
-    invoked directly by external code. Use the high-level visualize tool instead.
+This module now re-exports from unity.data_manager for backward compatibility.
 """
 
 from __future__ import annotations
@@ -19,105 +15,28 @@ from __future__ import annotations
 import logging
 import time
 import traceback
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
 
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
+# Re-export types from DataManager for backward compatibility
+from unity.data_manager.types.plot import PlotType, PlotConfig, PlotResult
+
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# ENUMERATIONS
-# =============================================================================
-
-
-class PlotType(str, Enum):
-    """
-    Supported plot types from the Plot API.
-
-    Values:
-        SCATTER: Scatter plot for correlations between two numeric variables
-        BAR: Bar chart for comparing values across categories
-        HISTOGRAM: Histogram for distribution of a single variable
-        LINE: Line chart for trends over time/sequences
-    """
-
-    SCATTER = "scatter"
-    BAR = "bar"
-    HISTOGRAM = "histogram"
-    LINE = "line"
+# Legacy re-export for code that imports PlotResult.success property
+# The new PlotResult in DataManager has the same interface
+__all__ = ["PlotType", "PlotConfig", "PlotResult", "generate_plot", "generate_plots"]
 
 
 # =============================================================================
-# PYDANTIC MODELS
+# DEPRECATED - Use DataManager.plot() instead
+# The functions below are kept for backward compatibility
 # =============================================================================
-
-
-class PlotConfig(BaseModel):
-    """
-    Configuration for a single plot visualization.
-
-    This model defines the parameters needed to generate a plot via the
-    Plot API. It maps to the 'plot_config' object in the API request body.
-    """
-
-    model_config = ConfigDict(use_enum_values=True)
-
-    plot_type: str
-    x_axis: str
-    y_axis: Optional[str] = None
-    group_by: Optional[str] = None
-    metric: Optional[str] = None
-    aggregate: Optional[str] = None
-    scale_x: Optional[str] = None
-    scale_y: Optional[str] = None
-    bin_count: Optional[int] = None
-    show_regression: Optional[bool] = None
-    title: Optional[str] = None
-
-
-class PlotResult(BaseModel):
-    """
-    Result of a plot generation attempt.
-
-    Contains either a successful plot URL or error information if generation
-    failed.
-    """
-
-    url: Optional[str] = None
-    token: Optional[str] = None
-    expires_in_hours: Optional[int] = None
-    title: Optional[str] = None
-    table: Optional[str] = None
-    error: Optional[str] = None
-    traceback_str: Optional[str] = Field(default=None, alias="traceback")
-
-    @property
-    def succeeded(self) -> bool:
-        """Return True if plot generation succeeded (has URL, no error)."""
-        return self.url is not None and self.error is None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for API response."""
-        result: Dict[str, Any] = {}
-        if self.url is not None:
-            result["url"] = self.url
-        if self.token is not None:
-            result["token"] = self.token
-        if self.expires_in_hours is not None:
-            result["expires_in_hours"] = self.expires_in_hours
-        if self.title is not None:
-            result["title"] = self.title
-        if self.table is not None:
-            result["table"] = self.table
-        if self.error is not None:
-            result["error"] = self.error
-        return result
 
 
 # =============================================================================

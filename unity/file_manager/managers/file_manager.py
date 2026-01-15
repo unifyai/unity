@@ -56,9 +56,7 @@ from .utils.storage import (
     ctx_for_file as _storage_ctx_for_file,
     ctx_for_file_table as _storage_ctx_for_file_table,
 )
-from .utils.viz_utils import (
-    PlotResult as _VizPlotResult,
-)
+from unity.data_manager.types import PlotResult as _VizPlotResult
 
 
 if TYPE_CHECKING:
