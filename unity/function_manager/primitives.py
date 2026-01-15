@@ -26,6 +26,8 @@ This module provides:
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import hashlib
 import inspect
 import logging
@@ -464,19 +466,6 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
 }
 
 
-# Tools exposed by get_tools() on files primitive (subset of all FileManager tools)
-_FILE_TOOLS_EXPOSED = frozenset(
-    {
-        "tables_overview",
-        "list_columns",
-        "schema_explain",
-        "reduce",
-        "filter_files",
-        "visualize",
-    },
-)
-
-
 def _get_stable_id(class_name: str, method_name: str) -> int:
     """
     Generate a stable integer ID from class.method name.
@@ -825,213 +814,40 @@ class FileTools(TypedDict, total=False):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Async FileManager Wrapper
+# Async Method Proxy
 # ────────────────────────────────────────────────────────────────────────────
 
 
-class _AsyncFileManagerWrapper:
+class _AsyncMethodProxy:
     """
-    Wrapper that makes synchronous FileManager methods awaitable.
+    Generic proxy that makes all methods on an object awaitable.
 
-    This ensures consistency across all `primitives.*` namespaces - the LLM can
-    safely use `await` on all primitives methods without needing to know which
-    underlying implementations are sync vs async.
+    Sync methods are automatically wrapped with asyncio.to_thread so callers
+    can consistently use `await` without knowing the underlying implementation.
+    Async methods are called directly. Non-callable attributes are returned as-is.
 
-    The wrapper delegates to the underlying FileManager but wraps each method
-    in an async function that simply returns the sync result. Docstrings are
-    copied from the underlying FileManager methods for discoverability.
+    This uses the same pattern as the async tool loop (see _async_tool/tools_data.py).
     """
 
-    # Methods whose docstrings should be copied from the underlying FileManager
-    _PROXIED_METHODS = (
-        "tables_overview",
-        "list_columns",
-        "schema_explain",
-        "reduce",
-        "filter_files",
-        "search_files",
-        "visualize",
-    )
+    def __init__(self, wrapped: Any):
+        self._wrapped = wrapped
 
-    def __init__(self, file_manager: "FileManager"):
-        self._fm = file_manager
-        # Copy docstrings from underlying FileManager methods
-        # Note: We only copy __doc__, NOT using update_wrapper which sets __wrapped__
-        # because __wrapped__ breaks inspect.signature() for async wrapper methods
-        for method_name in self._PROXIED_METHODS:
-            wrapper = getattr(self, method_name, None)
-            original = getattr(self._fm, method_name, None)
-            if wrapper and original and original.__doc__:
-                wrapper.__func__.__doc__ = original.__doc__
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._wrapped, name)
 
-    async def tables_overview(
-        self,
-        *,
-        include_column_info: bool = True,
-        file: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Show the information for all tables. Async wrapper for consistency.
+        # Non-callable attributes pass through directly
+        if not callable(attr):
+            return attr
 
-        See FileManager.tables_overview for full documentation.
-        """
-        return self._fm.tables_overview(
-            include_column_info=include_column_info,
-            file=file,
-        )
+        # For callable attributes, return an async wrapper
+        @functools.wraps(attr)
+        async def async_method_wrapper(*args, **kwargs):
+            if asyncio.iscoroutinefunction(attr):
+                return await attr(*args, **kwargs)
+            else:
+                return await asyncio.to_thread(attr, *args, **kwargs)
 
-    async def list_columns(
-        self,
-        *,
-        include_types: bool = True,
-        table: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        List columns for the FileRecords index or a resolved logical table.
-        Async wrapper for consistency.
-
-        See FileManager.list_columns for full documentation.
-        """
-        return self._fm.list_columns(
-            include_types=include_types,
-            table=table,
-        )
-
-    async def schema_explain(self, *, table: str) -> str:
-        """
-        Return a natural-language explanation of a table's structure.
-        Async wrapper for consistency.
-
-        See FileManager.schema_explain for full documentation.
-        """
-        return self._fm.schema_explain(table=table)
-
-    async def reduce(
-        self,
-        *,
-        table: Optional[str] = None,
-        metric: str,
-        keys: Any,
-        filter: Optional[Any] = None,
-        group_by: Optional[Any] = None,
-    ) -> Any:
-        """
-        Compute reduction metrics over a table. Async wrapper for consistency.
-
-        See FileManager.reduce for full documentation.
-        """
-        return self._fm.reduce(
-            table=table,
-            metric=metric,
-            keys=keys,
-            filter=filter,
-            group_by=group_by,
-        )
-
-    async def filter_files(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-        tables: Optional[Any] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Filter files or resolve-and-filter per-file Content/Tables.
-        Async wrapper for consistency.
-
-        See FileManager.filter_files for full documentation.
-        """
-        return self._fm.filter_files(
-            filter=filter,
-            offset=offset,
-            limit=limit,
-            tables=tables,
-        )
-
-    async def search_files(
-        self,
-        *,
-        references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-        table: Optional[str] = None,
-        filter: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Semantic search over a resolved context. Async wrapper for consistency.
-
-        See FileManager.search_files for full documentation.
-        """
-        return self._fm.search_files(
-            references=references,
-            k=k,
-            table=table,
-            filter=filter,
-        )
-
-    async def visualize(
-        self,
-        *,
-        tables: Any,
-        plot_type: str,
-        x_axis: str,
-        y_axis: Optional[str] = None,
-        group_by: Optional[str] = None,
-        filter: Optional[str] = None,
-        title: Optional[str] = None,
-        aggregate: Optional[str] = None,
-        scale_x: Optional[str] = None,
-        scale_y: Optional[str] = None,
-        bin_count: Optional[int] = None,
-        show_regression: Optional[bool] = None,
-    ) -> Any:
-        """
-        Generate plot visualizations from table data. Async wrapper for consistency.
-
-        See FileManager.visualize for full documentation.
-        """
-        return self._fm.visualize(
-            tables=tables,
-            plot_type=plot_type,
-            x_axis=x_axis,
-            y_axis=y_axis,
-            group_by=group_by,
-            filter=filter,
-            title=title,
-            aggregate=aggregate,
-            scale_x=scale_x,
-            scale_y=scale_y,
-            bin_count=bin_count,
-            show_regression=show_regression,
-        )
-
-    def get_tools(self) -> FileTools:
-        """
-        Get FileManager tools as a dictionary for passing to other functions.
-
-        Returns ONLY the tools compatible with metric/analysis functions:
-        - tables_overview, list_columns, schema_explain
-        - reduce, filter_files, visualize
-
-        Use this ONLY when calling a function that accepts a `tools: FileTools`
-        parameter. For direct data operations, use method syntax instead:
-            result = await primitives.files.reduce(table=..., metric="count", ...)
-
-        Example
-        -------
-        >>> # When a function signature shows `tools: FileTools`:
-        >>> tools = primitives.files.get_tools()
-        >>> result = await some_function(tools, other_args...)
-
-        Returns
-        -------
-        FileTools
-            Dictionary with keys: tables_overview, list_columns, schema_explain,
-            reduce, filter_files, visualize
-        """
-        all_tools = dict(self._fm.get_tools("ask", include_sub_tools=True))
-        # Filter to only the tools exposed for external function use
-        return {k: v for k, v in all_tools.items() if k in _FILE_TOOLS_EXPOSED}
+        return async_method_wrapper
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1070,7 +886,7 @@ class Primitives:
         self._guidance: Optional["GuidanceManager"] = None
         self._web: Optional["WebSearcher"] = None
         self._computer: Optional[ComputerPrimitives] = None
-        self._files: Optional[_AsyncFileManagerWrapper] = None
+        self._files: Optional[_AsyncMethodProxy] = None
 
     @property
     def contacts(self) -> "ContactManager":
@@ -1149,7 +965,7 @@ class Primitives:
         return self._computer
 
     @property
-    def files(self) -> _AsyncFileManagerWrapper:
+    def files(self) -> _AsyncMethodProxy:
         """
         File management primitives for data discovery, querying, and visualization.
 
@@ -1172,5 +988,5 @@ class Primitives:
             from unity.manager_registry import ManagerRegistry
 
             fm = ManagerRegistry.get_file_manager()
-            self._files = _AsyncFileManagerWrapper(fm)
+            self._files = _AsyncMethodProxy(fm)
         return self._files
