@@ -111,9 +111,13 @@ async def conversation_manager() -> CMStepDriver:
     issues with pytest-asyncio. This follows the same pattern as ContactManager
     tests - direct method calls, not event publishing.
 
+    Uses SimulatedActor explicitly for fast, deterministic testing without
+    browser/computer environment dependencies.
+
     Returns a CMStepDriver that wraps the CM and provides step() and
     step_until_wait() methods for deterministic testing.
     """
+    from unity.actor.simulated import SimulatedActor
     from unity.conversation_manager.event_broker import reset_event_broker
     from unity.conversation_manager import start_async, stop_async
     from unity.conversation_manager.domains import managers_utils
@@ -128,12 +132,16 @@ async def conversation_manager() -> CMStepDriver:
         apply_test_mocks=True,
     )
     print("✓ ConversationManager started (in-process mode)")
-    print("  Using simulated implementations for all managers")
+    print("  Using SimulatedActor for deterministic testing")
+
+    # Create SimulatedActor for fast, deterministic testing
+    # (avoids HierarchicalActor's browser/computer environment setup)
+    actor = SimulatedActor(steps=3, log_mode="log")
 
     # Initialize managers DIRECTLY (not via event handler)
     # This avoids the background task / event loop interleaving issues
     print("⏳ Initializing managers directly...")
-    await managers_utils.init_conv_manager(cm)
+    await managers_utils.init_conv_manager(cm, actor=actor)
     print("✅ Managers initialized")
 
     # Set test contacts directly on contact_index
