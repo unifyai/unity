@@ -72,11 +72,11 @@ RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "htt
 RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
-# unillm branch logic mirrors CI: main→main, otherwise→staging
-# This ensures staging deployments get unillm staging (with latest fixes)
-RUN git clone --depth 1 --branch ${BRANCH} https://github.com/unifyai/unify.git /unify
-RUN UNILLM_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
-    git clone --depth 1 --branch $UNILLM_BRANCH https://github.com/unifyai/unillm.git /unillm
+# Branch logic mirrors CI: main→main, otherwise→staging
+# This ensures staging deployments get staging branches (with latest fixes)
+RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
+    git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
+    git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
 # Copy source and install unity with all dependencies
 COPY . /app
