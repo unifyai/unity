@@ -55,15 +55,25 @@ def build_compact_ingest_model(
     def _ctype(r: FileContentRow) -> ContentType:
         return getattr(r, "content_type", None)
 
-    # Identity via describe() API (returns FileStorageMap)
-    # If file is not yet indexed, fall back to adapter-based identity
-    try:
-        storage = file_manager.describe(file_path=file_path)
-        source_uri = storage.source_uri
-    except (FileNotFoundError, ValueError):
-        # File not yet indexed - get source_uri from adapter
-        source_uri = file_manager._resolve_to_uri(file_path)
+    # Get identity and metadata from adapter
+    source_uri = file_manager._resolve_to_uri(file_path)
     display_path = file_path  # Use file_path as display_path
+
+    # Get file metadata (created_at, modified_at, file_size) from adapter
+    created_at = None
+    modified_at = None
+    file_size = None
+    try:
+        adapter = getattr(file_manager, "_adapter", None)
+        if adapter:
+            # Try to get file stats from adapter
+            ref = file_manager._adapter_get(file_id_or_path=file_path)
+            if ref:
+                created_at = ref.get("created_at")
+                modified_at = ref.get("modified_at")
+                file_size = ref.get("file_size") or ref.get("size")
+    except Exception:
+        pass
 
     # Destination naming depends on ingest mode
     dest_path = (
@@ -108,9 +118,9 @@ def build_compact_ingest_model(
     except Exception:
         tables_meta = []
 
-    # Metrics (from parse result; file_size not available from describe())
+    # Metrics (prefer adapter/FS info when available)
     metrics = _FileMetrics(
-        file_size=None,  # File size can be obtained from adapter if needed
+        file_size=file_size,
         processing_time=(
             (getattr(getattr(parse_result, "trace", None), "duration_ms", None) or 0.0)
             / 1000.0
@@ -158,8 +168,8 @@ def build_compact_ingest_model(
         mime_type=mime,
         status=parse_result.status,
         error=parse_result.error,
-        created_at=None,  # Not available from describe(); set during ingest if needed
-        modified_at=None,  # Not available from describe(); set during ingest if needed
+        created_at=created_at,
+        modified_at=modified_at,
         summary_excerpt=summary_excerpt,
         content_ref=content_ref,
         tables_ref=tables_meta,
