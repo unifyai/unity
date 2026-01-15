@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from unity.file_manager.types.ingest import IngestPipelineResult
 
 from .base import BaseFileManager, BaseGlobalFileManager
-from .managers.utils.viz_utils import PlotResult as _VizPlotResult
+from unity.data_manager.types import PlotResult as _VizPlotResult
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.llm_client import new_llm_client
 from .prompt_builders import (

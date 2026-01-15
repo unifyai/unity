@@ -136,40 +136,98 @@ class FileStorageMap(BaseModel):
     This is the primary output of FileManager.describe() and provides
     all information an agent needs to construct accurate queries:
 
-    - file_id: Stable identifier for cross-referencing
-    - file_path: Original filesystem path
-    - document: Info about /Content context (if present)
-    - tables: List of /Tables/<name> contexts with schemas
-    - index_context: Path to the FileRecords index
+    - Status: filesystem_exists, indexed_exists, parsed_status
+    - Identity: file_id, file_path, source_uri, source_provider
+    - Storage: document (/Content), tables (/Tables/<name>), index_context
+    - Schemas: column info with types and searchability
 
     Usage Pattern
     -------------
     1. Call describe(file_path="/reports/Q4.csv") to get FileStorageMap
-    2. Use storage_map.tables[0].context_path with filter/search/reduce
-    3. Reference storage_map.tables[0].schema for column names and types
+    2. Check storage.indexed_exists and storage.parsed_status before querying
+    3. Use storage.tables[0].context_path with filter/search/reduce
+    4. Reference storage.tables[0].column_schema for column names and types
+
+    Status Interpretation
+    ---------------------
+    - filesystem_exists=True, indexed_exists=False: File exists but not ingested
+    - indexed_exists=True, parsed_status='failed': Ingested but parsing failed
+    - indexed_exists=True, parsed_status='success': Full storage info available
 
     Example
     -------
     >>> storage = file_manager.describe(file_path="/reports/Q4.csv")
-    >>> # Query the first table
-    >>> results = data_manager.filter(
-    ...     context=storage.tables[0].context_path,
-    ...     filter="revenue > 1000000",
-    ...     columns=["region", "revenue"]
-    ... )
+    >>> if not storage.indexed_exists:
+    ...     file_manager.ingest_files("/reports/Q4.csv")
+    ...     storage = file_manager.describe(file_path="/reports/Q4.csv")
+    >>> if storage.parsed_status == "success" and storage.has_tables:
+    ...     results = data_manager.filter(
+    ...         context=storage.tables[0].context_path,
+    ...         filter="revenue > 1000000",
+    ...     )
     """
 
+    # -------------------------------------------------------------------------
+    # Status fields (from file_info)
+    # -------------------------------------------------------------------------
+    filesystem_exists: bool = Field(
+        default=False,
+        description=(
+            "True if the file exists on the filesystem at the given path. "
+            "False if the file was deleted or path is invalid."
+        ),
+    )
+    indexed_exists: bool = Field(
+        default=False,
+        description=(
+            "True if the file has a row in the FileRecords index. "
+            "False means the file hasn't been ingested yet."
+        ),
+    )
+    parsed_status: Optional[str] = Field(
+        default=None,
+        description=(
+            "Parse outcome: 'success', 'failed', 'partial', or None if not parsed. "
+            "Check this before accessing document/tables storage info."
+        ),
+    )
+
+    # -------------------------------------------------------------------------
+    # Ingest configuration
+    # -------------------------------------------------------------------------
+    ingest_mode: str = Field(
+        default="per_file",
+        description=(
+            "Ingest mode used: 'per_file' (file-specific contexts) or "
+            "'unified' (content merged into a shared context)."
+        ),
+    )
+    unified_label: Optional[str] = Field(
+        default=None,
+        description="Label for unified context when ingest_mode='unified'.",
+    )
+    table_ingest: bool = Field(
+        default=True,
+        description="True if table extraction was enabled during ingestion.",
+    )
+    file_format: Optional[str] = Field(
+        default=None,
+        description="Detected file format (e.g., 'pdf', 'xlsx', 'csv', 'docx').",
+    )
+
+    # -------------------------------------------------------------------------
     # Core identification
-    file_id: int = Field(
-        ...,
+    # -------------------------------------------------------------------------
+    file_id: Optional[int] = Field(
+        default=None,
         description=(
             "Stable unique identifier for this file. "
-            "Use this for cross-context joins and references."
+            "None if file is not indexed. Use for cross-context joins."
         ),
     )
     file_path: str = Field(
         ...,
-        description="Original filesystem path as provided to the FileManager.",
+        description="Filesystem path as provided or resolved from file_id.",
     )
     source_uri: Optional[str] = Field(
         default=None,

@@ -775,9 +775,9 @@ def describe_file(
     """
     Return a complete storage representation of a file in the Unify backend.
 
-    This is the primary discovery tool for understanding how a file's data
-    is stored. It returns all context paths, schemas, and identifiers needed
-    for accurate filter/search/reduce operations.
+    This is the primary discovery tool for understanding a file's status and
+    storage. It returns existence/status info, all context paths, schemas,
+    and identifiers needed for accurate filter/search/reduce operations.
 
     Parameters
     ----------
@@ -790,40 +790,45 @@ def describe_file(
     Returns
     -------
     FileStorageMap
-        Complete storage representation including:
-        - file_id: Stable identifier for cross-referencing
-        - file_path: Original filesystem path
-        - document: Info about /Content context (if present)
-        - tables: List of /Tables/<name> contexts with schemas
-        - index_context: Path to FileRecords index
+        Complete status and storage representation including:
+        - Status: filesystem_exists, indexed_exists, parsed_status
+        - Identity: file_id, file_path, source_uri, source_provider
+        - Config: ingest_mode, unified_label, table_ingest, file_format
+        - Storage: document (/Content), tables (/Tables/<name>), index_context
 
     Raises
     ------
     ValueError
-        If neither file_path nor file_id is provided, or if the file is not found.
+        If neither file_path nor file_id is provided.
 
     Examples
     --------
-    >>> # Describe by file path
+    >>> # Describe by file path - works even if not indexed
     >>> storage = file_manager.describe(file_path="/reports/Q4.csv")
-    >>> print(storage.file_id)  # 42
-    >>> print(storage.tables[0].context_path)
-    'Files/Local/42/Tables/Sheet1'
+    >>> if not storage.indexed_exists:
+    ...     print("File exists but not indexed yet")
+    ...     file_manager.ingest_files("/reports/Q4.csv")
+    >>> elif storage.parsed_status != "success":
+    ...     print(f"Parsing failed: {storage.parsed_status}")
+    >>> else:
+    ...     print(f"Tables: {storage.table_names}")
 
     >>> # Use the context path for queries
-    >>> results = data_manager.filter(
-    ...     context=storage.tables[0].context_path,
-    ...     filter="revenue > 1000000"
-    ... )
+    >>> if storage.has_tables:
+    ...     results = data_manager.filter(
+    ...         context=storage.tables[0].context_path,
+    ...         filter="revenue > 1000000"
+    ...     )
 
     >>> # Describe by file_id (faster, no path resolution needed)
     >>> storage = file_manager.describe(file_id=42)
 
     Notes
     -----
-    - The describe() method queries the backend live for fresh schema information.
+    - describe() never raises for missing files; check indexed_exists instead.
+    - filesystem_exists is checked via the adapter if file_path is provided.
+    - Storage info (document/tables) is only populated when parsed_status='success'.
     - Context paths use file_id (not file_path) for stability across renames.
-    - Row counts are not included by default; use reduce(metric='count') when needed.
     """
     from ...types.describe import (
         FileStorageMap,
@@ -835,50 +840,154 @@ def describe_file(
     if file_path is None and file_id is None:
         raise ValueError("Either file_path or file_id must be provided")
 
+    # Initialize all status fields
+    filesystem_exists: bool = False
+    indexed_exists: bool = False
+    parsed_status: Optional[str] = None
+    ingest_mode: str = "per_file"
+    unified_label: Optional[str] = None
+    table_ingest: bool = True
+    file_format: Optional[str] = None
+
     resolved_file_id: Optional[int] = file_id
     resolved_file_path: Optional[str] = file_path
     source_uri: Optional[str] = None
     source_provider: Optional[str] = None
 
-    # Resolve file_id from file_path if needed
-    if resolved_file_id is None and file_path is not None:
+    # Fields to fetch from index
+    index_fields = [
+        "file_id",
+        "file_path",
+        "source_uri",
+        "source_provider",
+        "status",
+        "ingest_mode",
+        "unified_label",
+        "table_ingest",
+        "file_format",
+    ]
+
+    # Resolve from file_id first (most direct)
+    if file_id is not None:
         try:
             rows = unify.get_logs(
                 context=self._ctx,
-                filter=f"file_path == {file_path!r}",
+                filter=f"file_id == {file_id}",
                 limit=1,
-                from_fields=["file_id", "source_uri", "source_provider"],
+                from_fields=index_fields,
             )
             if rows:
+                indexed_exists = True
                 entry = rows[0].entries
-                resolved_file_id = entry.get("file_id")
+                resolved_file_id = entry.get("file_id", file_id)
+                resolved_file_path = entry.get("file_path", file_path)
                 source_uri = entry.get("source_uri")
                 source_provider = entry.get("source_provider")
+                parsed_status = entry.get("status")
+                ingest_mode = entry.get("ingest_mode", "per_file")
+                unified_label = entry.get("unified_label")
+                table_ingest = bool(entry.get("table_ingest", True))
+                file_format = entry.get("file_format")
         except Exception as e:
-            logger.warning(f"Failed to lookup file_id for {file_path}: {e}")
+            logger.warning(f"Failed to lookup file_id={file_id}: {e}")
 
-    # Resolve file_path from file_id if needed
-    if resolved_file_path is None and resolved_file_id is not None:
+    # If not found by file_id, try file_path
+    if not indexed_exists and file_path is not None:
+        # Try by source_uri first (more reliable)
+        resolve_to_uri = getattr(self, "_resolve_to_uri", None)
+        if resolve_to_uri:
+            try:
+                source_uri = resolve_to_uri(file_path)
+            except Exception:
+                pass
+
+        # Try by source_uri if we have one
+        if source_uri:
+            try:
+                rows = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"source_uri == {source_uri!r}",
+                    limit=1,
+                    from_fields=index_fields,
+                )
+                if rows:
+                    indexed_exists = True
+                    entry = rows[0].entries
+                    resolved_file_id = entry.get("file_id")
+                    resolved_file_path = entry.get("file_path", file_path)
+                    source_provider = entry.get("source_provider")
+                    parsed_status = entry.get("status")
+                    ingest_mode = entry.get("ingest_mode", "per_file")
+                    unified_label = entry.get("unified_label")
+                    table_ingest = bool(entry.get("table_ingest", True))
+                    file_format = entry.get("file_format")
+            except Exception:
+                pass
+
+        # Fallback to file_path match
+        if not indexed_exists:
+            try:
+                rows = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"file_path == {file_path!r}",
+                    limit=1,
+                    from_fields=index_fields,
+                )
+                if rows:
+                    indexed_exists = True
+                    entry = rows[0].entries
+                    resolved_file_id = entry.get("file_id")
+                    resolved_file_path = entry.get("file_path", file_path)
+                    source_uri = entry.get("source_uri")
+                    source_provider = entry.get("source_provider")
+                    parsed_status = entry.get("status")
+                    ingest_mode = entry.get("ingest_mode", "per_file")
+                    unified_label = entry.get("unified_label")
+                    table_ingest = bool(entry.get("table_ingest", True))
+                    file_format = entry.get("file_format")
+            except Exception as e:
+                logger.warning(f"Failed to lookup file_path={file_path!r}: {e}")
+
+    # Check filesystem existence (only for path-based lookups)
+    if resolved_file_path:
         try:
-            rows = unify.get_logs(
-                context=self._ctx,
-                filter=f"file_id == {resolved_file_id}",
-                limit=1,
-                from_fields=["file_path", "source_uri", "source_provider"],
-            )
-            if rows:
-                entry = rows[0].entries
-                resolved_file_path = entry.get("file_path")
-                source_uri = entry.get("source_uri")
-                source_provider = entry.get("source_provider")
-        except Exception as e:
-            logger.warning(
-                f"Failed to lookup file_path for file_id={resolved_file_id}: {e}",
-            )
+            exists_fn = getattr(self, "exists", None)
+            if exists_fn:
+                filesystem_exists = bool(exists_fn(resolved_file_path))
+        except Exception:
+            pass
 
-    if resolved_file_id is None:
-        raise ValueError(
-            f"File not found in index: file_path={file_path!r}, file_id={file_id}",
+    # Get adapter provider if not already set
+    if not source_provider:
+        try:
+            adapter = getattr(self, "_adapter", None)
+            source_provider = getattr(adapter, "name", None) or getattr(
+                self,
+                "_fs_type",
+                None,
+            )
+        except Exception:
+            pass
+
+    # If not indexed, return early with status info only
+    if not indexed_exists:
+        return FileStorageMap(
+            filesystem_exists=filesystem_exists,
+            indexed_exists=False,
+            parsed_status=None,
+            ingest_mode="per_file",
+            unified_label=None,
+            table_ingest=True,
+            file_format=None,
+            file_id=None,
+            file_path=resolved_file_path or file_path or "",
+            source_uri=source_uri,
+            source_provider=source_provider,
+            document=None,
+            tables=[],
+            index_context=self._ctx,
+            has_document=False,
+            has_tables=False,
         )
 
     # Build context paths using file_id
@@ -886,64 +995,80 @@ def describe_file(
     content_ctx = f"{base}/{resolved_file_id}/Content"
     tables_prefix = f"{base}/{resolved_file_id}/Tables/"
 
-    # Check if document context exists and get its schema
+    # Only fetch storage info if parsing was successful
     document_info: Optional[DocumentInfo] = None
-    try:
-        content_fields = unify.get_fields(context=content_ctx)
-        if content_fields:
-            columns = _fields_to_column_info(content_fields)
-            document_info = DocumentInfo(
-                context_path=content_ctx,
-                column_schema=ContextSchema(columns=columns),
-                row_count=None,  # Fetch on-demand with reduce()
-            )
-    except Exception:
-        # Content context doesn't exist
-        pass
-
-    # Discover table contexts
     table_infos: List[TableInfo] = []
-    try:
-        # List all contexts under the tables prefix
-        all_contexts = unify.get_contexts(prefix=tables_prefix)
-        for ctx_path, ctx_info in all_contexts.items():
-            if ctx_path == tables_prefix:
-                continue  # Skip the prefix itself
-            # Extract table name from path
-            table_name = ctx_path.replace(tables_prefix, "").split("/")[0]
-            if not table_name:
-                continue
 
-            # Get table schema
-            try:
-                table_fields = unify.get_fields(context=ctx_path)
-                columns = _fields_to_column_info(table_fields)
-                table_infos.append(
-                    TableInfo(
-                        name=table_name,
-                        context_path=ctx_path,
-                        column_schema=ContextSchema(columns=columns),
-                        row_count=None,  # Fetch on-demand with reduce()
-                    ),
+    if parsed_status == "success":
+        # Check if document context exists and get its schema
+        try:
+            content_fields = unify.get_fields(context=content_ctx)
+            if content_fields:
+                columns = _fields_to_column_info(content_fields)
+                document_info = DocumentInfo(
+                    context_path=content_ctx,
+                    column_schema=ContextSchema(columns=columns),
+                    row_count=None,  # Fetch on-demand with reduce()
                 )
-            except Exception:
-                # Include table even without schema
-                table_infos.append(
-                    TableInfo(
-                        name=table_name,
-                        context_path=ctx_path,
-                        column_schema=ContextSchema(columns=[]),
-                        row_count=None,
-                    ),
-                )
-    except Exception as e:
-        logger.warning(f"Failed to discover tables for file_id={resolved_file_id}: {e}")
+        except Exception:
+            # Content context doesn't exist
+            pass
+
+        # Discover table contexts
+        try:
+            # List all contexts under the tables prefix
+            all_contexts = unify.get_contexts(prefix=tables_prefix)
+            for ctx_path, ctx_info in all_contexts.items():
+                if ctx_path == tables_prefix:
+                    continue  # Skip the prefix itself
+                # Extract table name from path
+                table_name = ctx_path.replace(tables_prefix, "").split("/")[0]
+                if not table_name:
+                    continue
+
+                # Get table schema
+                try:
+                    table_fields = unify.get_fields(context=ctx_path)
+                    columns = _fields_to_column_info(table_fields)
+                    table_infos.append(
+                        TableInfo(
+                            name=table_name,
+                            context_path=ctx_path,
+                            column_schema=ContextSchema(columns=columns),
+                            row_count=None,  # Fetch on-demand with reduce()
+                        ),
+                    )
+                except Exception:
+                    # Include table even without schema
+                    table_infos.append(
+                        TableInfo(
+                            name=table_name,
+                            context_path=ctx_path,
+                            column_schema=ContextSchema(columns=[]),
+                            row_count=None,
+                        ),
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Failed to discover tables for file_id={resolved_file_id}: {e}",
+            )
 
     return FileStorageMap(
+        # Status fields
+        filesystem_exists=filesystem_exists,
+        indexed_exists=indexed_exists,
+        parsed_status=parsed_status,
+        # Ingest config
+        ingest_mode=ingest_mode,
+        unified_label=unified_label,
+        table_ingest=table_ingest,
+        file_format=file_format,
+        # Identity
         file_id=resolved_file_id,
         file_path=resolved_file_path or "",
         source_uri=source_uri,
         source_provider=source_provider,
+        # Storage
         document=document_info,
         tables=table_infos,
         index_context=self._ctx,
