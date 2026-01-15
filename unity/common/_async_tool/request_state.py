@@ -52,7 +52,14 @@ class RequestState:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                loop = asyncio.get_event_loop()
+                # No running loop - create a new one and set it
+                # This handles sync test contexts and Python 3.12+ where
+                # get_event_loop() no longer auto-creates a loop
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
             self._result_future = loop.create_future()
         return self._result_future
 
