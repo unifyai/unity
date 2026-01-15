@@ -2,10 +2,8 @@ import asyncio
 import logging
 
 import json
-from dataclasses import dataclass
 from typing import Optional
 import contextlib
-import contextvars
 
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
@@ -55,21 +53,6 @@ if not logger.handlers:
 
 
 MAX_CONV_MANAGER_MSGS = 50
-
-
-@dataclass(frozen=True)
-class StepResult:
-    """Result of processing a single event step."""
-
-    input_event: "Event"
-    llm_requested: bool
-    llm_ran: bool
-    output_events: list["Event"]
-
-
-_step_llm_requests: contextvars.ContextVar[list[tuple[float, bool]] | None] = (
-    contextvars.ContextVar("_step_llm_requests", default=None)
-)
 
 
 class ConversationManager(metaclass=SingletonABCMeta):
@@ -328,193 +311,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def request_llm_run(self, delay=0, cancel_running=False) -> None:
         """Request an LLM run.
 
-        In normal operation, the request is recorded and later scheduled by
-        the event loop after the current event is handled.
-        When executed inside ConversationManager.step(), the request is recorded
-        and executed immediately by step().
+        The request is recorded and later scheduled by the event loop after
+        the current event is handled.
         """
-        requests = _step_llm_requests.get()
-        if requests is not None:
-            requests.append((delay, cancel_running))
-            return
         self._pending_llm_requests.append((delay, cancel_running))
 
     async def flush_llm_requests(self) -> None:
         """Schedule any pending LLM runs recorded during event handling."""
-        if _step_llm_requests.get() is not None:
-            return
         if not self._pending_llm_requests:
             return
         delay, cancel_running = self._pending_llm_requests[-1]
         self._pending_llm_requests.clear()
         await self.run_llm(delay=delay, cancel_running=cancel_running)
-
-    async def _step(self, event: "Event", *, publish: bool = False) -> StepResult:
-        """Process one event deterministically and return produced output events.
-
-        This is a TEST-ONLY method that bypasses the normal async event-driven flow.
-        It avoids relying on background tasks by:
-        - recording any requested LLM runs during event handling
-        - running the LLM immediately (if requested)
-        - capturing and applying any published output events to local state
-
-        Args:
-            event: Input event to process.
-            publish: Whether to forward published events to the broker.
-
-        Returns:
-            StepResult with output events produced during this step.
-        """
-        published_events: list[Event] = []
-        output_events: list[Event] = []
-        llm_requested = False
-        llm_ran = False
-
-        original_publish = self.event_broker.publish
-
-        async def publish_wrapper(channel: str, message: str) -> int:
-            try:
-                evt = Event.from_json(message)
-            except Exception:
-                evt = None
-            if evt is not None:
-                published_events.append(evt)
-            if publish:
-                return await original_publish(channel, message)
-            return 0
-
-        step_requests: list[tuple[float, bool]] = []
-        token = _step_llm_requests.set(step_requests)
-        try:
-            self.event_broker.publish = publish_wrapper
-
-            await EventHandler.handle_event(
-                event,
-                self,
-                is_voice_call=self.call_manager.uses_realtime_api,
-            )
-
-            llm_requested = bool(step_requests)
-            step_requests.clear()
-
-            if llm_requested:
-                llm_ran = True
-                await self._run_llm()
-
-            # Apply any published events to local state so callers can inspect state
-            # without depending on background broker subscribers.
-            for evt in published_events:
-                if isinstance(
-                    evt,
-                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
-                ):
-                    output_events.append(evt)
-                await EventHandler.handle_event(
-                    evt,
-                    self,
-                    is_voice_call=self.call_manager.uses_realtime_api,
-                )
-        finally:
-            self.event_broker.publish = original_publish
-            _step_llm_requests.reset(token)
-
-        return StepResult(
-            input_event=event,
-            llm_requested=llm_requested,
-            llm_ran=llm_ran,
-            output_events=output_events,
-        )
-
-    async def _step_until_wait(
-        self,
-        event: "Event",
-        *,
-        max_steps: int = 5,
-        publish: bool = False,
-    ) -> StepResult:
-        """Process an event and keep running LLM until it calls 'wait'.
-
-        This is a TEST-ONLY method that gives the LLM continuous control until
-        it explicitly decides to stop by calling the 'wait' tool.
-
-        Args:
-            event: Input event to process.
-            max_steps: Maximum LLM steps to prevent infinite loops (default 5).
-            publish: Whether to forward published events to the broker.
-
-        Returns:
-            StepResult with all output events produced across all steps.
-        """
-        all_output_events: list[Event] = []
-        llm_ran = False
-
-        original_publish = self.event_broker.publish
-
-        async def publish_wrapper(channel: str, message: str) -> int:
-            try:
-                evt = Event.from_json(message)
-            except Exception:
-                evt = None
-            if evt is not None:
-                if isinstance(
-                    evt,
-                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
-                ):
-                    all_output_events.append(evt)
-                # Handle the event locally
-                await EventHandler.handle_event(
-                    evt,
-                    self,
-                    is_voice_call=self.call_manager.uses_realtime_api,
-                )
-            if publish:
-                return await original_publish(channel, message)
-            return 0
-
-        step_requests: list[tuple[float, bool]] = []
-        token = _step_llm_requests.set(step_requests)
-        try:
-            self.event_broker.publish = publish_wrapper
-
-            # First, handle the incoming event
-            await EventHandler.handle_event(
-                event,
-                self,
-                is_voice_call=self.call_manager.uses_realtime_api,
-            )
-
-            llm_requested = bool(step_requests)
-            step_requests.clear()
-
-            # Run LLM in a loop until 'wait' is called or max_steps reached
-            step_count = 0
-            while llm_requested and step_count < max_steps:
-                llm_ran = True
-                tool_name = await self._run_llm()
-                step_count += 1
-
-                # Stop if 'wait' was called
-                if tool_name == "wait":
-                    break
-
-                # Check if another LLM run was requested (e.g., by event handlers)
-                llm_requested = bool(step_requests)
-                step_requests.clear()
-
-                # If no explicit request but we didn't call 'wait', continue
-                if not llm_requested and tool_name != "wait":
-                    llm_requested = True
-
-        finally:
-            self.event_broker.publish = original_publish
-            _step_llm_requests.reset(token)
-
-        return StepResult(
-            input_event=event,
-            llm_requested=True,
-            llm_ran=llm_ran,
-            output_events=all_output_events,
-        )
 
     async def _run_llm(self) -> str | None:
         """Run a single LLM decision and return the tool name that was called."""

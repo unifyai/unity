@@ -6,7 +6,7 @@ Fixtures for conversation manager integration tests.
 
 Uses **direct handler testing** pattern (same as ContactManager tests):
 - No event-driven initialization (no background task dependencies)
-- Direct calls to event handlers
+- Direct calls to event handlers via CMStepDriver
 - Direct state inspection
 - Works reliably with pytest-asyncio
 
@@ -23,8 +23,10 @@ from typing import TYPE_CHECKING
 
 import pytest_asyncio
 
+from .cm_test_driver import CMStepDriver
+
 if TYPE_CHECKING:
-    from unity.conversation_manager.conversation_manager import ConversationManager
+    pass
 
 
 # Fixed datetime for LLM cache consistency - must match tests/conftest.py
@@ -89,13 +91,16 @@ def pytest_configure(config):
 
 
 @pytest_asyncio.fixture(scope="module")
-async def conversation_manager() -> "ConversationManager":
+async def conversation_manager() -> CMStepDriver:
     """
     Start and initialize ConversationManager in-process for the test module.
 
     Uses DIRECT initialization (not event-driven) to avoid background task
     issues with pytest-asyncio. This follows the same pattern as ContactManager
     tests - direct method calls, not event publishing.
+
+    Returns a CMStepDriver that wraps the CM and provides step() and
+    step_until_wait() methods for deterministic testing.
     """
     from unity.conversation_manager.event_broker import reset_event_broker
     from unity.conversation_manager import start_async, stop_async
@@ -123,7 +128,10 @@ async def conversation_manager() -> "ConversationManager":
     cm.contact_index.set_contacts(TEST_CONTACTS)
     print(f"✅ Test contacts set: {len(TEST_CONTACTS)}")
 
-    yield cm
+    # Wrap in CMStepDriver for deterministic testing
+    driver = CMStepDriver(cm)
+
+    yield driver
 
     # Cleanup
     print("\n✓ Stopping ConversationManager...")
@@ -133,8 +141,8 @@ async def conversation_manager() -> "ConversationManager":
 
 @pytest.fixture
 def initialized_cm(
-    conversation_manager: "ConversationManager",
-) -> "ConversationManager":
+    conversation_manager: CMStepDriver,
+) -> CMStepDriver:
     """
     Per-test fixture that provides a clean ConversationManager.
 

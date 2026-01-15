@@ -69,7 +69,7 @@ async def test_brain_emits_toolloop_events(initialized_cm):
     )
 
     # Process an event that will trigger the brain
-    result = await cm._step(
+    result = await cm.step(
         SMSReceived(
             contact=contact,
             content="Hi there!",
@@ -138,7 +138,7 @@ async def test_toolloop_events_contain_expected_fields(initialized_cm):
     )
 
     # Process an event
-    result = await cm._step(
+    result = await cm.step(
         SMSReceived(
             contact=contact,
             content="What time is it?",

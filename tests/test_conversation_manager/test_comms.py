@@ -4,7 +4,7 @@ tests/test_conversation_manager/test_comms.py
 
 Tests for communication flows (SMS, email, calls, etc.)
 
-Uses the ConversationManager "_step_until_wait" API which:
+Uses the CMStepDriver "step_until_wait" API which:
 - Processes an input Event
 - Runs the LLM in a loop until it calls 'wait' (no-op)
 - Collects all output events produced
@@ -68,7 +68,7 @@ async def test_sms_to_sms(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke",
@@ -89,7 +89,7 @@ async def test_sms_to_email(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke via email",
@@ -110,7 +110,7 @@ async def test_sms_to_unify_message(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke via unify message",
@@ -131,7 +131,7 @@ async def test_sms_to_phone_call(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke via phone call",
@@ -151,7 +151,7 @@ async def test_email_to_email(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -175,7 +175,7 @@ async def test_email_to_sms(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -198,7 +198,7 @@ async def test_email_to_unify_message(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -221,7 +221,7 @@ async def test_email_to_phone_call(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -243,7 +243,7 @@ async def test_unify_message_to_unify_message(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke",
@@ -264,7 +264,7 @@ async def test_unify_message_to_sms(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke via SMS",
@@ -285,7 +285,7 @@ async def test_unify_message_to_email(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke via email",
@@ -306,7 +306,7 @@ async def test_unify_message_to_phone_call(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke via phone call",
@@ -331,21 +331,21 @@ async def test_phone_call(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(
+    await cm.step(
         PhoneCallReceived(
             contact=contact,
             conference_name="test_conference",
         ),
     )
-    await cm._step(PhoneCallStarted(contact=contact))
-    await cm._step(InboundPhoneUtterance(contact=contact, content="Tell me a joke"))
+    await cm.step(PhoneCallStarted(contact=contact))
+    await cm.step(InboundPhoneUtterance(contact=contact, content="Tell me a joke"))
 
     voice_thread = list(
         cm.contact_index.active_conversations[contact["contact_id"]].threads["voice"],
     )
     assert any(getattr(m, "content", None) == "Tell me a joke" for m in voice_thread)
 
-    await cm._step(PhoneCallEnded(contact=contact))
+    await cm.step(PhoneCallEnded(contact=contact))
 
 
 @pytest.mark.asyncio
@@ -355,15 +355,15 @@ async def test_phone_call_to_sms(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(
+    await cm.step(
         PhoneCallReceived(
             contact=contact,
             conference_name="test_conference",
         ),
     )
-    await cm._step(PhoneCallStarted(contact=contact))
+    await cm.step(PhoneCallStarted(contact=contact))
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         InboundPhoneUtterance(
             contact=contact,
             content="Send me a joke via SMS right now",
@@ -373,7 +373,7 @@ async def test_phone_call_to_sms(initialized_cm):
     # Must have SMS sent
     _has_one(result.output_events, SMSSent)
 
-    await cm._step(PhoneCallEnded(contact=contact))
+    await cm.step(PhoneCallEnded(contact=contact))
 
 
 @pytest.mark.asyncio
@@ -383,15 +383,15 @@ async def test_phone_call_to_email(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(
+    await cm.step(
         PhoneCallReceived(
             contact=contact,
             conference_name="test_conference",
         ),
     )
-    await cm._step(PhoneCallStarted(contact=contact))
+    await cm.step(PhoneCallStarted(contact=contact))
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         InboundPhoneUtterance(
             contact=contact,
             content="Send me a joke via email right now",
@@ -401,7 +401,7 @@ async def test_phone_call_to_email(initialized_cm):
     # Must have exactly one email sent
     _has_one(result.output_events, EmailSent)
 
-    await cm._step(PhoneCallEnded(contact=contact))
+    await cm.step(PhoneCallEnded(contact=contact))
 
 
 @pytest.mark.asyncio
@@ -411,15 +411,15 @@ async def test_phone_call_to_unify_message(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(
+    await cm.step(
         PhoneCallReceived(
             contact=contact,
             conference_name="test_conference",
         ),
     )
-    await cm._step(PhoneCallStarted(contact=contact))
+    await cm.step(PhoneCallStarted(contact=contact))
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         InboundPhoneUtterance(
             contact=contact,
             content="Send me a joke via unify message right now",
@@ -429,7 +429,7 @@ async def test_phone_call_to_unify_message(initialized_cm):
     # Must have exactly one unify message sent
     _has_one(result.output_events, UnifyMessageSent)
 
-    await cm._step(PhoneCallEnded(contact=contact))
+    await cm.step(PhoneCallEnded(contact=contact))
 
 
 # ---------------------------------------------------------------------------
@@ -444,16 +444,16 @@ async def test_unify_meet(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(UnifyMeetReceived(contact=contact))
-    await cm._step(UnifyMeetStarted(contact=contact))
-    await cm._step(InboundUnifyMeetUtterance(contact=contact, content="Tell me a joke"))
+    await cm.step(UnifyMeetReceived(contact=contact))
+    await cm.step(UnifyMeetStarted(contact=contact))
+    await cm.step(InboundUnifyMeetUtterance(contact=contact, content="Tell me a joke"))
 
     voice_thread = list(
         cm.contact_index.active_conversations[contact["contact_id"]].threads["voice"],
     )
     assert any(getattr(m, "content", None) == "Tell me a joke" for m in voice_thread)
 
-    await cm._step(UnifyMeetEnded(contact=contact))
+    await cm.step(UnifyMeetEnded(contact=contact))
 
 
 # Note: There is no test_unify_meet_to_phone_call test because the system does not
@@ -468,10 +468,10 @@ async def test_unify_meet_to_sms(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(UnifyMeetReceived(contact=contact))
-    await cm._step(UnifyMeetStarted(contact=contact))
+    await cm.step(UnifyMeetReceived(contact=contact))
+    await cm.step(UnifyMeetStarted(contact=contact))
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         InboundUnifyMeetUtterance(
             contact=contact,
             content="Send me a joke via sms right now",
@@ -481,7 +481,7 @@ async def test_unify_meet_to_sms(initialized_cm):
     # Must have SMS sent
     _has_one(result.output_events, SMSSent)
 
-    await cm._step(UnifyMeetEnded(contact=contact))
+    await cm.step(UnifyMeetEnded(contact=contact))
 
 
 @pytest.mark.asyncio
@@ -491,10 +491,10 @@ async def test_unify_meet_to_email(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(UnifyMeetReceived(contact=contact))
-    await cm._step(UnifyMeetStarted(contact=contact))
+    await cm.step(UnifyMeetReceived(contact=contact))
+    await cm.step(UnifyMeetStarted(contact=contact))
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         InboundUnifyMeetUtterance(
             contact=contact,
             content="Send me a joke via email right now",
@@ -504,7 +504,7 @@ async def test_unify_meet_to_email(initialized_cm):
     # Must have exactly one email sent
     _has_one(result.output_events, EmailSent)
 
-    await cm._step(UnifyMeetEnded(contact=contact))
+    await cm.step(UnifyMeetEnded(contact=contact))
 
 
 @pytest.mark.asyncio
@@ -514,10 +514,10 @@ async def test_unify_meet_to_unify_message(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    await cm._step(UnifyMeetReceived(contact=contact))
-    await cm._step(UnifyMeetStarted(contact=contact))
+    await cm.step(UnifyMeetReceived(contact=contact))
+    await cm.step(UnifyMeetStarted(contact=contact))
 
-    result = await cm._step_until_wait(
+    result = await cm.step_until_wait(
         InboundUnifyMeetUtterance(
             contact=contact,
             content="Send me a joke via unify message right now",
@@ -527,4 +527,4 @@ async def test_unify_meet_to_unify_message(initialized_cm):
     # Must have exactly one unify message sent
     _has_one(result.output_events, UnifyMessageSent)
 
-    await cm._step(UnifyMeetEnded(contact=contact))
+    await cm.step(UnifyMeetEnded(contact=contact))
