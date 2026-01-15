@@ -16,6 +16,7 @@ from unity.events.event_bus import EVENT_BUS
 from unity.manager_registry import ManagerRegistry
 
 if TYPE_CHECKING:
+    from unity.actor.base import BaseActor
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 event_broker = get_event_broker()
@@ -317,10 +318,18 @@ _init_lock = asyncio.Lock()
 def _init_managers(
     cm: "ConversationManager",
     loop: asyncio.AbstractEventLoop,
+    actor: "BaseActor | None" = None,
 ) -> None:
     """
     Initialize all managers in a separate thread.
     The main event loop is passed for managers that need to schedule async tasks.
+
+    Args:
+        cm: The ConversationManager instance to initialize.
+        loop: The main event loop for scheduling async tasks.
+        actor: Optional pre-instantiated Actor. If provided, used directly instead
+            of creating one via ManagerRegistry. Useful for testing with specific
+            Actor implementations.
     """
     start_time = perf_counter()
 
@@ -443,13 +452,18 @@ def _init_managers(
         f"{perf_counter() - local_start_time:.2f} seconds",
     )
 
-    # 7. Initialize Actor (respects SETTINGS.actor.IMPL)
+    # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
     print("[ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
-        cm.actor = ManagerRegistry.get_actor(
-            description="production deployment",
-        )
+        if actor is not None:
+            # Use pre-instantiated actor (e.g., for testing)
+            cm.actor = actor
+        else:
+            # Create via ManagerRegistry (respects SETTINGS.actor.IMPL)
+            cm.actor = ManagerRegistry.get_actor(
+                description="production deployment",
+            )
         actor_cls = type(cm.actor).__name__
         print(
             f"[ManagersWorker] Actor ({actor_cls}) initialized in "
@@ -464,10 +478,20 @@ def _init_managers(
     )
 
 
-async def init_conv_manager(cm: "ConversationManager") -> None:
+async def init_conv_manager(
+    cm: "ConversationManager",
+    *,
+    actor: "BaseActor | None" = None,
+) -> None:
     """
     Initialize all managers for the ConversationManager.
     All initialization runs in a separate thread (non-blocking).
+
+    Args:
+        cm: The ConversationManager instance to initialize.
+        actor: Optional pre-instantiated Actor. If provided, used directly instead
+            of creating one via ManagerRegistry. Useful for testing with specific
+            Actor implementations (e.g., SimulatedActor).
     """
     print("[ManagersWorker] Processing startup")
 
@@ -482,7 +506,7 @@ async def init_conv_manager(cm: "ConversationManager") -> None:
             loop = asyncio.get_running_loop()
 
             # Run all manager initialization in a thread (non-blocking)
-            await asyncio.to_thread(_init_managers, cm, loop)
+            await asyncio.to_thread(_init_managers, cm, loop, actor)
 
             store_chat_history = await get_last_store_chat_history()
             if store_chat_history:
