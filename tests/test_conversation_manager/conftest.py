@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import pytest
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest_asyncio
@@ -28,9 +27,6 @@ from .cm_test_driver import CMStepDriver
 if TYPE_CHECKING:
     pass
 
-
-# Fixed datetime for LLM cache consistency - must match tests/conftest.py
-_FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
 
 # Test contacts used across all tests
 TEST_CONTACTS = [
@@ -77,8 +73,9 @@ def pytest_configure(config):
     os.environ["UNITY_WEB_ENABLED"] = "false"
     os.environ["UNITY_FILE_ENABLED"] = "false"
 
-    # Fixed datetime for LLM cache consistency
-    os.environ["UNITY_FIXED_DATETIME"] = _FIXED_DATETIME.isoformat()
+    # Enable incrementing timestamps for **NEW** marker comparisons
+    # This allows last_snapshot < message.timestamp to work correctly
+    os.environ["UNITY_INCREMENTING_TIMESTAMPS"] = "true"
 
     # Mark as test mode
     os.environ["TEST"] = "true"

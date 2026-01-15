@@ -43,6 +43,9 @@ class TestingSettings(ProductionSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure Settings
     # ─────────────────────────────────────────────────────────────────────────
+    UNITY_INCREMENTING_TIMESTAMPS: bool = (
+        False  # Auto-increment timestamps for NEW markers
+    )
     EVENTBUS_PUBLISHING_ENABLED: bool = False  # Disabled by default in tests
     UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
     UNIFY_OVERWRITE_PROJECT: bool = False
