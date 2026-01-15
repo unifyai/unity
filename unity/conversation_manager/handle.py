@@ -181,39 +181,23 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                 )
             )
 
-            if (
-                contact
-                and contact["contact_id"]
-                in self.conversation_manager.contact_index.active_conversations
-            ):
-                active_contact = (
-                    self.conversation_manager.contact_index.active_conversations[
-                        contact["contact_id"]
-                    ]
+            conversation_turns, _ = (
+                self.conversation_manager.get_recent_voice_transcript(
+                    contact=contact,
+                    max_messages=20,
                 )
-                voice_thread = active_contact.threads.get("voice", [])
-                recent_msgs_raw = list(voice_thread)[-20:] if voice_thread else []
+            )
 
-                prompt_lines: list[str] = []
-                for msg in recent_msgs_raw:
-                    role = "assistant" if msg.name == "You" else "user"
-                    content = (msg.content or "").strip()
-
-                    # Skip system messages
-                    if content.startswith("<") and content.endswith(">"):
-                        continue
-
-                    prompt_lines.append(f"- {role}: {content}")
-
+            if conversation_turns:
+                prompt_lines = [
+                    f"- {turn['role']}: {turn['content']}"
+                    for turn in conversation_turns
+                ]
                 recent_transcript_for_prompt = (
                     "Recent Transcript (last 20 messages):\n" + "\n".join(prompt_lines)
-                    if prompt_lines
-                    else "Recent Transcript: (none)"
                 )
             else:
-                recent_transcript_for_prompt = (
-                    "Recent Transcript: (no active conversation)"
-                )
+                recent_transcript_for_prompt = "Recent Transcript: (none)"
         except Exception as e:
             logger.error(f"Could not fetch transcript context: {e}")
             recent_transcript_for_prompt = "Recent Transcript: (error)"
