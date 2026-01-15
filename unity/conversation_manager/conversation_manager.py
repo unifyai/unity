@@ -28,7 +28,8 @@ from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import *
 from unity.conversation_manager.events import _get_now
 
-from unity.conversation_manager.domains.llm import LLM
+from unity.common.llm_client import new_llm_client
+from unity.common.single_shot import single_shot_tool_decision
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 
@@ -136,8 +137,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.memory_manager: MemoryManager = None
         self.actor: BaseActor | None = None
 
-        # llm - uses system default model for careful orchestration decisions
-        self.llm = LLM(SETTINGS.UNIFY_MODEL, event_broker)
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
@@ -202,6 +201,101 @@ class ConversationManager(metaclass=SingletonABCMeta):
         return self.call_manager.call_contact or self.contact_index.get_contact(
             contact_id=1,
         )
+
+    def get_recent_voice_transcript(
+        self,
+        contact: dict | None = None,
+        max_messages: int | None = None,
+    ) -> tuple[list[dict], datetime | None]:
+        """Extract recent voice transcript from the active conversation.
+
+        Args:
+            contact: Contact to get transcript for. Defaults to active contact.
+            max_messages: Maximum number of messages to return. None for all.
+
+        Returns:
+            A tuple of (conversation_turns, last_message_timestamp) where:
+            - conversation_turns: List of {"role": "user"|"assistant", "content": str}
+            - last_message_timestamp: Timestamp of the last message, or None
+        """
+        conversation_turns: list[dict] = []
+        last_message_timestamp: datetime | None = None
+
+        if contact is None:
+            contact = self.get_active_contact()
+
+        if not contact:
+            return conversation_turns, last_message_timestamp
+
+        contact_id = contact.get("contact_id")
+        if contact_id not in self.contact_index.active_conversations:
+            return conversation_turns, last_message_timestamp
+
+        active_contact = self.contact_index.active_conversations[contact_id]
+        voice_thread = active_contact.threads.get("voice", [])
+
+        # Optionally limit to last N messages
+        if max_messages is not None:
+            voice_thread = list(voice_thread)[-max_messages:]
+
+        for msg in voice_thread:
+            role = "assistant" if msg.name == "You" else "user"
+            content = (msg.content or "").strip()
+
+            # Skip system messages (e.g., "<Call Started>")
+            if content.startswith("<") and content.endswith(">"):
+                continue
+
+            conversation_turns.append({"role": role, "content": content})
+
+            if hasattr(msg, "timestamp") and msg.timestamp:
+                last_message_timestamp = msg.timestamp
+
+        return conversation_turns, last_message_timestamp
+
+    def _preprocess_messages(
+        self,
+        messages: str | dict | list,
+    ) -> str | dict | list:
+        """Keep only the latest state snapshot from message history.
+
+        ConversationManager renders a full state snapshot each turn. We keep only the
+        latest snapshot when calling the model, while preserving any system messages
+        and user interjections.
+        """
+        if isinstance(messages, str):
+            return messages
+        if isinstance(messages, dict):
+            return messages
+        if not isinstance(messages, list):
+            return messages
+
+        try:
+            # Find all state snapshot messages
+            state_indices = [
+                i
+                for i, m in enumerate(messages)
+                if isinstance(m, dict) and m.get("_cm_state_snapshot") is True
+            ]
+            if not state_indices:
+                return messages
+
+            # Keep only the latest state snapshot and non-state messages
+            last_state = messages[state_indices[-1]]
+            kept: list[dict] = []
+            for m in messages:
+                if not isinstance(m, dict):
+                    continue
+                role = m.get("role")
+                if role == "system":
+                    kept.append(m)
+                elif role == "user" and not m.get("_cm_state_snapshot"):
+                    kept.append(m)
+
+            kept.append(last_state)
+            return kept
+        except Exception:
+            return messages
 
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
@@ -449,11 +543,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
         }
 
         # Single-shot LLM call: one decision, one action
-        result = await self.llm.run(
-            system_prompt=system_prompt,
-            messages=self.chat_history + [input_message],
-            response_model=response_model,
-            _tools=tools,
+        client = new_llm_client(SETTINGS.UNIFY_MODEL, reasoning_effort="low")
+        client.set_system_message(system_prompt)
+        messages = self._preprocess_messages(self.chat_history + [input_message])
+        result = await single_shot_tool_decision(
+            client,
+            messages,
+            tools,
+            tool_choice="required" if tools else "auto",
+            response_format=response_model,
         )
 
         # Extract structured output (thoughts, call_guidance)
@@ -697,31 +795,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "Entering _proactive_speech_loop",
             )
 
-            # Build conversation from contact_index and calculate elapsed time
-            conversation_turns = []
-            last_message_timestamp = None
-
-            contact = self.get_active_contact()
-            if (
-                contact
-                and contact["contact_id"] in self.contact_index.active_conversations
-            ):
-                active_contact = self.contact_index.active_conversations[
-                    contact["contact_id"]
-                ]
-                voice_thread = active_contact.threads.get("voice", [])
-
-                for msg in voice_thread:
-                    role = "assistant" if msg.name == "You" else "user"
-                    content = msg.content
-
-                    if content.startswith("<") and content.endswith(">"):
-                        continue
-
-                    conversation_turns.append({"role": role, "content": content})
-
-                    if hasattr(msg, "timestamp") and msg.timestamp:
-                        last_message_timestamp = msg.timestamp
+            # Get conversation turns and last message timestamp using helper
+            conversation_turns, last_message_timestamp = (
+                self.get_recent_voice_transcript()
+            )
 
             # Calculate elapsed time from last message timestamp
             if last_message_timestamp:
