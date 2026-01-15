@@ -36,7 +36,6 @@ from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.actor.base import BaseActor
-from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 
 logger = logging.getLogger(__name__)
@@ -511,9 +510,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         return result.tool_name
 
-        # Schedule proactive speech check after assistant turn
-        await self.schedule_proactive_speech()
-
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
@@ -523,11 +519,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "app:managers:output",
             )
 
-            if self.assistant_id != DEFAULT_ASSISTANT_ID:
-                # Start initialization and operations listener
-                asyncio.create_task(managers_utils.init_conv_manager(self))
-                asyncio.create_task(managers_utils.listen_to_operations(self))
-                self._session_logger.info("startup", "Default startup complete")
+            # Initialization is triggered by StartupEvent handler which
+            # sets details before starting init. Do not duplicate here.
 
             while True:
                 msg = await pubsub.get_message(

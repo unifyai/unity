@@ -136,11 +136,6 @@ async def get_update_or_create_contact(
         return cm.contact_index.get_contact(contact_id=contact_id)
 
 
-async def wait(cm, action_name, *args, **kwargs):
-    # does nothing
-    pass
-
-
 async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs):
     # ToDo: either include contact details in prompt and uncomment this
     # or remove this altogether
