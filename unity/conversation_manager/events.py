@@ -256,7 +256,9 @@ class EmailSent(Event):
 
 
 @dataclass
-class StartupEvent(Event):
+class _SessionConfigBase(Event):
+    """Base class for session configuration events (StartupEvent, AssistantUpdateEvent)."""
+
     loggable: ClassVar[bool] = False
     api_key: str
     medium: str
@@ -277,6 +279,11 @@ class StartupEvent(Event):
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
+
+
+@dataclass
+class StartupEvent(_SessionConfigBase):
+    """Initial session configuration sent when ConversationManager starts."""
 
 
 @dataclass
@@ -287,27 +294,8 @@ class InitializationComplete(Event):
 
 
 @dataclass
-class AssistantUpdateEvent(Event):
-    loggable: ClassVar[bool] = False
-    api_key: str
-    medium: str
-    assistant_id: str
-    user_id: str
-    assistant_name: str
-    assistant_age: str
-    assistant_nationality: str
-    assistant_about: str
-    assistant_number: str
-    assistant_email: str
-    user_name: str
-    user_number: str
-    user_email: str
-    voice_id: str
-    voice_provider: str = "cartesia"
-    voice_mode: str = "tts"
-    assistant_timezone: str = (
-        ""  # IANA timezone identifier; default empty for backward compat
-    )
+class AssistantUpdateEvent(_SessionConfigBase):
+    """Updated session configuration sent to a running ConversationManager."""
 
 
 @dataclass
