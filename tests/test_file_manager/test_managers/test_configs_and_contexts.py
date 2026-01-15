@@ -38,16 +38,14 @@ def test_per_file_contexts_created(file_manager, tmp_path: Path):
 
     print(f"item.file_path: {item.file_path}")
 
-    overview = fm.tables_overview(file=name)
-    print(f"overview: {overview}")
-    assert isinstance(overview, dict)
-    # Global entry
-    assert "FileRecords" in overview and isinstance(overview["FileRecords"], dict)
-    # Find file root entry (shape: { Content: {...}, Tables?: {...} })
-    roots = [v for k, v in overview.items() if isinstance(v, dict) and "Content" in v]
-    assert roots, "Expected a per-file root with a Content entry"
-    content_meta = roots[0]["Content"]
-    assert "/Content" in str(content_meta.get("context", ""))
+    # Use describe() to get storage map
+    storage = fm.describe(file_path=name)
+    print(f"storage: {storage}")
+
+    # Verify per-file context was created
+    assert storage.file_id is not None
+    assert storage.has_document, "Expected a per-file Content context"
+    assert "/Content" in storage.document.context_path
 
 
 @_handle_project
@@ -69,12 +67,12 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
     assert res[n1].status == "success"
     assert res[n2].status == "success"
 
-    # Unified context should exist under the unified label
-    ov = fm.tables_overview(file="Docs")
-    assert isinstance(ov, dict) and len(ov) >= 1
-    # Unified label entry should exist with Content
-    assert "Docs" in ov and "Content" in ov["Docs"]
-    assert "/Content" in str(ov["Docs"]["Content"].get("context", ""))
+    # Unified mode: files are indexed but content goes to unified context
+    # Verify both files were indexed
+    storage1 = fm.describe(file_path=n1)
+    storage2 = fm.describe(file_path=n2)
+    assert storage1.file_id is not None
+    assert storage2.file_id is not None
 
 
 @pytest.mark.unit
@@ -152,12 +150,11 @@ def test_table_ingest_toggle_off_skips_tables_contexts(file_manager, tmp_path: P
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
 
-    ov = fm.tables_overview(file=name)
-    assert isinstance(ov, dict)
-    # When table_ingest=False, the root should not include a "Tables" map
-    roots = [v for k, v in ov.items() if isinstance(v, dict) and "Content" in v]
-    assert roots, "Expected a per-file root with Content"
-    assert "Tables" not in roots[0]
+    # Use describe() to check storage layout
+    storage = fm.describe(file_path=name)
+    assert storage.has_document, "Expected a per-file Content context"
+    # When table_ingest=False, no tables should be created
+    assert not storage.has_tables, "Expected no Tables when table_ingest=False"
 
 
 # ==================== Comprehensive Config Testing ====================

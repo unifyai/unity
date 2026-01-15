@@ -429,15 +429,15 @@ def test_table_embeddings_along_for_csv_and_xlsx(
 
     process_single_file(fm, parse_result=parse_result, file_path=file_name, config=cfg)
 
-    # Locate a per-file table in the overview and assert the embedding columns exist
-    ov = fm.tables_overview(file=file_name)
-    roots = [k for k, v in ov.items() if isinstance(v, dict) and "Tables" in v]
-    assert roots, "Expected per-file root with Tables"
-    tables = ov[roots[0]]["Tables"]
-    assert isinstance(tables, dict) and len(tables) >= 1
-    logical = next(iter(tables.keys()))
-    # Use file_path directly instead of legacy root from tables_overview
-    cols = fm.list_columns(table=f"{file_name}.Tables.{logical}")
+    # Locate a per-file table using describe() and assert the embedding columns exist
+    storage = fm.describe(file_path=file_name)
+    assert storage.has_tables, "Expected per-file tables"
+    assert len(storage.tables) >= 1
+
+    # Use the exact context path from describe()
+    table_context = storage.tables[0].context_path
+    cols = fm.list_columns(context=table_context)
+
     # Verify all target columns were created (consolidated spec with multiple columns)
     for target_col in target_columns:
         assert target_col in cols, f"Expected embedding column {target_col} to exist"

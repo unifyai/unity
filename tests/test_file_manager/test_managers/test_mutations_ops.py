@@ -31,10 +31,10 @@ def test_rename_updates_index_and_contexts(file_manager, tmp_path: Path):
     assert len(rows_old) == 0
     assert any(r.get("file_path") == dst for r in rows_new)
 
-    # Content context should resolve for the new path in tables_overview
-    ov = fm.tables_overview(file=dst)
-    roots = [v for k, v in ov.items() if isinstance(v, dict) and "Content" in v]
-    assert roots and "/Content" in str(roots[0]["Content"].get("context", ""))
+    # Content context should resolve for the new path using describe()
+    storage = fm.describe(file_path=dst)
+    assert storage.has_document, "Expected document context after rename"
+    assert "/Content" in storage.document.context_path
 
 
 @_handle_project
