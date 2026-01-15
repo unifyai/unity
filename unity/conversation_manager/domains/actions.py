@@ -59,28 +59,6 @@ def build_response_models():
     }
 
 
-class Action:
-    """Registry for action handlers used by tool implementations."""
-
-    action_handlers = {}
-
-    @classmethod
-    def register(cls, action_name: str | list[str] = None):
-        """Register an action handler function."""
-
-        def wrapper(func):
-            names = (
-                [action_name or func.__name__]
-                if not isinstance(action_name, list)
-                else action_name
-            )
-            for name in names:
-                cls.action_handlers[name] = func
-            return func
-
-        return wrapper
-
-
 # utils
 async def get_update_or_create_contact(
     cm: "ConversationManager",
@@ -158,17 +136,11 @@ async def get_update_or_create_contact(
         return cm.contact_index.get_contact(contact_id=contact_id)
 
 
-# registered actions, make sure to add *args, **kwargs to make calling these actions easier
-# TODO: add sending/performing [action] notification when actions are made
-
-
-@Action.register()
 async def wait(cm, action_name, *args, **kwargs):
     # does nothing
     pass
 
 
-@Action.register()
 async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs):
     # ToDo: either include contact details in prompt and uncomment this
     # or remove this altogether
@@ -199,7 +171,6 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     await event_broker.publish("app:comms:sms_sent", event.to_json())
 
 
-@Action.register()
 async def send_unify_message(
     cm: "ConversationManager",
     action_name: str,
@@ -222,7 +193,6 @@ async def send_unify_message(
     await event_broker.publish("app:comms:unify_message_sent", event.to_json())
 
 
-@Action.register()
 async def send_email(cm: "ConversationManager", action_name: str, *args, **kwargs):
     # ToDo: either include contact details in prompt and uncomment this
     # or remove this altogether
@@ -301,7 +271,6 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     await event_broker.publish("app:comms:email_sent", event.to_json())
 
 
-@Action.register()
 async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs):
     # ToDo: either include contact details in prompt and uncomment this
     # or remove this altogether
@@ -329,7 +298,6 @@ async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs
 _next_handle_id = 0
 
 
-@Action.register(["start_task"])
 async def start_task_action(
     cm: "ConversationManager",
     action_name: str,
