@@ -673,17 +673,17 @@ class _InProcessFunctionProxy:
 
     Execution Modes
     ---------------
-    **stateful** (default):
+    **stateful** (default via ``__call__``, or explicit via ``.stateful()``):
         Executes in a persistent in-process session. Variables defined in previous
         calls persist across executions within the same session_id. Use this for
         iterative workflows where you want to build up state incrementally.
 
-    **stateless**:
+    **stateless** (via ``.stateless()``):
         Executes in a fresh globals dict with no inherited state. Each call starts
         with a clean environment. Use this for pure functions that should not
         depend on or affect any global state - guarantees reproducible results.
 
-    **read_only**:
+    **read_only** (via ``.read_only()``):
         Reads the current global state from the persistent session but executes
         in a fresh globals dict. Changes made during execution are NOT persisted
         back to the session. Use this for "what-if" exploration.
@@ -695,12 +695,25 @@ class _InProcessFunctionProxy:
     await set_config(key="debug", value=True)
     await run_analysis()  # can access 'config' from previous call
 
+    # Explicit stateful (equivalent to default __call__)
+    result = await compute.stateful(x=1, y=2)
+
     # Stateless - fresh environment each time
     result = await compute.stateless(x=1, y=2)
 
     # Read-only - see current state but don't modify it
     preview = await transform.read_only(factor=2)
     ```
+
+    Design Note
+    -----------
+    The proxy is returned to callers (e.g., CodeActActor) for state mode control,
+    but the **raw function** remains in the execution namespace. This allows:
+    - Inter-function calls to work naturally (``await b()`` calls raw ``b``)
+    - ``typing.get_type_hints(fn_name)`` to resolve correctly
+    - Custom decorators (``@my_decorator``) to work during exec()
+
+    The proxy exposes ``__wrapped__`` pointing to the raw function for introspection.
     """
 
     def __init__(
@@ -716,8 +729,10 @@ class _InProcessFunctionProxy:
         self._namespace = namespace
         self._raw_callable = raw_callable
 
+        # Copy key attributes from raw callable for introspection
         self.__name__ = str(func_data.get("name") or "unknown")
         self.__doc__ = str(func_data.get("docstring") or "")
+        self.__wrapped__ = raw_callable  # Standard Python convention for wrapper chains
 
     async def _execute_with_mode(
         self,
@@ -767,6 +782,8 @@ class _InProcessFunctionProxy:
         defined in previous executions remain accessible. This is the default
         behavior, suitable for iterative/interactive workflows.
 
+        Equivalent to calling ``.stateful()`` explicitly.
+
         Args:
             *args: Positional arguments passed to the function.
             **kwargs: Keyword arguments passed to the function.
@@ -775,6 +792,25 @@ class _InProcessFunctionProxy:
             The function's return value.
         """
         return await self._execute_with_mode("stateful", *args, **kwargs)
+
+    def stateful(self, *args: Any, **kwargs: Any):
+        """
+        Execute the function in stateful mode (explicit form of default ``__call__``).
+
+        State persists across calls within the shared namespace. Variables
+        defined in previous executions remain accessible. Use this when you want
+        to be explicit about the execution mode in your code.
+
+        Equivalent to ``await fn()`` but more self-documenting.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            Awaitable that resolves to the function's return value.
+        """
+        return self._execute_with_mode("stateful", *args, **kwargs)
 
     def stateless(self, *args: Any, **kwargs: Any):
         """
@@ -821,19 +857,19 @@ class _VenvFunctionProxy:
 
     Execution Modes
     ---------------
-    **stateful** (default):
+    **stateful** (default via ``__call__``, or explicit via ``.stateful()``):
         Executes in a persistent subprocess connection via VenvPool. Variables
         defined in previous calls persist across executions. Use this for
         iterative workflows where you want to build up state incrementally
         (e.g., loading data once, then running multiple analyses).
 
-    **stateless**:
+    **stateless** (via ``.stateless()``):
         Executes in a fresh subprocess with no inherited state. Each call starts
         with a clean globals dict. Use this for pure functions that should not
         depend on or affect any global state - guarantees reproducible results
         regardless of prior execution history.
 
-    **read_only**:
+    **read_only** (via ``.read_only()``):
         Reads the current global state from the persistent connection but executes
         in an ephemeral subprocess. Changes made during execution are NOT persisted
         back to the session. Use this for "what-if" exploration - you can inspect
@@ -847,6 +883,9 @@ class _VenvFunctionProxy:
     await load_dataset(path="data.csv")
     # Second call: can access the loaded data
     await analyze_dataset()
+
+    # Explicit stateful (equivalent to default __call__)
+    result = await my_func.stateful(x=1, y=2)
 
     # Stateless - fresh environment each time, no side effects
     # Useful for pure computations that shouldn't depend on session state
@@ -881,6 +920,7 @@ class _VenvFunctionProxy:
 
         self.__name__ = str(func_data.get("name") or "unknown")
         self.__doc__ = str(func_data.get("docstring") or "")
+        # Note: venv functions don't have a raw_callable since they run in subprocess
 
     @staticmethod
     def _map_positional_args(
@@ -1060,6 +1100,8 @@ class _VenvFunctionProxy:
         defined in previous executions remain accessible. This is the default
         behavior, suitable for iterative/interactive workflows.
 
+        Equivalent to calling ``.stateful()`` explicitly.
+
         Args:
             *args: Positional arguments passed to the function.
             **kwargs: Keyword arguments passed to the function.
@@ -1076,6 +1118,25 @@ class _VenvFunctionProxy:
             ```
         """
         return await self._execute_with_mode("stateful", *args, **kwargs)
+
+    def stateful(self, *args: Any, **kwargs: Any):
+        """
+        Execute the function in stateful mode (explicit form of default ``__call__``).
+
+        State persists across calls within the same VenvPool session. Variables
+        defined in previous executions remain accessible. Use this when you want
+        to be explicit about the execution mode in your code.
+
+        Equivalent to ``await fn()`` but more self-documenting.
+
+        Args:
+            *args: Positional arguments passed to the function.
+            **kwargs: Keyword arguments passed to the function.
+
+        Returns:
+            Awaitable that resolves to the function's return value.
+        """
+        return self._execute_with_mode("stateful", *args, **kwargs)
 
     def stateless(self, *args: Any, **kwargs: Any):
         """
@@ -2645,10 +2706,16 @@ class FunctionManager(BaseFunctionManager):
     ) -> _InProcessFunctionProxy:
         """Create an in-process callable wrapped in a proxy with state mode support.
 
-        The function is defined directly into the provided ``namespace`` so that it
-        can reference injected dependencies and injected environment globals. The
-        returned proxy supports `.stateless()` and `.read_only()` methods for
-        alternative execution modes.
+        The function is exec'd into the provided ``namespace``, placing the **raw
+        function** there. The caller should NOT overwrite ``namespace[func_name]``
+        with the returned proxy - this allows:
+
+        - Inter-function calls to work naturally (``await b()`` calls raw ``b``)
+        - ``typing.get_type_hints(fn_name)`` to resolve correctly via ``__wrapped__``
+        - Custom decorators (``@my_decorator``) to work during exec()
+
+        The returned proxy provides state mode control:
+        ``.stateful()`` / ``.stateless()`` / ``.read_only()``.
         """
         func_name = func_data.get("name")
         if not isinstance(func_name, str) or not func_name:
@@ -2826,7 +2893,12 @@ class FunctionManager(BaseFunctionManager):
         namespace: Dict[str, Any],
         visited: Set[str],
     ) -> None:
-        """Inject transitive dependencies into ``namespace`` (breadth-first)."""
+        """Inject transitive dependencies into ``namespace`` (breadth-first).
+
+        For in-process functions, the raw function (from exec) remains in the
+        namespace for inter-function calls, decorators, and introspection.
+        For venv functions, the proxy is placed in namespace (no raw function exists).
+        """
         from collections import deque
 
         deps = func_data.get("depends_on") or []
@@ -2847,7 +2919,7 @@ class FunctionManager(BaseFunctionManager):
                 )
                 continue
 
-            # Create + inject dependency callable.
+            # Handle venv dependencies: proxy goes in namespace (only way to call them)
             if dep_data.get("venv_id") is not None:
                 namespace[dep_name] = self._create_venv_callable(
                     dep_data,
@@ -2856,10 +2928,15 @@ class FunctionManager(BaseFunctionManager):
                 # Treat venv functions as atomic; do not recurse into their deps.
                 continue
 
-            namespace[dep_name] = self._create_in_process_callable(
+            # Handle in-process dependencies: exec puts raw function in namespace.
+            # We call _create_in_process_callable to exec the function, but we
+            # DON'T overwrite namespace with the proxy - the raw function stays
+            # for inter-function calls, decorators, and introspection.
+            self._create_in_process_callable(
                 dep_data,
                 namespace=namespace,
             )
+            # Note: proxy is discarded; namespace[dep_name] remains the raw function
 
             nested = dep_data.get("depends_on") or []
             if isinstance(nested, list):
@@ -2873,7 +2950,14 @@ class FunctionManager(BaseFunctionManager):
         *,
         namespace: Dict[str, Any],
     ) -> List[Callable[..., Any]]:
-        """Convert function records into callables and inject them into ``namespace``."""
+        """Convert function records into callables and return proxies to caller.
+
+        For in-process functions, the raw function (from exec) remains in the
+        namespace for inter-function calls, decorators, and introspection.
+        The returned proxies provide state mode control (.stateful/.stateless/.read_only).
+
+        For venv functions, the proxy is placed in namespace (no raw function exists).
+        """
         callables: List[Callable[..., Any]] = []
         visited: Set[str] = set()
 
@@ -2886,21 +2970,42 @@ class FunctionManager(BaseFunctionManager):
             if func_data.get("is_primitive") is True:
                 continue
 
-            # Reuse already-injected callables where possible.
-            if name in visited and name in namespace and callable(namespace.get(name)):
-                callables.append(namespace[name])
+            # Check if we've already processed this function (e.g., duplicate in results)
+            if name in visited:
+                # Already exec'd - just create a new proxy wrapping existing raw fn
+                if func_data.get("venv_id") is not None:
+                    fn = self._create_venv_callable(func_data, namespace=namespace)
+                else:
+                    raw_fn = namespace.get(name)
+                    if callable(raw_fn):
+                        fn = _InProcessFunctionProxy(
+                            function_manager=self,
+                            func_data=func_data,
+                            namespace=namespace,
+                            raw_callable=raw_fn,
+                        )
+                    else:
+                        # Shouldn't happen, but fallback to full creation
+                        fn = self._create_in_process_callable(
+                            func_data,
+                            namespace=namespace,
+                        )
+                callables.append(fn)
                 continue
 
             visited.add(name)  # Prevent cycles from re-injecting the root function.
             self._inject_dependencies(func_data, namespace=namespace, visited=visited)
 
-            # Create + inject the root callable.
+            # Create callable for the root function.
             if func_data.get("venv_id") is not None:
+                # Venv: proxy goes in namespace (only way to call them)
                 fn = self._create_venv_callable(func_data, namespace=namespace)
                 namespace[name] = fn
             else:
+                # In-process: exec puts raw function in namespace, return proxy to caller
+                # DON'T overwrite namespace - raw function stays for internal use
                 fn = self._create_in_process_callable(func_data, namespace=namespace)
-                namespace[name] = fn
+                # Note: namespace[name] remains the raw function from exec()
 
             callables.append(fn)
 
