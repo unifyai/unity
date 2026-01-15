@@ -17,6 +17,7 @@ from .events import (
     NotificationUnpinnedEvent,
     DirectMessageEvent,
 )
+from .prompt_builders import build_ask_handle_prompt
 import logging
 
 
@@ -217,187 +218,16 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             logger.error(f"Could not fetch transcript context: {e}")
             recent_transcript_for_prompt = "Recent Transcript: (error)"
 
-        # Build the schema requirement section only if response_format is provided
-        schema_requirement = ""
-        if response_format:
-            schema_requirement = f"""
-        The Pydantic schema for the final answer is:
-        {response_format.model_json_schema()}
-        """
-
-        final_requirement = (
-            f"""
-        - **If you used PATH 1 (INFER)**: Your final response MUST be a single JSON object with TWO keys: `acknowledgment` (your 2-3 sentence message) and `final_answer` (the JSON payload conforming to the Pydantic schema).
-        - **If you used PATH 2 (ASK)**: Your final response MUST be ONLY the JSON payload that strictly conforms to the Pydantic model schema.
-        """
-            if response_format
-            else "- Once you have the user's answer, respond with a clear and concise summary of what they said."
+        # Build prompts using prompt_builders
+        response_format_schema = (
+            response_format.model_json_schema() if response_format else None
         )
-
-        # Build static prompt (cacheable) and dynamic prompt (question-specific)
-        task_specific_section = ""
-        if task_instructions:
-            task_specific_section = f"""
-        ---
-        ### **📝 TASK SPECIFIC INSTRUCTIONS**
-        {task_instructions}
-        """
-
-        static_prompt = f"""
-        You are the "Brain" of a conversation agent. Your goal is to determine the user's answer to a specific question by listening to a transcript.
-
-        **LANGUAGE:** Infer from the transcript the language the user is speaking in. ALL your acknowledgments and questions MUST be in the same language.
-        When you call `ask_question`, the text you provide MUST be in the same language.
-
-        ---
-        ### **🛠️ YOUR TOOLS**
-        1. RECENT_TRANSCRIPT (seeded below) → Prefer using this directly to infer the answer without calling any tools.
-        2. `ask_question(text: str)` → Sends exactly your wording to the user and **BLOCKS** until the user replies.
-           - This tool is **ONLY FOR PATH 2 (ASK & WAIT)**.
-           - It sends the question to the live conversation and waits for the user's next utterance.
-        3. `ask_historic_transcript(text: str)` → Ask questions about the **historic** transcript (content BEFORE the current conversation session).
-           - **WARNING**: Do NOT use this for the active conversation. The active conversation is already in RECENT_TRANSCRIPT.
-           - Use this ONLY if you need to look up older context (e.g., "What did we discuss last week?").
-
-        {task_specific_section}
-
-        ---
-        ### **✅ ANSWER VERIFICATION (PATH 2 CRITICAL RULE)**
-
-        When using PATH 2 (`wait_for_reply=True`), after the user responds:
-
-        **STEP 1: VERIFY the response answers your question**
-        - Ask yourself: "Does this response actually answer what I asked?"
-
-        **STEP 2: Handle based on verification result**
-        - **If VALID ANSWER**: Return it immediately
-        - **If NON-ANSWER/TANGENTIAL**: Ask ONE simplified follow-up to get clarity
-        - **If STILL NO ANSWER after follow-up**: Use safe default (e.g., "No additional details provided")
-        - **If CORRECTION SIGNAL**: Handle as `go_back`
-
-        **Why this matters**: Blindly accepting non-answers leads to poor data quality and confused users.
-
-        ---
-        ### **📜 DECISION FLOW**
-
-        **Choose exactly ONE path per tool loop for efficiency.**
-
-        **CHOOSING YOUR PATH:**
-        - **Use PATH 1 (INFER)** when the transcript provides 90%+ certainty about the answer
-        - **Use PATH 2 (ASK)** when the user's words don't clearly distinguish between 2+ options (genuinely ambiguous)
-
-        **PATH 1 — INFER & ACKNOWLEDGE (When 90%+ Confident)**
-        1. Read RECENT_TRANSCRIPT and apply **strong common-sense reasoning** to infer the answer.
-        2. **CRITICAL - Check for Correction signal**: Is the user correcting a previous choice?
-           - "Actually it's X not Y" → Infer `go_back` (if applicable)
-        3. If you can infer with 90%+ confidence:
-           - **FIRST**: Check recent transcript (last 3-5 messages). If you see an acknowledgment that already mentions this issue, DO NOT create a new acknowledgment. Return a navigation message only.
-           - **ONLY IF no acknowledgment exists**: Formulate a contextually-aware acknowledgment (following all rules on linguistic variety, 2-3 sentences, etc.).
-           - **Use declarative sentences in PATH 1 acknowledgments.** If you need to ask anything—even a soft confirmation—switch to PATH 2.
-        4. **CRITICAL - RETURN IN ONE STEP**: Your final response MUST be a **single JSON object** that contains *both* the acknowledgment and the final answer.
-
-            **This is the ONLY way to complete PATH 1. Do NOT call any tools.**
-
-            **SCHEMA FOR PATH 1:**
-            ```json
-            {{
-              "acknowledgment": "Your 2-3 sentence acknowledgment text here (in the user's language).",
-              "final_answer": "the Pydantic/Enum JSON you inferred"
-            }}
-            ```
-            **Example:**
-            ```json
-            {{
-              "acknowledgment": "Thanks for that. Since you mentioned [X], I've noted that and we're proceeding.",
-              "final_answer": {{
-                "value": "some_value"
-              }}
-            }}
-            ```
-            This single response will simultaneously send the acknowledgment and complete the step.
-
-        **PATH 2 — ASK & WAIT (When Genuinely Ambiguous)**
-        1. Use this when you CANNOT infer with 90%+ confidence.
-        2. **Review last 2 turns** before formulating your question to ensure natural flow.
-        3. Call `ask_question("...")` with a conversational, focused clarifying question.
-        4. **CRITICAL - After user replies, VERIFY the answer (DO NOT blindly accept)**:
-           - **STEP A**: Read their response and explicitly ask yourself: "Does this directly answer my question?"
-           - **STEP B - If YES (valid answer)**: Return it immediately
-           - **STEP C - If NO (non-answer/tangential/vague)**:
-             - Call `ask_question` AGAIN with a simplified follow-up question.
-             - **This is ALLOWED and ENCOURAGED!** Multiple questions in PATH 2 are expected when verifying answers.
-           - **STEP D - If CORRECTION SIGNAL**: Recognize it and handle as `go_back`
-
-        **⚠️  PATH CONSISTENCY GUIDANCE**
-        - **PATH 1 (INFER)**: You make **ZERO** tool calls. Your final answer is the special `{{"acknowledgment": ..., "final_answer": ...}}` JSON object.
-        - **PATH 2 (ASK)**: You **MUST** call `ask_question(...)`.
-          - Multiple calls in PATH 2 are ENCOURAGED (e.g., Ask question → verify response → ask follow-up question).
-          - **Choose ONE path** per tool loop - either infer (PATH 1) or ask (PATH 2).
-
-        ---
-        ### **💎 CRAFTING HIGH-QUALITY MESSAGES**
-
-        **Before formulating ANY message (acknowledgment or question), you MUST:**
-        1. **Review the last 2 conversation turns** to understand the current context
-        2. **Be EXPLICIT about your decision**: Always name the specific category/option you've selected and confirm we're moving forward
-        3. **Flow naturally**: Make your message feel like a seamless continuation, not a robotic repetition
-        4. **VARY YOUR LANGUAGE**: Do NOT repeat the same sentence structures, openers, or action verbs across sequential messages
-
-        ---
-        ### **🎨 LINGUISTIC VARIETY (CRITICAL)**
-
-        **THE PROBLEM**: When multiple guidance messages (Path 1 inferences) are sent in a row, you sound robotic.
-
-        **THE SOLUTION: Mix Full Acknowledgments with "Thinking Aloud" Messages**
-
-        - **When acknowledging new information**: Give a full, natural, 2-3 sentence message. But ONLY if you haven't already acknowledged it in recent transcript!
-
-        - **For subsequent steps**: Use shorter "Thinking Aloud" messages that describe what you're doing in a natural, matter-of-fact way.
-
-        - **Move forward with each message**: Each message should progress the conversation. Acknowledge once, then move to categorization, then to specifics.
-
-        **3. VARY YOUR ACTION VERBS AND USE COMPLETED ACTIONS (when you do use full sentences):**
-        - "I've selected... and we're proceeding"
-        - "Since [reason], I've categorized this under... We're moving to the next step"
-        - "I've marked this as... moving forward now"
-        - "That's definitely a... issue—I've logged that and proceeding"
-        - "Within that, I've chosen... and we're continuing"
-        - "And I've specifically recorded this as... Bear with me as we proceed"
-
-        **4. VARY YOUR OPENERS (when you do use full sentences):**
-        - No opener - just dive into the statement
-        - "Since..." (causal)
-        - "You mentioned..." (reference)
-        - "For [X] specifically..." (specificity)
-        - Occasionally: "Perfect," "Right," (but NOT consecutively)
-
-        ---
-        ### **🗣️ MESSAGE QUALITY CHECKLIST**
-
-        **Every message you send (acknowledgment or question) MUST:**
-        ✓ **CHECK TRANSCRIPT FIRST** - Before creating ANY acknowledgment, check recent transcript (last 3-5 messages). If acknowledgment exists, create navigation message only.
-        ✓ **CONFIRM ACTION COMPLETE** - Use past tense and explicitly state we're moving forward.
-        ✓ Explicitly name the category/option you've chosen (use **bold** for emphasis)
-        ✓ Acknowledge what the user just said ONCE (show you're listening) - only if you haven't already
-        ✓ **MOVE FORWARD WITH EACH MESSAGE** - Each message should progress the conversation from general to specific
-        ✓ **BE 2-3 SENTENCES LONG** - When acknowledging NEW information that hasn't been acknowledged yet
-        ✓ **VARY YOUR SENTENCE STRUCTURE** - Rotate between different openers and structures
-        ✓ Flow naturally from the last 2 conversation turns (seamless continuation)
-        ✓ **VARY YOUR COMPLETION PHRASES** - Rotate between "and we're proceeding," "moving forward," "We're proceeding now to," "Bear with me as we proceed"
-        ✓ **VARY YOUR OPENERS** - Use different opening phrases for consecutive messages
-        """
-
-        # Dynamic prompt parts (question-specific, not cacheable)
-        dynamic_prompt = f"""
-        ---
-        ### **🎯 YOUR CURRENT MISSION**
-        Determine the user's answer to the question: **'{question}'**
-
-        {schema_requirement}
-        ---
-        ### **🚨 CRITICAL FINAL STEP**
-        {final_requirement}
-        """
+        static_prompt, dynamic_prompt = build_ask_handle_prompt(
+            question=question,
+            recent_transcript=recent_transcript_for_prompt,
+            response_format_schema=response_format_schema,
+            task_instructions=task_instructions,
+        )
 
         # Build content array with optional handler context
         content_parts = [
@@ -411,17 +241,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                 "text": dynamic_prompt,
             },
         ]
-
-        content_parts.append(
-            {
-                "type": "text",
-                "text": f"""
-        ---
-        ### **📋 RECENT TRANSCRIPT CONTEXT**
-        {recent_transcript_for_prompt}
-        """,
-            },
-        )
 
         system_header_msg = {
             "role": "system",
