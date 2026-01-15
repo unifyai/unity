@@ -60,6 +60,15 @@ def _build_response_models() -> dict:
 _RESPONSE_MODELS = _build_response_models()
 
 
+def build_response_models() -> dict:
+    """
+    Public accessor for response models used by ConversationManager's brain.
+
+    Returns cached models for different modes (call, unify_meet, text).
+    """
+    return _RESPONSE_MODELS
+
+
 @dataclass(frozen=True)
 class BrainSpec:
     """
