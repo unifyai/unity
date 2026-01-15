@@ -450,8 +450,19 @@ _create_orchestra_log_symlinks() {
 }
 
 # Resolve orchestra repo path (default: sibling directory)
-_orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$REPO_ROOT/../orchestra}"
+# For worktrees, look relative to the MAIN repo, not the worktree
+_orchestra_search_base="$REPO_ROOT"
+if _git_common_dir="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
+  # If git-common-dir differs from $REPO_ROOT/.git, we're in a worktree
+  # Use the main repo's parent as the search base for orchestra
+  _main_repo_git="${_git_common_dir%/}"
+  if [[ "$_main_repo_git" != "$REPO_ROOT/.git" ]]; then
+    _orchestra_search_base="$(dirname "$_main_repo_git")"
+  fi
+fi
+_orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$_orchestra_search_base/../orchestra}"
 _local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
+unset _git_common_dir _main_repo_git _orchestra_search_base
 
 if _is_local_url "${UNIFY_BASE_URL:-}"; then
   if [[ -x "$_local_orchestra_script" ]]; then
