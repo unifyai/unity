@@ -820,19 +820,26 @@ class FileTools(TypedDict, total=False):
 
 class _AsyncMethodProxy:
     """
-    Generic proxy that makes all methods on an object awaitable.
+    Generic proxy that makes public methods on an object awaitable.
 
-    Sync methods are automatically wrapped with asyncio.to_thread so callers
-    can consistently use `await` without knowing the underlying implementation.
-    Async methods are called directly. Non-callable attributes are returned as-is.
+    Only exposes public methods (those not starting with '_'). Sync methods
+    are automatically wrapped with asyncio.to_thread so callers can consistently
+    use `await` without knowing the underlying implementation. Async methods
+    are called directly.
 
     This uses the same pattern as the async tool loop (see _async_tool/tools_data.py).
     """
 
     def __init__(self, wrapped: Any):
-        self._wrapped = wrapped
+        object.__setattr__(self, "_wrapped", wrapped)
 
     def __getattr__(self, name: str) -> Any:
+        # Block access to private/internal attributes
+        if name.startswith("_"):
+            raise AttributeError(
+                f"'{type(self._wrapped).__name__}' primitive has no attribute '{name}'",
+            )
+
         attr = getattr(self._wrapped, name)
 
         # Non-callable attributes pass through directly
