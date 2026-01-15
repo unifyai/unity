@@ -157,8 +157,15 @@ class ConversationManagerBrainActionTools:
         """
         Wait for more input without taking any action.
 
-        Use this when there is nothing to do at the moment - for example,
-        when waiting for a contact to respond or for a task to complete.
+        PREFER THIS TOOL over sending messages in most situations. Call this tool:
+        - After completing a request (let the user respond first)
+        - When there are no NEW messages requiring response
+        - When unsure whether to speak (when in doubt, wait)
+        - To let the conversation end naturally
+
+        The user should usually have the last word. Do not send follow-up
+        messages, additional information, or "anything else?" prompts unless
+        the user explicitly asks for more.
         """
         return {"status": "waiting"}
 
