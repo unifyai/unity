@@ -168,9 +168,45 @@ class BaseFileManager(BaseStateManager):
     # Unify-backed retrieval (public tools)                              #
     # ------------------------------------------------------------------ #
     @abstractmethod
+    def describe(
+        self,
+        *,
+        file_path: Optional[str] = None,
+        file_id: Optional[int] = None,
+    ) -> Any:
+        """
+        Return a complete storage representation of a file in the Unify backend.
+
+        This is the primary discovery tool for understanding how a file's data
+        is stored. It returns all context paths, schemas, and identifiers needed
+        for accurate filter/search/reduce operations.
+
+        Use describe() BEFORE calling filter_files(), search_files(), or reduce()
+        to obtain the exact context paths for your queries.
+
+        Parameters
+        ----------
+        file_path : str | None
+            The filesystem path of the file. Either file_path or file_id must be provided.
+        file_id : int | None
+            The stable unique identifier from FileRecords. Either file_path or
+            file_id must be provided. Using file_id is preferred when available.
+
+        Returns
+        -------
+        FileStorageMap
+            Complete storage representation including file_id, file_path,
+            document info, table infos, index_context, and flags.
+        """
+
+    @abstractmethod
     def file_info(self, *, identifier: Union[str, int]) -> Any:
         """
         Return comprehensive information about a file's status and ingest identity.
+
+        .. deprecated::
+            Use describe(file_path=...) or describe(file_id=...) instead for
+            comprehensive file discovery with exact context paths and schemas.
 
         Parameters
         ----------
@@ -197,6 +233,10 @@ class BaseFileManager(BaseStateManager):
     ) -> Dict[str, Dict[str, Any]]:
         """
         Return an overview of available tables/contexts managed by this FileManager.
+
+        .. deprecated::
+            Use describe(file_path=...) instead for file-specific discovery.
+            describe() returns FileStorageMap with exact context paths and schemas.
 
         Parameters
         ----------
@@ -238,21 +278,25 @@ class BaseFileManager(BaseStateManager):
         self,
         *,
         include_types: bool = True,
-        table: Optional[str] = None,
+        context: Optional[str] = None,
     ) -> Dict[str, Any] | List[str]:
         """
         Return the schema for a context managed by this FileManager.
+
+        Use describe() first to obtain the exact context path, then use
+        list_columns() for detailed schema inspection if needed.
 
         Parameters
         ----------
         include_types : bool, default True
             When True, return a mapping of column → logical type. When False,
             return just the list of column names.
-        table : str | None, default None
-            Logical table name or fully-qualified context. When None, returns
-            the FileRecords (index) columns. When provided, resolves logical
-            names (e.g., "<root>", "<root>.Tables.<label>") to the correct
-            context and returns its columns.
+        context : str | None, default None
+            Full Unify context path to inspect. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
+            When None, returns the FileRecords (index) columns.
 
         Returns
         -------
@@ -264,93 +308,117 @@ class BaseFileManager(BaseStateManager):
     def filter_files(
         self,
         *,
+        context: Optional[str] = None,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        tables: Optional[Union[str, List[str]]] = None,
+        columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Filter the FileRecords index or resolve-and-filter per-file contexts.
+        Filter rows from a context using exact match expressions.
+
+        Use describe() first to get the exact context path.
 
         Parameters
         ----------
+        context : str | None
+            Full Unify context path to filter. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
+            When None, defaults to the FileRecords index.
         filter : str | None
-            Row-level predicate evaluated per context (column names in scope).
+            Row-level predicate evaluated per row (column names in scope).
         offset : int
-            Pagination offset per context.
+            Pagination offset.
         limit : int
-            Maximum rows per context (<= 1000).
-        tables : str | list[str] | None
-            Logical table names from `tables_overview()` (preferred) or legacy
-            refs. When None, only the FileRecords index is scanned.
+            Maximum rows to return.
+        columns : list[str] | None
+            Specific columns to return. When None, returns all columns.
 
         Returns
         -------
         list[dict]
-            Flat list of rows (index-only when tables=None, concatenated when tables provided).
-
-        Notes
-        -----
-        - For text-heavy questions, prefer semantic search over joins.
-        - When joining or scanning per-file contexts, consider calling
-          `tables_overview(file=...)` first and then `list_columns(table=...)`
-          to choose the correct columns for filters.
+            Flat list of matching rows from the context.
         """
 
     @abstractmethod
     def search_files(
         self,
         *,
+        context: Optional[str] = None,
         references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-        table: Optional[str] = None,
+        limit: int = 10,
         filter: Optional[str] = None,
+        columns: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Semantic search over a resolved context using Unify vector columns and references.
+        Semantic search over a context using reference texts for similarity matching.
 
-        Notes
-        -----
-        - The `table` parameter narrows the target context. It accepts logical
-          names from `tables_overview()` (e.g., "FileRecords", "<root>",
-          "<root>.Tables.<label>") or legacy refs and resolves them identically to
-          join tools and `_list_columns(table=...)`.
-        - The `filter` parameter is a row-level predicate (evaluated with column
-          names as variables) applied before ranking/backfill.
+        Use describe() first to get the exact context path and check which
+        columns are searchable (have embeddings).
+
+        Parameters
+        ----------
+        context : str | None
+            Full Unify context path to search. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
+            When None, defaults to the FileRecords index.
+        references : dict[str, str] | None
+            Mapping of column names → reference texts for semantic matching.
+            Only searchable columns (with embeddings) can be used.
+        limit : int
+            Maximum rows to return.
+        filter : str | None
+            Row-level predicate applied before ranking.
+        columns : list[str] | None
+            Specific columns to return. When None, returns all columns.
+
+        Returns
+        -------
+        list[dict]
+            Top-k rows ranked by semantic similarity.
         """
 
     @abstractmethod
     def reduce(
         self,
         *,
-        table: Optional[str] = None,
+        context: Optional[str] = None,
         metric: str,
-        keys: Union[str, List[str]],
-        filter: Optional[Union[str, Dict[str, str]]] = None,
+        column: str,
+        filter: Optional[str] = None,
         group_by: Optional[Union[str, List[str]]] = None,
     ) -> Any:
         """
-        Compute reduction metrics over the FileRecords index or a resolved table.
+        Compute aggregation metrics over a context.
+
+        Use describe() first to get the exact context path.
 
         Parameters
         ----------
-        table : str | None, default None
-            Table reference to aggregate. When None, aggregates over the main
-            FileRecords index.
+        context : str | None
+            Full Unify context path to aggregate. Obtain this from describe():
+            - storage.document.context_path for document content
+            - storage.tables[0].context_path for a specific table
+            - storage.index_context for the FileRecords index
+            When None, aggregates over the FileRecords index.
         metric : str
             Reduction metric: "count", "sum", "mean", "min", "max", "median",
             "mode", "var", "std".
-        keys : str | list[str]
-            Column(s) to aggregate.
-        filter : str | dict[str, str] | None
-            Optional row-level filter expression(s).
+        column : str
+            Column to aggregate.
+        filter : str | None
+            Optional row-level filter expression applied before aggregation.
         group_by : str | list[str] | None
             Optional column(s) to group by.
 
         Returns
         -------
         Any
-            Metric value(s) computed over the resolved context.
+            Metric value(s) computed over the context.
         """
 
     @abstractmethod
