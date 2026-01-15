@@ -11,7 +11,7 @@ from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
-from unity.conversation_manager.events import _get_now
+from unity.common.prompt_helpers import now as prompt_now
 from unity.events.event_bus import EVENT_BUS
 from unity.manager_registry import ManagerRegistry
 
@@ -186,7 +186,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         )
     )
     if timestamp:
-        delta = _get_now() - timestamp
+        delta = prompt_now(as_string=False) - timestamp
         if role == "Assistant":
             delta += timedelta(seconds=2)
         minutes, seconds = divmod(int(delta.total_seconds()), 60)
@@ -342,8 +342,8 @@ def _init_managers(
                 "email": SESSION_DETAILS.assistant.email or None,
                 "user_id": SESSION_DETAILS.user.id,
                 "user_phone": SESSION_DETAILS.user.number or None,
-                "created_at": _get_now().isoformat(),
-                "updated_at": _get_now().isoformat(),
+                "created_at": prompt_now(as_string=False).isoformat(),
+                "updated_at": prompt_now(as_string=False).isoformat(),
                 "surname": "",
                 "weekly_limit": None,
                 "max_parallel": None,

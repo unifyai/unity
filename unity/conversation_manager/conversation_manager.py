@@ -24,7 +24,7 @@ from unity.conversation_manager.domains.brain_tools import ConversationManagerBr
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import *
-from unity.conversation_manager.events import _get_now
+from unity.common.prompt_helpers import now as prompt_now
 
 from unity.common.llm_client import new_llm_client
 from unity.common.single_shot import single_shot_tool_decision
@@ -142,7 +142,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.active_tasks: dict[int, dict] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
-        self.last_snapshot = _get_now()
+        self.last_snapshot = prompt_now(as_string=False)
         self._current_snapshot = None
         self.is_summarizing = None
         self.max_messages = 30
@@ -166,7 +166,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
     def snapshot(self):
-        self._current_snapshot = _get_now()
+        self._current_snapshot = prompt_now(as_string=False)
         return self._current_snapshot
 
     def commit(self):
@@ -610,7 +610,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             # Calculate elapsed time from last message timestamp
             if last_message_timestamp:
-                now = _get_now()
+                now = prompt_now(as_string=False)
                 if isinstance(last_message_timestamp, datetime):
                     elapsed_seconds = (now - last_message_timestamp).total_seconds()
                 else:

@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import Field
 
 from unity.contact_manager.types.contact import Contact as ContactType
-from unity.conversation_manager.events import _get_now
+from unity.common.prompt_helpers import now as prompt_now
 
 
 class Contact(ContactType):
@@ -82,7 +82,7 @@ class ContactIndex:
         role: Literal["user", "assistant"] = "user",
     ):
         if not timestamp:
-            timestamp = _get_now()
+            timestamp = prompt_now(as_string=False)
         contact_id = contact["contact_id"]
         if contact_id not in self.active_conversations:
             self.active_conversations[contact_id] = Contact(**contact)

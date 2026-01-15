@@ -119,9 +119,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure
     # ─────────────────────────────────────────────────────────────────────────
-    # Fixed datetime for LLM cache consistency in tests (ISO format string)
-    # When set, _get_now() returns this fixed datetime instead of datetime.now()
-    UNITY_FIXED_DATETIME: str = ""
     # Log subdirectory for LLM I/O log files (datetime-prefixed for ordering)
     UNITY_LOG_SUBDIR: str = ""
     # Terminal socket name for tmux isolation; also used as log subdir fallback
