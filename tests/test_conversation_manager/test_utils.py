@@ -31,6 +31,7 @@ from unity.conversation_manager.domains.notifications import (
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.domains.contact_index import (
     Contact,
+    ContactIndex,
     Message,
     EmailMessage,
 )
@@ -530,6 +531,246 @@ class TestRenderer:
         assert 'surname="Doe"' in result
         assert 'is_boss="True"' in result
         assert "<bio>Test bio</bio>" in result
+
+    def test_global_thread_rendered_before_per_medium_threads(self, renderer):
+        """Global thread appears before per-medium threads in rendered output."""
+        contact = Contact(
+            contact_id=1,
+            first_name="John",
+            surname="Doe",
+            bio="Test bio",
+            rolling_summary="Test summary",
+            response_policy="Be polite",
+        )
+        # Add messages to both global and per-medium threads
+        ts = datetime.now()
+        msg = Message(name="John", content="Hello!", timestamp=ts)
+        contact.global_thread.append(msg)
+        contact.threads["sms"].append(msg)
+
+        last_snapshot = datetime.now() - timedelta(hours=1)
+        result = renderer.render_contact(contact, last_snapshot=last_snapshot)
+
+        # Global thread should appear before sms thread
+        global_pos = result.find("<global>")
+        sms_pos = result.find("<sms>")
+        assert global_pos != -1, "Global thread should be rendered"
+        assert sms_pos != -1, "SMS thread should be rendered"
+        assert (
+            global_pos < sms_pos
+        ), "Global thread should appear before per-medium threads"
+
+    def test_global_thread_shows_more_messages_than_per_medium(self, renderer):
+        """Global thread renders up to 50 messages while per-medium shows 5."""
+        contact = Contact(
+            contact_id=1,
+            first_name="John",
+            surname="Doe",
+            bio="Test bio",
+            rolling_summary="Test summary",
+            response_policy="Be polite",
+        )
+        # Add 10 messages to both threads
+        base_time = datetime.now()
+        for i in range(10):
+            ts = base_time + timedelta(minutes=i)
+            msg = Message(name="John", content=f"Message {i}", timestamp=ts)
+            contact.global_thread.append(msg)
+            contact.threads["sms"].append(msg)
+
+        last_snapshot = datetime.now() - timedelta(hours=1)
+        result = renderer.render_contact(contact, last_snapshot=last_snapshot)
+
+        # Global thread should have all 10 messages
+        for i in range(10):
+            assert f"Message {i}" in result, f"Message {i} should be in output"
+
+        # Count occurrences in global vs sms sections
+        global_section = result[result.find("<global>") : result.find("</global>")]
+        sms_section = result[result.find("<sms>") : result.find("</sms>")]
+
+        # Global should have all 10
+        for i in range(10):
+            assert f"Message {i}" in global_section, f"Message {i} should be in global"
+
+        # SMS should only have last 5 (default max_messages=5)
+        for i in range(5):
+            assert (
+                f"Message {i}" not in sms_section
+            ), f"Message {i} should NOT be in sms (too old)"
+        for i in range(5, 10):
+            assert f"Message {i}" in sms_section, f"Message {i} should be in sms"
+
+    def test_empty_global_thread_not_rendered(self, renderer, sample_contact):
+        """Empty global thread is not rendered."""
+        last_snapshot = datetime.now()
+        result = renderer.render_contact(sample_contact, last_snapshot=last_snapshot)
+        assert "<global>" not in result
+
+
+# =============================================================================
+# domains/contact_index.py tests
+# =============================================================================
+
+
+class TestContactIndex:
+    """Tests for ContactIndex class and global thread functionality."""
+
+    @pytest.fixture
+    def contact_index(self):
+        return ContactIndex()
+
+    @pytest.fixture
+    def sample_contact_dict(self):
+        return {
+            "contact_id": 1,
+            "first_name": "John",
+            "surname": "Doe",
+            "phone_number": "+15551234567",
+            "email_address": "john@example.com",
+            "bio": "Test bio",
+            "rolling_summary": "Test summary",
+            "response_policy": "Be polite",
+        }
+
+    def test_push_message_adds_to_global_thread(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """push_message adds message to both per-medium and global thread."""
+        contact_index.push_message(
+            sample_contact_dict,
+            "sms",
+            message_content="Hello!",
+        )
+
+        contact = contact_index.active_conversations[1]
+        assert len(contact.threads["sms"]) == 1
+        assert len(contact.global_thread) == 1
+        assert contact.threads["sms"][0].content == "Hello!"
+        assert contact.global_thread[0].content == "Hello!"
+
+    def test_global_thread_aggregates_all_mediums(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Global thread contains messages from all mediums."""
+        contact_index.push_message(
+            sample_contact_dict,
+            "sms",
+            message_content="SMS message",
+        )
+        contact_index.push_message(
+            sample_contact_dict,
+            "voice",
+            message_content="Voice message",
+        )
+        contact_index.push_message(
+            sample_contact_dict,
+            "email",
+            subject="Email subject",
+            body="Email body",
+        )
+
+        contact = contact_index.active_conversations[1]
+
+        # Each per-medium thread has 1 message
+        assert len(contact.threads["sms"]) == 1
+        assert len(contact.threads["voice"]) == 1
+        assert len(contact.threads["email"]) == 1
+
+        # Global thread has all 3
+        assert len(contact.global_thread) == 3
+
+    def test_global_thread_retains_more_messages_than_per_medium(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Global thread (maxlen=50) retains messages after per-medium (maxlen=25) drops them."""
+        # Push 30 messages to SMS - exceeds per-medium maxlen of 25
+        for i in range(30):
+            contact_index.push_message(
+                sample_contact_dict,
+                "sms",
+                message_content=f"Message {i}",
+            )
+
+        contact = contact_index.active_conversations[1]
+
+        # Per-medium thread capped at 25
+        assert len(contact.threads["sms"]) == 25
+        # First 5 messages dropped from per-medium
+        assert contact.threads["sms"][0].content == "Message 5"
+
+        # Global thread has all 30
+        assert len(contact.global_thread) == 30
+        # First message still present in global
+        assert contact.global_thread[0].content == "Message 0"
+
+    def test_global_thread_maxlen_is_50(self, contact_index, sample_contact_dict):
+        """Global thread has maxlen of 50."""
+        # Push 60 messages
+        for i in range(60):
+            contact_index.push_message(
+                sample_contact_dict,
+                "sms",
+                message_content=f"Message {i}",
+            )
+
+        contact = contact_index.active_conversations[1]
+
+        # Global thread capped at 50
+        assert len(contact.global_thread) == 50
+        # First 10 messages dropped
+        assert contact.global_thread[0].content == "Message 10"
+
+    def test_global_thread_preserves_chronological_order(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Messages in global thread maintain chronological order across mediums."""
+        base_time = datetime.now()
+
+        # Interleave messages from different mediums
+        contact_index.push_message(
+            sample_contact_dict,
+            "sms",
+            message_content="SMS 1",
+            timestamp=base_time,
+        )
+        contact_index.push_message(
+            sample_contact_dict,
+            "email",
+            subject="Email 1",
+            body="Body 1",
+            timestamp=base_time + timedelta(minutes=1),
+        )
+        contact_index.push_message(
+            sample_contact_dict,
+            "voice",
+            message_content="Voice 1",
+            timestamp=base_time + timedelta(minutes=2),
+        )
+        contact_index.push_message(
+            sample_contact_dict,
+            "sms",
+            message_content="SMS 2",
+            timestamp=base_time + timedelta(minutes=3),
+        )
+
+        contact = contact_index.active_conversations[1]
+
+        # Verify chronological order in global thread
+        assert len(contact.global_thread) == 4
+        assert contact.global_thread[0].content == "SMS 1"
+        # Email messages store content differently
+        assert contact.global_thread[1].subject == "Email 1"
+        assert contact.global_thread[2].content == "Voice 1"
+        assert contact.global_thread[3].content == "SMS 2"
 
 
 # =============================================================================
