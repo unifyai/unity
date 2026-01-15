@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 
 # Test contacts used across all tests
+# contact_id 1 is the "boss" (main user), others are additional contacts
 TEST_CONTACTS = [
     {
         "contact_id": 0,
@@ -43,6 +44,20 @@ TEST_CONTACTS = [
         "surname": "Contact",
         "email_address": "test@contact.com",
         "phone_number": "+15555551111",
+    },
+    {
+        "contact_id": 2,
+        "first_name": "Alice",
+        "surname": "Smith",
+        "email_address": "alice@example.com",
+        "phone_number": "+15555552222",
+    },
+    {
+        "contact_id": 3,
+        "first_name": "Bob",
+        "surname": "Johnson",
+        "email_address": "bob@example.com",
+        "phone_number": "+15555553333",
     },
 ]
 
