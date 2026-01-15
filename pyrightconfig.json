@@ -1,3 +1,4 @@
 {
-  "extraPaths": ["../unillm", "../unify"]
+  "extraPaths": ["../unillm", "../unify"],
+  "reportArgumentType": false
 }
