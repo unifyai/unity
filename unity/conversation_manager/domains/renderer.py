@@ -83,7 +83,8 @@ class Renderer:
         return f"<{thread_name}>\n" f"{messages}\n" f"</{thread_name}>"
 
     def render_message(self, message: Message, last_snapshot: datetime = None):
-        is_new = last_snapshot < message.timestamp
+        # Only mark incoming messages (not from "You") as NEW
+        is_new = last_snapshot < message.timestamp and message.name != "You"
         if isinstance(message, EmailMessage):
             return (
                 f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:\n"""
