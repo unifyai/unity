@@ -4,15 +4,19 @@ tests/test_conversation_manager/test_comms.py
 
 Tests for communication flows (SMS, email, calls, etc.)
 
-Uses the ConversationManager "single-step" API:
-- Construct an input Event
-- Call `await cm._step(event)`
-- Assert on the returned output events and/or resulting state
+Uses the ConversationManager "_step_until_wait" API which:
+- Processes an input Event
+- Runs the LLM in a loop until it calls 'wait' (no-op)
+- Collects all output events produced
+
+This allows the LLM to:
+1. Acknowledge on the inbound channel (e.g., reply via SMS)
+2. Send the requested communication on the target channel (e.g., email)
+3. Call 'wait' when done
 
 Voice call tests verify that events are handled correctly. In the voice
 architecture, the Main CM Brain only provides guidance to the Voice Agent
-(fast brain) - it doesn't produce speech directly. The Voice Agent handles
-all conversational responses. These tests verify event flow, not speech output.
+(fast brain) - it doesn't produce speech directly.
 """
 
 import pytest
@@ -44,22 +48,32 @@ def _only(events, typ):
     return [e for e in events if isinstance(e, typ)]
 
 
+def _has_any(events, typ):
+    return len(_only(events, typ)) >= 1
+
+
+# ---------------------------------------------------------------------------
+#  Text-based communication tests (SMS, Email, UnifyMessage)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_sms_to_sms(initialized_cm):
+    """SMS request for joke -> reply via SMS."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke",
         ),
     )
 
-    out = _only(result.output_events, SMSSent)
-    assert len(out) >= 1
-    sms = out[0]
+    # Should have at least one SMS sent (the reply)
+    assert _has_any(result.output_events, SMSSent)
+    sms = _only(result.output_events, SMSSent)[0]
     assert sms.contact["phone_number"] == contact["phone_number"]
     assert sms.content
 
@@ -67,19 +81,20 @@ async def test_sms_to_sms(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_sms_to_email(initialized_cm):
+    """SMS request for joke via email -> should send email (may also ack via SMS)."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke via email",
         ),
     )
 
-    out = _only(result.output_events, EmailSent)
-    assert len(out) >= 1
-    email = out[0]
+    # Must have email sent (the target)
+    assert _has_any(result.output_events, EmailSent)
+    email = _only(result.output_events, EmailSent)[0]
     assert email.contact["email_address"] == contact["email_address"]
     assert email.body
 
@@ -87,19 +102,20 @@ async def test_sms_to_email(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_sms_to_unify_message(initialized_cm):
+    """SMS request for joke via unify message -> should send unify message."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke via unify message",
         ),
     )
 
-    out = _only(result.output_events, UnifyMessageSent)
-    assert len(out) >= 1
-    msg = out[0]
+    # Must have unify message sent (the target)
+    assert _has_any(result.output_events, UnifyMessageSent)
+    msg = _only(result.output_events, UnifyMessageSent)[0]
     assert msg.contact["contact_id"] == contact["contact_id"]
     assert msg.content
 
@@ -107,29 +123,31 @@ async def test_sms_to_unify_message(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_sms_to_phone_call(initialized_cm):
+    """SMS request for joke via phone call -> should initiate call."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         SMSReceived(
             contact=contact,
             content="Tell me a joke via phone call",
         ),
     )
 
-    out = _only(result.output_events, PhoneCallSent)
-    assert len(out) >= 1
-    call = out[0]
+    # Must have phone call initiated (the target)
+    assert _has_any(result.output_events, PhoneCallSent)
+    call = _only(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_email_to_email(initialized_cm):
+    """Email request for joke -> reply via email."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -138,9 +156,9 @@ async def test_email_to_email(initialized_cm):
         ),
     )
 
-    out = _only(result.output_events, EmailSent)
-    assert len(out) >= 1
-    email = out[0]
+    # Should have at least one email sent (the reply)
+    assert _has_any(result.output_events, EmailSent)
+    email = _only(result.output_events, EmailSent)[0]
     assert email.contact["email_address"] == contact["email_address"]
     assert email.subject
     assert email.body
@@ -149,10 +167,11 @@ async def test_email_to_email(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_email_to_sms(initialized_cm):
+    """Email request for joke via SMS -> should send SMS."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -161,9 +180,9 @@ async def test_email_to_sms(initialized_cm):
         ),
     )
 
-    out = _only(result.output_events, SMSSent)
-    assert len(out) >= 1
-    sms = out[0]
+    # Must have SMS sent (the target)
+    assert _has_any(result.output_events, SMSSent)
+    sms = _only(result.output_events, SMSSent)[0]
     assert sms.contact["phone_number"] == contact["phone_number"]
     assert sms.content
 
@@ -171,10 +190,11 @@ async def test_email_to_sms(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_email_to_unify_message(initialized_cm):
+    """Email request for joke via unify message -> should send unify message."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -183,9 +203,9 @@ async def test_email_to_unify_message(initialized_cm):
         ),
     )
 
-    out = _only(result.output_events, UnifyMessageSent)
-    assert len(out) >= 1
-    msg = out[0]
+    # Must have unify message sent (the target)
+    assert _has_any(result.output_events, UnifyMessageSent)
+    msg = _only(result.output_events, UnifyMessageSent)[0]
     assert msg.contact["contact_id"] == contact["contact_id"]
     assert msg.content
 
@@ -193,10 +213,11 @@ async def test_email_to_unify_message(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_email_to_phone_call(initialized_cm):
+    """Email request for joke via phone call -> should initiate call."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         EmailReceived(
             contact=contact,
             subject="Test Subject",
@@ -205,28 +226,29 @@ async def test_email_to_phone_call(initialized_cm):
         ),
     )
 
-    out = _only(result.output_events, PhoneCallSent)
-    assert len(out) >= 1
-    call = out[0]
+    # Must have phone call initiated (the target)
+    assert _has_any(result.output_events, PhoneCallSent)
+    call = _only(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_message_to_unify_message(initialized_cm):
+    """Unify message request for joke -> reply via unify message."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke",
         ),
     )
 
-    out = _only(result.output_events, UnifyMessageSent)
-    assert len(out) >= 1
-    msg = out[0]
+    # Should have at least one unify message sent (the reply)
+    assert _has_any(result.output_events, UnifyMessageSent)
+    msg = _only(result.output_events, UnifyMessageSent)[0]
     assert msg.contact["contact_id"] == contact["contact_id"]
     assert msg.content
 
@@ -234,19 +256,20 @@ async def test_unify_message_to_unify_message(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_message_to_sms(initialized_cm):
+    """Unify message request for joke via SMS -> should send SMS."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke via SMS",
         ),
     )
 
-    out = _only(result.output_events, SMSSent)
-    assert len(out) >= 1
-    sms = out[0]
+    # Must have SMS sent (the target)
+    assert _has_any(result.output_events, SMSSent)
+    sms = _only(result.output_events, SMSSent)[0]
     assert sms.contact["phone_number"] == contact["phone_number"]
     assert sms.content
 
@@ -254,19 +277,20 @@ async def test_unify_message_to_sms(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_message_to_email(initialized_cm):
+    """Unify message request for joke via email -> should send email."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke via email",
         ),
     )
 
-    out = _only(result.output_events, EmailSent)
-    assert len(out) >= 1
-    email = out[0]
+    # Must have email sent (the target)
+    assert _has_any(result.output_events, EmailSent)
+    email = _only(result.output_events, EmailSent)[0]
     assert email.contact["email_address"] == contact["email_address"]
     assert email.body
 
@@ -274,25 +298,32 @@ async def test_unify_message_to_email(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_message_to_phone_call(initialized_cm):
+    """Unify message request for joke via phone call -> should initiate call."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         UnifyMessageReceived(
             contact=contact,
             content="Tell me a joke via phone call",
         ),
     )
 
-    out = _only(result.output_events, PhoneCallSent)
-    assert len(out) >= 1
-    call = out[0]
+    # Must have phone call initiated (the target)
+    assert _has_any(result.output_events, PhoneCallSent)
+    call = _only(result.output_events, PhoneCallSent)[0]
     assert call.contact["phone_number"] == contact["phone_number"]
+
+
+# ---------------------------------------------------------------------------
+#  Voice call tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_phone_call(initialized_cm):
+    """Basic phone call flow - just verify utterance is recorded."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
@@ -316,6 +347,7 @@ async def test_phone_call(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_phone_call_to_sms(initialized_cm):
+    """During phone call, request joke via SMS -> should send SMS."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
@@ -327,15 +359,15 @@ async def test_phone_call_to_sms(initialized_cm):
     )
     await cm._step(PhoneCallStarted(contact=contact))
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         InboundPhoneUtterance(
             contact=contact,
-            content="Tell me a joke via SMS right now",
+            content="Send me a joke via SMS right now",
         ),
     )
 
-    out = _only(result.output_events, SMSSent)
-    assert len(out) >= 1
+    # Must have SMS sent
+    assert _has_any(result.output_events, SMSSent)
 
     await cm._step(PhoneCallEnded(contact=contact))
 
@@ -343,6 +375,7 @@ async def test_phone_call_to_sms(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_phone_call_to_email(initialized_cm):
+    """During phone call, request joke via email -> should send email."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
@@ -354,15 +387,15 @@ async def test_phone_call_to_email(initialized_cm):
     )
     await cm._step(PhoneCallStarted(contact=contact))
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         InboundPhoneUtterance(
             contact=contact,
-            content="Tell me a joke via email right now",
+            content="Send me a joke via email right now",
         ),
     )
 
-    out = _only(result.output_events, EmailSent)
-    assert len(out) >= 1
+    # Must have email sent
+    assert _has_any(result.output_events, EmailSent)
 
     await cm._step(PhoneCallEnded(contact=contact))
 
@@ -370,6 +403,7 @@ async def test_phone_call_to_email(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_phone_call_to_unify_message(initialized_cm):
+    """During phone call, request joke via unify message -> should send unify message."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
@@ -381,22 +415,28 @@ async def test_phone_call_to_unify_message(initialized_cm):
     )
     await cm._step(PhoneCallStarted(contact=contact))
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         InboundPhoneUtterance(
             contact=contact,
-            content="Tell me a joke via unify message right now",
+            content="Send me a joke via unify message right now",
         ),
     )
 
-    out = _only(result.output_events, UnifyMessageSent)
-    assert len(out) >= 1
+    # Must have unify message sent
+    assert _has_any(result.output_events, UnifyMessageSent)
 
     await cm._step(PhoneCallEnded(contact=contact))
+
+
+# ---------------------------------------------------------------------------
+#  Unify Meet tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_meet(initialized_cm):
+    """Basic unify meet flow - just verify utterance is recorded."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
@@ -420,21 +460,22 @@ async def test_unify_meet(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_meet_to_sms(initialized_cm):
+    """During unify meet, request joke via SMS -> should send SMS."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
     await cm._step(UnifyMeetReceived(contact=contact))
     await cm._step(UnifyMeetStarted(contact=contact))
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         InboundUnifyMeetUtterance(
             contact=contact,
-            content="Tell me a joke via sms right now",
+            content="Send me a joke via sms right now",
         ),
     )
 
-    out = _only(result.output_events, SMSSent)
-    assert len(out) >= 1
+    # Must have SMS sent
+    assert _has_any(result.output_events, SMSSent)
 
     await cm._step(UnifyMeetEnded(contact=contact))
 
@@ -442,21 +483,22 @@ async def test_unify_meet_to_sms(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_meet_to_email(initialized_cm):
+    """During unify meet, request joke via email -> should send email."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
     await cm._step(UnifyMeetReceived(contact=contact))
     await cm._step(UnifyMeetStarted(contact=contact))
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         InboundUnifyMeetUtterance(
             contact=contact,
-            content="Tell me a joke via email right now",
+            content="Send me a joke via email right now",
         ),
     )
 
-    out = _only(result.output_events, EmailSent)
-    assert len(out) >= 1
+    # Must have email sent
+    assert _has_any(result.output_events, EmailSent)
 
     await cm._step(UnifyMeetEnded(contact=contact))
 
@@ -464,20 +506,21 @@ async def test_unify_meet_to_email(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_unify_meet_to_unify_message(initialized_cm):
+    """During unify meet, request joke via unify message -> should send unify message."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
     await cm._step(UnifyMeetReceived(contact=contact))
     await cm._step(UnifyMeetStarted(contact=contact))
 
-    result = await cm._step(
+    result = await cm._step_until_wait(
         InboundUnifyMeetUtterance(
             contact=contact,
-            content="Tell me a joke via unify message right now",
+            content="Send me a joke via unify message right now",
         ),
     )
 
-    out = _only(result.output_events, UnifyMessageSent)
-    assert len(out) >= 1
+    # Must have unify message sent
+    assert _has_any(result.output_events, UnifyMessageSent)
 
     await cm._step(UnifyMeetEnded(contact=contact))
