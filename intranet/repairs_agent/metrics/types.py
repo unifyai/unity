@@ -22,8 +22,8 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
-# Re-export plot types from viz_utils (canonical source)
-from unity.file_manager.managers.utils.viz_utils import (
+# Re-export plot types from DataManager (canonical source)
+from unity.data_manager.types import (
     PlotConfig,
     PlotResult,
     PlotType,

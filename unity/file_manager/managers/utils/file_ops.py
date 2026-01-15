@@ -55,9 +55,14 @@ def build_compact_ingest_model(
     def _ctype(r: FileContentRow) -> ContentType:
         return getattr(r, "content_type", None)
 
-    # Identity via file_info (returns FileInfo Pydantic model)
-    info = file_manager.file_info(identifier=file_path)
-    source_uri = info.source_uri
+    # Identity via describe() API (returns FileStorageMap)
+    # If file is not yet indexed, fall back to adapter-based identity
+    try:
+        storage = file_manager.describe(file_path=file_path)
+        source_uri = storage.source_uri
+    except (FileNotFoundError, ValueError):
+        # File not yet indexed - get source_uri from adapter
+        source_uri = file_manager._resolve_to_uri(file_path)
     display_path = file_path  # Use file_path as display_path
 
     # Destination naming depends on ingest mode
@@ -103,11 +108,9 @@ def build_compact_ingest_model(
     except Exception:
         tables_meta = []
 
-    # Metrics (prefer adapter/FS info when available)
+    # Metrics (from parse result; file_size not available from describe())
     metrics = _FileMetrics(
-        file_size=(
-            getattr(info, "file_size", None) if hasattr(info, "file_size") else None
-        ),
+        file_size=None,  # File size can be obtained from adapter if needed
         processing_time=(
             (getattr(getattr(parse_result, "trace", None), "duration_ms", None) or 0.0)
             / 1000.0
@@ -155,8 +158,8 @@ def build_compact_ingest_model(
         mime_type=mime,
         status=parse_result.status,
         error=parse_result.error,
-        created_at=getattr(info, "created_at", None),
-        modified_at=getattr(info, "modified_at", None),
+        created_at=None,  # Not available from describe(); set during ingest if needed
+        modified_at=None,  # Not available from describe(); set during ingest if needed
         summary_excerpt=summary_excerpt,
         content_ref=content_ref,
         tables_ref=tables_meta,
