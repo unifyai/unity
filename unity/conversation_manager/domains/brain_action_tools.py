@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from unity.contact_manager.types import ContactDetailsEmail, ContactDetailsPhone
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.contact_index import Contact
@@ -35,14 +36,14 @@ _next_handle_id = 0
 async def _get_or_create_contact(
     cm: "ConversationManager",
     contact_id: int | None = None,
-    details: dict | None = None,
+    details: ContactDetailsPhone | ContactDetailsEmail | None = None,
 ) -> dict:
     """Get an existing contact or create a new one.
 
     Args:
         cm: The ConversationManager instance.
         contact_id: Contact ID if known.
-        details: Contact details for lookup/creation.
+        details: Contact details for lookup/creation (Pydantic model).
 
     Returns:
         The contact dict.
@@ -50,8 +51,13 @@ async def _get_or_create_contact(
     if not contact_id and not details:
         raise ValueError("Either contact_id or details must be provided")
 
+    # Convert Pydantic model to dict for internal use (exclude unset fields)
+    details_dict: dict | None = None
+    if details is not None:
+        details_dict = details.model_dump(exclude_none=True)
+
     # Update existing contact
-    if contact_id and details:
+    if contact_id and details_dict:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         updated_contacts_raw = cm.contact_manager.get_contact_info(
             contact_id=list(cm.contact_index.contacts.keys()),
@@ -72,8 +78,8 @@ async def _get_or_create_contact(
                 cm.contact_index.active_conversations[cid] = Contact(
                     **{**c.model_dump(), **uc, "threads": c.threads},
                 )
-        phone_number = details.get("phone_number")
-        email_address = details.get("email_address")
+        phone_number = details_dict.get("phone_number")
+        email_address = details_dict.get("email_address")
         contact = (
             cm.contact_index.get_contact(phone_number=phone_number)
             if phone_number
@@ -82,9 +88,9 @@ async def _get_or_create_contact(
         return contact
 
     # Retrieve if exists, create if not
-    if details:
-        phone_number = details.get("phone_number")
-        email_address = details.get("email_address")
+    if details_dict:
+        phone_number = details_dict.get("phone_number")
+        email_address = details_dict.get("email_address")
         maybe_contact = cm.contact_index.get_contact(
             phone_number=phone_number,
         ) or cm.contact_index.get_contact(email=email_address)
@@ -92,7 +98,7 @@ async def _get_or_create_contact(
             return maybe_contact
         tool_outcome = await asyncio.to_thread(
             cm.contact_manager._create_contact,
-            **details,
+            **details_dict,
         )
         new_contact_id = tool_outcome["details"]["contact_id"]
         new_contact = await asyncio.to_thread(
@@ -127,7 +133,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         contact_id: int | None = None,
-        contact_details: dict[str, Any] | None = None,
+        contact_details: ContactDetailsPhone | None = None,
         content: str,
     ) -> dict[str, Any]:
         """
@@ -196,7 +202,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         contact_id: int | None = None,
-        contact_details: dict[str, Any] | None = None,
+        contact_details: ContactDetailsEmail | None = None,
         subject: str,
         body: str,
         email_id_to_reply_to: str | None = None,
@@ -278,7 +284,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         contact_id: int | None = None,
-        contact_details: dict[str, Any] | None = None,
+        contact_details: ContactDetailsPhone | None = None,
     ) -> dict[str, Any]:
         """
         Start an outbound phone call to a contact.
