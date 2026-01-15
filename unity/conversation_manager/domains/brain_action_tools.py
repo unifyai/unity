@@ -52,9 +52,13 @@ async def _get_or_create_contact(
         raise ValueError("Either contact_id or details must be provided")
 
     # Convert Pydantic model to dict for internal use (exclude unset fields)
+    # Handle both dict (from JSON tool args) and Pydantic model inputs
     details_dict: dict | None = None
     if details is not None:
-        details_dict = details.model_dump(exclude_none=True)
+        if isinstance(details, dict):
+            details_dict = {k: v for k, v in details.items() if v is not None}
+        else:
+            details_dict = details.model_dump(exclude_none=True)
 
     # Update existing contact
     if contact_id and details_dict:
