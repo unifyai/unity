@@ -64,6 +64,7 @@ from . import semantic_cache as sc
 
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
+    from .multi_handle import MultiHandleCoordinator
 
 
 def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
@@ -220,6 +221,7 @@ async def async_tool_loop_inner(
     resume_children: Optional[list[dict]] = None,
     replay_origin: Optional[str] = None,
     persist: bool = False,
+    multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -2402,6 +2404,65 @@ async def async_tool_loop_inner(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
+            # Inject multi-handle `final_answer` tool when coordinator is present.
+            # This tool requires request_id to specify which request is being answered.
+            # Unlike response_format mode, this is always available (tools may be shared).
+            if multi_handle_coordinator is not None:
+                visible_base_tools_schema.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "final_answer",
+                            "description": (
+                                "Submit the final answer for a specific request. "
+                                "Use this to complete a request when you have the final response. "
+                                "Each request must be answered exactly once."
+                            ),
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "request_id": {
+                                        "type": "integer",
+                                        "description": "The ID of the request being answered (from [Request N] tag).",
+                                    },
+                                    "answer": {
+                                        "type": "string",
+                                        "description": "The final answer text for this request.",
+                                    },
+                                },
+                                "required": ["request_id", "answer"],
+                            },
+                        },
+                    },
+                )
+                # Also inject `ask_user_clarification` for routing clarifications to specific requests
+                visible_base_tools_schema.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "ask_user_clarification",
+                            "description": (
+                                "Ask a specific user for clarification. Use this when you need "
+                                "more information from the user who submitted a particular request."
+                            ),
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "request_id": {
+                                        "type": "integer",
+                                        "description": "The ID of the request whose user should receive the question.",
+                                    },
+                                    "question": {
+                                        "type": "string",
+                                        "description": "The clarification question to ask the user.",
+                                    },
+                                },
+                                "required": ["request_id", "question"],
+                            },
+                        },
+                    },
+                )
+
             # Yield to allow just-scheduled tool tasks to complete (especially
             # those that immediately return a SteerableToolHandle). This ensures
             # dynamic helpers are generated with the handle's docstrings.
@@ -2811,6 +2872,142 @@ async def async_tool_loop_inner(
                                     "⚠️ Validation failed – proceeding with standard formatting step.\n"
                                     + str(_exc)
                                 ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+
+                    # Special-case: handle multi-handle `final_answer` tool
+                    if name == "final_answer" and multi_handle_coordinator is not None:
+                        try:
+                            request_id = args.get("request_id")
+                            answer = args.get("answer")
+
+                            if request_id is None:
+                                raise ValueError(
+                                    "Missing 'request_id' in tool arguments.",
+                                )
+                            if answer is None:
+                                raise ValueError("Missing 'answer' in tool arguments.")
+
+                            request_id = int(request_id)
+
+                            # Validate request_id
+                            error_msg = multi_handle_coordinator.validate_request_id(
+                                request_id,
+                            )
+                            if error_msg:
+                                tool_msg = create_tool_call_message(
+                                    name="final_answer",
+                                    call_id=call["id"],
+                                    content=f"⚠️ Error: {error_msg}",
+                                )
+                                await insert_tool_message_after_assistant(
+                                    assistant_meta,
+                                    msg,
+                                    tool_msg,
+                                    client,
+                                    _msg_dispatcher,
+                                )
+                                continue
+
+                            # Complete the request
+                            multi_handle_coordinator.complete_request(
+                                request_id,
+                                str(answer),
+                            )
+
+                            tool_msg = create_tool_call_message(
+                                name="final_answer",
+                                call_id=call["id"],
+                                content=f"Request {request_id} completed successfully.",
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+
+                            logger.info(
+                                f"Request {request_id} completed with answer: {answer[:100]}{'...' if len(answer) > 100 else ''}",
+                                prefix="✅",
+                            )
+
+                            # Check if all requests are done - if so, loop will terminate
+                            # at the next iteration when it checks should_terminate()
+                            continue
+
+                        except Exception as _exc:
+                            tool_msg = create_tool_call_message(
+                                name="final_answer",
+                                call_id=call["id"],
+                                content=f"⚠️ Error processing final_answer: {_exc}",
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+
+                    # Special-case: handle multi-handle `ask_user_clarification` tool
+                    if (
+                        name == "ask_user_clarification"
+                        and multi_handle_coordinator is not None
+                    ):
+                        try:
+                            request_id = args.get("request_id")
+                            question = args.get("question")
+
+                            if request_id is None:
+                                raise ValueError(
+                                    "Missing 'request_id' in tool arguments.",
+                                )
+                            if question is None:
+                                raise ValueError(
+                                    "Missing 'question' in tool arguments.",
+                                )
+
+                            request_id = int(request_id)
+
+                            # Route the clarification to the appropriate request's queue
+                            multi_handle_coordinator.route_clarification_to_request(
+                                request_id,
+                                {
+                                    "type": "clarification",
+                                    "request_id": request_id,
+                                    "question": str(question),
+                                },
+                            )
+
+                            tool_msg = create_tool_call_message(
+                                name="ask_user_clarification",
+                                call_id=call["id"],
+                                content=f"Clarification question sent to request {request_id}. Waiting for user response.",
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+
+                        except Exception as _exc:
+                            tool_msg = create_tool_call_message(
+                                name="ask_user_clarification",
+                                call_id=call["id"],
+                                content=f"⚠️ Error: {_exc}",
                             )
                             await insert_tool_message_after_assistant(
                                 assistant_meta,
@@ -3480,6 +3677,25 @@ async def async_tool_loop_inner(
                 )
 
             final_answer = msg["content"]
+
+            # ── multi-handle mode: check if all requests are done ──
+            if multi_handle_coordinator is not None:
+                if multi_handle_coordinator.should_terminate():
+                    # All requests completed/cancelled and persist=False
+                    logger.info(
+                        "Multi-handle mode: all requests completed, terminating loop.",
+                        prefix="✅",
+                    )
+                    multi_handle_coordinator.close()
+                    return final_answer  # Return last assistant content (may be empty)
+                else:
+                    # Still have pending requests - continue waiting
+                    logger.info(
+                        f"Multi-handle mode: {multi_handle_coordinator.registry.pending_count()} request(s) still pending.",
+                        prefix="⏳",
+                    )
+                    # Wait for next interjection or tool completion
+                    continue
 
             # ── persist mode: wait for next interjection instead of returning ──
             if persist:
