@@ -12,6 +12,7 @@ from unity.conversation_manager.events import _get_now
 class Contact(ContactType):
     is_boss: bool = False
     on_call: bool = False
+    global_thread: deque = Field(default_factory=lambda: deque(maxlen=50))
     threads: dict[str, deque] = Field(
         default_factory=lambda: {
             "sms": deque(maxlen=25),
@@ -109,6 +110,7 @@ class ContactIndex:
                 timestamp,
             )
         contact.threads[thread_name].append(message)
+        contact.global_thread.append(message)
 
     # should check if the contact exists
     def get_contact(
@@ -130,4 +132,4 @@ class ContactIndex:
                 (c for c in self.contacts.values() if c.email_address == email),
                 None,
             )
-        return c.model_dump(exclude={"threads"}) if c else None
+        return c.model_dump(exclude={"threads", "global_thread"}) if c else None
