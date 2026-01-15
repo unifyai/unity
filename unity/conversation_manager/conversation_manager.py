@@ -326,6 +326,97 @@ class ConversationManager(metaclass=SingletonABCMeta):
             output_events=output_events,
         )
 
+    async def _step_until_wait(
+        self,
+        event: "Event",
+        *,
+        max_steps: int = 5,
+        publish: bool = False,
+    ) -> StepResult:
+        """Process an event and keep running LLM until it calls 'wait'.
+
+        This is a TEST-ONLY method that gives the LLM continuous control until
+        it explicitly decides to stop by calling the 'wait' tool.
+
+        Args:
+            event: Input event to process.
+            max_steps: Maximum LLM steps to prevent infinite loops (default 5).
+            publish: Whether to forward published events to the broker.
+
+        Returns:
+            StepResult with all output events produced across all steps.
+        """
+        all_output_events: list[Event] = []
+        llm_ran = False
+
+        original_publish = self.event_broker.publish
+
+        async def publish_wrapper(channel: str, message: str) -> int:
+            try:
+                evt = Event.from_json(message)
+            except Exception:
+                evt = None
+            if evt is not None:
+                if isinstance(
+                    evt,
+                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
+                ):
+                    all_output_events.append(evt)
+                # Handle the event locally
+                await EventHandler.handle_event(
+                    evt,
+                    self,
+                    is_voice_call=self.call_manager.uses_realtime_api,
+                )
+            if publish:
+                return await original_publish(channel, message)
+            return 0
+
+        step_requests: list[tuple[float, bool]] = []
+        token = _step_llm_requests.set(step_requests)
+        try:
+            self.event_broker.publish = publish_wrapper
+
+            # First, handle the incoming event
+            await EventHandler.handle_event(
+                event,
+                self,
+                is_voice_call=self.call_manager.uses_realtime_api,
+            )
+
+            llm_requested = bool(step_requests)
+            step_requests.clear()
+
+            # Run LLM in a loop until 'wait' is called or max_steps reached
+            step_count = 0
+            while llm_requested and step_count < max_steps:
+                llm_ran = True
+                tool_name = await self._run_llm()
+                step_count += 1
+
+                # Stop if 'wait' was called
+                if tool_name == "wait":
+                    break
+
+                # Check if another LLM run was requested (e.g., by event handlers)
+                llm_requested = bool(step_requests)
+                step_requests.clear()
+
+                # If no explicit request but we didn't call 'wait', continue
+                if not llm_requested and tool_name != "wait":
+                    llm_requested = True
+
+        finally:
+            self.event_broker.publish = original_publish
+            _step_llm_requests.reset(token)
+
+        return StepResult(
+            input_event=event,
+            llm_requested=True,
+            llm_ran=llm_ran,
+            output_events=all_output_events,
+        )
+
     async def _run_llm(self) -> str | None:
         """Run a single LLM decision and return the tool name that was called."""
         self.snapshot()
@@ -636,9 +727,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"[Proactive Speech] Elapsed time since last message: {elapsed_seconds:.1f}s",
             )
 
+            # Build system prompt dynamically (there's no self.system_prompt attribute)
+            brain_spec = build_brain_spec(self)
             decision = await self.proactive_speech.decide(
                 conversation_turns,
-                self.system_prompt,
+                brain_spec.system_prompt,
                 elapsed_seconds=elapsed_seconds,
             )
             print(
