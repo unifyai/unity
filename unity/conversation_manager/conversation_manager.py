@@ -326,7 +326,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             output_events=output_events,
         )
 
-    async def _run_llm(self):
+    async def _run_llm(self) -> str | None:
+        """Run a single LLM decision and return the tool name that was called."""
         self.snapshot()
         brain_spec = build_brain_spec(self)
         print(brain_spec.state_prompt)
@@ -411,6 +412,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             )
             self.is_summarizing = True
 
+        return result.tool_name
+
         # Schedule proactive speech check after assistant turn
         await self.schedule_proactive_speech()
 
@@ -424,9 +427,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             )
 
             if self.assistant_id != DEFAULT_ASSISTANT_ID:
-                self.build_response_model()
-                # asyncio.create_task(self.publish_startup())
-
                 # Start initialization and operations listener
                 asyncio.create_task(managers_utils.init_conv_manager(self))
                 asyncio.create_task(managers_utils.listen_to_operations(self))
@@ -479,7 +479,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.voice_mode = payload["voice_mode"]
-        self.build_response_model()
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -526,10 +525,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_id=self.voice_id,
             voice_mode=self.voice_mode,
         )
-
-    def build_response_model(self):
-        # Response models are now static (cached in brain.py) since all actions are tools
-        pass
 
     async def store_chat_history(self):
         if len(self.chat_history) >= 2:
