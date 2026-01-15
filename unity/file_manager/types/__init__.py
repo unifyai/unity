@@ -1,4 +1,16 @@
-from .file import FileContentRow, FileRecord, FileRecordRow, FileTableRefRow
+from .file import (
+    # New type names
+    DocumentFields,
+    DocumentRow,
+    Document,
+    FileRecord,
+    FileRecordRow,
+    FileTableRefRow,
+    # Backward compatibility aliases
+    FileContentFields,
+    FileContentRow,
+    FileContent,
+)
 from .filesystem import (
     FileSystemCapabilities,
     FileReference,
@@ -43,10 +55,18 @@ from .describe import (
 )
 
 __all__ = [
+    # New type names (preferred)
+    "DocumentFields",
+    "DocumentRow",
+    "Document",
+    # Legacy types
     "FileRecord",
     "FileRecordRow",
-    "FileContentRow",
     "FileTableRefRow",
+    # Backward compatibility aliases (deprecated)
+    "FileContentFields",
+    "FileContentRow",
+    "FileContent",
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",

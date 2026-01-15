@@ -288,8 +288,14 @@ class FileInfo(BaseModel):
     )
 
 
-class FileContentFields(BaseModel):
-    """Common fields for per-file `/Content/` rows (shared by row payload + stored rows)."""
+class DocumentFields(BaseModel):
+    """
+    Common fields for per-file `/Content/` (document) rows.
+
+    .. note::
+        The underlying Unify context path remains `/Content/` for backward compatibility.
+        Only the API type names have been updated (FileContent* → Document*).
+    """
 
     # Foreign keys / identifiers
     file_id: int = Field(
@@ -322,7 +328,7 @@ class FileContentFields(BaseModel):
     )
 
 
-class FileContentRow(FileContentFields):
+class DocumentRow(DocumentFields):
     """
     Client-side payload written to a per-file `/Content/` context.
 
@@ -330,14 +336,18 @@ class FileContentRow(FileContentFields):
     """
 
 
-class FileContent(FileContentFields):
+class Document(DocumentFields):
     """
     Per-file context row schema used for storing flattened, hierarchical
     records extracted from a single file. The per-file context lives under
-    "<base>/Files/<alias>/<file_path>/Content/" and uses counters to represent the
+    "<base>/Files/<alias>/<file_id>/Content/" and uses counters to represent the
     document→section→paragraph→sentence hierarchy. Extracted tabular content
     for a file is stored under separate per-table contexts (no predefined
-    fields) at "<base>/Files/<alias>/<file_path>/Tables/<table>".
+    fields) at "<base>/Files/<alias>/<file_id>/Tables/<table>".
+
+    .. note::
+        The underlying Unify context path is `/Content/` (not `/Document/`)
+        for backward compatibility.
     """
 
     # Unique id within the per-file content context (row identifier)
@@ -348,19 +358,25 @@ class FileContent(FileContentFields):
     )
 
     @staticmethod
-    def to_file_content_entries(
+    def to_document_entries(
         *,
         file_id: int,
-        rows: List[FileContentRow],
-    ) -> List[FileContentRow]:
+        rows: List["DocumentRow"],
+    ) -> List["DocumentRow"]:
         """
         Build per-file Content entries from parser rows, attaching file_id and
         dropping fields not represented in the schema.
         """
-        out: List[FileContentRow] = []
+        out: List[DocumentRow] = []
         for r in list(rows or []):
             out.append(r.model_copy(update={"file_id": int(file_id)}))
         return out
+
+
+# Backward compatibility aliases (deprecated)
+FileContentFields = DocumentFields
+FileContentRow = DocumentRow
+FileContent = Document
 
 
 class FileTableRefRow(BaseModel):
