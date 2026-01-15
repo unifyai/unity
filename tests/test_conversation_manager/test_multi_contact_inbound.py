@@ -1,8 +1,8 @@
 """
-tests/test_conversation_manager/test_multi_contact.py
+tests/test_conversation_manager/test_multi_contact_inbound.py
 =====================================================
 
-Tests for multi-contact conversation routing.
+Tests for multi-contact inbound conversation routing.
 
 These tests verify that the ConversationManager can handle conversations
 with multiple contacts. We first establish contact (receive a message
