@@ -33,6 +33,19 @@ def custom_dict_factory(kv):
     return d
 
 
+class _TruncatedReprMixin:
+    """Mixin for events that need truncated repr (to avoid logging huge payloads)."""
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        raise NotImplementedError
+
+
 @dataclass(kw_only=True)
 class Event:
     timestamp: datetime = field(default_factory=_get_now)
@@ -325,45 +338,27 @@ class ContactInfoResponse(Event):
     contact_details: dict[str, Any]
 
 
-@dataclass
-class StoreChatHistory(Event):
+@dataclass(repr=False)
+class StoreChatHistory(_TruncatedReprMixin, Event):
     chat_history: list[dict]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(chat_history_len={len(self.chat_history)})"
 
 
-@dataclass
-class GetChatHistory(Event):
+@dataclass(repr=False)
+class GetChatHistory(_TruncatedReprMixin, Event):
     loggable: ClassVar[bool] = False
     chat_history: list[dict]
 
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
-
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(chat_history_len={len(self.chat_history)})"
 
 
-@dataclass
-class GetBusEventsResponse(Event):
+@dataclass(repr=False)
+class GetBusEventsResponse(_TruncatedReprMixin, Event):
     loggable: ClassVar[bool] = False
     events: list[dict[str, Any]]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(events_len={len(self.events)})"
@@ -419,19 +414,13 @@ class NotificationUnpinnedEvent(Event):
 # --------------------------------------------------------------------------- #
 
 
-@dataclass
-class ActorRequest(Event):
+@dataclass(repr=False)
+class ActorRequest(_TruncatedReprMixin, Event):
     """Event to ask or request the Actor to perform a task."""
 
     action_name: str
     query: str
     parent_chat_context: list[dict]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return (
@@ -451,20 +440,14 @@ class ActorResponse(Event):
     response: str
 
 
-@dataclass
-class ActorHandleRequest(Event):
+@dataclass(repr=False)
+class ActorHandleRequest(_TruncatedReprMixin, Event):
     """Event to any action on an existing Actor handle."""
 
     handle_id: int
     action_name: str
     query: str
     parent_chat_context: list[dict]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return (
