@@ -38,6 +38,11 @@ from ._async_tool.transcript_ops import (
     extract_clarifications as _extract_clarifications,
     initial_user_from_user_visible_history as _initial_user_from_user_visible_history,
 )
+from ._async_tool.multi_handle import (
+    MultiHandleCoordinator,
+    MultiRequestHandle,
+)
+from ._async_tool.tagging import tag_message_with_request
 
 if TYPE_CHECKING:
     from ..image_manager.types.image_refs import ImageRefs
@@ -2834,6 +2839,7 @@ def start_async_tool_loop(
     resume_children: Optional[list[dict]] = None,
     replay_origin: Optional[str] = None,
     persist: bool = False,
+    multi_handle: bool = False,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2867,6 +2873,15 @@ def start_async_tool_loop(
         granted another turn. This enables a single persistent loop that can
         process multiple events over time. The loop only terminates when
         explicitly stopped via ``handle.stop()`` or cancelled.
+
+    multi_handle : bool, default False
+        If ``True``, enables multi-handle mode where the loop can serve multiple
+        concurrent requests. Each request is identified by a request_id, and the
+        LLM uses ``final_answer(request_id, answer)`` to complete specific requests.
+        The returned handle supports ``add_request(message)`` to add new requests
+        to the running loop. Interjections are tagged with request IDs so the LLM
+        knows which request they belong to. The loop terminates when all requests
+        are completed/cancelled (unless persist=True).
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
     loop_id = loop_id if loop_id is not None else short_id()
@@ -2887,13 +2902,35 @@ def start_async_tool_loop(
     )
     _lineage = [*_parent, loop_id]
 
+    # --- multi-handle mode setup -------------------------------------------
+    # Create the coordinator if multi_handle is enabled
+    multi_handle_coordinator: MultiHandleCoordinator | None = None
+    if multi_handle:
+        # We need to reference clarification_channels which is set on the task later
+        # Use a placeholder dict that will be updated when the task starts
+        _clarification_channels_ref: dict = {}
+        multi_handle_coordinator = MultiHandleCoordinator(
+            interject_queue=interject_queue,
+            clarification_channels=_clarification_channels_ref,
+            persist=persist,
+        )
+        # Register the first request (request_id=0)
+        multi_handle_coordinator.register_request()
+
     # Run the async tool loop
 
     async def _loop_wrapper():
         try:
             return await async_tool_loop_inner(
                 client,
-                message,
+                (
+                    message
+                    if not multi_handle
+                    else tag_message_with_request(
+                        message if isinstance(message, str) else str(message),
+                        0,
+                    )
+                ),
                 tools,
                 loop_id=loop_id,
                 lineage=_lineage,
@@ -2923,6 +2960,7 @@ def start_async_tool_loop(
                 resume_children=resume_children,
                 replay_origin=replay_origin,
                 persist=persist,
+                multi_handle_coordinator=multi_handle_coordinator,
             )
         except asyncio.CancelledError:
             raise
@@ -3034,6 +3072,36 @@ def start_async_tool_loop(
     # Let the inner coroutine discover the outer handle so it can switch
     # steering when a nested handle requests pass-through behaviour.
     outer_handle_container[0] = handle
+
+    # --- multi-handle mode: return a MultiRequestHandle for request 0 ---
+    if multi_handle and multi_handle_coordinator is not None:
+        # Store the underlying handle reference for potential introspection
+        multi_handle_coordinator._underlying_handle = handle  # type: ignore[attr-defined]
+
+        # Update the clarification channels reference once the task has it
+        # This is a bit of a hack but necessary since the task attr is set after creation
+        try:
+            multi_handle_coordinator._clarification_channels = getattr(
+                task,
+                "clarification_channels",
+                {},
+            )
+        except Exception:
+            pass
+
+        # Create and return the request handle for request_id=0
+        request_handle = MultiRequestHandle(
+            request_id=0,
+            coordinator=multi_handle_coordinator,
+            loop_id=loop_id,
+        )
+
+        # Store handle reference in registry
+        state = multi_handle_coordinator.registry.get(0)
+        if state:
+            state.handle_ref = request_handle
+
+        return request_handle  # type: ignore[return-value]
 
     return handle
 
