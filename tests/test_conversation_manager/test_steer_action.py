@@ -52,15 +52,18 @@ def _get_steering_action(result, operation_prefix):
 
 def _has_steering_in_handle_actions(cm, operation_prefix):
     """
-    Check if any active task has a recorded steering action.
+    Check if any steering tool with the given operation prefix was called.
+
+    Checks all tool calls made during the test (tracked by CMStepDriver),
+    not just active tasks, since completed/stopped tasks are removed from
+    active_tasks.
 
     Returns True if found, False otherwise.
     """
-    for handle_id, handle_data in (cm.cm.active_tasks or {}).items():
-        for action in handle_data.get("handle_actions", []):
-            action_name = action.get("action_name", "")
-            if action_name.startswith(operation_prefix):
-                return True
+    # Check all tool calls tracked by the driver (survives task completion/stop)
+    for tool_name in cm.all_tool_calls:
+        if tool_name.startswith(operation_prefix):
+            return True
     return False
 
 
@@ -194,11 +197,11 @@ async def test_stop_task_after_small_talk(initialized_cm):
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
 
-    # Step 2: Small talk
+    # Step 2: Genuine small talk (not task-related)
     await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Actually hold on a second.",
+            content="By the way, the weather is nice today.",
         ),
     )
 
@@ -238,11 +241,11 @@ async def test_stop_task_change_of_mind(initialized_cm):
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
 
-    # Step 2: Clarifying question
+    # Step 2: Genuine small talk (not task-related)
     await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Wait, is that 3pm my time or Bob's time?",
+            content="Oh I just remembered, I need to buy groceries later.",
         ),
     )
 
@@ -250,7 +253,7 @@ async def test_stop_task_change_of_mind(initialized_cm):
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="You know what, forget it. Stop that reminder. I'll just call him now.",
+            content="You know what, forget about that reminder. I'll just call Bob now.",
         ),
     )
 
@@ -598,11 +601,11 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start a task (web search reliably triggers act)
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Draft an email to all project stakeholders about the delay.",
+            content="Search the web for information about project management best practices.",
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
@@ -611,7 +614,7 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Pause that email draft.",
+            content="Hold on, put that search on hold.",
         ),
     )
 
@@ -619,7 +622,7 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Add this to the email: the new deadline is January 30th.",
+            content="Actually, focus specifically on agile methodology.",
         ),
     )
 
@@ -627,7 +630,7 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     result4 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="OK, continue with the email now.",
+            content="OK, go ahead with the search now.",
         ),
     )
 

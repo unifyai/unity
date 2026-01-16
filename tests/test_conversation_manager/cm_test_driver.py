@@ -62,6 +62,8 @@ class CMStepDriver:
 
     def __init__(self, cm: "ConversationManager"):
         self._cm = cm
+        # Track all tool calls made across all steps for test assertions
+        self.all_tool_calls: list[str] = []
 
     @property
     def cm(self) -> "ConversationManager":
@@ -134,7 +136,10 @@ class CMStepDriver:
 
             if llm_requested:
                 llm_ran = True
-                await self._cm._run_llm()
+                tool_name = await self._cm._run_llm()
+                # Track tool call for test assertions
+                if tool_name:
+                    self.all_tool_calls.append(tool_name)
 
             # Apply any published events to local state so callers can inspect state
             # without depending on background broker subscribers.
@@ -252,6 +257,10 @@ class CMStepDriver:
                 llm_ran = True
                 tool_name = await self._cm._run_llm()
                 step_count += 1
+
+                # Track tool call for test assertions
+                if tool_name:
+                    self.all_tool_calls.append(tool_name)
 
                 # Stop if 'wait' was called
                 if tool_name == "wait":
