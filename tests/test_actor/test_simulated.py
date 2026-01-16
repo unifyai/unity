@@ -40,12 +40,15 @@ async def test_stateful_memory_serial_asks():
     actor = SimulatedActor(steps=1)
 
     h1 = await actor.act("Start some new research.")
-    code = await h1.ask("Invent a unique codename. Reply with only the codename.")
-    code = code.strip()
+    ask_handle1 = await h1.ask(
+        "Invent a unique codename. Reply with only the codename.",
+    )
+    code = (await ask_handle1.result()).strip()
     assert code, "Codename should not be empty"
 
     h2 = await actor.act("Continue the research.")
-    answer2 = (await h2.ask("What codename did you just suggest? ")).lower()
+    ask_handle2 = await h2.ask("What codename did you just suggest? ")
+    answer2 = (await ask_handle2.result()).lower()
     assert code.lower().split(" ")[-1] in answer2
 
     # Allow both handles to complete
@@ -187,7 +190,8 @@ async def test_handle_ask():
 
     # Ask a follow-up while running
     await asyncio.sleep(0.05)
-    reply = await handle.ask("What is the key point to emphasize?")
+    ask_handle = await handle.ask("What is the key point to emphasize?")
+    reply = await ask_handle.result()
     assert isinstance(reply, str) and reply.strip()
 
     # The original handle should still be awaitable and produce a result
@@ -268,9 +272,10 @@ def simulate_linkedin_sales_leads() -> str:
     actor = SimulatedActor(steps=2, duration=None)
     handle = await actor.act("Search sales leads.", entrypoint=fid)
 
-    reply = await handle.ask(
+    ask_handle = await handle.ask(
         "Did you or are you encountering any problems logging in? Reply briefly, explaining any relevant websites.",
     )
+    reply = await ask_handle.result()
     assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
     assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
 
@@ -321,9 +326,10 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
     )
 
     # Ask about status and infer file type from the visual context
-    reply = await handle.ask(
+    ask_handle = await handle.ask(
         "How is it going? What file are you working on? What file type is it?",
     )
+    reply = await ask_handle.result()
     assert isinstance(reply, str) and reply.strip()
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
