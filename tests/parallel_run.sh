@@ -453,6 +453,11 @@ _create_orchestra_log_symlinks() {
 # For worktrees, look relative to the MAIN repo, not the worktree
 _orchestra_search_base="$REPO_ROOT"
 if _git_common_dir="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
+  # git rev-parse --git-common-dir returns a relative path ".git" for regular repos,
+  # but an absolute path for worktrees. Normalize to absolute for consistent comparison.
+  if [[ "$_git_common_dir" != /* ]]; then
+    _git_common_dir="$REPO_ROOT/$_git_common_dir"
+  fi
   # If git-common-dir differs from $REPO_ROOT/.git, we're in a worktree
   # Use the main repo's parent as the search base for orchestra
   _main_repo_git="${_git_common_dir%/}"
