@@ -1024,7 +1024,6 @@ async def async_tool_loop_inner(
                         tool_schema=schema,
                         llm_arguments={},
                         raw_arguments_json=str(raw_args),
-                        is_passthrough=bool(child.get("is_passthrough", False)),
                         tool_reply_msg=existing_tool_msg,
                     )
 
@@ -1118,10 +1117,8 @@ async def async_tool_loop_inner(
         Choose which child tool calls should receive a steering signal.
         Policy:
           - clarify: target the specified call_id only (exact or suffix match)
-          - pause/resume/stop: target ALL children (treat as if passthrough)
-          - interject/ask: target only passthrough children
-          - custom methods (payload['_custom']): target only passthrough children
-            whose adopted handle implements the method (or one of its aliases)
+          - pause/resume/stop: target ALL children
+          - interject/ask/custom: not auto-forwarded to children
         """
         base = str(method or "").lower().strip()
         payload = payload or {}
@@ -1152,60 +1149,7 @@ async def async_tool_loop_inner(
                 except Exception:
                     continue
             return selected
-        # Message-like signals go only to passthrough children
-        if base in ("interject", "ask"):
-            for t, inf in list(tools_data.info.items()):
-                try:
-                    if getattr(inf, "is_passthrough", False):
-                        selected.append((t, inf))
-                except Exception:
-                    continue
-            return selected
-        # Custom steering routing: only passthrough children that implement method/alias
-        try:
-            is_custom = bool(payload.get("_custom"))
-        except Exception:
-            is_custom = False
-        if is_custom:
-            try:
-                original_name = str(method or "")
-            except Exception:
-                original_name = base
-            try:
-                aliases = list(payload.get("_aliases") or [])
-            except Exception:
-                aliases = []
-            name_candidates: list[str] = []
-            if original_name:
-                name_candidates.append(original_name)
-            # include provided aliases
-            for nm in aliases:
-                if isinstance(nm, str) and nm:
-                    name_candidates.append(nm)
-            # add lowercased base as last resort
-            if base and base not in name_candidates:
-                name_candidates.append(base)
-            for t, inf in list(tools_data.info.items()):
-                try:
-                    if not getattr(inf, "is_passthrough", False):
-                        continue
-                    h = getattr(inf, "handle", None)
-                    if h is None:
-                        continue
-                    matched = False
-                    for nm in name_candidates:
-                        try:
-                            attr = getattr(h, nm, None)
-                            if callable(attr):
-                                matched = True
-                                break
-                        except Exception:
-                            continue
-                    if matched:
-                        selected.append((t, inf))
-                except Exception:
-                    continue
-            return selected
+        # interject/ask/custom methods are not auto-forwarded to children
         return selected
 
     async def _dispatch_steering_to_child(

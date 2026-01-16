@@ -12,7 +12,6 @@ class ChildSnapshot(BaseModel):
     Minimal, nested_structure-aligned vocabulary:
     - tool: canonical "Class.method" when available; else canonical class name
     - handle: canonicalized inheritance chain up to AsyncToolLoopHandle or sentinels
-    - passthrough: whether the child was wired for passthrough steering
     - state: "in_flight" | "done"
     - call_id: optional assistant tool_call id that spawned this child
     - snapshot: required for in_flight children
@@ -20,7 +19,6 @@ class ChildSnapshot(BaseModel):
 
     tool: Optional[str] = None
     handle: Optional[str] = None
-    passthrough: bool = False
     state: Literal["in_flight", "done"]
     call_id: Optional[str] = None
     snapshot: Optional[Dict[str, Any]] = None
