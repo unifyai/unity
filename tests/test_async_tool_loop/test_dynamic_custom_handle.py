@@ -21,7 +21,7 @@ from tests.test_async_tool_loop.async_helpers import (
 
 
 class CustomArgsHandle(SteerableToolHandle):
-    """A passthrough-disabled handle that records all steering calls with extra args."""
+    """A handle that records all steering calls with extra args."""
 
     def __init__(self) -> None:
         self._done_ev = asyncio.Event()
