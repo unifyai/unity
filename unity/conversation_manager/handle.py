@@ -368,14 +368,28 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                 try:
                     raw_result = await inner_handle.result()
 
+                    # Handle the standard stop notice from async tool loop
+                    if raw_result == "processed stopped early, no result":
+                        return None
+
                     # Convert result to dict for processing
                     if hasattr(raw_result, "model_dump"):
                         final_payload = raw_result.model_dump()
                     elif isinstance(raw_result, dict):
                         final_payload = raw_result
                     elif isinstance(raw_result, str):
+                        # Strip markdown code fences if present (```json ... ```)
+                        json_str = raw_result.strip()
+                        if json_str.startswith("```"):
+                            # Remove opening fence (```json or ```)
+                            first_newline = json_str.find("\n")
+                            if first_newline != -1:
+                                json_str = json_str[first_newline + 1 :]
+                            # Remove closing fence
+                            if json_str.rstrip().endswith("```"):
+                                json_str = json_str.rstrip()[:-3].rstrip()
                         try:
-                            final_payload = json.loads(raw_result)
+                            final_payload = json.loads(json_str)
                         except json.JSONDecodeError:
                             raise ValueError(f"Invalid JSON result: {raw_result}")
                     else:
