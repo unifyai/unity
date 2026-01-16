@@ -707,12 +707,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ),
         )
 
-        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
-        tool_policy_fn = (
-            None
-            if use_semantic_cache in ("read", "both")
-            else self._default_ask_tool_policy
-        )
+        tool_policy_fn = self._default_ask_tool_policy
         # Maybe seed a synthetic `show_all` dump as the first tool call (ask only)
         text = await self._maybe_build_show_all_seed(text, tables_overview) or text
 
@@ -725,8 +720,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
             response_format=response_format,
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),

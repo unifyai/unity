@@ -1107,25 +1107,6 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         return _AnswerHandle(answer)
 
     # ----------------------------
-    # Nested steer (tests/helper)
-    # ----------------------------
-    async def nested_steer(self, spec: dict) -> dict:
-        """
-        Apply a nested steering spec starting from this ActiveQueue.
-
-        This mirrors the AsyncToolLoopHandle.nested_steer surface so tests and
-        higher‑level orchestrators can target inner handles (ActiveTask/Actor).
-        """
-        try:
-            from ..common.async_tool_loop import (  # local import to avoid cycles
-                _nested_steer_on as _ns,
-            )
-        except Exception:
-            # If the helper cannot be imported, behave as a no‑op
-            return {"applied": [], "skipped": [], "status": {}}
-        return await _ns(self, spec or {})
-
-    # ----------------------------
     # Queue steering: append tail
     # ----------------------------
     def append_to_queue(self, task_id: int) -> Optional[str]:
@@ -1263,18 +1244,3 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             pass
 
         return f"Appended task {append_tid} to queue {q_emit}."
-
-    # ----------------------------
-    # Introspection helper (tests)
-    # ----------------------------
-    async def nested_structure(self) -> dict:  # type: ignore[override]
-        """
-        Return the minimal nested structure for this ActiveQueue, matching the
-        shape produced by AsyncToolLoopHandle.nested_structure, so tests can
-        introspect the queue → task → actor handle chain directly.
-        """
-        from ..common.async_tool_loop import (  # local import to avoid cycles
-            _nested_structure_on as _ns,
-        )
-
-        return await _ns(self)
