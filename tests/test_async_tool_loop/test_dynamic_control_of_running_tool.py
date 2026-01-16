@@ -956,25 +956,39 @@ async def test_resume_unblocks_base_tool(client, monkeypatch):
     release_llm = asyncio.Event()
     orig_gwp = _loop.generate_with_preprocess
 
+    # Track invocation count so the monkeypatch only emits the tool call once.
+    # On subsequent calls (after tool completion), emit a final response to
+    # properly terminate the loop.
+    call_count = {"value": 0}
+
     async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
-        # Signal that LLM thinking has started
-        llm_started.set()
-        # Wait until the test allows the LLM to finish (after outer pause)
-        await release_llm.wait()
-        # Emit a single assistant turn that calls `pausable_fn`
-        _client.messages.append(
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_fake_2",
-                        "type": "function",
-                        "function": {"name": "pausable_fn", "arguments": "{}"},
-                    },
-                ],
-            },
-        )
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            # First call: wait for test signal, then emit tool call
+            llm_started.set()
+            await release_llm.wait()
+            _client.messages.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_fake_2",
+                            "type": "function",
+                            "function": {"name": "pausable_fn", "arguments": "{}"},
+                        },
+                    ],
+                },
+            )
+        else:
+            # Subsequent calls: emit a final response to terminate the loop
+            _client.messages.append(
+                {
+                    "role": "assistant",
+                    "content": "Done.",
+                    "tool_calls": None,
+                },
+            )
         return {"ok": True}
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
