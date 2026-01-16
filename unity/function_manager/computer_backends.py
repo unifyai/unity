@@ -76,6 +76,11 @@ class ComputerBackend(ABC):
         """Cleanly shut down the backend."""
 
 
+# A valid 1x1 white PNG image encoded as base64 - used as default mock screenshot
+# This ensures screenshot values don't cause "invalid image format" errors when sent to LLMs
+VALID_MOCK_SCREENSHOT_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
+
+
 class MockComputerBackend(ComputerBackend):
     """
     A lightweight mock backend for testing Actor logic without external services.
@@ -104,8 +109,8 @@ class MockComputerBackend(ComputerBackend):
     def __init__(
         self,
         *,
-        url: str = "https://mock.example.com",
-        screenshot: str = "mock_screenshot_base64",
+        url: str = "https://google.com",
+        screenshot: str = VALID_MOCK_SCREENSHOT_PNG,
         act_response: str = "done",
         observe_response: str = "Mock observation",
         query_response: str = "Mock query response",
@@ -131,13 +136,53 @@ class MockComputerBackend(ComputerBackend):
         # Sequence tracking (for barrier compatibility)
         self._seq = 0
 
-    async def act(self, instruction: str, expectation: str = "") -> str:
-        """Returns the configured act response."""
+    @property
+    def backend(self) -> "MockComputerBackend":
+        """
+        Self-reference for compatibility with code that expects `computer.backend`.
+
+        When MockComputerBackend is used as a drop-in replacement for Computer,
+        this allows `mock_backend.backend.method()` to work the same as
+        `computer.backend.method()`.
+        """
+        return self
+
+    async def act(
+        self,
+        instruction: str,
+        wait: bool = True,
+        context: dict = None,
+        override_cache: bool = False,
+    ) -> Any:
+        """Mock implementation of `MagnitudeBackend.act` (signature-compatible).
+
+        Notes:
+        - The mock completes instantly; `wait` is accepted for signature compatibility.
+        - We ignore `context`/`override_cache` but accept them to match MagnitudeBackend.
+        - For `wait=False`, we mimic MagnitudeBackend semantics by returning "Command queued."
+        """
+
+        _ = context
+        _ = override_cache
         self._seq += 1
+        if not wait:
+            return "Command queued."
         return self._act_response
 
-    async def observe(self, query: str, response_format: Any = str) -> Any:
-        """Returns the configured observe response, optionally validated against response_format."""
+    async def observe(
+        self,
+        query: str,
+        response_format: Any = str,
+        wait: bool = True,
+        context: dict = None,
+        bypass_dom_processing: bool = False,
+    ) -> Any:
+        """Mock implementation of `MagnitudeBackend.observe` (signature-compatible)."""
+
+        _ = query
+        _ = wait
+        _ = context
+        _ = bypass_dom_processing
         self._seq += 1
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             # If a Pydantic model is requested, try to create an instance with defaults
