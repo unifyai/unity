@@ -175,13 +175,20 @@ def _scoped_context_str(
     return "\n\n---\n\n".join(parts)
 
 
-def _images() -> dict[str, Any]:
-    """Return image handles that behave like ImageHandle objects for caption access."""
+def _images() -> list[Any]:
+    """Return AnnotatedImageRef-like objects for test image context."""
+    from unity.image_manager.types import AnnotatedImageRef, RawImageRef
 
-    return {
-        "img_1": SimpleNamespace(caption="Login screen"),
-        "img_2": SimpleNamespace(caption="Confirmation modal"),
-    }
+    return [
+        AnnotatedImageRef(
+            raw_image_ref=RawImageRef(image_id=1),
+            annotation="Login screen",
+        ),
+        AnnotatedImageRef(
+            raw_image_ref=RawImageRef(image_id=2),
+            annotation="Confirmation modal",
+        ),
+    ]
 
 
 def _interactions(
@@ -338,8 +345,59 @@ def test_initial_plan_includes_existing_functions_library_and_retry_and_images()
     assert "other_skill" in prompt
     assert retry_msg in prompt
     assert "The user has provided the following images" in prompt
-    assert "Image `img_1`: Login screen" in prompt
-    assert "Image `img_2`: Confirmation modal" in prompt
+    assert "Image 0: Login screen" in prompt
+    assert "Image 1: Confirmation modal" in prompt
+
+
+def test_all_codegen_prompts_include_simplicity_first_principles() -> None:
+    """All codegen prompt types should include the shared simplicity-first guidance."""
+
+    marker = "### Simplicity-First Planning (CRITICAL)"
+
+    prompt = build_initial_plan_prompt(
+        goal="Find Alice and update her contact.",
+        existing_functions=_existing_functions_library(),
+        retry_msg="",
+        tools=_tools_mixed(),
+        environments=_environments_mixed(),
+        images=None,
+    )
+    assert marker in prompt
+
+    static_prefix, _dynamic = build_dynamic_implement_prompt(
+        goal="Keep contacts up to date.",
+        scoped_context=_scoped_context_str(include_parent=True, include_children=True),
+        call_stack=["main_plan", "parent_fn", "current_fn"],
+        function_name="current_fn",
+        function_sig="() -> str",
+        function_docstring="Current function.",
+        clarification_question=None,
+        clarification_answer=None,
+        replan_context="Implement from stub.",
+        has_browser_screenshot=False,
+        tools=_tools_mixed(),
+        existing_functions=_existing_functions_library(),
+        environments=_environments_mixed(),
+        recent_transcript=None,
+        parent_chat_context=None,
+        images=None,
+    )
+    assert marker in static_prefix
+
+    static_prefix, _dynamic = build_interjection_prompt(
+        interjection="Be concise.",
+        parent_chat_context=None,
+        scoped_context=_scoped_context_str(include_parent=True, include_children=True),
+        call_stack=["main_plan"],
+        action_log=["step: started"],
+        goal="Goal",
+        idempotency_cache=None,
+        tools=_tools_mixed(),
+        environments=_environments_mixed(),
+        images=None,
+        pane_snapshot=None,
+    )
+    assert marker in static_prefix
 
 
 def test_initial_plan_with_empty_state_is_safe() -> None:
@@ -432,7 +490,7 @@ def test_dynamic_implement_includes_optional_sections_only_when_provided() -> No
     assert "### 📌 CRITICAL INSTRUCTIONS: MODIFY EXISTING FUNCTION `f`" in dynamic
     assert "Current Browser View (Screenshot)" in dynamic
     assert "The user has provided the following images" in dynamic
-    assert "Image `img_1`" in dynamic
+    assert "Image 0: Login screen" in dynamic
 
 
 def test_verification_includes_agent_trace_when_present() -> None:
@@ -618,6 +676,85 @@ def test_interjection_with_empty_state_is_safe() -> None:
     assert "Not inside any function." in dynamic
     assert "No actions yet." in dynamic
     assert "The cache is currently empty." in dynamic
+
+
+def test_interjection_prompt_with_annotated_images() -> None:
+    """`build_interjection_prompt` includes annotated images in the correct format."""
+    from unity.image_manager.types import AnnotatedImageRef, RawImageRef
+
+    images = [
+        AnnotatedImageRef(
+            raw_image_ref=RawImageRef(image_id=42),
+            annotation="Screenshot of login page with username field highlighted",
+        ),
+        AnnotatedImageRef(
+            raw_image_ref=RawImageRef(image_id=43),
+            annotation="Error message popup showing 'Invalid credentials'",
+        ),
+        RawImageRef(image_id=44),  # Raw image without annotation
+    ]
+
+    _static_prefix, dynamic = build_interjection_prompt(
+        interjection="The login isn't working - see the attached screenshots.",
+        parent_chat_context=None,
+        scoped_context="",
+        call_stack=["main_plan", "login_flow"],
+        action_log=["Navigated to login page", "Entered username"],
+        goal="Login to the application",
+        idempotency_cache={},
+        tools=_tools_mixed(),
+        environments=_environments_mixed(),
+        images=images,
+        pane_snapshot=None,
+    )
+
+    # Verify interjection message is included
+    assert "The login isn't working" in dynamic
+
+    # Verify images section header is present
+    assert "The user has provided the following images" in dynamic
+
+    # Verify annotated images show their annotations
+    assert (
+        "Image 0: Screenshot of login page with username field highlighted" in dynamic
+    )
+    assert "Image 1: Error message popup showing 'Invalid credentials'" in dynamic
+
+    # Verify raw image without annotation shows appropriate fallback
+    assert "Image 2:" in dynamic
+    assert "raw image, no annotation" in dynamic
+
+
+def test_interjection_prompt_with_mixed_image_refs() -> None:
+    """`build_interjection_prompt` handles ImageRefs (RootModel) correctly."""
+    from unity.image_manager.types import AnnotatedImageRef, ImageRefs, RawImageRef
+
+    # Create ImageRefs wrapper (RootModel with .root attribute)
+    images = ImageRefs(
+        root=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=100),
+                annotation="Dashboard view",
+            ),
+        ],
+    )
+
+    _static_prefix, dynamic = build_interjection_prompt(
+        interjection="Update the dashboard",
+        parent_chat_context=None,
+        scoped_context="",
+        call_stack=[],
+        action_log=[],
+        goal="Modify dashboard",
+        idempotency_cache={},
+        tools=_tools_mixed(),
+        environments=_environments_mixed(),
+        images=images,
+        pane_snapshot=None,
+    )
+
+    assert "The user has provided the following images" in dynamic
+    assert "Image 0: Dashboard view" in dynamic
 
 
 # ============================================================================
