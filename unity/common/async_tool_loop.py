@@ -328,7 +328,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # "running" ⇢ Event **set**,  "paused" ⇢ Event **cleared**
         self._pause_event = pause_event or asyncio.Event()
         self._client = client
-        # No delegate in the new passthrough design – outer loop stays active.
         self._pause_event.set()
         self._loop_id: str = loop_id
         # Human-friendly label for logs (includes 4-hex suffix when available).
@@ -353,7 +352,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Event streams for bottom-up signals
         self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
-        # No pending passthrough ops buffer; unified steer_log replaces ad-hoc buffering.
 
     # small local helpers to keep user-visible history consistent
     def _append_user_visible_user(
@@ -384,10 +382,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {"role": "assistant", "content": message},
             )
 
-    # ── internal: passthrough forwarding/buffering helpers ──────────────────
-    def _iter_passthrough_handles(self):
-        return []
-
+    # ── internal: steering helpers ──────────────────────────────────────────
     def _has_scheduled_tools(self) -> bool:
         return False
 
@@ -407,43 +402,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             )
         return None
 
-    async def _record_and_forward(
+    def _record_steering(
         self,
         method_name: str,
         *,
         args: tuple | list | None = None,
         kwargs: dict | None = None,
-        fallback: tuple[str, ...] = (),
-        had_passthrough: bool | None = None,
-        forwarded_to: list[str] | tuple[str, ...] | None = None,
     ) -> None:
-        # Record the steering event with a timestamp for later replay at adoption time.
-        try:
-            from time import perf_counter as _pc  # local import to avoid top pollution
-        except Exception:  # pragma: no cover
-            _pc = lambda: 0.0  # type: ignore
-        # Snapshot which call_ids are already scheduled at the moment of recording.
-        # This provides a robust lower bound for adoption-time replay without relying
-        # on fragile cross-task timing windows.
-        try:
-            _ti = getattr(self._task, "task_info", {}) or {}
-            _scheduled_ids = []
-            for _t, _inf in _ti.items():
-                try:
-                    _scheduled_ids.append(str(getattr(_inf, "call_id", "")))
-                except Exception:
-                    continue
-        except Exception:
-            _scheduled_ids = []
+        """Record a steering event for serialization purposes."""
         rec = {
-            "t": _pc(),
             "method": str(method_name or ""),
             "args": tuple(args or ()),
             "kwargs": dict(kwargs or {}),
-            "fallback": tuple(fallback or ()),
-            "had_passthrough": bool(had_passthrough),
-            "forwarded_to": list(forwarded_to or []),
-            "scheduled_call_ids": _scheduled_ids,
         }
         try:
             self._steer_log.append(rec)
@@ -478,8 +448,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, parent_chat_context_cont)
 
-        # Centralized steering: record steer event; functional forwarding happens via mirror path
-        await self._record_and_forward(
+        # Record steering event for serialization
+        self._record_steering(
             "ask",
             kwargs={
                 "question": question,
@@ -487,8 +457,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "images": images,
                 **(kwargs or {}),
             },
-            had_passthrough=False,
-            forwarded_to=[],
         )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
@@ -561,67 +529,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
         )
 
-        # 3. Recursive visibility ––––––––––––––––––––––––––––––––––––––––
-        # Any *currently pending* SteerableToolHandle (deep-nested) should
-        # be made available as a tool so the inspection loop can itself ask
-        # follow-up questions.  We approximate this by scanning the parent
-        # task_info dict that the outer loop stored on our asyncio.Task in
-        # its "._task_info" attribute (injected by the inner loop runner).
-        #
-        # The attribute is deliberately *weakly* referenced to avoid tight
-        # coupling; if it is absent we just skip recursion.
-        #
-        # NOTE: this is best-effort – individual callers can override ask()
-        # for richer behaviour if desired.
-        task_info = {}
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-
-        recursive_tools: dict[str, Callable] = {}
-
-        for _t, _inf in task_info.items():
-            h = _inf.handle
-            # Only consider live passthrough child handles for recursive ask tools
-            is_passthrough = False
-            try:
-                is_passthrough = bool(getattr(_inf, "is_passthrough", False))
-            except Exception:
-                is_passthrough = False
-            if (
-                h is None
-                or not isinstance(h, SteerableToolHandle)
-                or not is_passthrough
-            ):
-                continue
-
-            async def _proxy(
-                question: str | None = None,
-                images: dict | list | None = None,
-                _h=h,  # capture now
-                _seed_images=images,  # capture outer ask() images to use by default
-            ):
-                # Robust forward; return the downstream ask handle so the inspection loop can adopt it
-                try:
-                    if images is None:
-                        images = _seed_images
-                except Exception:
-                    pass
-                return await forward_handle_call(
-                    _h,
-                    "ask",
-                    {"question": question, "images": images},
-                    fallback_positional_keys=("question", "content"),
-                )
-
-            # tool name encodes the call-id so collisions are impossible
-            _cid = None
-            with suppress(Exception):
-                _cid = getattr(_inf, "call_id", None)
-            _proxy.__name__ = f"ask_{_cid or 'unknown'}"
-            recursive_tools[_proxy.__name__] = _proxy
-        # ----------------------------------------------------------------
-
-        # 4.  Fire off a *stand-alone* read-only loop.
+        # 3.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
         # question refers to, e.g. "Question(TaskScheduler.execute)" or
         # "Question(TaskScheduler.execute->TaskScheduler.ask)" when a single
@@ -649,44 +557,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         else:
             _ask_message = question
 
-        # If passthrough children are present, seed assistant tool_calls to invoke ask_* immediately.
-        seeded_batch = None
-        try:
-            if isinstance(recursive_tools, dict) and recursive_tools:
-                tool_calls = []
-                import json as _json  # local alias to avoid top-level pollution
-
-                for _name in list(recursive_tools.keys()):
-                    try:
-                        tool_calls.append(
-                            {
-                                "id": f"seed_{_name}",
-                                "type": "function",
-                                "function": {
-                                    "name": _name,
-                                    "arguments": _json.dumps({"question": question}),
-                                },
-                            },
-                        )
-                    except Exception:
-                        continue
-                if tool_calls:
-                    # Build a normalized user message dict
-                    if isinstance(_ask_message, dict):
-                        _user_msg = _ask_message
-                    else:
-                        _user_msg = {"role": "user", "content": _ask_message}
-                    seeded_batch = [
-                        _user_msg,
-                        {"role": "assistant", "content": "", "tool_calls": tool_calls},
-                    ]
-        except Exception:
-            seeded_batch = None
-
         helper_handle = start_async_tool_loop(
             inspection_client,
-            seeded_batch if seeded_batch is not None else _ask_message,
-            recursive_tools,  # may be empty
+            _ask_message,
+            {},  # no recursive tools
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
             parent_chat_context=parent_ctx,  # ← nested context
@@ -774,12 +648,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
         }
         # Use put_nowait to ensure the interjection is registered *synchronously* before
-        # we yield control (e.g. in _record_and_forward). This prevents a race where
-        # a fast-running loop completes its turn and exits before seeing the queued item.
+        # we yield control. This prevents a race where a fast-running loop completes
+        # its turn and exits before seeing the queued item.
         self._queue.put_nowait(payload)
 
-        # Centralized steering: record steer event; functional forwarding happens via mirror path
-        await self._record_and_forward(
+        # Record steering event for serialization
+        self._record_steering(
             "interject",
             kwargs={
                 "message": message,
@@ -788,9 +662,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
                 **(kwargs or {}),
             },
-            fallback=("content", "message"),
-            had_passthrough=False,
-            forwarded_to=[],
         )
         # Also mirror as synthetic helper tool_calls immediately (no LLM step)
         try:
@@ -823,18 +694,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Stop request is logged centrally in the loop via mirror path
 
-        # Record steer event (best-effort). Functional forwarding happens via mirror path.
-        try:
-            asyncio.create_task(
-                self._record_and_forward(
-                    "stop",
-                    kwargs={"reason": reason, **(kwargs or {})},
-                    had_passthrough=False,
-                    forwarded_to=[],
-                ),
-            )
-        except Exception:
-            pass
+        # Record steering event for serialization
+        self._record_steering("stop", kwargs={"reason": reason, **(kwargs or {})})
         # Ensure the loop is not paused so the inner loop can observe and process the stop immediately
         with suppress(Exception):
             self._pause_event.set()
@@ -874,16 +735,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.clear()
 
         self._pause_event.clear()
-        # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
-        try:
-            await self._record_and_forward(
-                "pause",
-                kwargs=dict(kwargs or {}),
-                had_passthrough=False,
-                forwarded_to=[],
-            )
-        except Exception:
-            pass
+        # Record steering event for serialization
+        self._record_steering("pause", kwargs=dict(kwargs or {}))
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             await self._queue.put(
@@ -914,16 +767,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.set()
 
         self._pause_event.set()
-        # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
-        try:
-            await self._record_and_forward(
-                "resume",
-                kwargs=dict(kwargs or {}),
-                had_passthrough=False,
-                forwarded_to=[],
-            )
-        except Exception:
-            pass
+        # Record steering event for serialization
+        self._record_steering("resume", kwargs=dict(kwargs or {}))
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             await self._queue.put(
@@ -987,15 +832,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         This looks up the down-queue for the given call and pushes the answer.
         Falls through silently if the mapping is missing (tool may have finished).
         """
-        # Centralized steering: record steer event; functional forwarding happens via mirror path.
-        try:
-            await self._record_and_forward(
-                "clarify",
-                kwargs={"call_id": call_id, "answer": answer},
-                had_passthrough=False,
-            )
-        except Exception:
-            pass
+        # Record steering event for serialization
+        self._record_steering("clarify", kwargs={"call_id": call_id, "answer": answer})
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             await self._queue.put(
@@ -1392,7 +1230,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     "call_id": getattr(_inf, "call_id", None),
                     "tool": _child_tool(child) or getattr(_inf, "name", None),
                     "handle": _child_handle_chain(child),
-                    "passthrough": bool(getattr(_inf, "is_passthrough", False)),
                     "state": state,
                 }
                 if isinstance(child_snapshot, dict):
@@ -1429,7 +1266,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "call_id": None,
                         "tool": _child_tool(child),
                         "handle": _child_handle_chain(child),
-                        "passthrough": False,
                         "state": state,
                     }
                     if isinstance(child_snapshot, dict):
@@ -1742,9 +1578,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             {
                                 "call_id": rec.get("call_id"),
                                 "tool_name": rec.get("tool"),
-                                "is_passthrough": bool(
-                                    rec.get("passthrough", False),
-                                ),
                                 "handle": child_handle,
                             },
                         )
@@ -2891,9 +2724,8 @@ def start_async_tool_loop(
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
-    # --- enable handle passthrough -----------------------------------------
     # A single-element list is a mutable container that the inner loop can use
-    # to call ``_adopt`` on the *real* outer handle once it exists.
+    # to access the outer handle once it exists.
     outer_handle_container: list = [None]
 
     # Determine lineage for this loop start (inherit from context when not provided)
@@ -3121,12 +2953,11 @@ def custom_steering_method(
     Behaviour
     ---------
     - Executes the original method.
-    - Records the steering event into the handle's steer log so adoption can replay.
-    - Enqueues a mirror sentinel that the inner loop consumes to:
-        • synthesize helper tool_calls/acks, and
-        • forward the call to all in‑flight passthrough children that implement it.
+    - Records the steering event into the handle's steer log for serialization.
+    - Enqueues a mirror sentinel that the inner loop consumes to synthesize
+      helper tool_calls/acks.
     - The mirror payload carries control keys ("_custom", "_aliases", "_fallback")
-      used only by the inner loop; these are NOT forwarded to child handles.
+      used only by the inner loop.
 
     Parameters
     ----------
@@ -3143,19 +2974,16 @@ def custom_steering_method(
         alias_list = list(aliases or [])
         fb_list = list(fallback or [])
 
-        async def _post_call(self: "AsyncToolLoopHandle", args, kwargs, result):
-            # Record without control keys
-            await self._record_and_forward(
+        def _record_and_mirror(self: "AsyncToolLoopHandle", args, kwargs, result):
+            # Record steering event for serialization
+            self._record_steering(
                 fn.__name__,
                 args=list(args or ()),
                 kwargs=dict(kwargs or {}),
-                fallback=tuple(fb_list),
-                had_passthrough=False,
-                forwarded_to=[],
             )
             # Mirror to the inner loop with control keys for routing/dispatch
             try:
-                await self._queue.put(
+                self._queue.put_nowait(
                     {
                         "_mirror": {
                             "method": fn.__name__,
@@ -3175,43 +3003,14 @@ def custom_steering_method(
             @functools.wraps(fn, updated=())
             async def _async_wrapped(self: "AsyncToolLoopHandle", *a, **kw):
                 res = await fn(self, *a, **kw)
-                return await _post_call(self, a, kw, res)
+                return _record_and_mirror(self, a, kw, res)
 
             return _async_wrapped
 
         @functools.wraps(fn, updated=())
         def _sync_wrapped(self: "AsyncToolLoopHandle", *a, **kw):
             res = fn(self, *a, **kw)
-            # Fire-and-forget record (do not block caller)
-            try:
-                asyncio.create_task(
-                    self._record_and_forward(
-                        fn.__name__,
-                        args=list(a or ()),
-                        kwargs=dict(kw or {}),
-                        fallback=tuple(fb_list),
-                        had_passthrough=False,
-                        forwarded_to=[],
-                    ),
-                )
-            except Exception:
-                pass
-            # Mirror sentinel nowait
-            try:
-                self._queue.put_nowait(
-                    {
-                        "_mirror": {
-                            "method": fn.__name__,
-                            "kwargs": dict(kw or {}),
-                            "_custom": True,
-                            "_aliases": list(alias_list),
-                            "_fallback": list(fb_list),
-                        },
-                    },
-                )
-            except Exception:
-                pass
-            return res
+            return _record_and_mirror(self, a, kw, res)
 
         return _sync_wrapped
 
