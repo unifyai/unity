@@ -611,7 +611,7 @@ async def llm_call(
     client: unillm.AsyncUnify,
     prompt: str,
     screenshot: bytes | str | None = None,
-    images: Optional[dict[str, Any]] = None,
+    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     static_prompt: Optional[str] = None,
 ) -> str:
     """
@@ -624,7 +624,7 @@ async def llm_call(
         client: The AsyncUnify client to use for the LLM call
         prompt: The dynamic prompt content (user message)
         screenshot: Optional screenshot to include in the prompt
-        images: Optional dictionary of image handles to include
+        images: Optional ImageRefs or list of image references to include
         static_prompt: Optional static content to cache (sent as system message with cache_control)
 
     Returns:
@@ -670,9 +670,38 @@ async def llm_call(
         )
 
     if images:
-        for key, handle in images.items():
+        # Support ImageRefs (RootModel with .root) or list[AnnotatedImageRef/RawImageRef]
+        items_to_process = (
+            getattr(images, "root", images) if hasattr(images, "root") else images
+        )
+
+        for item in items_to_process:
             try:
-                image_bytes = handle.raw()
+                # Handle different item types
+                if hasattr(item, "raw_image_ref"):
+                    # AnnotatedImageRef - resolve via ImageManager
+                    from unity.manager_registry import ManagerRegistry
+
+                    img_manager = ManagerRegistry.get_image_manager()
+                    handles = img_manager.get_images([item.raw_image_ref.image_id])
+                    if handles:
+                        image_bytes = handles[0].raw()
+                    else:
+                        continue
+                elif hasattr(item, "image_id"):
+                    # RawImageRef - resolve via ImageManager
+                    from unity.manager_registry import ManagerRegistry
+
+                    img_manager = ManagerRegistry.get_image_manager()
+                    handles = img_manager.get_images([item.image_id])
+                    if handles:
+                        image_bytes = handles[0].raw()
+                    else:
+                        continue
+                else:
+                    logger.warning(f"Unknown image item type: {type(item)}")
+                    continue
+
                 b64_image = base64.b64encode(image_bytes).decode("utf-8")
                 user_content.append(
                     {
@@ -2490,24 +2519,42 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self._img_token = None
         self._imglog_token = None
         if self.images:
+            # Support ImageRefs (RootModel with .root) or list[AnnotatedImageRef/RawImageRef]
+            items = (
+                getattr(self.images, "root", self.images)
+                if hasattr(self.images, "root")
+                else self.images
+            )
+
             id_map: dict[int, Any] = {}
-            for _k, _ih in self.images.items():
+            for i, ref in enumerate(items or []):
                 try:
-                    _iid = int(getattr(_ih, "image_id", -1))
+                    # Get image_id from AnnotatedImageRef or RawImageRef
+                    if hasattr(ref, "raw_image_ref"):
+                        _iid = int(ref.raw_image_ref.image_id)
+                    elif hasattr(ref, "image_id"):
+                        _iid = int(ref.image_id)
+                    else:
+                        continue
                     if _iid >= 0:
-                        id_map[_iid] = _ih
+                        id_map[_iid] = ref
                 except Exception:
                     continue
             self._img_token = LIVE_IMAGES_REGISTRY.set(id_map)
 
             seed_log: list[str] = []
             try:
-                for _k, _ih in self.images.items():
+                for i, ref in enumerate(items or []):
                     try:
-                        _iid = int(getattr(_ih, "image_id", -1))
+                        if hasattr(ref, "raw_image_ref"):
+                            _iid = int(ref.raw_image_ref.image_id)
+                        elif hasattr(ref, "image_id"):
+                            _iid = int(ref.image_id)
+                        else:
+                            _iid = -1
                     except Exception:
                         _iid = -1
-                    seed_log.append(f"user_message:{_iid}:{_k}")
+                    seed_log.append(f"user_message:{_iid}:img_{i}")
             except Exception:
                 pass
             self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
