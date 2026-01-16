@@ -375,19 +375,19 @@ async def test_dynamic_helpers_use_base_docstrings(client):
     # pause
     for k, v in registered_docs.items():
         if k.startswith("pause_"):
-            assert "Pause the outer conversational loop" in v
+            assert "Pause this task temporarily" in v
     # resume
     for k, v in registered_docs.items():
         if k.startswith("resume_"):
-            assert "Resume a loop previously paused" in v
+            assert "Resume a task that was previously paused" in v
     # interject
     for k, v in registered_docs.items():
         if k.startswith("interject_"):
-            assert "Inject an additional" in v
+            assert "Provide additional information or instructions" in v
     # ask (from SteerableHandle.ask)
     for k, v in registered_docs.items():
         if k.startswith("ask_"):
-            assert "Ask a question to the running process" in v
+            assert "Ask about the current status or progress" in v
     # stop – either base or explicit; ensure it's non-empty and informative
     for k, v in registered_docs.items():
         if k.startswith("stop_"):
