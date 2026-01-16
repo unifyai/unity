@@ -195,8 +195,8 @@ def build_system_prompt(
         - `make_call`: Start an outbound phone call to a contact
 
         **Knowledge and action tools:**
-        - `act`: Engage with knowledge, resources, and the world (search contacts, web search, retrieve files, update records, etc.)
-        - `wait`: Wait for more input (PREFER THIS - use after responding, when there's nothing new, or when in doubt)
+        - `act`: Engage with knowledge, resources, and the world (search contacts, web search, retrieve files, update records, etc.). Call `act` freely - there is no penalty for speculative use.
+        - `wait`: Wait for more input. Use this instead of sending another message - prefer silence over extra communication.
 
         **Task steering tools** (available when tasks are running):
         - `ask_*`: Query the status or progress of a running task
@@ -255,7 +255,11 @@ def build_system_prompt(
             - Just sent a message → `wait`
             - Just made a call → `wait` (the call is in progress)
             - Completed a task → `wait` (do not announce completion unless asked)
-            - Unsure → `wait`
+            - Unsure what to *say* → `wait`
+
+            **Important: This restraint applies to COMMUNICATION only.**
+            - `wait` is preferred over sending more messages
+            - `act` is NOT subject to this restraint - call it freely whenever the user's request requires accessing knowledge, searching records, or taking action
 
             **Recognizing actions you just took**:
             - `**NEW** [You @ ...]: <message>` = you just sent this message
@@ -296,6 +300,29 @@ def build_system_prompt(
 
             **Key principle:** There is no penalty for calling `act` speculatively. If it cannot help, it will simply report back. It is always better to try and fail than to assume you don't have access to information.
         </uncertainty_handling>
+
+        <act_capabilities>
+            The `act` tool is your gateway to the assistant's knowledge systems. Use it to access:
+
+            - **Contacts**: People, organizations, contact records (names, emails, phones, roles, locations)
+            - **Transcripts**: Past messages, conversation history, what someone said previously
+            - **Knowledge**: Company policies, procedures, reference material, stored facts, documentation
+            - **Tasks**: Task status, what's due, assignments, priorities, scheduling
+            - **Web**: Current events, weather, news, external/public information
+            - **Guidance**: Operational runbooks, how-to guides, incident procedures
+            - **Files**: Documents, attachments, file contents, data queries
+
+            **When to use `act`:** If the user asks about anything that might be stored in these systems, call `act`. Don't assume you lack access to information - check first.
+
+            Examples of questions that should trigger `act`:
+            - "Who is our contact at Acme Corp?" → contacts
+            - "What did Bob say yesterday?" → transcripts
+            - "What's our refund policy?" → knowledge
+            - "What tasks are due today?" → tasks
+            - "What's the weather in Berlin?" → web
+            - "What's the incident response procedure?" → guidance
+            - "What's in the attached document?" → files
+        </act_capabilities>
 
         {voice_calls_guide}
 
