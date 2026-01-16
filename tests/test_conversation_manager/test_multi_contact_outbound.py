@@ -6,12 +6,12 @@ Tests for outbound messages to contacts not yet in active_conversations.
 
 These tests verify that when the boss asks to message someone who hasn't
 messaged first (i.e., not in active_conversations), the ConversationManager
-correctly routes through start_task to get contact details from the Actor,
+correctly uses `act` to search for contact details from the Actor,
 then sends the message once details are returned.
 
 Also tests that when the boss provides contact details inline (e.g., "call
 David on +1234567890"), the LLM correctly uses the contact_details field
-rather than delegating to start_task.
+rather than delegating to `act`.
 
 Uses SimulatedActor which returns plausible made-up contact details.
 """
@@ -39,19 +39,19 @@ def _only(events, typ):
 
 
 # ---------------------------------------------------------------------------
-#  Outbound to unknown contact triggers start_task
+#  Outbound to unknown contact triggers act
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_unknown_contact_triggers_start_task(initialized_cm):
+async def test_email_unknown_contact_triggers_act(initialized_cm):
     """
-    Boss asks to email someone not in contacts -> should call start_task.
+    Boss asks to email someone not in contacts -> should call act.
 
     When the boss says "email David about X", and David is not in
-    active_conversations, the assistant should use start_task to
-    get David's contact details from the Actor.
+    active_conversations, the assistant should use act to search for
+    David's contact details from the Actor.
     """
     cm = initialized_cm
 
@@ -62,11 +62,11 @@ async def test_email_unknown_contact_triggers_start_task(initialized_cm):
         ),
     )
 
-    # Check that start_task was called (ActorHandleStarted event)
+    # Check that act was called (ActorHandleStarted event)
     actor_events = _only(result.output_events, ActorHandleStarted)
 
     assert len(actor_events) >= 1, (
-        f"Expected start_task to be called (ActorHandleStarted event), "
+        f"Expected act to be called (ActorHandleStarted event), "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
 
@@ -74,7 +74,7 @@ async def test_email_unknown_contact_triggers_start_task(initialized_cm):
     task_event = actor_events[0]
     assert (
         "david" in task_event.query.lower() or "email" in task_event.query.lower()
-    ), f"start_task query should mention David or email, got: {task_event.query}"
+    ), f"act query should mention David or email, got: {task_event.query}"
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ async def test_call_with_inline_phone_number(initialized_cm):
 
     When the boss says "call David, his number is +15551234567", the LLM should
     directly call make_call with contact_details containing the phone number,
-    NOT delegate to start_task.
+    NOT delegate to act.
     """
     cm = initialized_cm
 
@@ -104,10 +104,10 @@ async def test_call_with_inline_phone_number(initialized_cm):
     # Check that make_call was triggered (PhoneCallSent event)
     call_events = _only(result.output_events, PhoneCallSent)
 
-    # Should NOT have called start_task since we provided the number
+    # Should NOT have called act since we provided the number
     actor_events = _only(result.output_events, ActorHandleStarted)
     assert len(actor_events) == 0, (
-        f"Should not call start_task when phone number is provided inline, "
+        f"Should not call act when phone number is provided inline, "
         f"got ActorHandleStarted events: {actor_events}"
     )
 
@@ -125,7 +125,7 @@ async def test_sms_with_inline_phone_number(initialized_cm):
 
     When the boss says "text Joanna on +15559876543 saying hi", the LLM should
     directly call send_sms with contact_details containing the phone number,
-    NOT delegate to start_task.
+    NOT delegate to act.
     """
     cm = initialized_cm
 
@@ -139,10 +139,10 @@ async def test_sms_with_inline_phone_number(initialized_cm):
     # Check that send_sms was triggered (SMSSent event)
     sms_events = _only(result.output_events, SMSSent)
 
-    # Should NOT have called start_task since we provided the number
+    # Should NOT have called act since we provided the number
     actor_events = _only(result.output_events, ActorHandleStarted)
     assert len(actor_events) == 0, (
-        f"Should not call start_task when phone number is provided inline, "
+        f"Should not call act when phone number is provided inline, "
         f"got ActorHandleStarted events: {actor_events}"
     )
 
@@ -160,7 +160,7 @@ async def test_email_with_inline_email_address(initialized_cm):
 
     When the boss says "email Johnny at johnny@example.com", the LLM should
     directly call send_email with contact_details containing the email address,
-    NOT delegate to start_task.
+    NOT delegate to act.
     """
     cm = initialized_cm
 
@@ -174,10 +174,10 @@ async def test_email_with_inline_email_address(initialized_cm):
     # Check that send_email was triggered (EmailSent event)
     email_events = _only(result.output_events, EmailSent)
 
-    # Should NOT have called start_task since we provided the email
+    # Should NOT have called act since we provided the email
     actor_events = _only(result.output_events, ActorHandleStarted)
     assert len(actor_events) == 0, (
-        f"Should not call start_task when email address is provided inline, "
+        f"Should not call act when email address is provided inline, "
         f"got ActorHandleStarted events: {actor_events}"
     )
 

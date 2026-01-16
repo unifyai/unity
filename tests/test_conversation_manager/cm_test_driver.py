@@ -24,6 +24,7 @@ from unity.conversation_manager.events import (
     EmailSent,
     UnifyMessageSent,
     PhoneCallSent,
+    ActorHandleStarted,
 )
 
 if TYPE_CHECKING:
@@ -140,7 +141,13 @@ class CMStepDriver:
             for evt in published_events:
                 if isinstance(
                     evt,
-                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
+                    (
+                        SMSSent,
+                        EmailSent,
+                        UnifyMessageSent,
+                        PhoneCallSent,
+                        ActorHandleStarted,
+                    ),
                 ):
                     output_events.append(evt)
                 await EventHandler.handle_event(
@@ -193,7 +200,13 @@ class CMStepDriver:
             if evt is not None:
                 if isinstance(
                     evt,
-                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
+                    (
+                        SMSSent,
+                        EmailSent,
+                        UnifyMessageSent,
+                        PhoneCallSent,
+                        ActorHandleStarted,
+                    ),
                 ):
                     all_output_events.append(evt)
                 # Handle the event locally

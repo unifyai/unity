@@ -5845,6 +5845,7 @@ class HierarchicalActor(BaseActor):
         )
         return cache_key
 
+    @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
         description: str,
@@ -5864,28 +5865,6 @@ class HierarchicalActor(BaseActor):
         can_store: Optional[bool] = None,
         **kwargs,
     ) -> HierarchicalActorHandle:
-        """
-        Creates and starts a new HierarchicalActorHandle active task.
-
-        Args:
-            description: The high-level goal for the task.
-            parent_chat_context: Chat context from a parent process.
-            clarification_up_q: Queue for sending clarification questions.
-            clarification_down_q: Queue for receiving clarification answers.
-            persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
-            images: Optional mapping of source-scoped keys to ImageHandle objects.
-            entrypoint: Optional. If provided, bypasses LLM plan generation
-                and directly executes the specified function from the FunctionManager.
-            new_session: If True, creates a new browser/desktop session for this plan. If False (default), reuses the actor's shared session.
-            can_compose: If provided, overrides the actor's default can_compose setting
-                for this call. When False, the actor can only execute pre-existing
-                functions via entrypoint.
-            can_store: If provided, overrides the actor's default can_store setting
-                for this call. When False, verified functions are not persisted.
-
-        Returns:
-            An active handle to the running HierarchicalActorHandle.
-        """
         # Clarification queues are optional. For HierarchicalActor, queue-based clarification
         # routing implies an outer supervisor is actively consuming those queues.
         #

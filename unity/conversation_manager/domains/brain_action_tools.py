@@ -315,16 +315,28 @@ class ConversationManagerBrainActionTools:
         await self._event_broker.publish("app:comms:make_call", event.to_json())
         return {"status": "ok"}
 
-    async def start_task(self, *, query: str) -> dict[str, Any]:
+    async def act(self, *, query: str) -> dict[str, Any]:
         """
-        Start a new background task for work not related to direct communication.
+        Engage with knowledge, resources, and the world beyond immediate conversations.
 
-        Use this for tasks like searching the web, doing research, answering
-        questions, managing contacts, scheduling, or any work that requires
-        the Conductor to orchestrate.
+        This is the all-purpose method for any work that requires searching, retrieving,
+        manipulating, or acting on information. Use ``act`` liberally — if it cannot
+        help, it will simply report back. There is no penalty for speculative delegation.
+
+        **Capabilities include:**
+
+        - **Retrieval**: Search contact records, query knowledge bases, look up past
+          conversations, find calendar events, search the web, retrieve files
+        - **Action**: Update records, modify spreadsheets, control the desktop/browser,
+          schedule tasks, create reminders
+        - **Combined**: Find information and act on it (e.g., "find David's email")
+
+        **When uncertain, call ``act``**: If you need information you don't have (like
+        a contact's email address), call ``act`` to search for it. If ``act`` can't find
+        it, it will tell you, and you can then ask the user.
 
         Args:
-            query: The task description or question to work on.
+            query: Natural language description of what to do or find.
         """
         global _next_handle_id
 
@@ -349,7 +361,7 @@ class ConversationManagerBrainActionTools:
             f"app:actor:actor_started_handle_{handle_id}",
             ActorHandleStarted(
                 handle_id=handle_id,
-                action_name="start_task",
+                action_name="act",
                 query=query,
             ).to_json(),
         )
@@ -361,7 +373,7 @@ class ConversationManagerBrainActionTools:
             managers_utils.actor_watch_clarifications(handle_id, handle),
         )
 
-        return {"status": "task_started", "query": query}
+        return {"status": "acting", "query": query}
 
     async def wait(self) -> dict[str, Any]:
         """
@@ -386,7 +398,7 @@ class ConversationManagerBrainActionTools:
             "send_unify_message": self.send_unify_message,
             "send_email": self.send_email,
             "make_call": self.make_call,
-            "start_task": self.start_task,
+            "act": self.act,
             "wait": self.wait,
         }
 
