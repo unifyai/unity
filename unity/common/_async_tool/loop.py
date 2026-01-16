@@ -13,7 +13,6 @@ from typing import (
     Set,
     Optional,
     TYPE_CHECKING,
-    Literal,
 )
 from contextlib import suppress
 from pydantic import BaseModel
@@ -60,7 +59,6 @@ from .messages import (
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
-from . import semantic_cache as sc
 
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
@@ -141,16 +139,6 @@ class LoopLogger:
             self._defer_after_first_llm.append((prefix, msg))
 
 
-def _via(replay_origin: str | None) -> str:
-    if not replay_origin:
-        return ""
-    return (
-        " – via deserialize 📦"
-        if replay_origin == "deserialize"
-        else f" – via {replay_origin}"
-    )
-
-
 class _LoopToolFailureTracker:
     def __init__(self, max_consecutive_failures: int):
         self._consecutive_failures = 0
@@ -215,11 +203,7 @@ async def async_tool_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
-    semantic_cache_namespace: Optional[str] = None,
     images: "ImageRefs | None" = None,
-    resume_children: Optional[list[dict]] = None,
-    replay_origin: Optional[str] = None,
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
 ) -> str:
@@ -599,15 +583,10 @@ async def async_tool_loop_inner(
                         )
                     # mark images up to current length as already logged
                     image_log_last_len = len(logs)
-                # If this loop is resuming from a snapshot, annotate this initial message log
-                suffix = _via(replay_origin)
-                if suffix:
-                    combined_lines[0] = combined_lines[0] + suffix
                 logger.info("\n".join(combined_lines), prefix="🧑‍💻")
         except Exception:
-            suffix = _via(replay_origin)
             if not isinstance(message, list):
-                logger.info(f"User Message: {message}{suffix}", prefix="🧑‍💻")
+                logger.info(f"User Message: {message}", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
@@ -696,114 +675,12 @@ async def async_tool_loop_inner(
         # the API, NOT in client.messages. This allows backfill to find and
         # execute seeded tool_calls before transformation occurs.
 
-        await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
+        await _msg_dispatcher.append_msgs(seeded_batch)
 
         # Track seeded message count for Claude transformation (must only
         # transform seeded messages, not loop-generated ones)
         _seeded_msg_count = len(client.messages)
-        # Emit concise one-time banner and replay logs for seeded history (if requested)
-        if replay_origin:
-            try:
-                # One-time banner indicating number of replayed messages
-                try:
-                    n_msgs = sum(1 for _m in seeded_batch if isinstance(_m, dict))
-                except Exception:
-                    n_msgs = len(seeded_batch or [])
-                try:
-                    logger.info(
-                        f"Deserializing {n_msgs} Message(s)…",
-                        prefix="📦",
-                    )
-                except Exception:
-                    pass
-                import copy as _copy  # local import
-                from .utils import try_parse_json as _try_parse_json  # noqa: WPS433
-            except Exception:
-                _copy = None
-                _try_parse_json = lambda v: v  # type: ignore
-            try:
-                for _m in seeded_batch:
-                    if not isinstance(_m, dict):
-                        continue
-                    _role = _m.get("role")
-                    if _role == "assistant":
-                        # Content-only assistant replay log; summarize tool_calls if no content
-                        _content = _m.get("content")
-                        if isinstance(_content, str) and _content.strip():
-                            logger.info(
-                                f"Assistant: {_content}{_via(replay_origin)}",
-                                prefix="🤖",
-                            )
-                        else:
-                            try:
-                                names = [
-                                    str(tc.get("function", {}).get("name"))
-                                    for tc in (_m.get("tool_calls") or [])
-                                    if isinstance(tc, dict)
-                                ]
-                                names = [n for n in names if n and n != "None"]
-                                if names:
-                                    logger.info(
-                                        f"Assistant scheduled: {', '.join(names)}{_via(replay_origin)}",
-                                        prefix="🤖",
-                                    )
-                                else:
-                                    logger.info(
-                                        f"Assistant (replayed){_via(replay_origin)}",
-                                        prefix="🤖",
-                                    )
-                            except Exception:
-                                logger.info(
-                                    f"Assistant (replayed){_via(replay_origin)}",
-                                    prefix="🤖",
-                                )
-                    elif _role == "user":
-                        # Content-only user replay log
-                        _content = _m.get("content")
-                        if isinstance(_content, str):
-                            logger.info(
-                                f"User Message: {_content}{_via(replay_origin)}",
-                                prefix="🧑‍💻",
-                            )
-                        else:
-                            try:
-                                logger.info(
-                                    f"User Message: {json.dumps(_content, indent=2)}{_via(replay_origin)}",
-                                    prefix="🧑‍💻",
-                                )
-                            except Exception:
-                                logger.info(
-                                    f"User Message (replayed){_via(replay_origin)}",
-                                    prefix="🧑‍💻",
-                                )
-                    elif _role == "tool":
-                        try:
-                            _tool_for_logging = (
-                                _copy.deepcopy(_m) if _copy else dict(_m)
-                            )
-                            try:
-                                if isinstance(_tool_for_logging.get("content"), str):
-                                    _tool_for_logging["content"] = _try_parse_json(
-                                        _tool_for_logging.get("content"),
-                                    )
-                            except Exception:
-                                pass
-                            logger.info(
-                                f"ToolCall Completed (replayed){_via(replay_origin)}",
-                                prefix="✅  ",
-                            )
-                            logger.info(f"{json.dumps(_tool_for_logging, indent=4)}")
-                        except Exception:
-                            pass
-            except Exception:
-                # Never let replay logging break the loop
-                pass
-        # Emit end-of-deserialization banner after replayed messages
-        try:
-            if replay_origin == "deserialize":
-                logger.info("Deserialization complete", prefix="📦")
-        except Exception:
-            pass
+
         # Inject an initial snapshot of live images (if any) immediately by
         # appending assistant→tool messages directly to the client transcript.
         try:
@@ -851,42 +728,6 @@ async def async_tool_loop_inner(
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
-    semantic_closest_match = None
-    last_valid_user_history = []
-    if semantic_cache in ("read", "both"):
-        if semantic_closest_match := sc.search_semantic_cache(
-            message,
-            semantic_cache_namespace,
-        ):
-            msgs = await sc.get_dummy_tool(
-                semantic_closest_match,
-                tools_data.normalized,
-            )
-            if log_steps == "full":
-                logger.info(
-                    f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
-                    prefix="🔍",
-                )
-            client.append_messages(msgs)
-            # Append semantic cache hint as a new system message (never mutate the original)
-            await _msg_dispatcher.append_msgs(
-                [
-                    {
-                        "role": "system",
-                        "_semantic_cache_hint": True,
-                        "content": sc.get_system_msg_hint(),
-                    },
-                ],
-            )
-            tools_data.normalized["semantic_search"] = ToolSpec(
-                fn=sc.semantic_search_placeholder,
-            )
-        else:
-            if log_steps == "full":
-                logger.info(
-                    "Semantic cache miss, no entry for the user message",
-                    prefix="🔍",
-                )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
@@ -909,20 +750,6 @@ async def async_tool_loop_inner(
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
-        # If resuming with children, do not re-schedule those call_ids; they'll be adopted below
-        resume_children_call_ids: set[str] = set()
-        try:
-            if resume_children:
-                for _rec in resume_children:
-                    try:
-                        _cid = _rec.get("call_id")
-                        if isinstance(_cid, str) and _cid:
-                            resume_children_call_ids.add(_cid)
-                    except Exception:
-                        continue
-        except Exception:
-            resume_children_call_ids = set()
-
         unreplied = find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
@@ -938,8 +765,7 @@ async def async_tool_loop_inner(
                         entry["missing"] = [
                             cid for cid in entry["missing"] if cid not in pruned
                         ]
-                # Exclude any call_ids that will be adopted as resume_children
-                missing_ids = set(entry["missing"]) - resume_children_call_ids
+                missing_ids = set(entry["missing"])
                 if not missing_ids:
                     continue
                 await schedule_missing_for_message(
@@ -952,99 +778,6 @@ async def async_tool_loop_inner(
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
                 )
-
-    # Adopt any nested children provided for resume (after backfill so placeholders exist)
-    try:
-        if resume_children:
-            # ToolCallMetadata is imported at module level; avoid local import to prevent
-            # function-scope shadowing that leads to UnboundLocalError on other paths.
-
-            # Build indices:
-            #  - call_index: call_id -> (assistant_msg, tool_call, tool_idx)
-            #  - reply_index: call_id -> existing tool reply message (if any)
-            call_index: dict[str, tuple[dict, dict, int]] = {}
-            reply_index: dict[str, dict] = {}
-            for m in client.messages:
-                try:
-                    if m.get("role") != "assistant":
-                        # capture existing tool reply messages
-                        if m.get("role") == "tool":
-                            try:
-                                cid = m.get("tool_call_id")
-                                if isinstance(cid, str):
-                                    reply_index[cid] = m
-                            except Exception:
-                                pass
-                        continue
-                    for i, tc in enumerate(m.get("tool_calls") or []):
-                        cid = tc.get("id")
-                        if isinstance(cid, str):
-                            call_index[cid] = (m, tc, i)
-                except Exception:
-                    continue
-
-            for child in resume_children:
-                try:
-                    cid = child.get("call_id")
-                    tool_name = str(child.get("tool_name") or "")
-                    ch = child.get("handle")
-                    if not cid or not tool_name or ch is None:
-                        continue
-                    tup = call_index.get(cid)
-                    if not tup:
-                        continue
-                    amsg, tc, idx = tup
-
-                    # Compute tool schema if available
-                    schema = {}
-                    try:
-                        spec = tools_data.normalized.get(tool_name)
-                        if spec is not None:
-                            schema = method_to_schema(spec.fn, tool_name)
-                    except Exception:
-                        schema = {}
-
-                    raw_args = "{}"
-                    try:
-                        raw_args = tc.get("function", {}).get("arguments", "{}")
-                    except Exception:
-                        raw_args = "{}"
-
-                    # Reuse existing placeholder tool message if present to avoid duplicates
-                    existing_tool_msg = reply_index.get(str(cid))
-
-                    info = ToolCallMetadata(
-                        name=tool_name,
-                        call_id=str(cid),
-                        call_dict=tc,
-                        call_idx=int(idx),
-                        chat_context=None,
-                        assistant_msg=amsg,
-                        is_interjectable=hasattr(ch, "interject"),
-                        tool_schema=schema,
-                        llm_arguments={},
-                        raw_arguments_json=str(raw_args),
-                        tool_reply_msg=existing_tool_msg,
-                    )
-
-                    await tools_data.adopt_nested(
-                        info,
-                        ch,
-                        msg_dispatcher=_msg_dispatcher,
-                        assistant_meta=assistant_meta,
-                        outer_handle_container=outer_handle_container,
-                    )
-                    try:
-                        logger.info(
-                            f"Adopted child handle for call_id={cid} tool={tool_name}",
-                            prefix="🔗",
-                        )
-                    except Exception:
-                        pass
-                except Exception:
-                    continue
-    except Exception:
-        pass
 
     # Helper: inject a synthetic image-overview tool call/result so the full
     # set of live images persists in the transcript (independent of tool policy).
@@ -3699,16 +3432,3 @@ async def async_tool_loop_inner(
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
         reset_live_images_context(_img_token, _imglog_token)
-
-        if semantic_cache in ("write", "both"):
-            sc.save_semantic_cache(
-                _initial_user_message,
-                last_valid_user_history,
-                client.messages,
-                namespace=semantic_cache_namespace,
-                previous_tool_trajectory=(
-                    semantic_closest_match.tool_trajectory
-                    if semantic_closest_match
-                    else None
-                ),
-            )
