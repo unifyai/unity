@@ -1930,7 +1930,7 @@ class _ToolProviderProxy:
 
             if self._is_browser_env:
                 try:
-                    backend = self._real_instance.browser.backend
+                    backend = self._real_instance.computer.backend
                     is_magnitude = isinstance(backend, MagnitudeBackend)
                 except Exception:
                     backend = None
@@ -2038,7 +2038,7 @@ class _ToolProviderProxy:
             url = None
             if self._is_browser_env:
                 try:
-                    url = await self._real_instance.browser.get_current_url()
+                    url = await self._real_instance.computer.get_current_url()
                 except Exception:
                     url = None
 
@@ -2062,7 +2062,9 @@ class _ToolProviderProxy:
 
             if meta["impure"] and self._is_browser_env:
                 try:
-                    post_screenshot = await self._real_instance.browser.get_screenshot()
+                    post_screenshot = (
+                        await self._real_instance.computer.get_screenshot()
+                    )
                     meta["post_state_screenshot"] = post_screenshot
                 except Exception as e:
                     logger.warning(f"Failed to capture post-action screenshot: {e}")
@@ -2565,31 +2567,37 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
 
         self.plan_generation_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.verification_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.implementation_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.summarization_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.modification_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.ask_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
@@ -3454,11 +3462,11 @@ async def main_plan():
                     and item.exit_seq > item.start_seq
                     and computer_primitives is not None
                     and isinstance(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         MagnitudeBackend,
                     )
                 ):
-                    backend = computer_primitives.browser.backend
+                    backend = computer_primitives.computer.backend
                     current_seq_cursor = item.start_seq + 1
 
                     for idx, interaction in enumerate(item.interactions):
@@ -3524,10 +3532,10 @@ async def main_plan():
                             computer_primitives = None
 
                     if computer_primitives is not None and isinstance(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         MagnitudeBackend,
                     ):
-                        await computer_primitives.browser.backend.barrier(
+                        await computer_primitives.computer.backend.barrier(
                             up_to_seq=item.exit_seq,
                         )
 
@@ -3858,10 +3866,10 @@ async def main_plan():
                 await self._clear_browser_queue_for_run(run_id_being_cancelled)
                 computer_primitives = self._get_computer_primitives()
                 if hasattr(
-                    computer_primitives.browser.backend,
+                    computer_primitives.computer.backend,
                     "interrupt_current_action",
                 ):
-                    await computer_primitives.browser.backend.interrupt_current_action()
+                    await computer_primitives.computer.backend.interrupt_current_action()
 
             await self._handle_dynamic_implementation(
                 function_name=target_function_name_override,
@@ -4225,7 +4233,7 @@ async def main_plan():
             return
 
         try:
-            backend = self._get_computer_primitives().browser.backend
+            backend = self._get_computer_primitives().computer.backend
         except Exception as e:
             logger.debug(f"Could not access browser backend to clear queue: {e}")
             return
@@ -4425,10 +4433,10 @@ async def main_plan():
                 try:
                     computer_primitives = self._get_computer_primitives()
                     if hasattr(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         "interrupt_current_action",
                     ):
-                        await computer_primitives.browser.backend.interrupt_current_action()
+                        await computer_primitives.computer.backend.interrupt_current_action()
                 except Exception as e:
                     logger.debug(f"Could not interrupt browser action: {e}")
             await self.pause()
@@ -4942,7 +4950,7 @@ async def main_plan():
             if "computer_primitives" in (self.actor.environments or {}):
                 try:
                     computer_primitives = self._get_computer_primitives()
-                    current_url = await computer_primitives.browser.get_current_url()
+                    current_url = await computer_primitives.computer.get_current_url()
                 except Exception as e:
                     logger.debug(f"Could not get current URL: {e}")
             refactor_prompt = prompt_builders.build_refactor_prompt(
@@ -5019,7 +5027,7 @@ async def main_plan():
                                 response_format=TabState,
                             )
                             original_url = (
-                                await computer_primitives.browser.get_current_url()
+                                await computer_primitives.computer.get_current_url()
                             )
                         except Exception as e:
                             self.action_log.append(
@@ -5027,7 +5035,7 @@ async def main_plan():
                             )
                             original_tab_index = TabState(current_tab_index=0)
                             original_url = (
-                                await computer_primitives.browser.get_current_url()
+                                await computer_primitives.computer.get_current_url()
                             )
 
                         self.action_log.append(
@@ -5207,7 +5215,7 @@ async def main_plan():
                     "Stopping dedicated action provider session for plan %s.",
                     self._module_name,
                 )
-                self.dedicated_computer_primitives.browser.stop()
+                self.dedicated_computer_primitives.computer.stop()
             except Exception as exc:
                 logger.warning(
                     "Failed to stop dedicated action provider session for plan %s: %s",
@@ -5308,10 +5316,10 @@ async def main_plan():
             if immediate:
                 computer_primitives = self._get_computer_primitives()
                 if computer_primitives and hasattr(
-                    computer_primitives.browser,
+                    computer_primitives.computer,
                     "backend",
                 ):
-                    backend = computer_primitives.browser.backend
+                    backend = computer_primitives.computer.backend
                     if hasattr(backend, "interrupt_current_action"):
                         logger.info("⚡ Sending interrupt to browser action...")
                         await backend.interrupt_current_action()
@@ -6391,7 +6399,7 @@ class HierarchicalActor(BaseActor):
         computer_primitives = plan._get_computer_primitives()
 
         logger.info("[COURSE_CORRECTION] Getting current screenshot...")
-        current_screenshot = await computer_primitives.browser.get_screenshot()
+        current_screenshot = await computer_primitives.computer.get_screenshot()
         logger.info("[COURSE_CORRECTION] Got current screenshot.")
 
         if isinstance(current_screenshot, str):
@@ -6584,10 +6592,10 @@ class HierarchicalActor(BaseActor):
 
                     start_seq = -1
                     if computer_primitives is not None and isinstance(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         MagnitudeBackend,
                     ):
-                        start_seq = computer_primitives.browser.backend.current_seq
+                        start_seq = computer_primitives.computer.backend.current_seq
 
                     last_error_reason = ""
                     result = None
@@ -6786,10 +6794,10 @@ class HierarchicalActor(BaseActor):
 
                         exit_seq = -1
                         if computer_primitives is not None and isinstance(
-                            computer_primitives.browser.backend,
+                            computer_primitives.computer.backend,
                             MagnitudeBackend,
                         ):
-                            exit_seq = computer_primitives.browser.backend.current_seq
+                            exit_seq = computer_primitives.computer.backend.current_seq
 
                         # Gather post-execution evidence from all active environments.
                         post_state: dict[str, Any] = {}
@@ -7245,7 +7253,7 @@ class HierarchicalActor(BaseActor):
             ):
                 try:
                     browser_screenshot = (
-                        await self.computer_primitives.browser.get_screenshot()
+                        await self.computer_primitives.computer.get_screenshot()
                     )
                 except Exception as e:
                     logger.warning(f"Could not get browser screenshot: {e}")
@@ -7468,5 +7476,5 @@ class HierarchicalActor(BaseActor):
         for plan in self._plan_handles:
             await plan.stop()
         if self.computer_primitives is not None:
-            self.computer_primitives.browser.stop()
+            self.computer_primitives.computer.stop()
         self._plan_handles.clear()
