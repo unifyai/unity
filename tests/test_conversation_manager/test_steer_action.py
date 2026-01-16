@@ -541,14 +541,14 @@ async def test_interject_additional_constraint(initialized_cm):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_correction(initialized_cm):
+async def test_interject_extension(initialized_cm):
     """
-    User interjects to correct something about the task.
+    User interjects to extend/add to the task.
 
     Flow:
     1. User requests a knowledge query
-    2. User realizes they made an error
-    3. User corrects the query
+    2. User expresses anticipation (neutral small talk)
+    3. User extends the request with additional requirements
     """
     cm = initialized_cm
 
@@ -562,28 +562,28 @@ async def test_interject_correction(initialized_cm):
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
     _assert_efficient(result1, "Step 1: initial task")
 
-    # Step 2: Realization
+    # Step 2: Anticipation (neutral, should not trigger pause/stop)
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Wait, I meant to ask about something else.",
+            content="Looking forward to seeing the results.",
         ),
     )
-    _assert_efficient(result2, "Step 2: realization")
+    _assert_efficient(result2, "Step 2: anticipation")
 
-    # Step 3: Correction via interjection
+    # Step 3: Extension via interjection (clearly adding to existing task)
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Sorry, I meant Q4, not Q3. Please look at Q4 instead.",
+            content="Also include any notes or comments attached to the report.",
         ),
     )
-    _assert_efficient(result3, "Step 3: correction")
+    _assert_efficient(result3, "Step 3: extension")
 
     assert _has_steering_in_handle_actions(
         cm,
         "interject_",
-    ), "Expected interject_* steering tool for correction"
+    ), "Expected interject_* steering tool for extension"
 
 
 @pytest.mark.asyncio
