@@ -21,7 +21,6 @@ class _TaskInfoMeta:
         self.name = name
         self.call_id = call_id
         self.handle = handle
-        self.is_passthrough = False
 
 
 class _TaskContainer:

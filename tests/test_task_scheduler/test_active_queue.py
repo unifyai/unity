@@ -43,8 +43,8 @@ async def _make_ordered_queue(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_passthrough_then_switch_to_multitask(monkeypatch):
-    """Start with a singleton queue (passthrough), then append a follower and
+async def test_direct_delegation_then_switch_to_multitask(monkeypatch):
+    """Start with a singleton queue (direct delegation), then append a follower and
     verify the handle switches to multi-task behaviour (CHAIN preamble in ask).
 
     Steps
@@ -83,7 +83,7 @@ async def test_passthrough_then_switch_to_multitask(monkeypatch):
     ]
     handle = await ts.execute(task_id=tid1)
 
-    # 1) Passthrough path: queue length == 1 → inner receives direct asks
+    # 1) Direct delegation path: queue length == 1 → inner receives direct asks
     await handle.ask("Q1: status?")
     # Give the background actor a moment to process
     await asyncio.sleep(0.05)
@@ -101,7 +101,7 @@ async def test_passthrough_then_switch_to_multitask(monkeypatch):
     # Establish explicit order: [tid1, tid2]
     ts._set_queue(queue_id=qid, order=[tid1, tid2])
 
-    # 3) Multi-task path: queue length > 1 → passthrough disabled. Inner ask still
+    # 3) Multi-task path: queue length > 1 → direct delegation disabled. Inner ask still
     #    receives the raw user question; queue context is handled by the outer LLM.
     await handle.ask("Q2: what remains?")
     await asyncio.sleep(0.05)
@@ -1115,7 +1115,7 @@ async def test_task_done_incremental(monkeypatch):
 @_handle_project
 async def test_interject_image_seen_by_simulation(monkeypatch):
     """
-    Singleton queue passthrough: interject with an image via ActiveQueue handle,
+    Singleton queue direct delegation: interject with an image via ActiveQueue handle,
     then ask about the file; reply should reference a sheet/spreadsheet, proving
     the image propagated to the underlying SimulatedActor.
     """
@@ -1139,7 +1139,7 @@ async def test_interject_image_seen_by_simulation(monkeypatch):
     # Build a singleton queue
     (solo_id,) = tuple(await _make_ordered_queue(ts, ["Rota"]))
 
-    # Start execution by numeric id → ActiveQueue passthrough (singleton)
+    # Start execution by numeric id → ActiveQueue direct delegation (singleton)
     h = await ts.execute(task_id=solo_id)
 
     # Wait deterministically until a task is active
@@ -1216,7 +1216,7 @@ async def test_execute_by_id_returns_active_handle(monkeypatch):
     inner = getattr(h, "_inner", h)
     assert isinstance(inner, ActiveQueue), "execute(isolate) must return ActiveQueue"
 
-    # Complete and verify non-summary final text (singleton queue passthrough)
+    # Complete and verify non-summary final text (singleton queue direct delegation)
     res = await h.result()
     assert isinstance(res, str)
     assert "Completed the following tasks:" not in res
@@ -1224,7 +1224,7 @@ async def test_execute_by_id_returns_active_handle(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_singleton_passthrough_to_inner_handle(monkeypatch):
+async def test_singleton_direct_delegation_to_inner_handle(monkeypatch):
     """
     For a true singleton queue (exactly one task at creation), the queue handle
     should pass through interject, ask, and result directly to the inner task
@@ -1597,7 +1597,7 @@ async def test_inner_clarification_bubbles_up_to_outer(monkeypatch):
     question = await asyncio.wait_for(up_q.get(), timeout=5)
     assert isinstance(question, str) and question, "expected a clarification question"
 
-    # Provide an answer and expect completion that reflects the answer (passthrough)
+    # Provide an answer and expect completion that reflects the answer (direct delegation)
     await down_q.put("YES_PROCEED")
     res = await asyncio.wait_for(h.result(), timeout=5)
     assert "Clarification received: YES_PROCEED" in (res or "")
