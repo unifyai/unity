@@ -649,6 +649,6 @@ class SingleFunctionActor(BaseActor):
         """Clean up resources."""
         if self._computer_primitives:
             try:
-                self._computer_primitives.browser.stop()
+                self._computer_primitives.computer.stop()
             except Exception:
                 pass

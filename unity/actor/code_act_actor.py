@@ -417,7 +417,7 @@ class CodeExecutionSandbox:
 
             def __getattr__(self, name: str) -> Any:
                 # Treat any access as potential "use" since callers may invoke nested objects
-                # like `computer_primitives.browser.get_screenshot()`.
+                # like `computer_primitives.computer.get_screenshot()`.
                 self._on_use()
                 attr = getattr(self._target, name)
                 if callable(attr):
@@ -719,9 +719,9 @@ class CodeActActor(BaseActor):
                 and execution_result.get("browser_used")
             ):
                 try:
-                    url = await self._computer_primitives.browser.get_current_url()
+                    url = await self._computer_primitives.computer.get_current_url()
                     screenshot_b64 = (
-                        await self._computer_primitives.browser.get_screenshot()
+                        await self._computer_primitives.computer.get_screenshot()
                     )
 
                     browser_state_summary = f"--- BROWSER STATE ---\nURL: {url}"
@@ -1080,4 +1080,4 @@ class CodeActActor(BaseActor):
         await self._shell_pool.close()
 
         if self._computer_primitives:
-            self._computer_primitives.browser.stop()
+            self._computer_primitives.computer.stop()
