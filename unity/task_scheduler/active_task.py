@@ -182,42 +182,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         _return_reasoning_steps: bool = False,
     ) -> SteerableToolHandle:
         """Answer a read-only question about the live activity and return a handle."""
-        answer: str = await self._actor_handle.ask(message)
-
-        # Lightweight static handle that simply returns the captured answer
-        class _AnswerHandle(SteerableToolHandle):  # type: ignore[abstract-method]
-            def __init__(self) -> None:
-                pass
-
-            async def interject(self, message: str): ...
-
-            def stop(self, reason: Optional[str] = None): ...
-
-            def pause(self): ...
-
-            def resume(self): ...
-
-            def done(self) -> bool:
-                return True
-
-            async def result(self) -> str:
-                # Ignoring _return_reasoning_steps for ActiveTask.ask; only answer string is returned.
-                return answer
-
-            async def ask(self, question: str) -> "SteerableToolHandle":  # type: ignore[override]
-                return self
-
-            # New abstract event APIs – provide inert stubs for static answer handle
-            async def next_clarification(self) -> dict:
-                return {}
-
-            async def next_notification(self) -> dict:
-                return {}
-
-            async def answer_clarification(self, call_id: str, answer: str) -> None:
-                return None
-
-        return _AnswerHandle()
+        return await self._actor_handle.ask(message)
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(

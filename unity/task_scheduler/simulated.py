@@ -747,7 +747,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 except Exception:
                     return None
 
-            # --- ask semantics: wrap actor's one-shot answer into a static handle ---
+            # --- ask semantics: delegate to inner handle (returns SteerableToolHandle) ---
             async def ask(
                 self,
                 question: str,
@@ -756,46 +756,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 images: object | None = None,
                 _return_reasoning_steps: bool = False,
             ) -> "SteerableToolHandle":
-                # Actor.ask returns a string; package it as a minimal static handle
-                try:
-                    answer_text = await self._inner.ask(question)  # type: ignore[attr-defined]
-                except Exception:
-                    answer_text = ""
-
-                class _AnswerHandle(SteerableToolHandle):  # type: ignore[abstract-method]
-                    def __init__(self, text: str) -> None:
-                        self._text = text
-
-                    async def interject(self, message: str): ...
-
-                    def stop(self, reason: Optional[str] = None): ...
-
-                    async def pause(self): ...
-
-                    async def resume(self): ...
-
-                    def done(self) -> bool:
-                        return True
-
-                    async def result(self) -> str:
-                        return self._text
-
-                    async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
-                        return self
-
-                    async def next_clarification(self) -> dict:
-                        return {}
-
-                    async def next_notification(self) -> dict:
-                        return {}
-
-                    async def answer_clarification(
-                        self,
-                        call_id: str,
-                        answer: str,
-                    ) -> None:
-                        return None
-
-                return _AnswerHandle(answer_text)
+                return await self._inner.ask(question)  # type: ignore[attr-defined]
 
         return SimulatedActiveQueue(handle, _exec_label)
