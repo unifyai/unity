@@ -512,118 +512,6 @@ async def test_global_resume_idempotent_no_extra_turns(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_resume_forwarded_once_to_delegate(client):
-    """
-    When a tool returns a passthrough SteerableToolHandle and the outer handle is adopted,
-    calling `resume()` on the OUTER handle must forward exactly once to the delegate.
-    """
-
-    class MockPassthroughHandle(SteerableToolHandle):
-        __passthrough__ = True
-
-        def __init__(self):
-            self._done = asyncio.Event()
-            self.pause_count = 0
-            self.resume_count = 0
-
-        async def ask(self, question: str) -> "SteerableToolHandle":
-            return self
-
-        async def interject(self, message: str):
-            return None
-
-        def stop(self):
-            self._done.set()
-            return "stopped"
-
-        async def pause(self):
-            self.pause_count += 1
-            return "paused"
-
-        async def resume(self):
-            self.resume_count += 1
-            return "resumed"
-
-        def done(self) -> bool:
-            return self._done.is_set()
-
-        async def result(self) -> str:
-            await self._done.wait()
-            return "inner_done"
-
-        # New abstract event APIs stubs
-        async def next_clarification(self) -> dict:
-            return {}
-
-        async def next_notification(self) -> dict:
-            return {}
-
-        async def answer_clarification(self, call_id: str, answer: str) -> None:
-            return None
-
-    inner_handle = MockPassthroughHandle()
-
-    async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
-        """Return a passthrough handle immediately so the outer loop adopts it."""
-        return inner_handle
-
-    client.set_system_message(
-        "1️⃣ Call `spawn_handle` to start a nested task.\n"
-        "2️⃣ Wait until it finishes.\n"
-        "3️⃣ Then reply with OK.",
-    )
-
-    # Force the first assistant turn to call only `spawn_handle` to avoid model variance
-    def _policy(step_idx, available_tools):
-        if step_idx == 0:
-            return "required", {"spawn_handle": available_tools["spawn_handle"]}
-        return "auto", available_tools
-
-    outer = start_async_tool_loop(
-        client,
-        message="start",
-        tools={"spawn_handle": spawn_handle},
-        timeout=120,
-        tool_policy=_policy,
-    )
-
-    # Wait until assistant requests the spawn tool (ensures tool scheduling happened)
-    await _wait_for_tool_request(client, "spawn_handle")
-
-    # In the new design, the outer loop continues running and does not rely on
-    # adopting a single delegate. We no longer assert on `_delegate`.
-
-    # Pause the outer loop – must forward exactly once to the delegate
-    await outer.pause()
-
-    async def _paused_once() -> bool:
-        return inner_handle.pause_count >= 1
-
-    await _wait_for_condition(_paused_once, poll=0.05, timeout=60.0)
-    assert (
-        inner_handle.pause_count == 1
-    ), "delegate did not receive pause() exactly once"
-
-    # Now resume the outer loop – must forward exactly once to the delegate
-    await outer.resume()
-
-    async def _resumed_once() -> bool:
-        return inner_handle.resume_count >= 1
-
-    await _wait_for_condition(_resumed_once, poll=0.05, timeout=60.0)
-    assert (
-        inner_handle.resume_count == 1
-    ), "delegate did not receive resume() exactly once"
-
-    # Let the inner handle complete so the loop can finish
-    inner_handle._done.set()
-
-    final = await outer.result()
-    assert final is not None, "Loop should complete with a response"
-
-
-@pytest.mark.asyncio
-@_handle_project
 async def test_resume_allows_llm_turn(client):
     """
     If the loop is paused while no tools are pending, resuming should immediately
@@ -802,9 +690,7 @@ async def test_helpers_hide_notification_clarification(client):
     for an in‑flight inner handle (would fail before the management-set change).
     """
 
-    class MockPassthroughHandle(SteerableToolHandle):
-        __passthrough__ = True
-
+    class MockNestedHandle(SteerableToolHandle):
         def __init__(self):
             self._done = asyncio.Event()
 
@@ -841,7 +727,7 @@ async def test_helpers_hide_notification_clarification(client):
         async def answer_clarification(self, call_id: str, answer: str) -> None:
             return None
 
-    inner_handle = MockPassthroughHandle()
+    inner_handle = MockNestedHandle()
 
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner_handle

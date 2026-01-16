@@ -1050,7 +1050,6 @@ class CodeActActor(BaseActor):
                 entrypoint_id=entrypoint_id,
                 execution_task=entry_task,
             )
-            setattr(entry_handle, "__passthrough__", True)
             return entry_handle
 
         system_prompt = build_code_act_system_prompt(

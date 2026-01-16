@@ -5993,7 +5993,6 @@ class HierarchicalActor(BaseActor):
             can_compose=effective_can_compose,
             can_store=effective_can_store,
         )
-        setattr(plan_handle, "__passthrough__", True)
         self._plan_handles.add(plan_handle)
         return plan_handle
 
