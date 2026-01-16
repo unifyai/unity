@@ -3897,17 +3897,25 @@ async def main_plan():
                     and "computer_primitives" in (self.actor.environments or {})
                     and getattr(self.actor, "computer_primitives", None) is not None
                 ):
-                    await self.actor._run_course_correction_agent(
-                        plan=self,
-                        target_screenshot=target_screenshot,
-                        trajectory=trajectory,
-                    )
-                    self.action_log.append(
-                        "COURSE CORRECTION: Recovery agent completed successfully.",
-                    )
-                    logger.info(
-                        "Course correction for verification recovery completed successfully.",
-                    )
+                    if getattr(self.actor, "enable_course_correction", True):
+                        await self.actor._run_course_correction_agent(
+                            plan=self,
+                            target_screenshot=target_screenshot,
+                            trajectory=trajectory,
+                        )
+                        self.action_log.append(
+                            "COURSE CORRECTION: Recovery agent completed successfully.",
+                        )
+                        logger.info(
+                            "Course correction for verification recovery completed successfully.",
+                        )
+                    else:
+                        logger.info(
+                            "Course correction disabled (enable_course_correction=False); skipping verification recovery course correction and proceeding with replay.",
+                        )
+                        self.action_log.append(
+                            "COURSE CORRECTION: Disabled. Skipping verification recovery course correction; proceeding with replay.",
+                        )
                 else:
                     logger.warning(
                         f"Missing target screenshot or trajectory for course correction. "
@@ -4804,29 +4812,37 @@ async def main_plan():
                 and target_screenshot
                 and "computer_primitives" in (self.actor.environments or {})
             ):
-                self.action_log.append(
-                    f"COURSE CORRECTION: Launching recovery agent to reverse {len(trajectory)} invalidated actions.",
-                )
-                logger.info(
-                    f"Launching course correction agent to reverse {len(trajectory)} actions.",
-                )
-                try:
-                    await self.actor._run_course_correction_agent(
-                        plan=self,
-                        target_screenshot=target_screenshot,
-                        trajectory=trajectory,
+                if getattr(self.actor, "enable_course_correction", True):
+                    self.action_log.append(
+                        f"COURSE CORRECTION: Launching recovery agent to reverse {len(trajectory)} invalidated actions.",
+                    )
+                    logger.info(
+                        f"Launching course correction agent to reverse {len(trajectory)} actions.",
+                    )
+                    try:
+                        await self.actor._run_course_correction_agent(
+                            plan=self,
+                            target_screenshot=target_screenshot,
+                            trajectory=trajectory,
+                        )
+                        self.action_log.append(
+                            "COURSE CORRECTION: Recovery agent completed successfully.",
+                        )
+                        logger.info("Course correction completed successfully.")
+                    except Exception as e:
+                        logger.error(
+                            f"Course correction failed: {e}",
+                            exc_info=True,
+                        )
+                        self.action_log.append(
+                            f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
+                        )
+                else:
+                    logger.info(
+                        "Course correction disabled (enable_course_correction=False); proceeding with replay from current state.",
                     )
                     self.action_log.append(
-                        "COURSE CORRECTION: Recovery agent completed successfully.",
-                    )
-                    logger.info("Course correction completed successfully.")
-                except Exception as e:
-                    logger.error(
-                        f"Course correction failed: {e}",
-                        exc_info=True,
-                    )
-                    self.action_log.append(
-                        f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
+                        "COURSE CORRECTION: Disabled. Proceeding with replay from current state.",
                     )
             elif trajectory and not target_screenshot:
                 logger.debug(
@@ -5525,6 +5541,7 @@ class HierarchicalActor(BaseActor):
         computer_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
+        enable_course_correction: bool = True,
         *,
         connect_now: bool = False,
         can_compose: bool = True,
@@ -5545,6 +5562,9 @@ class HierarchicalActor(BaseActor):
             computer_mode: The computer backend mode. Can be "magnitude" or "mock".
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
             agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
+            enable_course_correction: When True (default), the actor may spawn a recovery sub-agent
+                to restore computer/browser state after invalidation or verification recovery.
+                When False, the actor will skip course correction and rely on replay/re-execution.
             connect_now: When False (default), defer any agent connections until first use.
             can_compose: When True (default), allows the actor to generate new code on the fly.
                 When False, the actor can only execute pre-existing functions via entrypoint.
@@ -5564,6 +5584,7 @@ class HierarchicalActor(BaseActor):
         self._connect_now = connect_now
         self.can_compose = can_compose
         self.can_store = can_store
+        self.enable_course_correction = enable_course_correction
 
         # Preserve backward-compatible test hooks: many tests monkeypatch
         # `unity.actor.hierarchical_actor.ComputerPrimitives`. When environments are not
