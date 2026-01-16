@@ -452,10 +452,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(self.inactivity_check_interval)
             current_time = self.loop.time()
             if current_time - self.last_activity_time > self.inactivity_timeout:
-                self._session_logger.info(
-                    "session_end",
-                    f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown",
-                )
+                log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
+                print(
+                    log_str
+                )  # need console logging of inactivity to detect idle containers
+                self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
 
