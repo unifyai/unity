@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import inspect
 import io
 import traceback
@@ -942,6 +943,7 @@ class CodeActActor(BaseActor):
 
         return tools
 
+    @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
         description: str,
@@ -957,9 +959,6 @@ class CodeActActor(BaseActor):
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> SteerableToolHandle:
-        """
-        Creates and starts a new ActorHandle for the CodeAct agent.
-        """
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
 

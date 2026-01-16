@@ -194,8 +194,8 @@ def build_system_prompt(
         - `send_unify_message`: Send a Unify platform message to a contact
         - `make_call`: Start an outbound phone call to a contact
 
-        **Task management tools:**
-        - `start_task`: Start a new background task for work like research, web searches, contact management, scheduling, etc.
+        **Knowledge and action tools:**
+        - `act`: Engage with knowledge, resources, and the world (search contacts, web search, retrieve files, update records, etc.)
         - `wait`: Wait for more input (PREFER THIS - use after responding, when there's nothing new, or when in doubt)
 
         **Task steering tools** (available when tasks are running):
@@ -272,10 +272,30 @@ def build_system_prompt(
 
             <important_notes_about_contact_actions>
                 - If you can find the contact_id (if the contact is in the active conversations), and the contact has the requested medium information (e.g., you want to SMS the contact, then you must have their phone number), then simply use the contact_id field only.
-                - If you do not have the contact_id (the contact is not in the active conversations), keep the contact id as None, use the contact_detail field and fill out the information. The system will then attempt to retrieve the contact if it exists, or create one.
+                - If the contact is NOT in active conversations and you don't have their details, use `act` to search for them. For example: `act(query="find David's email address")`. The system has access to contact records and can find details you don't have in your immediate context.
+                - If `act` cannot find the contact details, it will tell you, and you can then ask the user for clarification.
+                - If you do have contact details but no contact_id, keep the contact id as None, use the contact_detail field and fill out the information. The system will then attempt to retrieve the contact if it exists, or create one.
                 - If you want to communicate with the contact through some medium that does not have information set, simply provide contact_id if it can be inferred, contact_details with the new contact details to overwrite, and old_contact_details that you would like to overwrite/update.
             </important_notes_about_contact_actions>
         </communication_guidelines>
+
+        <uncertainty_handling>
+            When you are uncertain whether you have the information needed to complete a request, use the **parallel strategy**: simultaneously ask for clarification AND call `act` to search.
+
+            **The parallel strategy:**
+            1. Acknowledge the request and explain you're checking your records
+            2. Call `act` to search for the information (e.g., contact details, past conversations, etc.)
+            3. If `act` finds the information, proceed with the original request
+            4. If `act` cannot find it, inform the user and ask for the missing details
+
+            **Example:** Boss says "email David about the meeting"
+            - You don't see David in active_conversations
+            - Good response: "Sure, let me check my records for David's contact details." + call `act(query="find David's email address")`
+            - If `act` finds David's email → send the email
+            - If `act` cannot find it → "I couldn't find David's email in my records. Could you provide it?"
+
+            **Key principle:** There is no penalty for calling `act` speculatively. If it cannot help, it will simply report back. It is always better to try and fail than to assume you don't have access to information.
+        </uncertainty_handling>
 
         {voice_calls_guide}
 
