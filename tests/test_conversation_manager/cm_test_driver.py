@@ -39,6 +39,7 @@ class StepResult:
     llm_requested: bool
     llm_ran: bool
     output_events: list[Event]
+    llm_step_count: int = 0  # Number of LLM thinking steps taken
 
 
 # Context variable to track LLM run requests during stepping
@@ -284,4 +285,5 @@ class CMStepDriver:
             llm_requested=True,
             llm_ran=llm_ran,
             output_events=all_output_events,
+            llm_step_count=step_count,
         )

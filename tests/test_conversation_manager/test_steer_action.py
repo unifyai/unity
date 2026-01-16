@@ -29,10 +29,24 @@ pytestmark = pytest.mark.eval
 # Convenience references to test contacts
 BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
 
+# Maximum LLM steps for efficient tool calling
+# - Ideal: 2 steps (action + acknowledge concurrent, then wait)
+# - Acceptable: 3 steps (action, acknowledge, wait - or action + query + wait)
+MAX_EFFICIENT_STEPS = 3
+
 
 def _only(events, typ):
     """Filter events by type."""
     return [e for e in events if isinstance(e, typ)]
+
+
+def _assert_efficient(result, context: str = ""):
+    """Assert that the LLM completed efficiently (concurrent tool calls + wait)."""
+    assert result.llm_step_count <= MAX_EFFICIENT_STEPS, (
+        f"Expected efficient concurrent tool calling (<= {MAX_EFFICIENT_STEPS} steps), "
+        f"but took {result.llm_step_count} steps. "
+        f"LLM should call tools concurrently in one step, then wait. {context}"
+    )
 
 
 def _get_steering_action(result, operation_prefix):
@@ -101,6 +115,7 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     actor_events = _only(result1.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, "Expected act to be called"
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Small talk distractor (should not affect the task)
     result2 = await cm.step_until_wait(
@@ -109,6 +124,7 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
             content="Thanks! The weather is nice today.",
         ),
     )
+    _assert_efficient(result2, "Step 2: small talk")
 
     # Step 3: Ask about task status
     result3 = await cm.step_until_wait(
@@ -117,6 +133,7 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
             content="How's that contact search going? Any progress?",
         ),
     )
+    _assert_efficient(result3, "Step 3: status query")
 
     # Verify: LLM should have called ask_* tool
     assert _has_steering_in_handle_actions(cm, "ask_"), (
@@ -146,14 +163,16 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Unrelated question
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="By the way, what time is it there?",
         ),
     )
+    _assert_efficient(result2, "Step 2: unrelated question")
 
     # Step 3: Ask about task progress
     result3 = await cm.step_until_wait(
@@ -162,6 +181,7 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
             content="What have you found so far about the refund policy?",
         ),
     )
+    _assert_efficient(result3, "Step 3: progress query")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -196,14 +216,16 @@ async def test_stop_task_after_small_talk(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Genuine small talk (not task-related)
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="By the way, the weather is nice today.",
         ),
     )
+    _assert_efficient(result2, "Step 2: small talk")
 
     # Step 3: Stop the task
     result3 = await cm.step_until_wait(
@@ -212,6 +234,7 @@ async def test_stop_task_after_small_talk(initialized_cm):
             content="Never mind, cancel that search. I found what I needed.",
         ),
     )
+    _assert_efficient(result3, "Step 3: cancel request")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -240,14 +263,16 @@ async def test_stop_task_change_of_mind(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Genuine small talk (not task-related)
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Oh I just remembered, I need to buy groceries later.",
         ),
     )
+    _assert_efficient(result2, "Step 2: small talk")
 
     # Step 3: Cancel
     result3 = await cm.step_until_wait(
@@ -256,6 +281,7 @@ async def test_stop_task_change_of_mind(initialized_cm):
             content="You know what, forget about that reminder. I'll just call Bob now.",
         ),
     )
+    _assert_efficient(result3, "Step 3: cancel request")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -289,14 +315,16 @@ async def test_pause_task_for_meeting(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Mention meeting
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="I have a meeting in 5 minutes.",
         ),
     )
+    _assert_efficient(result2, "Step 2: mention meeting")
 
     # Step 3: Pause request (natural language)
     result3 = await cm.step_until_wait(
@@ -305,6 +333,7 @@ async def test_pause_task_for_meeting(initialized_cm):
             content="Put that on hold for now. I need to step into the meeting.",
         ),
     )
+    _assert_efficient(result3, "Step 3: pause request")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -332,6 +361,7 @@ async def test_pause_task_hold_on(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Hold on (natural language)
     result2 = await cm.step_until_wait(
@@ -340,6 +370,7 @@ async def test_pause_task_hold_on(initialized_cm):
             content="Wait, hold on a second. Let me think about what I actually need.",
         ),
     )
+    _assert_efficient(result2, "Step 2: hold on request")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -373,14 +404,16 @@ async def test_resume_after_pause(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Hold (natural language)
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Wait, hold on a moment.",
         ),
     )
+    _assert_efficient(result2, "Step 2: hold request")
 
     # Step 3: Continue (natural language)
     result3 = await cm.step_until_wait(
@@ -389,6 +422,7 @@ async def test_resume_after_pause(initialized_cm):
             content="OK, I'm back. Go ahead with that task list.",
         ),
     )
+    _assert_efficient(result3, "Step 3: resume request")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -418,22 +452,25 @@ async def test_resume_continue_where_left_off(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Hold (natural language)
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Wait, hold on a sec.",
         ),
     )
+    _assert_efficient(result2, "Step 2: hold request")
 
     # Step 3: Small talk
-    await cm.step_until_wait(
+    result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Sorry, had to take another call.",
         ),
     )
+    _assert_efficient(result3, "Step 3: small talk")
 
     # Step 4: Pick up where left off (natural language)
     result4 = await cm.step_until_wait(
@@ -442,6 +479,7 @@ async def test_resume_continue_where_left_off(initialized_cm):
             content="OK where were we? Go ahead with that search for Bob's info.",
         ),
     )
+    _assert_efficient(result4, "Step 4: resume request")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -475,14 +513,16 @@ async def test_interject_additional_constraint(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Side comment
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="We're planning a team event.",
         ),
     )
+    _assert_efficient(result2, "Step 2: side comment")
 
     # Step 3: Interject with constraint
     result3 = await cm.step_until_wait(
@@ -491,6 +531,7 @@ async def test_interject_additional_constraint(initialized_cm):
             content="Actually, for that search, only include people in the Berlin office.",
         ),
     )
+    _assert_efficient(result3, "Step 3: interject constraint")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -519,14 +560,16 @@ async def test_interject_correction(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Realization
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Wait, I meant to ask about something else.",
         ),
     )
+    _assert_efficient(result2, "Step 2: realization")
 
     # Step 3: Correction via interjection
     result3 = await cm.step_until_wait(
@@ -535,6 +578,7 @@ async def test_interject_correction(initialized_cm):
             content="Sorry, I meant Q4, not Q3. Please look at Q4 instead.",
         ),
     )
+    _assert_efficient(result3, "Step 3: correction")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -563,14 +607,16 @@ async def test_interject_new_priority(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Conversation
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="I just got out of a meeting.",
         ),
     )
+    _assert_efficient(result2, "Step 2: conversation")
 
     # Step 3: Narrow focus
     result3 = await cm.step_until_wait(
@@ -579,6 +625,7 @@ async def test_interject_new_priority(initialized_cm):
             content="For that research, focus specifically on pricing - that's the most urgent.",
         ),
     )
+    _assert_efficient(result3, "Step 3: narrow focus")
 
     assert _has_steering_in_handle_actions(
         cm,
@@ -609,22 +656,25 @@ async def test_pause_interject_resume_sequence(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Pause
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Hold on, put that search on hold.",
         ),
     )
+    _assert_efficient(result2, "Step 2: pause request")
 
     # Step 3: Interject while paused
-    await cm.step_until_wait(
+    result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Actually, focus specifically on agile methodology.",
         ),
     )
+    _assert_efficient(result3, "Step 3: interject while paused")
 
     # Step 4: Resume
     result4 = await cm.step_until_wait(
@@ -633,6 +683,7 @@ async def test_pause_interject_resume_sequence(initialized_cm):
             content="OK, go ahead with the search now.",
         ),
     )
+    _assert_efficient(result4, "Step 4: resume request")
 
     # Should have pause and either interject or resume actions
     has_pause = _has_steering_in_handle_actions(cm, "pause_")
@@ -662,28 +713,32 @@ async def test_multiple_distractors_then_stop(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: initial task")
 
     # Step 2-4: Multiple distractors
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="It's really busy today.",
         ),
     )
+    _assert_efficient(result2, "Step 2: distractor 1")
 
-    await cm.step_until_wait(
+    result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Did you see the news?",
         ),
     )
+    _assert_efficient(result3, "Step 3: distractor 2")
 
-    await cm.step_until_wait(
+    result4 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Anyway...",
         ),
     )
+    _assert_efficient(result4, "Step 4: distractor 3")
 
     # Step 5: Stop after distractors
     result5 = await cm.step_until_wait(
@@ -692,6 +747,7 @@ async def test_multiple_distractors_then_stop(initialized_cm):
             content="Actually, stop that report. Someone else is already doing it.",
         ),
     )
+    _assert_efficient(result5, "Step 5: stop request")
 
     assert _has_steering_in_handle_actions(
         cm,

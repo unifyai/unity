@@ -30,10 +30,24 @@ pytestmark = pytest.mark.eval
 # Convenience references to test contacts
 BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
 
+# Maximum LLM steps for efficient tool calling
+# - Ideal: 2 steps (action + acknowledge concurrent, then wait)
+# - Acceptable: 3 steps (action, acknowledge, wait - or action + query + wait)
+MAX_EFFICIENT_STEPS = 3
+
 
 def _only(events, typ):
     """Filter events by type."""
     return [e for e in events if isinstance(e, typ)]
+
+
+def _assert_efficient(result, context: str = ""):
+    """Assert that the LLM completed efficiently (concurrent tool calls + wait)."""
+    assert result.llm_step_count <= MAX_EFFICIENT_STEPS, (
+        f"Expected efficient concurrent tool calling (<= {MAX_EFFICIENT_STEPS} steps), "
+        f"but took {result.llm_step_count} steps. "
+        f"LLM should call tools concurrently in one step, then wait. {context}"
+    )
 
 
 def _get_active_task_count(cm):
@@ -82,6 +96,7 @@ async def test_two_unrelated_requests_create_two_tasks(initialized_cm):
     actor_events1 = _only(result1.output_events, ActorHandleStarted)
     assert len(actor_events1) >= 1, "Expected act to be called for first task"
     task_count_after_first = _get_active_task_count(cm)
+    _assert_efficient(result1, "Step 1: first task")
 
     # Step 2: Second task - completely unrelated contact lookup
     result2 = await cm.step_until_wait(
@@ -91,6 +106,7 @@ async def test_two_unrelated_requests_create_two_tasks(initialized_cm):
         ),
     )
     actor_events2 = _only(result2.output_events, ActorHandleStarted)
+    _assert_efficient(result2, "Step 2: second task")
 
     # Should have created a second task (either now or total of 2)
     assert (
@@ -119,6 +135,7 @@ async def test_parallel_searches_different_topics(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first search")
 
     # Step 2: Explicitly request a NEW task (make it very clear)
     result2 = await cm.step_until_wait(
@@ -127,6 +144,7 @@ async def test_parallel_searches_different_topics(initialized_cm):
             content="I need a second thing: look up Bob's phone number in my contacts.",
         ),
     )
+    _assert_efficient(result2, "Step 2: second task")
 
     # Should have called act at least twice
     assert (
@@ -161,6 +179,7 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
     initial_act_count = _count_act_calls(cm)
+    _assert_efficient(result1, "Step 1: first task")
 
     # Step 2: Different task type - contact lookup (clearly not an interject)
     result2 = await cm.step_until_wait(
@@ -169,6 +188,7 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
             content="Also, I need you to find Sarah's email address in my contacts.",
         ),
     )
+    _assert_efficient(result2, "Step 2: different task type")
 
     # Should have called act again (new task) for different task type
     # Alternatively, may have multiple active tasks
@@ -202,6 +222,7 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
     act_count_after_first = _count_act_calls(cm)
+    _assert_efficient(result1, "Step 1: initial search")
 
     # Step 2: Add constraint to the SAME search
     result2 = await cm.step_until_wait(
@@ -210,6 +231,7 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
             content="For that search, focus on European regulations specifically.",
         ),
     )
+    _assert_efficient(result2, "Step 2: add constraint")
 
     # Should have interjected, not created new task
     has_interject = _has_steering_in_handle_actions(cm, "interject_")
@@ -248,6 +270,7 @@ async def test_two_tasks_stop_one_specifically(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
 
     # Step 2: Second task - contact lookup
     result2 = await cm.step_until_wait(
@@ -256,6 +279,7 @@ async def test_two_tasks_stop_one_specifically(initialized_cm):
             content="Also find Bob's contact information.",
         ),
     )
+    _assert_efficient(result2, "Step 2: second task")
 
     # Step 3: Stop the web search specifically
     result3 = await cm.step_until_wait(
@@ -264,6 +288,7 @@ async def test_two_tasks_stop_one_specifically(initialized_cm):
             content="Cancel the stock market search, I don't need that anymore.",
         ),
     )
+    _assert_efficient(result3, "Step 3: cancel specific task")
 
     # Should have called stop_ at some point
     assert _has_steering_in_handle_actions(
@@ -293,6 +318,7 @@ async def test_two_tasks_ask_about_one_specifically(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
 
     # Step 2: Second task - web search
     result2 = await cm.step_until_wait(
@@ -301,6 +327,7 @@ async def test_two_tasks_ask_about_one_specifically(initialized_cm):
             content="Also search the web for Henderson Company's latest quarterly report.",
         ),
     )
+    _assert_efficient(result2, "Step 2: second task")
 
     # Step 3: Ask about the transcript search specifically
     result3 = await cm.step_until_wait(
@@ -309,6 +336,7 @@ async def test_two_tasks_ask_about_one_specifically(initialized_cm):
             content="How's the search through my past conversations going?",
         ),
     )
+    _assert_efficient(result3, "Step 3: ask about specific task")
 
     # Should have called ask_ at some point
     assert _has_steering_in_handle_actions(
@@ -344,14 +372,16 @@ async def test_stop_task_then_start_new_unrelated(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
 
     # Step 2: Cancel it
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Never mind, cancel that search.",
         ),
     )
+    _assert_efficient(result2, "Step 2: cancel task")
 
     act_count_after_cancel = _count_act_calls(cm)
 
@@ -362,6 +392,7 @@ async def test_stop_task_then_start_new_unrelated(initialized_cm):
             content="Actually, look up the weather in Tokyo for next week.",
         ),
     )
+    _assert_efficient(result3, "Step 3: new unrelated task")
 
     # Should have called act again for the new task
     assert (
@@ -390,14 +421,16 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: NYC contacts")
 
     # Step 2: Small talk
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Thanks, that's helpful.",
         ),
     )
+    _assert_efficient(result2, "Step 2: small talk")
 
     act_count_midpoint = _count_act_calls(cm)
 
@@ -408,6 +441,7 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
             content="Now find all my contacts in Los Angeles.",
         ),
     )
+    _assert_efficient(result3, "Step 3: LA contacts")
 
     # Should have called act again for the new location
     assert (
@@ -442,14 +476,16 @@ async def test_interject_first_then_start_second(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: restaurant search")
 
     # Step 2: Interject to narrow
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="For those restaurants, only look at Italian places.",
         ),
     )
+    _assert_efficient(result2, "Step 2: narrow search")
 
     # Step 3: Start unrelated task
     result3 = await cm.step_until_wait(
@@ -458,6 +494,7 @@ async def test_interject_first_then_start_second(initialized_cm):
             content="By the way, find Alice's email address.",
         ),
     )
+    _assert_efficient(result3, "Step 3: unrelated task")
 
     # Should have both interject (or modification) and multiple act calls
     act_count = _count_act_calls(cm)
@@ -490,6 +527,7 @@ async def test_three_tasks_rapid_succession(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Task 1: weather")
 
     # Task 2: Contacts
     result2 = await cm.step_until_wait(
@@ -498,6 +536,7 @@ async def test_three_tasks_rapid_succession(initialized_cm):
             content="Find Bob's phone number.",
         ),
     )
+    _assert_efficient(result2, "Task 2: contacts")
 
     # Task 3: Transcript
     result3 = await cm.step_until_wait(
@@ -506,6 +545,7 @@ async def test_three_tasks_rapid_succession(initialized_cm):
             content="Search my messages for anything about the budget meeting.",
         ),
     )
+    _assert_efficient(result3, "Task 3: transcript")
 
     # Should have at least 3 act calls for 3 different tasks
     assert (
@@ -535,14 +575,16 @@ async def test_pause_first_start_second_resume_first(initialized_cm):
         ),
     )
     assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
 
     # Step 2: Pause it
-    await cm.step_until_wait(
+    result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Hold on that search for a moment.",
         ),
     )
+    _assert_efficient(result2, "Step 2: pause request")
 
     # Step 3: Start different task
     result3 = await cm.step_until_wait(
@@ -551,6 +593,7 @@ async def test_pause_first_start_second_resume_first(initialized_cm):
             content="While that's on hold, find Sarah's contact info.",
         ),
     )
+    _assert_efficient(result3, "Step 3: new task while paused")
 
     # Step 4: Resume first task
     result4 = await cm.step_until_wait(
@@ -559,6 +602,7 @@ async def test_pause_first_start_second_resume_first(initialized_cm):
             content="OK, go ahead with that competitor pricing search now.",
         ),
     )
+    _assert_efficient(result4, "Step 4: resume first task")
 
     # Should have pause, second act, and resume
     has_pause = _has_steering_in_handle_actions(cm, "pause_")
