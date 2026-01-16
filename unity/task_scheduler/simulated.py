@@ -654,7 +654,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         # Wrap the actor handle to expose TaskScheduler-style stop(cancel=..., reason=...) while
         # delegating all behaviour to the underlying actor. Named to mirror ActiveQueue's surface
-        # (single-task, passthrough-style).
+        # (single-task, direct-delegation style).
         class SimulatedActiveQueue(SteerableToolHandle, SimulatedHandleMixin):  # type: ignore[abstract-method]
             def __init__(self, inner: SteerableToolHandle, log_label: str) -> None:
                 self._inner = inner
