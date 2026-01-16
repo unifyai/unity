@@ -132,7 +132,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
     # ─────────────────────────────────────────────────────────────────────────
-    UNITY_SEMANTIC_CACHE: bool = False
     UNITY_READONLY_ASK_GUARD: bool = True
     FIRST_ASK_TOOL_IS_SEARCH: bool = True
     FIRST_MUTATION_TOOL_IS_ASK: bool = True
@@ -178,7 +177,6 @@ class ProductionSettings(BaseSettings):
         "ASYNCIO_DEBUG",
         "ASYNCIO_DEBUG_VERBOSE",
         "PYTEST_LOG_TO_FILE",
-        "UNITY_SEMANTIC_CACHE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
         "FIRST_MUTATION_TOOL_IS_ASK",
