@@ -212,6 +212,10 @@ declare -a TAGS=()
 # Extra pytest arguments (passed through via -- separator)
 declare -a PYTEST_EXTRA_ARGS=()
 
+# Collection-relevant pytest arguments extracted from PYTEST_EXTRA_ARGS
+# These args affect which tests are collected (-k, -m) vs run-time behavior (-v, --tb)
+declare -a PYTEST_COLLECTION_ARGS=()
+
 # Resolve repo root (parent of this script's directory)
 # SCRIPT_DIR is already set by sourcing _shell_common.sh
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -331,11 +335,43 @@ while (( "$#" )); do
       echo "  parallel_run.sh --eval-only tests/       # Only eval tests"
       echo "  parallel_run.sh -e UNIFY_CACHE=false tests/"
       echo "  parallel_run.sh tests/ -- -v --tb=short  # Pass args to pytest"
+      echo "  parallel_run.sh tests/ -- -k 'gpt-5'     # Filter by test name pattern"
       exit 0
       ;;
     --)
       shift
       PYTEST_EXTRA_ARGS=("$@")
+      # Extract collection-relevant args (-k, -m) for use during test discovery
+      # These filters affect which tests are collected, not just how they run
+      _coll_i=0
+      while (( _coll_i < ${#PYTEST_EXTRA_ARGS[@]} )); do
+        _coll_arg="${PYTEST_EXTRA_ARGS[_coll_i]}"
+        case "$_coll_arg" in
+          -k|-m)
+            # Next arg is the value (e.g., -k "pattern")
+            if (( _coll_i + 1 < ${#PYTEST_EXTRA_ARGS[@]} )); then
+              PYTEST_COLLECTION_ARGS+=( "$_coll_arg" "${PYTEST_EXTRA_ARGS[_coll_i+1]}" )
+              ((_coll_i+=2))
+            else
+              ((_coll_i++))
+            fi
+            ;;
+          -k=*|-m=*)
+            # Value is attached (e.g., -k="pattern")
+            PYTEST_COLLECTION_ARGS+=( "$_coll_arg" )
+            ((_coll_i++))
+            ;;
+          --keyword=*|--markers=*)
+            # Long form with attached value
+            PYTEST_COLLECTION_ARGS+=( "$_coll_arg" )
+            ((_coll_i++))
+            ;;
+          *)
+            ((_coll_i++))
+            ;;
+        esac
+      done
+      unset _coll_i _coll_arg
       break
       ;;
     -*)
@@ -1265,9 +1301,21 @@ collect_nodes_batch() {
     quoted_targets+=" $(printf '%q' "$t")"
   done
 
-  # Build collection command with optional marker filter
+  # Build collection filter args (marker filter + any -k/-m from PYTEST_EXTRA_ARGS)
+  local collection_filters=""
   if [[ -n "$marker_arg" ]]; then
-    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$marker_arg" "$quoted_targets")
+    collection_filters="$marker_arg"
+  fi
+  # Append collection-relevant args from PYTEST_EXTRA_ARGS (e.g., -k "pattern")
+  if (( ${#PYTEST_COLLECTION_ARGS[@]} > 0 )); then
+    for carg in "${PYTEST_COLLECTION_ARGS[@]}"; do
+      collection_filters+=" $(printf '%q' "$carg")"
+    done
+  fi
+
+  # Build collection command with filters
+  if [[ -n "$collection_filters" ]]; then
+    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$collection_filters" "$quoted_targets")
   else
     cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$quoted_targets")
   fi
