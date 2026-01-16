@@ -1249,29 +1249,6 @@ async def async_tool_loop_inner(
                 if (not inject_only) and (inf is not None):
                     base = str(method or "").lower().strip()
                     await _dispatch_steering_to_child(base, args, inf)
-                    # Track that this call_id was forwarded in the steer_log
-                    # so adopt_nested won't dispatch again for late-adopted handles
-                    with suppress(Exception):
-                        if outer_handle_container and outer_handle_container[0]:
-                            _steer_log = getattr(
-                                outer_handle_container[0],
-                                "_steer_log",
-                                [],
-                            )
-                            for rec in reversed(_steer_log):
-                                if rec.get(
-                                    "method",
-                                    "",
-                                ).lower().strip() == base and str(
-                                    inf.call_id,
-                                ) not in rec.get(
-                                    "forwarded_to",
-                                    [],
-                                ):
-                                    rec.setdefault("forwarded_to", []).append(
-                                        str(inf.call_id),
-                                    )
-                                    break
             except Exception:
                 continue
 

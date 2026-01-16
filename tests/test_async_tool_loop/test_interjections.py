@@ -91,7 +91,6 @@ def _is_internal_bookkeeping(msg: dict) -> bool:
         for marker in (
             "_visibility_guidance",
             "_runtime_context",
-            "_semantic_cache_hint",
             "_ctx_header",
         )
     )

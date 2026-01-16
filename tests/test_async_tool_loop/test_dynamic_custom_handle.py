@@ -728,9 +728,9 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods(model):
 async def test_dynamic_factory_ignores_internal_introspection_methods(model):
     """
     Regression test: Ensure `DynamicToolFactory` does NOT generate tools for
-    internal introspection methods (e.g. `get_wrapped_handles`, `_get_wrapped_handles`,
-    `nested_steer`) even if they are public on the handle class, while correctly
-    exposing other public methods.
+    internal introspection methods (e.g. `get_wrapped_handles`, `_get_wrapped_handles`)
+    even if they are public on the handle class, while correctly exposing other
+    public methods.
     """
     from contextlib import suppress
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -747,15 +747,6 @@ async def test_dynamic_factory_ignores_internal_introspection_methods(model):
         # Valid public method - SHOULD be exposed
         def public_action(self, arg: str) -> str:
             return f"echo: {arg}"
-
-        # Old-style public introspection (simulating pre-fix state to ensure it's ignored if present)
-        # Although we renamed it in the codebase, a user might define it.
-        # Actually, the factory logic uses _discover_custom_public_methods which filters based on SteerableToolHandle.
-        # But `get_wrapped_handles` was NOT on SteerableToolHandle base, hence it was leaking.
-        # We should verify that if a handle HAS `get_wrapped_handles`, it IS exposed (unless we blacklist it).
-        # Wait, the fix was to rename it to `_get_wrapped_handles`.
-        # So this test confirms that `_get_wrapped_handles` is NOT exposed (because it starts with _).
-        # And `nested_steer` is NOT exposed because it is now on SteerableToolHandle base.
 
         # Internal method - SHOULD NOT be exposed
         def _internal_method(self):
@@ -839,10 +830,6 @@ async def test_dynamic_factory_ignores_internal_introspection_methods(model):
     # Check 2: _get_wrapped_handles (from mixin) should NOT be present
     internal_keys = [k for k in tools.keys() if "get_wrapped_handles" in k]
     assert not internal_keys, f"Introspection method leaked: {internal_keys}"
-
-    # Check 3: nested_steer (from base) should NOT be present
-    steer_keys = [k for k in tools.keys() if "nested_steer" in k]
-    assert not steer_keys, f"nested_steer leaked: {steer_keys}"
 
     with suppress(BaseException):
         pending_task.cancel()
