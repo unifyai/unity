@@ -71,6 +71,11 @@ current_interaction_sink_var = contextvars.ContextVar(
 )
 current_invocation_id_var = contextvars.ContextVar("hp_invocation_id", default="none")
 
+current_actor_handle_var: contextvars.ContextVar = contextvars.ContextVar(
+    "current_actor_handle",
+    default=None,
+)
+
 logger = logging.getLogger(__name__)
 
 DIAGNOSTIC_MODE = True
@@ -2375,7 +2380,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
         persist: bool = True,
-        images: Optional[dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
@@ -2395,7 +2400,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             max_escalations: Max number of strategic replans before pausing.
             max_local_retries: Max number of tactical retries for a function.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
-            images: Optional mapping of source-scoped keys to ImageHandle objects.
+            images: Optional ImageRefs or list[RawImageRef | AnnotatedImageRef] for visual context.
             entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the function from the FunctionManager as the main plan.
             dedicated_computer_primitives: Optional. If provided, use this action provider for the plan.
@@ -2407,7 +2412,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         """
         self.actor = actor
         self.goal = goal
-        self.images = images or {}
+        self.images = images or []
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
@@ -2632,6 +2637,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         Manages the entire lifecycle of the plan from initialization to completion.
         """
         token = current_run_id_var.set(self.run_id)
+        handle_token = current_actor_handle_var.set(self)
         delegate_token = None
         try:
             delegate: TaskExecutionDelegate = _HierarchicalActorDelegate(
@@ -2773,6 +2779,11 @@ async def main_plan():
         finally:
             try:
                 current_run_id_var.reset(token)
+            except Exception:
+                pass
+
+            try:
+                current_actor_handle_var.reset(handle_token)
             except Exception:
                 pass
 
@@ -6069,6 +6080,29 @@ class HierarchicalActor(BaseActor):
         """
         sandbox_globals = self._create_sandbox_globals()
 
+        async def notify_primitive(message: str) -> None:
+            """
+            Send a progress notification to the user.
+
+            Use this to communicate progress during long-running operations.
+            The notification will be delivered to the supervising handle.
+
+            Args:
+                message: Progress message to display to the user
+
+            Example:
+                await notify("Navigating to homepage...")
+                await computer_primitives.navigate("https://example.com")
+                await notify("Navigation complete")
+            """
+            plan.action_log.append(f"Notification: {message}")
+            await plan._notification_q.put(
+                {
+                    "type": "notification",
+                    "message": message,
+                },
+            )
+
         async def request_clarification_primitive(question: str) -> str:
             """Allows the plan to ask for clarification during execution."""
             plan.action_log.append(f"Asking clarification: {question}")
@@ -6235,9 +6269,10 @@ class HierarchicalActor(BaseActor):
                         f"Failed to inject environment '{env_namespace}' into execution namespace: {e}",
                     )
 
-        # Keep existing helper injections (request_clarification, verify, etc.)
+        # Keep existing helper injections (request_clarification, notify, verify, etc.)
         plan.execution_namespace.update(
             {
+                "notify": notify_primitive,
                 "request_clarification": request_clarification_primitive,
                 "runtime": plan.runtime,
                 "verify": self._create_verify_decorator(plan),
