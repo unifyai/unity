@@ -46,7 +46,11 @@ from unity.actor.hierarchical_actor import (
     _HierarchicalHandleState,
 )
 from unity.function_manager.function_manager import FunctionManager
-from unity.function_manager.computer_backends import ComputerAgentError
+from unity.function_manager.computer_backends import (
+    ComputerAgentError,
+    MockComputerBackend,
+    VALID_MOCK_SCREENSHOT_PNG,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -74,41 +78,6 @@ unity.init(overwrite=True)
 # ────────────────────────────────────────────────────────────────────────────
 # Shared Mock Classes
 # ────────────────────────────────────────────────────────────────────────────
-
-
-class NoKeychainComputer:
-    """
-    Mock computer that prevents Keychain prompts during tests.
-
-    Args:
-        url: URL to return from get_current_url()
-        screenshot: Screenshot data to return from get_screenshot()
-        with_backend_mocks: If True, adds MagicMock backend with barrier/interrupt
-    """
-
-    def __init__(
-        self,
-        url: str = "",
-        screenshot: str = "",
-        with_backend_mocks: bool = False,
-    ):
-        self._url = url
-        self._screenshot = screenshot
-        if with_backend_mocks:
-            self.backend = MagicMock()
-            self.backend.barrier = AsyncMock()
-            self.backend.interrupt_current_action = AsyncMock()
-        else:
-            self.backend = object()
-
-    async def get_current_url(self) -> str:
-        return self._url
-
-    async def get_screenshot(self) -> str:
-        return self._screenshot
-
-    def stop(self) -> None:
-        pass
 
 
 class SimpleMockVerificationClient:
@@ -377,7 +346,7 @@ async def test_cache_hits_after_interjection_for_browser_primitives():
     )
     actor = HierarchicalActor(
         headless=True,
-        computer_mode="magnitude",
+        computer_mode="mock",
         connect_now=False,
     )  # connect_now=False prevents real browser init
 
@@ -630,7 +599,7 @@ async def test_loop_iterations_get_unique_cache_keys():
 
     actor = HierarchicalActor(
         headless=True,
-        computer_mode="magnitude",
+        computer_mode="mock",
         connect_now=False,
     )
 
@@ -920,7 +889,7 @@ async def test_nested_loop_combinations_get_unique_cache_keys():
 
     actor = HierarchicalActor(
         headless=True,
-        computer_mode="magnitude",
+        computer_mode="mock",
         connect_now=False,
     )
 
@@ -1126,9 +1095,9 @@ async def test_recovery_agent_launches_on_user_interjection():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -1280,9 +1249,9 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
     )
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -1914,10 +1883,9 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
         connect_now=False,
     )
 
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://www.allrecipes.com",
-        screenshot="mock_screenshot_base64",
-        with_backend_mocks=True,
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -2248,10 +2216,9 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
         # Mock external I/O
         actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
-        actor.computer_primitives._computer = NoKeychainComputer(
+        actor.computer_primitives._computer = MockComputerBackend(
             url="https://mock-url.com",
-            screenshot="mock_screenshot_base64",
-            with_backend_mocks=True,
+            screenshot=VALID_MOCK_SCREENSHOT_PNG,
         )
         print("✅ Actor initialized with mocked browser.")
 
@@ -3205,9 +3172,9 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
@@ -3454,9 +3421,9 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
             computer_mode="mock",
             connect_now=False,
         )
-        actor.computer_primitives._computer = NoKeychainComputer(
+        actor.computer_primitives._computer = MockComputerBackend(
             url="https://mock-url.com",
-            screenshot="mock_screenshot_base64",
+            screenshot=VALID_MOCK_SCREENSHOT_PNG,
         )
         actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
@@ -3640,9 +3607,9 @@ async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
     )
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -3810,9 +3777,9 @@ async def test_nested_functions_maintain_correct_scope_in_prompts():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
@@ -4044,9 +4011,9 @@ async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_
         )
 
         # 4. Mock the browser and action_provider
-        actor.computer_primitives._computer = NoKeychainComputer(
+        actor.computer_primitives._computer = MockComputerBackend(
             url="https://mock-url.com",
-            screenshot="mock_screenshot_base64",
+            screenshot=VALID_MOCK_SCREENSHOT_PNG,
         )
         actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
@@ -4237,9 +4204,9 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
     )
 
     # Mock browser and action_provider
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
@@ -4499,9 +4466,9 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
         )
 
         # Mock browser and action_provider
-        actor.computer_primitives._computer = NoKeychainComputer(
+        actor.computer_primitives._computer = MockComputerBackend(
             url="https://mock-url.com",
-            screenshot="mock_screenshot_base64",
+            screenshot=VALID_MOCK_SCREENSHOT_PNG,
         )
         actor.computer_primitives.act = AsyncMock(return_value="Mock action completed.")
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
@@ -4672,9 +4639,9 @@ async def test_explore_interjection_runs_in_detached_sandbox():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -4826,9 +4793,9 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -4948,6 +4915,121 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
         await asyncio.sleep(1)
 
 
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_modify_task_skips_course_correction_when_disabled():
+    """
+    When course correction is disabled, interjection-triggered invalidations should not
+    spawn the recovery sub-agent. This is important for the guided-learning demo UX.
+    """
+
+    actor = HierarchicalActor(
+        headless=True,
+        computer_mode="mock",
+        connect_now=False,
+        enable_course_correction=False,
+    )
+
+    # Ensure a browser/computer environment exists, but don't actually do any real work.
+    actor.computer_primitives._computer = MockComputerBackend(
+        url="https://mock-url.com",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
+    )
+
+    active_task = None
+    try:
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test course correction gating.",
+            persist=True,
+        )
+
+        # Cancel auto-started execution.
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await active_task._execution_task
+        active_task._execution_task = None
+
+        # Populate execution_namespace with required injected helpers (e.g. `verify`)
+        # so that plan module reloads during patch application do not crash.
+        await actor._prepare_execution_environment(active_task)
+
+        # Prevent the test from spawning background work.
+        active_task._restart_execution_loop = lambda *args, **kwargs: None  # type: ignore[method-assign]
+        active_task._clear_browser_queue_for_run = AsyncMock(return_value=None)
+
+        # Force the invalidation path to have:
+        # - at least one "last valid" entry with a screenshot in meta
+        # - at least one invalidated entry with interaction_log to produce a trajectory
+        key_valid = (("main_plan",), (), (), 1, "computer_primitives.act", "valid")
+        key_invalid = (
+            ("main_plan",),
+            (),
+            (),
+            2,
+            "computer_primitives.observe",
+            "invalid",
+        )
+        active_task.idempotency_cache = {
+            key_valid: {
+                "meta": {
+                    "function": "main_plan",
+                    "step": 1,
+                    "post_state_screenshot": VALID_MOCK_SCREENSHOT_PNG,
+                },
+                "interaction_log": ["", "computer_primitives.act(...)", ""],
+                "result": None,
+            },
+            key_invalid: {
+                "meta": {"function": "main_plan", "step": 2, "impure": True},
+                "interaction_log": [
+                    "",
+                    "computer_primitives.observe(...)",
+                    "Returned: ok",
+                ],
+                "result": None,
+            },
+        }
+
+        # If course correction were enabled, this would be invoked.
+        actor._run_course_correction_agent = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        decision = InterjectionDecision(
+            action="modify_task",
+            reason="Update plan; invalidate step 2.",
+            patches=[
+                FunctionPatch(
+                    function_name="main_plan",
+                    new_code=textwrap.dedent(
+                        """
+                        async def main_plan():
+                            return "ok"
+                        """,
+                    ).strip(),
+                ),
+            ],
+            cache=CacheInvalidateSpec(
+                invalidate_steps=[
+                    CacheStepRange(function_name="main_plan", from_step_inclusive=2),
+                ],
+            ),
+        )
+
+        _ = await active_task._execute_interjection_decision(decision)
+
+        # Verify we did NOT spawn the recovery sub-agent.
+        actor._run_course_correction_agent.assert_not_awaited()
+
+    finally:
+        if active_task and not active_task.done():
+            with contextlib.suppress(Exception):
+                await active_task.stop()
+        if actor:
+            with contextlib.suppress(Exception):
+                await actor.close()
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 19: Steerable Replace Tests
 # ════════════════════════════════════════════════════════════════════════════
@@ -4986,9 +5068,9 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -5112,9 +5194,9 @@ async def test_actor_extracts_information_from_images_during_execution():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # Mock browser and action_provider to avoid real browser calls
-    actor.computer_primitives._computer = NoKeychainComputer(
+    actor.computer_primitives._computer = MockComputerBackend(
         url="https://mock-url.com",
-        screenshot="mock_screenshot_base64",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
     )
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value=None)
@@ -5128,17 +5210,23 @@ async def test_actor_extracts_information_from_images_during_execution():
             "\n\n--- PHASE 1: Using an image to provide login credentials (MOCKED) ---",
         )
 
-        # Create mock image handles
-        mock_login_image = MagicMock()
-        mock_login_image.id = "mock_login_image_id"
-        mock_login_image.base64 = "mock_image_base64"
+        # Import types for image handling
+        from unity.image_manager.image_manager import ImageManager
+        from unity.image_manager.types import AnnotatedImageRef, RawImageRef
 
-        mock_cell_image = MagicMock()
-        mock_cell_image.id = "mock_cell_image_id"
-        mock_cell_image.base64 = "mock_image_base64"
+        # Create real images in ImageManager for testing
+        im = ImageManager()
+        [login_img_id, cell_img_id] = im.add_images(
+            [
+                {"caption": "login credentials", "data": VALID_MOCK_SCREENSHOT_PNG},
+                {"caption": "cell highlight", "data": VALID_MOCK_SCREENSHOT_PNG},
+            ],
+        )
+        login_img_id = int(login_img_id)
+        cell_img_id = int(cell_img_id)
 
         goal_1 = "Go to google drive. Sign in with the email 'yusha@unify.ai' and password shown in the image."
-        images_1 = {"[53:74]": mock_login_image}  # Span for "shown in the image"
+        # Note: images_1 not used in this test - the goal describes the image context
 
         print(f"\n>>> Starting Plan 1 with goal: '{goal_1}'")
 
@@ -5268,7 +5356,12 @@ async def test_actor_extracts_information_from_images_during_execution():
         print("\n>>> Plan is paused after opening the timesheet.")
 
         interjection_message_2 = "Great! Now please calculate the total hrs for james and fill in the total in the cell highlighted in the image."
-        images_2 = {"[70:100]": mock_cell_image}
+        images_2 = [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=cell_img_id),
+                annotation="Cell to be edited is highlighted",
+            ),
+        ]
         print(f"\n>>> INTERJECTION 2: '{interjection_message_2}'")
         await active_task.interject(interjection_message_2, images=images_2)
 
@@ -5306,3 +5399,165 @@ async def test_actor_extracts_information_from_images_during_execution():
         if actor:
             await actor.close()
         await asyncio.sleep(1)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TEST: Interject with Various Image Formats (Dict, List, ImageRefs)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_interject_with_various_image_formats():
+    """
+    Tests that HierarchicalActorHandle.interject() correctly handles different
+    image format conventions:
+
+    1. List format: [AnnotatedImageRef, RawImageRef]
+    2. ImageRefs format (Pydantic RootModel): ImageRefs([...])
+    3. Mixed list with both RawImageRef and AnnotatedImageRef
+
+    Uses the ImageRefs convention expected by managers and the async tool loop.
+    """
+    from unity.image_manager.image_manager import ImageManager
+    from unity.image_manager.types import AnnotatedImageRef, RawImageRef, ImageRefs
+
+    print("--- Testing interject() with various image formats ---")
+
+    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
+
+    # Mock browser
+    actor.computer_primitives._computer = MockComputerBackend(
+        url="https://mock-url.com",
+        screenshot=VALID_MOCK_SCREENSHOT_PNG,
+    )
+    actor.computer_primitives.navigate = AsyncMock(return_value=None)
+    actor.computer_primitives.act = AsyncMock(return_value=None)
+
+    active_task = None
+
+    # Create a real image in ImageManager for testing
+    im = ImageManager()
+    # Use the valid mock screenshot PNG
+    [img_id] = im.add_images(
+        [
+            {"caption": "test image", "data": VALID_MOCK_SCREENSHOT_PNG},
+        ],
+    )
+    img_id = int(img_id)
+
+    try:
+        # Create actor handle with persist=True for interjections
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test interjection with various image formats",
+            persist=True,
+        )
+
+        # Cancel auto-started task
+        if active_task._execution_task:
+            active_task._execution_task.cancel()
+            try:
+                await active_task._execution_task
+            except asyncio.CancelledError:
+                pass
+
+        # Mock verification client
+        active_task.verification_client = SimpleMockVerificationClient()
+
+        # Mock modification client to accept interjections
+        active_task.modification_client.generate = AsyncMock(
+            return_value=InterjectionDecision(
+                action="modify_task",
+                reason="Received image interjection, acknowledging visual context.",
+                patches=[],  # Empty patches means no actual code changes
+            ).model_dump_json(),
+        )
+
+        # Set up a simple plan
+        active_task.plan_source_code = actor._sanitize_code(
+            textwrap.dedent(
+                """
+                async def main_plan():
+                    '''Main plan that awaits interjections.'''
+                    return "Plan complete"
+            """,
+            ),
+            active_task,
+        )
+
+        # Start execution
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+
+        # Wait for PAUSED_FOR_INTERJECTION state
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
+
+        # --- TEST 1: List format [AnnotatedImageRef] ---
+        print("\n>>> TEST 1: List format [AnnotatedImageRef]")
+        list_images = [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=img_id),
+                annotation="Test annotation for list format",
+            ),
+        ]
+        status1 = await active_task.interject(
+            "Test with list format images",
+            images=list_images,
+        )
+        print(f"    Status: {status1}")
+        assert "error" not in status1.lower(), f"List format failed: {status1}"
+
+        # Wait for state to stabilize
+        await asyncio.sleep(0.5)
+
+        # --- TEST 2: ImageRefs format (Pydantic RootModel) ---
+        print("\n>>> TEST 2: ImageRefs format (RootModel)")
+        imagerefs_images = ImageRefs(
+            [
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=img_id),
+                    annotation="Test annotation for ImageRefs format",
+                ),
+            ],
+        )
+        status2 = await active_task.interject(
+            "Test with ImageRefs format images",
+            images=imagerefs_images,
+        )
+        print(f"    Status: {status2}")
+        assert "error" not in status2.lower(), f"ImageRefs format failed: {status2}"
+
+        # --- TEST 3: Mixed list with RawImageRef ---
+        print("\n>>> TEST 3: Mixed list with RawImageRef")
+        mixed_images = [
+            RawImageRef(image_id=img_id),
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=img_id),
+                annotation="Annotated in mixed list",
+            ),
+        ]
+        status3 = await active_task.interject(
+            "Test with mixed format images",
+            images=mixed_images,
+        )
+        print(f"    Status: {status3}")
+        assert "error" not in status3.lower(), f"Mixed format failed: {status3}"
+
+        print("\n✅ All image format tests passed!")
+
+    finally:
+        print("\n--- Cleaning up resources... ---")
+        if active_task and not active_task.done():
+            try:
+                await active_task.stop()
+            except Exception:
+                pass
+        if actor:
+            await actor.close()
+        await asyncio.sleep(0.5)
