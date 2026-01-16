@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 import time
 import inspect
@@ -181,11 +180,9 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                 )
             )
 
-            conversation_turns, _ = (
-                self.conversation_manager.get_recent_voice_transcript(
-                    contact=contact,
-                    max_messages=20,
-                )
+            conversation_turns, _ = self.conversation_manager.get_recent_transcript(
+                contact=contact,
+                max_messages=20,
             )
 
             if conversation_turns:
@@ -203,13 +200,9 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             recent_transcript_for_prompt = "Recent Transcript: (error)"
 
         # Build prompts using prompt_builders
-        response_format_schema = (
-            response_format.model_json_schema() if response_format else None
-        )
         static_prompt, dynamic_prompt = build_ask_handle_prompt(
             question=question,
             recent_transcript=recent_transcript_for_prompt,
-            response_format_schema=response_format_schema,
             task_instructions=task_instructions,
         )
 
@@ -218,7 +211,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             {
                 "type": "text",
                 "text": static_prompt,
-                # "cache_control": {"type": "ephemeral"},
             },
             {
                 "type": "text",
@@ -232,7 +224,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         }
         kickoff_user_msg = {
             "role": "user",
-            "content": f"Start by attempting to infer the answer from the RECENT TRANSCRIPT using strong common-sense reasoning. If you can infer with 90%+ confidence, use PATH 1 (return the single `{{\"acknowledgment\": ..., \"final_answer\": ...}}` JSON). Only use PATH 2 (call `ask_question`) if inference is genuinely impossible. CRITICAL: Your acknowledgments MUST use PAST TENSE to confirm actions are complete (e.g., \"I've selected **X** and we're proceeding\"). For corrections, use explicit completion language (e.g., \"I've updated the room to **Y** as per your correction. Thanks for clarifying, and we're continuing\"). Before generating ANY acknowledgment, check the recent transcript (last 3-5 messages) to see if you've ALREADY acknowledged this issue—if so, use a shorter navigation message instead. If you use PATH 2 and the user replies, VERIFY their response actually answers your question before returning it—if it doesn't, ask a focused follow-up question (you can call the tool multiple times in the same path). Question: '{question}'. Started at {ask_start_ts}.",
+            "content": f"Answer the question: '{question}'",
         }
         seeded_messages: list[dict] = [system_header_msg, kickoff_user_msg]
 
@@ -267,41 +259,10 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         }
 
         # ──────────────────────────────────────────────────────────────────
-        # Dynamic Response Format Wrapper for PATH 1 Acknowledgments
-        # ──────────────────────────────────────────────────────────────────
-        wrapped_response_format = None
-        if response_format:
-            from typing import Optional
-            from pydantic import Field, create_model
-
-            # Create a wrapper model dynamically
-            # The model will have: acknowledgment (optional) + final_answer (the original type)
-            wrapped_response_format = create_model(
-                f"{response_format.__name__}WithAcknowledgment",
-                acknowledgment=(
-                    Optional[str],
-                    Field(
-                        default=None,
-                        description="Optional 2-3 sentence acknowledgment message in the user's language (only for PATH 1 inference)",
-                    ),
-                ),
-                final_answer=(
-                    response_format,
-                    Field(
-                        description="The actual answer conforming to the required schema",
-                    ),
-                ),
-                __base__=None,
-            )
-
-        # ──────────────────────────────────────────────────────────────────
         # 3. START THE LOOP
         # ──────────────────────────────────────────────────────────────────
         llm = new_llm_client(
-            "gemini-2.5-flash@vertex-ai",
             return_full_completion=False,
-            reasoning_effort=None,
-            service_tier=None,
         )
 
         # Get the parent lineage from the ConversationManager's session logger
@@ -309,11 +270,13 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         if hasattr(self.conversation_manager, "_session_logger"):
             parent_lineage = self.conversation_manager._session_logger.child_lineage()
 
+        # Pass response_format directly - the async tool loop handles
+        # final_answer tool injection automatically
         inner_handle = start_async_tool_loop(
             client=llm,
             message=seeded_messages,
             tools=tools,
-            response_format=wrapped_response_format,
+            response_format=response_format,
             interrupt_llm_with_interjections=True,
             loop_id="ConversationManager.ask",
             parent_lineage=parent_lineage,
@@ -368,53 +331,52 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                 try:
                     raw_result = await inner_handle.result()
 
+                    # Handle the standard stop notice from async tool loop
+                    if raw_result == "processed stopped early, no result":
+                        return None
+
+                    # Handle null/None results
+                    if raw_result is None:
+                        return None
+
                     # Convert result to dict for processing
                     if hasattr(raw_result, "model_dump"):
                         final_payload = raw_result.model_dump()
-                    elif isinstance(raw_result, dict):
-                        final_payload = raw_result
-                    elif isinstance(raw_result, str):
-                        try:
-                            final_payload = json.loads(raw_result)
-                        except json.JSONDecodeError:
-                            raise ValueError(f"Invalid JSON result: {raw_result}")
-                    else:
-                        raise ValueError(f"Unexpected result type: {type(raw_result)}")
-
-                    # Send PATH 1 acknowledgment if present
-                    if (
-                        "acknowledgment" in final_payload
-                        and final_payload["acknowledgment"]
-                    ):
-                        await cm_handle.event_broker.publish(
-                            "app:comms:direct_speech",
-                            DirectMessageEvent(
-                                content=final_payload["acknowledgment"],
-                            ).to_json(),
-                        )
-
-                    # Unwrap final_answer if wrapped
-                    answer_payload = final_payload.get("final_answer", final_payload)
-
-                    # Validate and return
+                    # Parse result if response_format was specified
                     if response_format:
-                        if inspect.isclass(response_format) and issubclass(
-                            response_format,
-                            BaseModel,
-                        ):
-                            return response_format.model_validate(answer_payload)
-                        elif inspect.isclass(response_format) and issubclass(
-                            response_format,
-                            Enum,
-                        ):
-                            if (
-                                isinstance(answer_payload, dict)
-                                and "value" in answer_payload
+                        if isinstance(raw_result, str):
+                            # Parse JSON string into the Pydantic model
+                            if inspect.isclass(response_format) and issubclass(
+                                response_format,
+                                BaseModel,
                             ):
-                                return response_format(answer_payload["value"])
-                            return response_format(answer_payload)
+                                return response_format.model_validate_json(raw_result)
+                            elif inspect.isclass(response_format) and issubclass(
+                                response_format,
+                                Enum,
+                            ):
+                                import json
 
-                    return answer_payload
+                                data = json.loads(raw_result)
+                                if isinstance(data, dict) and "value" in data:
+                                    return response_format(data["value"])
+                                return response_format(data)
+                        elif isinstance(raw_result, dict):
+                            if inspect.isclass(response_format) and issubclass(
+                                response_format,
+                                BaseModel,
+                            ):
+                                return response_format.model_validate(raw_result)
+                            elif inspect.isclass(response_format) and issubclass(
+                                response_format,
+                                Enum,
+                            ):
+                                if "value" in raw_result:
+                                    return response_format(raw_result["value"])
+                                return response_format(raw_result)
+                        elif isinstance(raw_result, response_format):
+                            return raw_result
+                    return raw_result
 
                 finally:
                     if cm_handle.conversation_manager.active_ask_handle == self:

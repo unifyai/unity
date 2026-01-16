@@ -236,6 +236,67 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         return conversation_turns, last_message_timestamp
 
+    def get_recent_transcript(
+        self,
+        contact: dict | None = None,
+        max_messages: int | None = None,
+    ) -> tuple[list[dict], datetime | None]:
+        """Extract recent transcript from ALL threads for a contact.
+
+        Unlike get_recent_voice_transcript which only looks at the voice thread,
+        this method uses the global_thread which contains messages from ALL mediums
+        (sms, unify, voice, email).
+
+        Args:
+            contact: Contact to get transcript for. Defaults to active contact.
+            max_messages: Maximum number of messages to return. None for all.
+
+        Returns:
+            A tuple of (conversation_turns, last_message_timestamp) where:
+            - conversation_turns: List of {"role": "user"|"assistant", "content": str}
+            - last_message_timestamp: Timestamp of the last message, or None
+        """
+        conversation_turns: list[dict] = []
+        last_message_timestamp: datetime | None = None
+
+        if contact is None:
+            contact = self.get_active_contact()
+
+        if not contact:
+            return conversation_turns, last_message_timestamp
+
+        contact_id = contact.get("contact_id")
+        if contact_id not in self.contact_index.active_conversations:
+            return conversation_turns, last_message_timestamp
+
+        active_contact = self.contact_index.active_conversations[contact_id]
+        global_thread = list(active_contact.global_thread)
+
+        # Optionally limit to last N messages
+        if max_messages is not None:
+            global_thread = global_thread[-max_messages:]
+
+        for msg in global_thread:
+            role = "assistant" if msg.name == "You" else "user"
+            # Handle both Message and EmailMessage types
+            if hasattr(msg, "content"):
+                content = (msg.content or "").strip()
+            elif hasattr(msg, "body"):
+                content = (msg.body or "").strip()
+            else:
+                continue
+
+            # Skip system messages (e.g., "<Call Started>")
+            if content.startswith("<") and content.endswith(">"):
+                continue
+
+            conversation_turns.append({"role": role, "content": content})
+
+            if hasattr(msg, "timestamp") and msg.timestamp:
+                last_message_timestamp = msg.timestamp
+
+        return conversation_turns, last_message_timestamp
+
     def _preprocess_messages(
         self,
         messages: str | dict | list,
