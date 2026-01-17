@@ -130,9 +130,9 @@ class _SettingsProxy:
     def __getattr__(self, name: str) -> "Any":
         return getattr(self._get_instance(), name)
 
-    def model_dump(self) -> dict:
+    def model_dump(self, **kwargs) -> dict:
         """Forward model_dump() to the underlying instance."""
-        return self._get_instance().model_dump()
+        return self._get_instance().model_dump(**kwargs)
 
 
 # Lazy singleton - instantiated on first use, not at import time

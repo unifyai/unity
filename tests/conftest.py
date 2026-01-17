@@ -464,7 +464,7 @@ def pytest_configure(config):
         config.option.showcapture = "no"
         config.option.capture = "no"
 
-    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
+    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump(mode="json")
 
     # ------------------------------------------------------------------ #
     # Prune non-pytest console handlers so only pytest live logs appear. #
