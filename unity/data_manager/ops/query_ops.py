@@ -25,9 +25,13 @@ def filter_impl(
     *,
     filter: Optional[str] = None,
     columns: Optional[List[str]] = None,
+    exclude_columns: Optional[List[str]] = None,
     limit: int = 100,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
+    order_by: Optional[str] = None,
+    descending: bool = False,
+    return_ids_only: bool = False,
+) -> Union[List[Dict[str, Any]], List[int]]:
     """
     Implementation of filter operation.
 
@@ -41,15 +45,23 @@ def filter_impl(
         Python boolean expression evaluated with column names in scope.
     columns : list[str] | None
         Specific columns to return. When None, returns all non-private columns.
+    exclude_columns : list[str] | None
+        Columns to exclude from results. Takes precedence over auto-exclusion.
     limit : int, default 100
         Maximum rows to return (must be <= 1000).
     offset : int, default 0
         Pagination offset.
+    order_by : str | None
+        Column name to sort results by.
+    descending : bool, default False
+        When True and order_by is set, sort in descending order.
+    return_ids_only : bool, default False
+        When True, returns only log IDs instead of full row data.
 
     Returns
     -------
-    list[dict[str, Any]]
-        List of row dictionaries.
+    list[dict[str, Any]] | list[int]
+        List of row dictionaries, or list of log IDs if return_ids_only=True.
 
     Raises
     ------
@@ -60,22 +72,29 @@ def filter_impl(
         raise ValueError("Limit must be <= 1000")
 
     logger.debug(
-        "Filtering context=%s filter=%s limit=%d offset=%d",
+        "Filtering context=%s filter=%s limit=%d offset=%d return_ids_only=%s",
         context,
         filter,
         limit,
         offset,
+        return_ids_only,
     )
 
     filter_expr = normalize_filter_expr(filter)
 
     # Determine fields to exclude (private fields) or include (specific columns)
-    exclude_fields = None
+    exclude_fields = exclude_columns
     from_fields = None
     if columns is not None:
         from_fields = columns
-    else:
+    elif exclude_columns is None:
+        # Only auto-exclude private fields if no explicit exclude_columns
         exclude_fields = list_private_fields(context)
+
+    # Build sorting dict if order_by is specified
+    sorting = None
+    if order_by:
+        sorting = {order_by: "descending" if descending else "ascending"}
 
     logs = unify.get_logs(
         context=context,
@@ -84,7 +103,13 @@ def filter_impl(
         exclude_fields=exclude_fields,
         limit=limit,
         offset=offset,
+        sorting=sorting,
+        return_ids_only=return_ids_only,
     )
+
+    # If return_ids_only, logs is already a list of IDs
+    if return_ids_only:
+        return logs if isinstance(logs, list) else []
 
     # Extract entries from Log objects
     results = []

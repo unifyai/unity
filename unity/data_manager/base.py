@@ -276,12 +276,136 @@ class BaseDataManager(BaseStateManager):
         """
 
     @abstractmethod
-    def list_tables(self, *, prefix: Optional[str] = None) -> List[str]:
+    def get_columns(self, table: str) -> Dict[str, Any]:
         """
-        List all table contexts, optionally filtered by prefix.
+        Get raw column definitions for a table.
 
-        Use this to discover available tables within a namespace or find
-        tables matching a naming pattern.
+        Use this to retrieve column metadata without the full table description.
+        Useful for schema introspection when you only need column information.
+
+        Parameters
+        ----------
+        table : str
+            Full context path of the table. Accepts:
+
+            - **Relative paths**: Resolved against DataManager's base context.
+            - **Absolute paths**: Used as-is (e.g., ``"Data/MH/arrears"`` or
+              ``"Files/Local/120/Content"``).
+
+        Returns
+        -------
+        dict[str, Any]
+            Mapping of column_name -> column_info dict.
+
+            Each column_info dict contains:
+            - ``data_type``: The Unify data type (str, int, float, etc.)
+            - ``description``: Optional column description
+            - Other metadata as defined by Unify
+
+            Returns empty dict if table has no columns defined.
+
+        Raises
+        ------
+        ValueError
+            If the table does not exist.
+
+        Usage Examples
+        --------------
+        # Get columns for a file's content context
+        columns = dm.get_columns("Files/Local/120/Content")
+        for name, info in columns.items():
+            print(f"{name}: {info.get('data_type', 'unknown')}")
+
+        # Check if a specific column exists
+        columns = dm.get_columns("Data/MH/arrears")
+        if "amount" in columns:
+            print("Has amount column")
+
+        Anti-patterns
+        -------------
+        - WRONG: Parsing column names to detect types.
+          CORRECT: Use the data_type from column_info.
+
+        - WRONG: Calling get_columns in a tight loop.
+          CORRECT: Cache column definitions if used repeatedly.
+
+        Notes
+        -----
+        - Unlike describe_table, this returns ALL columns including private ones
+          (those starting with ``_``).
+        - Use describe_table for a cleaner schema view excluding internal columns.
+
+        See Also
+        --------
+        describe_table : Get full table description with filtered schema.
+        list_tables : Discover available tables.
+        """
+
+    @abstractmethod
+    def get_table(self, context: str) -> Dict[str, Any]:
+        """
+        Get table/context metadata without full schema details.
+
+        This is a lightweight alternative to ``describe_table`` when you only
+        need basic context info like unique_keys, description, or auto_counting
+        but don't need the full column schema.
+
+        Parameters
+        ----------
+        context : str
+            Full context path of the table.
+
+        Returns
+        -------
+        dict[str, Any]
+            Context metadata including:
+            - ``unique_keys``: List or dict of unique key columns
+            - ``auto_counting``: Auto-increment configuration
+            - ``description``: Table description
+            - Other context-level metadata
+
+        Raises
+        ------
+        ValueError
+            If the table does not exist.
+
+        Usage Examples
+        --------------
+        # Get unique key column name
+        ctx_info = dm.get_table("Knowledge/Products")
+        unique_keys = ctx_info.get("unique_keys")
+        pk_column = unique_keys[0] if isinstance(unique_keys, list) else unique_keys
+
+        # Check if table has auto-counting
+        ctx_info = dm.get_table("Data/orders")
+        if ctx_info.get("auto_counting"):
+            print("Table has auto-counting enabled")
+
+        Notes
+        -----
+        - Much faster than ``describe_table`` as it doesn't fetch column definitions.
+        - Use ``get_columns`` if you need column info.
+        - Use ``describe_table`` for a complete view including filtered schema.
+
+        See Also
+        --------
+        describe_table : Get full table description with schema.
+        get_columns : Get column definitions only.
+        """
+
+    @abstractmethod
+    def list_tables(
+        self,
+        *,
+        prefix: Optional[str] = None,
+        include_column_info: bool = True,
+    ) -> Union[List[str], Dict[str, Any]]:
+        """
+        List tables, optionally filtered by prefix and with column info.
+
+        Use this to discover available tables within a namespace. When
+        ``include_column_info=True`` (default), also returns context metadata
+        for each table.
 
         Parameters
         ----------
@@ -294,24 +418,47 @@ class BaseDataManager(BaseStateManager):
 
             When ``None``, returns all accessible tables (may be slow/large).
 
+        include_column_info : bool, default ``True``
+            If ``True``, returns a dict mapping table paths to their metadata
+            (description, unique_keys, auto_counting, etc.).
+
+            If ``False``, returns just a sorted list of table names (faster
+            when you only need to check existence or iterate names).
+
         Returns
         -------
-        list[str]
-            List of fully-qualified context paths matching the prefix.
-            Sorted alphabetically.
+        list[str] | dict[str, Any]
+            When ``include_column_info=False``:
+                List of fully-qualified context paths matching the prefix.
+                Sorted alphabetically.
+
+            When ``include_column_info=True``:
+                Mapping of context_path -> context_info dict.
+                Each context_info dict contains:
+                - ``description``: Human-readable context description
+                - ``unique_keys``: Unique key configuration
+                - ``auto_counting``: Auto-increment configuration
+                - Other metadata as defined by Unify
 
         Usage Examples
         --------------
-        # List all tables in a project namespace
+        # List tables with metadata (default)
         tables = dm.list_tables(prefix="Data/MidlandHeart")
+        for path, info in tables.items():
+            print(f"{path}: {info.get('description', 'No description')}")
+
+        # List just table names (faster)
+        table_names = dm.list_tables(prefix="Data/MidlandHeart", include_column_info=False)
         # Returns: ["Data/MidlandHeart/arrears", "Data/MidlandHeart/properties", ...]
 
         # List all tables for a specific file
-        file_tables = dm.list_tables(prefix="Files/Local/120")
+        file_tables = dm.list_tables(prefix="Files/Local/120", include_column_info=False)
         # Returns: ["Files/Local/120/Content", "Files/Local/120/Tables/Sheet1", ...]
 
-        # List all Data/* tables
-        all_data = dm.list_tables(prefix="Data/")
+        # Check if a specific table exists
+        tables = dm.list_tables(prefix="Data/MH/")
+        if "Data/MH/arrears" in tables:
+            print("Arrears table exists")
 
         Anti-patterns
         -------------
@@ -325,6 +472,8 @@ class BaseDataManager(BaseStateManager):
         -----
         - Results are limited by access permissions.
         - Large result sets may be truncated; use specific prefixes.
+        - Use ``include_column_info=False`` when you only need table names for
+          better performance.
         """
 
     @abstractmethod
@@ -379,6 +528,345 @@ class BaseDataManager(BaseStateManager):
         - References from other tables are NOT automatically cleaned up.
         """
 
+    @abstractmethod
+    def rename_table(
+        self,
+        old_context: str,
+        new_context: str,
+    ) -> Dict[str, str]:
+        """
+        Rename a table context.
+
+        Use this method to rename an existing table to a new name while preserving
+        all its data and schema. This is useful for reorganizing namespaces or
+        correcting naming mistakes.
+
+        Parameters
+        ----------
+        old_context : str
+            Current full context path of the table to rename.
+
+        new_context : str
+            New full context path for the table.
+
+        Returns
+        -------
+        dict[str, str]
+            Backend response containing the operation result.
+
+        Raises
+        ------
+        ValueError
+            If the old context does not exist.
+        ValueError
+            If the new context already exists.
+
+        Usage Examples
+        --------------
+        # Rename a table within the same namespace
+        dm.rename_table("Data/MH/old_arrears", "Data/MH/current_arrears")
+
+        # Move a table to a different sub-namespace
+        dm.rename_table("Data/staging/imports", "Data/production/imports")
+
+        Anti-patterns
+        -------------
+        - WRONG: Renaming to a context that already exists.
+          CORRECT: Delete or rename the existing target first.
+
+        - WRONG: Renaming FileManager-owned contexts directly.
+          CORRECT: Use FileManager methods for file-derived contexts.
+
+        Notes
+        -----
+        - The operation is atomic - either succeeds completely or fails.
+        - All data, schema, and embeddings are preserved.
+        - References from other tables are NOT automatically updated.
+        """
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Column Operations
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def create_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+        column_type: str,
+        mutable: bool = True,
+        backfill_logs: bool = False,
+    ) -> Dict[str, str]:
+        """
+        Add a new column to a table.
+
+        Creates a new column with the specified type. The column starts empty
+        and values can be populated via ``insert_rows`` or ``update_rows``.
+
+        Parameters
+        ----------
+        context : str
+            Full context path of the table.
+
+        column_name : str
+            Name for the new column. Must be a valid identifier (snake_case
+            recommended). The name ``id`` is reserved and cannot be used.
+
+        column_type : str
+            Unify data type for the column. Supported types:
+            ``"str"``, ``"int"``, ``"float"``, ``"bool"``, ``"datetime"``,
+            ``"list"``, ``"dict"``.
+
+        mutable : bool, default ``True``
+            Whether the column values can be updated after creation.
+            Set to ``False`` for immutable audit columns.
+
+        backfill_logs : bool, default ``False``
+            Whether to backfill existing rows with ``None`` values.
+            Usually not needed for new columns.
+
+        Returns
+        -------
+        dict[str, str]
+            Backend response confirming column creation.
+
+        Raises
+        ------
+        ValueError
+            If the column already exists.
+        ValueError
+            If the column name is reserved (``id``).
+
+        Usage Examples
+        --------------
+        # Add a string column
+        dm.create_column("Data/products", column_name="category", column_type="str")
+
+        # Add a numeric column
+        dm.create_column("Data/orders", column_name="total_amount", column_type="float")
+
+        # Add an immutable timestamp column
+        dm.create_column(
+            "Data/audit_log",
+            column_name="created_at",
+            column_type="datetime",
+            mutable=False
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Using ``id`` as a column name.
+          CORRECT: Use descriptive names like ``product_id``, ``row_id``.
+
+        - WRONG: Creating many columns one at a time.
+          CORRECT: Define columns in ``create_table`` when possible.
+
+        Notes
+        -----
+        - Column names should follow snake_case convention.
+        - New columns are added with ``None`` values for existing rows.
+        - Use ``create_derived_column`` for computed columns.
+        """
+
+    @abstractmethod
+    def delete_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+    ) -> Dict[str, str]:
+        """
+        Remove a column from a table.
+
+        **WARNING**: This permanently deletes the column and all its data.
+
+        Parameters
+        ----------
+        context : str
+            Full context path of the table.
+
+        column_name : str
+            Name of the column to delete.
+
+        Returns
+        -------
+        dict[str, str]
+            Backend response confirming column deletion.
+
+        Raises
+        ------
+        ValueError
+            If the column is a primary key or required column.
+        ValueError
+            If the column does not exist.
+
+        Usage Examples
+        --------------
+        # Remove an obsolete column
+        dm.delete_column("Data/products", column_name="legacy_sku")
+
+        # Clean up temporary columns
+        dm.delete_column("Data/staging", column_name="temp_calculation")
+
+        Anti-patterns
+        -------------
+        - WRONG: Deleting primary key columns.
+          CORRECT: Primary keys cannot be deleted; restructure if needed.
+
+        - WRONG: Deleting columns without backing up data.
+          CORRECT: Export data first if recovery might be needed.
+
+        Notes
+        -----
+        - Deletion is immediate and permanent.
+        - Associated embeddings for this column are also deleted.
+        - Cannot delete the unique key column of a table.
+        """
+
+    @abstractmethod
+    def rename_column(
+        self,
+        context: str,
+        *,
+        old_name: str,
+        new_name: str,
+    ) -> Dict[str, str]:
+        """
+        Rename a column in a table.
+
+        Parameters
+        ----------
+        context : str
+            Full context path of the table.
+
+        old_name : str
+            Current name of the column.
+
+        new_name : str
+            New name for the column. Must be a valid identifier.
+            The name ``id`` is reserved and cannot be used.
+
+        Returns
+        -------
+        dict[str, str]
+            Backend response confirming the rename.
+
+        Raises
+        ------
+        ValueError
+            If the old column does not exist.
+        ValueError
+            If the new name is reserved (``id``).
+        ValueError
+            If a column with the new name already exists.
+
+        Usage Examples
+        --------------
+        # Rename for clarity
+        dm.rename_column("Data/orders", old_name="amt", new_name="total_amount")
+
+        # Fix typo in column name
+        dm.rename_column("Data/users", old_name="nmae", new_name="name")
+
+        Anti-patterns
+        -------------
+        - WRONG: Renaming to a reserved name like ``id``.
+          CORRECT: Use descriptive names that don't conflict.
+
+        - WRONG: Renaming columns that are referenced by other tables.
+          CORRECT: Update references first or use migration strategy.
+
+        Notes
+        -----
+        - The operation preserves all existing data.
+        - Embedding columns (``_*_emb``) should generally not be renamed.
+        - If old_name equals new_name, returns a no-op response.
+        """
+
+    @abstractmethod
+    def create_derived_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+        equation: str,
+    ) -> Dict[str, str]:
+        """
+        Create a computed column based on an equation.
+
+        Creates a new column whose values are derived from other columns
+        using a Python expression. The values are computed for all existing
+        rows when the column is created.
+
+        Parameters
+        ----------
+        context : str
+            Full context path of the table.
+
+        column_name : str
+            Name for the new derived column.
+
+        equation : str
+            Python expression evaluated per-row. Column names appear as
+            variables in the expression. Use curly braces for column
+            references: ``{column_name}``.
+
+            Examples:
+            - ``"{price} * {quantity}"`` - multiplication
+            - ``"{first_name} + ' ' + {last_name}"`` - string concatenation
+            - ``"({score1} + {score2}) / 2"`` - average
+
+        Returns
+        -------
+        dict[str, str]
+            Backend response confirming column creation.
+
+        Raises
+        ------
+        ValueError
+            If referenced columns don't exist.
+        ValueError
+            If the equation has syntax errors.
+
+        Usage Examples
+        --------------
+        # Create a total column
+        dm.create_derived_column(
+            "Data/orders",
+            column_name="total",
+            equation="{unit_price} * {quantity}"
+        )
+
+        # Create a full name column
+        dm.create_derived_column(
+            "Data/contacts",
+            column_name="full_name",
+            equation="{first_name} + ' ' + {last_name}"
+        )
+
+        # Create a calculated field
+        dm.create_derived_column(
+            "Data/metrics",
+            column_name="profit_margin",
+            equation="({revenue} - {cost}) / {revenue} * 100"
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Using column names without curly braces.
+          CORRECT: Always use ``{column_name}`` syntax.
+
+        - WRONG: Referencing non-existent columns.
+          CORRECT: Verify column names with ``get_columns`` first.
+
+        Notes
+        -----
+        - Values are computed once when the column is created.
+        - To update values, delete and recreate the derived column.
+        - For dynamic values, use ``update_rows`` instead.
+        """
+
     # ──────────────────────────────────────────────────────────────────────────
     # Query Operations
     # ──────────────────────────────────────────────────────────────────────────
@@ -390,11 +878,13 @@ class BaseDataManager(BaseStateManager):
         *,
         filter: Optional[str] = None,
         columns: Optional[List[str]] = None,
+        exclude_columns: Optional[List[str]] = None,
         limit: int = 100,
         offset: int = 0,
         order_by: Optional[str] = None,
         descending: bool = False,
-    ) -> List[Dict[str, Any]]:
+        return_ids_only: bool = False,
+    ) -> Union[List[Dict[str, Any]], List[int]]:
         """
         Filter rows from a table by expression.
 
@@ -442,6 +932,12 @@ class BaseDataManager(BaseStateManager):
 
             Example: ``columns=["id", "name", "status"]``
 
+        exclude_columns : list[str] | None, default ``None``
+            Columns to exclude from the result. Takes precedence over ``columns``.
+            Use this to hide internal/private columns from results.
+
+            Example: ``exclude_columns=["_internal_id", "_embedding"]``
+
         limit : int, default ``100``
             Maximum rows to return. Use for pagination or limiting large result sets.
             Set higher for exhaustive queries, but be mindful of memory.
@@ -457,11 +953,18 @@ class BaseDataManager(BaseStateManager):
         descending : bool, default ``False``
             When ``True`` and ``order_by`` is set, sort in descending order.
 
+        return_ids_only : bool, default ``False``
+            When ``True``, returns only the log IDs of matching rows instead of
+            full row data. This is much more efficient when you only need IDs
+            (e.g., for deletion or batched updates).
+
+            Example: ``ids = dm.filter(ctx, filter="...", return_ids_only=True)``
+
         Returns
         -------
-        list[dict]
-            List of row dictionaries containing the requested columns.
-            Each dict maps column names to values. Empty list if no matches.
+        list[dict] | list[int]
+            When ``return_ids_only=False`` (default): List of row dictionaries.
+            When ``return_ids_only=True``: List of log IDs (integers).
 
         Usage Examples
         --------------
@@ -808,6 +1311,131 @@ class BaseDataManager(BaseStateManager):
     # ──────────────────────────────────────────────────────────────────────────
     # Join Operations
     # ──────────────────────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def join_tables(
+        self,
+        *,
+        left_table: str,
+        right_table: str,
+        join_expr: str,
+        dest_table: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+    ) -> str:
+        """
+        Join two tables and write results to a destination table.
+
+        This is the low-level join primitive that creates a materialized join
+        result. Use this when you need control over the destination table lifecycle,
+        e.g., for multi-step pipelines where intermediate results are reused.
+
+        For one-shot queries, prefer ``filter_join`` or ``search_join`` which
+        handle temporary table cleanup automatically.
+
+        Parameters
+        ----------
+        left_table : str
+            Full context path of the left table.
+            Example: ``"Data/orders"`` or ``"Files/Local/120/Tables/Sheet1"``
+
+        right_table : str
+            Full context path of the right table.
+            Example: ``"Data/customers"``
+
+        join_expr : str
+            Join condition expression using table paths as prefixes.
+            Example: ``"Data/orders.customer_id == Data/customers.id"``
+
+            Columns are referenced as ``<table_path>.<column_name>``.
+
+        dest_table : str
+            Full context path for the destination table.
+            The table is created automatically.
+            Example: ``"Data/_tmp_join_abc123"``
+
+        select : dict[str, str]
+            Mapping of source columns to output column names.
+            Keys use table paths as prefixes; values are the output aliases.
+
+            Example::
+
+                {
+                    "Data/orders.id": "order_id",
+                    "Data/orders.amount": "amount",
+                    "Data/customers.name": "customer_name"
+                }
+
+        mode : str, default ``"inner"``
+            Join mode: ``"inner"``, ``"left"``, ``"right"``, or ``"outer"``.
+
+        left_where : str | None, default ``None``
+            Optional filter expression applied to left table BEFORE joining.
+            Uses column names without table prefix.
+            Example: ``"status == 'active'"``
+
+        right_where : str | None, default ``None``
+            Optional filter expression applied to right table BEFORE joining.
+            Uses column names without table prefix.
+            Example: ``"created_at >= '2024-01-01'"``
+
+        Returns
+        -------
+        str
+            The destination table path.
+
+        Usage Examples
+        --------------
+        # Basic join to a temporary table
+        dest = dm.join_tables(
+            left_table="Data/orders",
+            right_table="Data/customers",
+            join_expr="Data/orders.customer_id == Data/customers.id",
+            dest_table="Data/_tmp_order_customers",
+            select={
+                "Data/orders.id": "order_id",
+                "Data/customers.name": "customer_name"
+            }
+        )
+        # Now query the result
+        rows = dm.filter(dest, limit=100)
+        # Clean up when done
+        dm.delete_table(dest, dangerous_ok=True)
+
+        # Cross-namespace join (file + data)
+        dm.join_tables(
+            left_table="Files/Local/120/Tables/Sheet1",
+            right_table="Data/properties",
+            join_expr="Files/Local/120/Tables/Sheet1.ref == Data/properties.id",
+            dest_table="Data/_tmp_file_props",
+            select={
+                "Files/Local/120/Tables/Sheet1.amount": "arrears",
+                "Data/properties.address": "address"
+            }
+        )
+
+        Anti-patterns
+        -------------
+        - WRONG: Forgetting to delete temporary tables.
+          CORRECT: Use ``filter_join`` or ``search_join`` for auto-cleanup.
+
+        - WRONG: Using output aliases in ``join_expr``.
+          CORRECT: Use source ``<table>.<column>`` references in ``join_expr``.
+
+        Notes
+        -----
+        - The destination table is created automatically; it will fail if it exists.
+        - Pre-filters (``left_where``, ``right_where``) improve performance on large tables.
+        - The caller is responsible for cleaning up the destination table.
+        - For one-shot queries, prefer ``filter_join`` or ``search_join``.
+
+        See Also
+        --------
+        filter_join : Join + filter with automatic temp table cleanup.
+        search_join : Join + semantic search with automatic temp table cleanup.
+        """
 
     @abstractmethod
     def filter_join(
@@ -1241,7 +1869,9 @@ class BaseDataManager(BaseStateManager):
         rows: List[Dict[str, Any]],
         *,
         dedupe_key: Optional[str] = None,
-    ) -> int:
+        add_to_all_context: bool = False,
+        batched: bool = True,
+    ) -> List[int]:
         """
         Insert rows into a table.
 
@@ -1265,10 +1895,18 @@ class BaseDataManager(BaseStateManager):
 
             Example: ``dedupe_key="id"`` - if row with same id exists, update it.
 
+        add_to_all_context : bool, default ``False``
+            Whether to also add rows to aggregation contexts.
+
+        batched : bool, default ``True``
+            When ``True`` (recommended), uses batched log creation for better
+            performance. Set to ``False`` only for special cases requiring
+            sequential insertion.
+
         Returns
         -------
-        int
-            Number of rows inserted (or updated if dedupe_key caused updates).
+        list[int]
+            Log IDs of inserted rows (or updated if dedupe_key caused updates).
 
         Usage Examples
         --------------
@@ -1376,11 +2014,13 @@ class BaseDataManager(BaseStateManager):
         self,
         context: str,
         *,
-        filter: str,
+        filter: Optional[str] = None,
+        log_ids: Optional[List[int]] = None,
         dangerous_ok: bool = False,
+        delete_empty_rows: bool = False,
     ) -> int:
         """
-        Delete rows matching a filter.
+        Delete rows matching a filter or by specific log IDs.
 
         **WARNING**: This is a destructive operation. Deleted rows cannot be recovered.
 
@@ -1389,12 +2029,19 @@ class BaseDataManager(BaseStateManager):
         context : str
             Target context path.
 
-        filter : str
-            Filter expression to match rows for deletion. **Required** to prevent
-            accidental mass deletion. Same syntax as ``filter()`` method.
+        filter : str | None, default ``None``
+            Filter expression to match rows for deletion. Same syntax as ``filter()`` method.
+            Either ``filter`` or ``log_ids`` must be provided.
+
+        log_ids : list[int] | None, default ``None``
+            Specific log IDs to delete. More efficient than filter when you already
+            have the IDs (e.g., from a previous ``filter(return_ids_only=True)`` call).
 
         dangerous_ok : bool, default ``False``
             Safety flag that MUST be set to ``True`` to confirm deletion.
+
+        delete_empty_rows : bool, default ``False``
+            When ``True``, also deletes rows that have no data (empty logs).
 
         Returns
         -------

@@ -24,4 +24,3 @@ class DataSettings(BaseSettings):
         default="real",
         description="DataManager implementation: 'real' only.",
     )
-

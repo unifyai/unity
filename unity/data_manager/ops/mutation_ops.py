@@ -24,7 +24,8 @@ def insert_rows_impl(
     *,
     dedupe_key: Optional[str] = None,
     add_to_all_context: bool = False,
-) -> int:
+    batched: bool = True,
+) -> List[int]:
     """
     Implementation of insert_rows operation.
 
@@ -40,11 +41,13 @@ def insert_rows_impl(
         If provided, existing rows with matching key values are replaced.
     add_to_all_context : bool, default False
         Whether to also add to aggregation contexts.
+    batched : bool, default True
+        When True, uses batched log creation for better performance.
 
     Returns
     -------
-    int
-        Number of rows inserted.
+    list[int]
+        Log IDs of inserted rows.
 
     Raises
     ------
@@ -52,18 +55,19 @@ def insert_rows_impl(
         If insertion fails.
     """
     if not rows:
-        return 0
+        return []
 
     logger.debug(
-        "Inserting %d rows into %s (dedupe_key=%s)",
+        "Inserting %d rows into %s (dedupe_key=%s, batched=%s)",
         len(rows),
         context,
         dedupe_key,
+        batched,
     )
 
     if dedupe_key:
         # Upsert mode: check and replace existing rows
-        inserted = 0
+        inserted_ids: List[int] = []
         for row in rows:
             key_val = row.get(dedupe_key)
             if key_val is not None:
@@ -80,26 +84,26 @@ def insert_rows_impl(
                         unify.delete_logs(context=context, logs=[log_id])
 
             # Insert the row
-            unify_log(
+            log = unify_log(
                 context=context,
                 add_to_all_context=add_to_all_context,
                 **row,
             )
-            inserted += 1
+            if hasattr(log, "id"):
+                inserted_ids.append(log.id)
 
-        return inserted
+        return inserted_ids
     else:
-        # Bulk insert mode
+        # Bulk insert mode - always use batched=True for efficiency
         result = unify_create_logs(
             context=context,
             entries=rows,
             add_to_all_context=add_to_all_context,
+            batched=batched,
         )
-        if isinstance(result, dict):
-            return len(result.get("log_event_ids", []))
-        elif isinstance(result, list):
-            return len(result)
-        return len(rows)
+        if isinstance(result, list):
+            return [lg.id for lg in result if hasattr(lg, "id")]
+        return []
 
 
 def update_rows_impl(
@@ -172,19 +176,28 @@ def update_rows_impl(
 def delete_rows_impl(
     context: str,
     *,
-    filter: str,
+    filter: Optional[str] = None,
+    log_ids: Optional[List[int]] = None,
+    dangerous_ok: bool = False,
+    delete_empty_rows: bool = False,
 ) -> int:
     """
     Implementation of delete_rows operation.
 
-    Deletes rows matching a filter expression.
+    Deletes rows matching a filter expression or specific log IDs.
 
     Parameters
     ----------
     context : str
         Fully-qualified Unify context path.
-    filter : str
-        Filter expression to select rows to delete. Required.
+    filter : str | None
+        Filter expression to select rows to delete.
+    log_ids : list[int] | None
+        Specific log IDs to delete. More efficient than filter when IDs are known.
+    dangerous_ok : bool
+        Safety flag; must be True to confirm destructive operation.
+    delete_empty_rows : bool, default False
+        When True, also deletes rows with no data (empty logs).
 
     Returns
     -------
@@ -193,27 +206,46 @@ def delete_rows_impl(
 
     Raises
     ------
+    ValueError
+        If neither filter nor log_ids is provided.
     Exception
         If deletion fails.
     """
-    logger.info("Deleting rows from %s where %s", context, filter)
+    if filter is None and log_ids is None:
+        raise ValueError("Either filter or log_ids must be provided for delete_rows")
 
-    filter_expr = normalize_filter_expr(filter)
+    logger.info(
+        "Deleting rows from %s (filter=%s, log_ids=%s, delete_empty_rows=%s)",
+        context,
+        filter,
+        f"{len(log_ids)} ids" if log_ids else None,
+        delete_empty_rows,
+    )
 
-    # Get matching rows
-    logs = unify.get_logs(context=context, filter=filter_expr)
+    ids_to_delete: List[int] = []
 
-    if not logs:
+    if log_ids is not None:
+        # Use provided log IDs directly
+        ids_to_delete = list(log_ids)
+    elif filter is not None:
+        # Get log IDs using return_ids_only for efficiency
+        filter_expr = normalize_filter_expr(filter)
+        result = unify.get_logs(
+            context=context,
+            filter=filter_expr,
+            return_ids_only=True,
+        )
+        if isinstance(result, list):
+            ids_to_delete = result
+
+    if not ids_to_delete:
         return 0
 
-    # Collect log IDs
-    log_ids = []
-    for log in logs:
-        log_id = log.id if hasattr(log, "id") else None
-        if log_id:
-            log_ids.append(log_id)
+    # Delete the logs
+    unify.delete_logs(
+        context=context,
+        logs=ids_to_delete,
+        delete_empty_logs=delete_empty_rows,
+    )
 
-    if log_ids:
-        unify.delete_logs(context=context, logs=log_ids)
-
-    return len(log_ids)
+    return len(ids_to_delete)
