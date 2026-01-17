@@ -315,7 +315,7 @@ def test_backend_schema_image_field_enforced():
     assert "timestamp" in dtype and "data" in dtype
 
     # Valid payload for Image (use deterministic base64 PNG)
-    png_b64 = make_solid_png_base64(4, 4, (1, 2, 3))
+    png_b64 = make_solid_png_base64(32, 32, (1, 2, 3))
     valid = {
         "entry": {
             "timestamp": datetime.now(UTC).isoformat(),

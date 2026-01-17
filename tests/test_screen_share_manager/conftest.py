@@ -5,10 +5,11 @@ import pytest
 from PIL import Image
 
 from unity.screen_share_manager.screen_share_manager import ScreenShareManager
+from unity.image_manager.utils import make_solid_png_base64
 
-PNG_BLUE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAADElEQVR4nGNkYPhfz/w3A5EhBgAEAP//AwCAN3964Q2Myb4AAAAASUVORK5CYII="
-PNG_RED_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAADElEQVR4nGP8z8AARIwMrAANAAD//wMAANO3+f4uEvsAAAAASUVORK5CYII="
-PNG_GREEN_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAADElEQVR4nGP8/5/hP2E8A5EhBgAEAP//AwCANn967g93DMAAAAASUVORK5CYII="
+PNG_BLUE_B64 = f"data:image/png;base64,{make_solid_png_base64(32, 32, (0, 0, 255))}"
+PNG_RED_B64 = f"data:image/png;base64,{make_solid_png_base64(32, 32, (255, 0, 0))}"
+PNG_GREEN_B64 = f"data:image/png;base64,{make_solid_png_base64(32, 32, (0, 255, 0))}"
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 
