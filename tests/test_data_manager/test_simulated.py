@@ -96,15 +96,88 @@ def test_list_tables(simulated_dm):
     assert all("project1" in t for t in p1_tables)
 
 
+def test_get_columns(simulated_dm):
+    """get_columns should return raw column definitions."""
+    simulated_dm.create_table(
+        "test/columns_demo",
+        fields={"id": "int", "name": "str", "price": "float"},
+    )
+
+    columns = simulated_dm.get_columns("test/columns_demo")
+
+    assert isinstance(columns, dict)
+    assert "id" in columns
+    assert "name" in columns
+    assert "price" in columns
+    # Each column should have data_type
+    assert columns["id"]["data_type"] == "int"
+    assert columns["name"]["data_type"] == "str"
+    assert columns["price"]["data_type"] == "float"
+
+
+def test_get_columns_includes_private(simulated_dm):
+    """get_columns should include private columns (unlike describe_table)."""
+    simulated_dm.create_table(
+        "test/private_columns",
+        fields={"id": "int", "_internal": "str", "_id_emb": "vector"},
+    )
+
+    columns = simulated_dm.get_columns("test/private_columns")
+
+    # Should include ALL columns including private ones
+    assert "id" in columns
+    assert "_internal" in columns
+    assert "_id_emb" in columns
+
+
+def test_list_tables_with_column_info(simulated_dm):
+    """list_tables with include_column_info=True returns contexts with metadata."""
+    simulated_dm.create_table("ctx_test/table_a", description="Table A")
+    simulated_dm.create_table("ctx_test/table_b", description="Table B")
+    simulated_dm.create_table("other/table_c")
+
+    # All contexts for prefix with column info (default)
+    tables = simulated_dm.list_tables(prefix="Data/ctx_test", include_column_info=True)
+
+    assert isinstance(tables, dict)
+    assert len(tables) == 2
+
+    # Each context should have info including description
+    for ctx_path, ctx_info in tables.items():
+        assert "ctx_test" in ctx_path
+        assert "description" in ctx_info
+
+
+def test_list_tables_without_column_info(simulated_dm):
+    """list_tables with include_column_info=False returns just table names."""
+    simulated_dm.create_table("names_test/t1")
+    simulated_dm.create_table("names_test/t2")
+
+    tables = simulated_dm.list_tables(
+        prefix="Data/names_test",
+        include_column_info=False,
+    )
+
+    assert isinstance(tables, list)
+    assert len(tables) == 2
+    assert all(isinstance(t, str) for t in tables)
+
+
 def test_delete_table(simulated_dm):
     """delete_table should remove the table."""
     simulated_dm.create_table("temp/to_delete")
-    tables_before = simulated_dm.list_tables(prefix="Data/temp")
+    tables_before = simulated_dm.list_tables(
+        prefix="Data/temp",
+        include_column_info=False,
+    )
     assert len(tables_before) == 1
 
     simulated_dm.delete_table("temp/to_delete", dangerous_ok=True)
 
-    tables_after = simulated_dm.list_tables(prefix="Data/temp")
+    tables_after = simulated_dm.list_tables(
+        prefix="Data/temp",
+        include_column_info=False,
+    )
     assert len(tables_after) == 0
 
 
@@ -114,6 +187,30 @@ def test_delete_table_requires_dangerous_ok(simulated_dm):
 
     with pytest.raises(ValueError, match="dangerous_ok"):
         simulated_dm.delete_table("temp/protected")
+
+
+def test_get_table(simulated_dm):
+    """get_table should return lightweight context metadata."""
+    simulated_dm.create_table(
+        "test/get_table_demo",
+        description="Demo for get_table",
+        fields={"id": "int", "name": "str"},
+        unique_keys=["id"],
+        auto_counting={"key": "id"},
+    )
+
+    ctx_info = simulated_dm.get_table("test/get_table_demo")
+
+    assert isinstance(ctx_info, dict)
+    assert ctx_info.get("description") == "Demo for get_table"
+    assert ctx_info.get("unique_keys") == ["id"]
+    assert ctx_info.get("auto_counting") == {"key": "id"}
+
+
+def test_get_table_not_found(simulated_dm):
+    """get_table should raise ValueError for non-existent table."""
+    with pytest.raises(ValueError, match="not found"):
+        simulated_dm.get_table("nonexistent/table")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -165,6 +262,38 @@ def test_filter_with_column_selection(seeded_dm):
     assert all("id" in r and "name" in r for r in rows)
     # Other columns should not be present
     assert all("price" not in r and "category" not in r for r in rows)
+
+
+def test_filter_with_exclude_columns(seeded_dm):
+    """filter with exclude_columns should exclude specified columns."""
+    rows = seeded_dm.filter("test/products", exclude_columns=["price", "category"])
+
+    assert len(rows) == 5
+    assert all("id" in r and "name" in r for r in rows)
+    # Excluded columns should not be present
+    assert all("price" not in r and "category" not in r for r in rows)
+
+
+def test_filter_with_return_ids_only(seeded_dm):
+    """filter with return_ids_only=True should return list of log IDs."""
+    ids = seeded_dm.filter("test/products", return_ids_only=True)
+
+    assert isinstance(ids, list)
+    assert len(ids) == 5
+    # All IDs should be integers
+    assert all(isinstance(i, int) for i in ids)
+
+
+def test_filter_with_return_ids_only_and_filter(seeded_dm):
+    """filter with return_ids_only=True and filter expression."""
+    ids = seeded_dm.filter(
+        "test/products",
+        filter="category == 'widgets'",
+        return_ids_only=True,
+    )
+
+    assert isinstance(ids, list)
+    assert len(ids) == 2
 
 
 def test_search_basic(seeded_dm):
@@ -244,10 +373,10 @@ def test_reduce_with_group_by(seeded_dm):
 
 
 def test_insert_rows(simulated_dm):
-    """insert_rows should add rows to the table."""
+    """insert_rows should return list of inserted log IDs."""
     simulated_dm.create_table("test/items", fields={"id": "int", "value": "str"})
 
-    count = simulated_dm.insert_rows(
+    inserted_ids = simulated_dm.insert_rows(
         "test/items",
         [
             {"id": 1, "value": "one"},
@@ -255,7 +384,9 @@ def test_insert_rows(simulated_dm):
         ],
     )
 
-    assert count == 2
+    # insert_rows returns list of log IDs (one per inserted row)
+    assert isinstance(inserted_ids, list)
+    assert len(inserted_ids) == 2
     rows = simulated_dm.filter("test/items")
     assert len(rows) == 2
 
@@ -277,6 +408,29 @@ def test_insert_rows_with_dedupe(simulated_dm):
     rows = simulated_dm.filter("test/items")
     assert len(rows) == 1
     assert rows[0]["value"] == "updated"
+
+
+def test_insert_rows_with_batched(simulated_dm):
+    """insert_rows with batched=True should return log IDs."""
+    simulated_dm.create_table("test/batched", fields={"id": "int", "text": "str"})
+
+    # Default batched=True
+    ids = simulated_dm.insert_rows(
+        "test/batched",
+        [{"id": 1, "text": "a"}, {"id": 2, "text": "b"}],
+        batched=True,
+    )
+
+    assert isinstance(ids, list)
+    assert len(ids) == 2
+
+    # Also works with batched=False
+    ids_unbatched = simulated_dm.insert_rows(
+        "test/batched",
+        [{"id": 3, "text": "c"}],
+        batched=False,
+    )
+    assert len(ids_unbatched) == 1
 
 
 def test_update_rows(seeded_dm):
@@ -314,6 +468,49 @@ def test_delete_rows_requires_dangerous_ok(seeded_dm):
     """delete_rows should raise without dangerous_ok=True."""
     with pytest.raises(ValueError, match="dangerous_ok"):
         seeded_dm.delete_rows("test/products", filter="id == 1")
+
+
+def test_delete_rows_with_log_ids(seeded_dm):
+    """delete_rows with log_ids should delete specific rows."""
+    # First get log IDs using filter
+    ids_to_delete = seeded_dm.filter(
+        "test/products",
+        filter="category == 'tools'",
+        return_ids_only=True,
+    )
+    assert len(ids_to_delete) == 1
+
+    # Then delete using those IDs
+    deleted_count = seeded_dm.delete_rows(
+        "test/products",
+        log_ids=ids_to_delete,
+        dangerous_ok=True,
+    )
+
+    # Should return count of deleted rows
+    assert deleted_count == 1
+
+    # Verify deletion
+    remaining = seeded_dm.filter("test/products", filter="category == 'tools'")
+    assert len(remaining) == 0
+
+
+def test_delete_rows_with_delete_empty_rows(simulated_dm):
+    """delete_rows with delete_empty_rows=True cascades empty cleanup."""
+    simulated_dm.create_table("test/cleanup", fields={"id": "int", "data": "str"})
+    simulated_dm.insert_rows("test/cleanup", [{"id": 1, "data": "test"}])
+
+    # Delete with delete_empty_rows flag
+    deleted = simulated_dm.delete_rows(
+        "test/cleanup",
+        filter="id == 1",
+        dangerous_ok=True,
+        delete_empty_rows=True,
+    )
+
+    assert deleted == 1
+    remaining = simulated_dm.filter("test/cleanup")
+    assert len(remaining) == 0
 
 
 # ────────────────────────────────────────────────────────────────────────────
