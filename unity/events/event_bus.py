@@ -1288,6 +1288,9 @@ class EventBus:
                 return
 
             await asyncio.gather(*to_await, return_exceptions=True)
+            # Yield to allow done_callbacks (scheduled via call_soon) to execute
+            # and remove completed futures from _callback_futures
+            await asyncio.sleep(0)
 
             if not cascade:
                 return
