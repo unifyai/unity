@@ -12,8 +12,8 @@ from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.utils import make_solid_png_base64
 
 
-PNG_RED_B64 = make_solid_png_base64(8, 8, (255, 0, 0))
-PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
+PNG_RED_B64 = make_solid_png_base64(32, 32, (255, 0, 0))
+PNG_BLUE_B64 = make_solid_png_base64(32, 32, (0, 0, 255))
 
 
 def _get_raw_log_by_image_id(ctx: str, image_id: int):

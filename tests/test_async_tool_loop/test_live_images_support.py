@@ -23,7 +23,7 @@ def _solid_png_bytes() -> bytes:
     """Make a tiny solid PNG as raw bytes for attachment tests."""
     from unity.image_manager.utils import make_solid_png_base64
 
-    b64 = make_solid_png_base64(2, 2, (255, 0, 0))
+    b64 = make_solid_png_base64(32, 32, (255, 0, 0))
     return base64.b64decode(b64)
 
 
@@ -366,7 +366,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(
         [
             {
                 "caption": "variant check",
-                "data": make_solid_png_base64(2, 2, (0, 255, 0)),
+                "data": make_solid_png_base64(32, 32, (0, 255, 0)),
                 "timestamp": static_now,
             },
         ],

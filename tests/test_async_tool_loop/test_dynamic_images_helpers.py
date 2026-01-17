@@ -37,7 +37,7 @@ async def test_interject_dynamic_helper_appends_images(model, static_now) -> Non
     )
 
     manager = ImageManager()
-    b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
+    b64_blue = make_solid_png_base64(32, 32, (0, 0, 255))
     [img_id] = manager.add_images(
         [
             {"caption": "blue square", "data": b64_blue, "timestamp": static_now},
@@ -83,7 +83,7 @@ async def test_stop_dynamic_helper_appends_images(model, static_now) -> None:
     )
 
     manager = ImageManager()
-    b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
+    b64_blue = make_solid_png_base64(32, 32, (0, 0, 255))
     [img_id] = manager.add_images(
         [
             {"caption": "blue tile", "data": b64_blue, "timestamp": static_now},
@@ -143,7 +143,7 @@ async def test_clarify_helpers_append_images_for_request_and_answer(
     )
 
     manager = ImageManager()
-    b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
+    b64_blue = make_solid_png_base64(32, 32, (0, 0, 255))
     [img_id] = manager.add_images(
         [
             {"caption": "blue square", "data": b64_blue, "timestamp": static_now},
@@ -182,7 +182,7 @@ async def test_notification_payload_appends_images(model, static_now) -> None:
     )
 
     manager = ImageManager()
-    b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
+    b64_blue = make_solid_png_base64(32, 32, (0, 0, 255))
     [img_id] = manager.add_images(
         [
             {"caption": "blue tile", "data": b64_blue, "timestamp": static_now},
@@ -234,7 +234,7 @@ async def test_overview_reinjected_on_interjection_images(model, static_now) -> 
         [
             {
                 "caption": "first",
-                "data": make_solid_png_base64(2, 2, (0, 0, 255)),
+                "data": make_solid_png_base64(32, 32, (0, 0, 255)),
                 "timestamp": static_now,
             },
         ],
@@ -273,7 +273,7 @@ async def test_overview_reinjected_on_interjection_images(model, static_now) -> 
         [
             {
                 "caption": "second",
-                "data": make_solid_png_base64(2, 2, (255, 0, 0)),
+                "data": make_solid_png_base64(32, 32, (255, 0, 0)),
                 "timestamp": static_now,
             },
         ],
@@ -305,7 +305,7 @@ async def test_ask_image_with_images_param_appends_log(model, static_now) -> Non
     )
 
     manager = ImageManager()
-    b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
+    b64_blue = make_solid_png_base64(32, 32, (0, 0, 255))
     [img_id] = manager.add_images(
         [
             {"caption": "blue square", "data": b64_blue, "timestamp": static_now},
@@ -362,9 +362,9 @@ async def test_two_images_then_interjection_three_asks_real_llm(
 
     # Use stored images and typed refs (distinct colours to require real vision recognition)
     manager = ImageManager()
-    b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    b64_yellow = make_solid_png_base64(2, 2, (255, 255, 0))
-    b64_red = make_solid_png_base64(2, 2, (255, 0, 0))
+    b64_blue = make_solid_png_base64(32, 32, (0, 0, 255))
+    b64_yellow = make_solid_png_base64(32, 32, (255, 255, 0))
+    b64_red = make_solid_png_base64(32, 32, (255, 0, 0))
     [john_id, david_id, jenny_id] = manager.add_images(
         [
             {"data": b64_blue, "timestamp": static_now},
