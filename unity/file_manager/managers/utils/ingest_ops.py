@@ -11,18 +11,20 @@ These functions:
 
 The orchestration of these operations (parallel execution, progress reporting,
 retries) is handled by the executor layer.
+
+All data operations delegate to DataManager for consistency.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeVar
 
-import unify
-
-from unity.common.log_utils import create_logs as unity_create_logs
 from unity.file_manager.types.file import FileContent
 from unity.file_manager.types.file import FileContentRow
+
+if TYPE_CHECKING:
+    from unity.data_manager.data_manager import DataManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,21 +33,28 @@ T = TypeVar("T")
 
 def ingest_content_batch(
     *,
+    data_manager: "DataManager",
     context: str,
     rows: List[FileContentRow],
     file_id: int,
+    add_to_all_context: bool = False,
 ) -> List[int]:
     """
-    Ingest a batch of content rows into a context.
+    Ingest a batch of content rows into a context via DataManager.
 
     Parameters
     ----------
+    data_manager : DataManager
+        The DataManager instance for data operations.
     context : str
         The Unify context to ingest into.
-    rows : list[dict]
+    rows : list[FileContentRow]
         Content rows to ingest.
     file_id : int
         The file ID to associate with these rows.
+    add_to_all_context : bool
+        Whether to add to multi-assistant aggregation contexts.
+
     Returns
     -------
     list[int]
@@ -55,166 +64,21 @@ def ingest_content_batch(
         return []
 
     # Transform rows to file content entries (attach file_id)
-    file_content_rows = FileContent.to_file_content_entries(file_id=file_id, rows=rows)
+    file_content_rows = FileContent.to_document_entries(file_id=file_id, rows=rows)
     file_content_entries: List[Dict[str, Any]] = [
         r.model_dump(mode="json", exclude_none=True) for r in file_content_rows
     ]
 
-    # Batch insert
+    # Batch insert via DataManager
     try:
-        result = unity_create_logs(
+        return data_manager.insert_rows(
             context=context,
-            entries=file_content_entries,
-            batched=True,
+            rows=file_content_entries,
+            add_to_all_context=add_to_all_context,
         )
-        return [lg.id for lg in result]
     except Exception as e:
         logger.error(f"Failed to ingest content batch: {e}")
         raise
-
-
-def ingest_table_batch(
-    *,
-    context: str,
-    rows: List[Dict[str, Any]],
-    columns: List[str],
-) -> List[int]:
-    """
-    Ingest a batch of table rows into a context.
-
-    Parameters
-    ----------
-    context : str
-        The Unify context to ingest into.
-    rows : list[dict]
-        Table rows to ingest.
-    columns : list[str]
-        Column names for the table.
-
-    Returns
-    -------
-    list[int]
-        Log IDs of the inserted rows.
-    """
-    if not rows:
-        return []
-
-    # Normalize rows to dict format
-    entries: List[Dict[str, Any]] = []
-    for r in rows:
-        if isinstance(r, dict):
-            entry = {str(k): (str(v) if v is not None else "") for k, v in r.items()}
-        else:
-            # Assume it's a sequence matching columns
-            entry = {
-                str(col): (str(val) if val is not None else "")
-                for col, val in zip(columns, r)
-            }
-        entries.append(entry)
-
-    # Batch insert
-    try:
-        result = unity_create_logs(context=context, entries=entries, batched=True)
-        return [lg.id for lg in result]
-    except Exception as e:
-        logger.error(f"Failed to ingest table batch: {e}")
-        raise
-
-
-def delete_content_rows(
-    *,
-    context: str,
-    file_id: Optional[int] = None,
-) -> int:
-    """
-    Delete content rows from a context.
-
-    Parameters
-    ----------
-    context : str
-        The Unify context to delete from.
-    file_id : int | None
-        If provided, only delete rows with this file_id.
-        If None, delete all rows.
-
-    Returns
-    -------
-    int
-        Number of rows deleted.
-    """
-    try:
-        filter_expr = f"file_id == {file_id}" if file_id is not None else None
-        if filter_expr:
-            ids = list(
-                unify.get_logs(
-                    context=context,
-                    filter=filter_expr,
-                    return_ids_only=True,
-                ),
-            )
-        else:
-            ids = list(unify.get_logs(context=context, return_ids_only=True))
-
-        if not ids:
-            return 0
-
-        unify.delete_logs(
-            logs=ids,
-            context=context,
-            project=unify.active_project(),
-            delete_empty_logs=True,
-        )
-        return len(ids)
-    except Exception as e:
-        logger.warning(f"Failed to delete content rows: {e}")
-        return 0
-
-
-def delete_table_rows(
-    *,
-    context: str,
-    filter_expr: Optional[str] = None,
-) -> int:
-    """
-    Delete table rows from a context.
-
-    Parameters
-    ----------
-    context : str
-        The Unify context to delete from.
-    filter_expr : str | None
-        Optional filter expression. If None, delete all rows.
-
-    Returns
-    -------
-    int
-        Number of rows deleted.
-    """
-    try:
-        if filter_expr:
-            ids = list(
-                unify.get_logs(
-                    context=context,
-                    filter=filter_expr,
-                    return_ids_only=True,
-                ),
-            )
-        else:
-            ids = list(unify.get_logs(context=context, return_ids_only=True))
-
-        if not ids:
-            return 0
-
-        unify.delete_logs(
-            logs=ids,
-            context=context,
-            project=unify.active_project(),
-            delete_empty_logs=True,
-        )
-        return len(ids)
-    except Exception as e:
-        logger.warning(f"Failed to delete table rows: {e}")
-        return 0
 
 
 def chunk_records(
@@ -226,14 +90,14 @@ def chunk_records(
 
     Parameters
     ----------
-    records : list[dict]
+    records : list
         Records to chunk.
     batch_size : int
         Maximum size of each chunk.
 
     Returns
     -------
-    list[list[dict]]
+    list[list]
         List of chunks.
     """
     if batch_size <= 0:
@@ -247,14 +111,17 @@ def chunk_records(
 
 def get_file_id_from_path(
     *,
+    data_manager: "DataManager",
     index_context: str,
     file_path: str,
 ) -> Optional[int]:
     """
-    Look up file_id from the FileRecords index.
+    Look up file_id from the FileRecords index via DataManager.
 
     Parameters
     ----------
+    data_manager : DataManager
+        The DataManager instance for data operations.
     index_context : str
         The FileRecords index context.
     file_path : str
@@ -266,92 +133,58 @@ def get_file_id_from_path(
         The file_id if found, None otherwise.
     """
     try:
-        rows = unify.get_logs(
+        rows = data_manager.filter(
             context=index_context,
             filter=f"file_path == {file_path!r}",
             limit=1,
-            from_fields=["file_id"],
+            columns=["file_id"],
         )
         if rows:
-            return rows[0].entries.get("file_id")
+            return rows[0].get("file_id")
     except Exception as e:
         logger.warning(f"Failed to lookup file_id for {file_path}: {e}")
     return None
 
 
-def extract_table_metadata(document: Any) -> List[Dict[str, Any]]:
+def get_storage_id_from_path(
+    *,
+    data_manager: "DataManager",
+    index_context: str,
+    file_path: str,
+) -> Optional[str]:
     """
-    Extract table metadata from a parsed document.
+    Look up storage_id from the FileRecords index via DataManager.
 
     Parameters
     ----------
-    document : Any
-        Parsed document object.
+    data_manager : DataManager
+        The DataManager instance for data operations.
+    index_context : str
+        The FileRecords index context.
+    file_path : str
+        The file path to look up.
 
     Returns
     -------
-    list[dict]
-        List of table metadata dicts with keys:
-        - columns: list of column names
-        - rows: list of row data
-        - label: derived table label
-        - sheet_name: optional sheet name
-        - section_path: optional section path
+    str | None
+        The storage_id if found, None otherwise.
+        If storage_id is empty in the record, returns str(file_id).
     """
-    tables_meta = []
     try:
-        tables = getattr(getattr(document, "metadata", None), "tables", []) or []
-        for idx, tbl in enumerate(tables, start=1):
-            columns = getattr(tbl, "columns", None)
-            rows = getattr(tbl, "rows", None)
-            sheet_name = getattr(tbl, "sheet_name", None)
-            section_path = getattr(tbl, "section_path", None)
-
-            if not rows:
-                continue
-
-            # Derive columns if missing
-            if not columns:
-                first = rows[0]
-                if isinstance(first, dict):
-                    columns = list(first.keys())
-                else:
-                    columns = [str(val) for val in first]
-                # First row is header, drop it
-                rows = rows[1:]
-
-            # Ensure columns is a list
-            columns = list(columns) if columns else []
-
-            # Convert list/tuple rows to dicts using columns
-            # This is required because downstream unify.create_logs expects dicts
-            if rows and columns:
-                converted_rows = []
-                for row in rows:
-                    if isinstance(row, dict):
-                        converted_rows.append(row)
-                    elif isinstance(row, (list, tuple)):
-                        # Zip columns with row values to create dict
-                        converted_rows.append(dict(zip(columns, row)))
-                    else:
-                        # Unexpected row type - skip or wrap
-                        logger.warning(f"Unexpected row type {type(row)}, skipping")
-                        continue
-                rows = converted_rows
-
-            # Derive label
-            label = sheet_name or section_path or f"{idx:02d}"
-
-            tables_meta.append(
-                {
-                    "columns": columns,
-                    "rows": list(rows),
-                    "label": str(label),
-                    "sheet_name": sheet_name,
-                    "section_path": section_path,
-                },
-            )
+        rows = data_manager.filter(
+            context=index_context,
+            filter=f"file_path == {file_path!r}",
+            limit=1,
+            columns=["file_id", "storage_id"],
+        )
+        if rows:
+            entry = rows[0]
+            storage_id = entry.get("storage_id", "")
+            file_id = entry.get("file_id")
+            # If storage_id is empty, use str(file_id)
+            if not storage_id and file_id is not None:
+                return str(file_id)
+            return storage_id or None
     except Exception as e:
-        logger.warning(f"Failed to extract table metadata: {e}")
-
-    return tables_meta
+        logger.warning(f"Failed to lookup storage_id for {file_path}: {e}")
+    return None

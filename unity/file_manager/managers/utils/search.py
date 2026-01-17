@@ -1,76 +1,78 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union
 import uuid
-
-import unify
 
 from unity.common.log_utils import create_logs as unity_create_logs
 from unity.common.search_utils import table_search_top_k
 from unity.common.filter_utils import normalize_filter_expr
-from unity.common.embed_utils import list_private_fields
+
+if TYPE_CHECKING:
+    from unity.file_manager.managers.file_manager import FileManager
 
 
-def ctx_for_table(self, table: str) -> str:
+def ctx_for_storage(
+    file_manager: "FileManager",
+    *,
+    storage_id: str,
+    table: Optional[str] = None,
+) -> str:
     """
-    Resolve a table reference to a fully-qualified Unify context.
+    Resolve a storage_id reference to a fully-qualified Unify context.
 
-    Preferred forms (path-first):
-    - "<file_path>" → per-file Content context for that exact file path
-    - "<file_path>.Tables.<label>" → per-file Tables context for the given table label
+    Parameters
+    ----------
+    storage_id : str
+        The storage identifier (e.g., str(file_id) or a custom label).
+    table : str | None
+        If None, returns Content context.
+        If provided, returns Tables/<table> context.
 
-    Also accepted for backward compatibility:
-    - "FileRecords" → global index context (`self._ctx`)
-    - "<root>" → legacy alias for a per-file Content root
-    - "<root>.Tables.<label>" → legacy per-file Tables form
-
-    Notes
-    -----
-    - Use fully qualified absolute file paths whenever possible, as stored in
-      FileRecords and returned by identity helpers. Avoid legacy "<root>" forms.
-    - All returned contexts are built by prefixing the manager base +
-      "/Files/<alias>/…" via the ops helpers.
+    Returns
+    -------
+    str
+        Full Unify context path.
     """
-    t = (table or "").strip()
-    if not t:
-        raise ValueError("table must be non-empty")
-    if t.lower() == "filerecords":
-        return self._ctx
-    # Per-file Content
-    if ".tables." not in t.lower():
-        from .storage import ctx_for_file as _ctx_for_file
+    from .storage import ctx_for_file_content, ctx_for_file_table
 
-        return _ctx_for_file(self, file_path=t)
-    # Per-file table
-    root, label = t.split(".Tables.", 1)
-    from .storage import ctx_for_file_table as _ctx_for_file_table
-
-    return _ctx_for_file_table(self, file_path=root, table=label)
+    if table:
+        return ctx_for_file_table(file_manager, storage_id=storage_id, table=table)
+    return ctx_for_file_content(file_manager, storage_id=storage_id)
 
 
-def resolve_table_ref(self, ref: str) -> str:
+def resolve_table_ref(file_manager: "FileManager", ref: str) -> str:
     """
     Resolve a table reference to a fully-qualified context.
 
-    Preferred forms (path-first):
-    - "<file_path>" → per-file Content context for that exact file path
-    - "<file_path>.Tables.<label>" → per-file Tables context for the given table label
+    Preferred forms (storage_id-first):
+    - "s=<storage_id>" → Content context using storage_id
+    - "s=<storage_id>.Tables.<table>" → Tables context using storage_id
+
+    Also supported (for convenience):
+    - "id=<file_id>" or "#<file_id>" → Content context (resolves file_id to storage_id)
+    - "id=<file_id>.Tables.<table>" → Tables context (resolves file_id to storage_id)
+    - "<storage_id>" → Content context (direct storage_id string)
+    - "<storage_id>.Tables.<table>" → Tables context
     - "FileRecords" → global index context
 
-    Also accepted for backward compatibility:
-    - "<root>" → legacy alias for a per-file Content root (deprecated; use <file_path>)
-    - "<root>.Tables.<label>" → legacy per-file Tables form (deprecated; use <file_path>.Tables.<label>)
-    - "<file_path>:<table>" (legacy colon-separated form)
-    - "id=<file_id>:<table>" or "#<file_id>:<table>" (id-based addressing)
+    Notes
+    -----
+    storage_id is the stable identifier for context paths. It can be:
+    - str(file_id) for files with auto-assigned storage (default)
+    - A custom label for files with shared storage
+
+    Use describe(file_path=...) to get the storage_id for a file.
     """
+    from .storage import ctx_for_file_content, ctx_for_file_table
+
     # If the ref already looks like a fully-qualified context under this manager,
-    # return as-is using known manager roots (no hard-coded labels).
+    # return as-is.
     try:
-        _index_ctx = getattr(self, "_ctx")
+        _index_ctx = getattr(file_manager, "_ctx")
     except Exception:
         _index_ctx = None
     try:
-        _files_root = getattr(self, "_per_file_root")
+        _files_root = getattr(file_manager, "_per_file_root")
     except Exception:
         _files_root = None
     if isinstance(ref, str):
@@ -80,55 +82,107 @@ def resolve_table_ref(self, ref: str) -> str:
         if _files_root and r.startswith(f"{_files_root}/"):
             return r
         # Check if ref is already a fully-qualified context path (e.g., temporary join contexts)
-        # Temporary contexts are under FileRecords (e.g., "Assistant/FileRecords/Local/_tmp_mjoin_...")
-        # Check if it starts with the index context prefix (which includes FileRecords)
         if _index_ctx and r.startswith(_index_ctx + "/"):
             return r
-    if ":" not in ref:
-        # Treat as logical name from tables_overview
-        return ctx_for_table(self, ref)
-    left, tbl = ref.split(":", 1)
-    key = left.strip()
 
-    # Allow id-based addressing: "id=123:Table" or "#123:Table"
-    def _lookup_path_by_id(fid: int) -> str:
+    # Handle "FileRecords" special case
+    if ref.lower() == "filerecords":
+        return file_manager._ctx
+
+    # Helper to resolve file_id to storage_id
+    def _get_storage_id_for_file_id(fid: int) -> Optional[str]:
+        dm = file_manager._data_manager
         try:
-            rows = unify.get_logs(
-                context=self._ctx,
+            rows = dm.filter(
+                context=file_manager._ctx,
                 filter=f"file_id == {int(fid)}",
                 limit=1,
-                from_fields=["file_path"],
+                columns=["file_id", "storage_id"],
             )
+            if rows:
+                storage_id = rows[0].get("storage_id", "")
+                file_id = rows[0].get("file_id")
+                return storage_id if storage_id else str(file_id)
         except Exception:
-            rows = []
-        if not rows:
-            raise ValueError(f"No file found with file_id={fid}")
-        return rows[0].entries.get("file_path")
+            pass
+        return None
 
-    if key.startswith("id="):
-        file_id = int(key.split("=", 1)[1])
-        file_path = _lookup_path_by_id(file_id)
-        from .storage import ctx_for_file_table as _ctx_for_file_table
+    # Handle "s=<storage_id>" or "s=<storage_id>.Tables.<table>" forms
+    if ref.startswith("s="):
+        s_part = ref.split("=", 1)[1]
+        if ".tables." in s_part.lower():
+            parts = s_part.split(".Tables.", 1)
+            storage_id = parts[0]
+            tbl = parts[1] if len(parts) > 1 else None
+        else:
+            storage_id = s_part
+            tbl = None
+        if tbl:
+            return ctx_for_file_table(file_manager, storage_id=storage_id, table=tbl)
+        return ctx_for_file_content(file_manager, storage_id=storage_id)
 
-        return _ctx_for_file_table(self, file_path=file_path, table=tbl)
-    if key.startswith("#") and key[1:].isdigit():
-        file_id = int(key[1:])
-        file_path = _lookup_path_by_id(file_id)
-        from .storage import ctx_for_file_table as _ctx_for_file_table
+    # Handle "id=<file_id>" or "id=<file_id>.Tables.<table>" forms
+    if ref.startswith("id="):
+        id_part = ref.split("=", 1)[1]
+        if ".tables." in id_part.lower():
+            parts = id_part.split(".Tables.", 1)
+            file_id = int(parts[0])
+            tbl = parts[1] if len(parts) > 1 else None
+        else:
+            file_id = int(id_part)
+            tbl = None
+        storage_id = _get_storage_id_for_file_id(file_id)
+        if not storage_id:
+            raise ValueError(f"No file found with file_id={file_id}")
+        if tbl:
+            return ctx_for_file_table(file_manager, storage_id=storage_id, table=tbl)
+        return ctx_for_file_content(file_manager, storage_id=storage_id)
 
-        return _ctx_for_file_table(self, file_path=file_path, table=tbl)
-    # Fallback: treat as file path / display name
-    file_path = key
-    from .storage import ctx_for_file_table as _ctx_for_file_table
+    # Handle "#<file_id>" or "#<file_id>.Tables.<table>" forms
+    if ref.startswith("#"):
+        rest = ref[1:]
+        if ".tables." in rest.lower():
+            parts = rest.split(".Tables.", 1)
+            if parts[0].isdigit():
+                file_id = int(parts[0])
+                tbl = parts[1] if len(parts) > 1 else None
+                storage_id = _get_storage_id_for_file_id(file_id)
+                if not storage_id:
+                    raise ValueError(f"No file found with file_id={file_id}")
+                if tbl:
+                    return ctx_for_file_table(
+                        file_manager,
+                        storage_id=storage_id,
+                        table=tbl,
+                    )
+                return ctx_for_file_content(file_manager, storage_id=storage_id)
+        elif rest.isdigit():
+            file_id = int(rest)
+            storage_id = _get_storage_id_for_file_id(file_id)
+            if not storage_id:
+                raise ValueError(f"No file found with file_id={file_id}")
+            return ctx_for_file_content(file_manager, storage_id=storage_id)
 
-    return _ctx_for_file_table(self, file_path=file_path, table=tbl)
+    # Handle direct storage_id or storage_id.Tables.<table> forms
+    base = getattr(file_manager, "_per_file_root")
+    safe_fn = getattr(file_manager, "safe", lambda x: x)
+
+    t = ref.strip()
+    if ".tables." in t.lower():
+        parts = t.split(".Tables.", 1)
+        storage_id = parts[0]
+        table_name = parts[1] if len(parts) > 1 else ""
+        return ctx_for_file_table(file_manager, storage_id=storage_id, table=table_name)
+
+    # Direct storage_id → Content context
+    return ctx_for_file_content(file_manager, storage_id=t)
 
 
 # --------------------- Index-level filter/search (FileRecords) ---------------- #
 
 
 def filter_files(
-    self,
+    file_manager: "FileManager",
     *,
     filter: Optional[str] = None,
     offset: int = 0,
@@ -149,9 +203,9 @@ def filter_files(
     tables : list[str] | str | None
         Table references to filter. Accepted forms:
         - Full context path (preferred): Use describe() to get exact paths
-        - Path-first: "<file_path>" for per-file Content,
-          "<file_path>.Tables.<label>" for per-file tables
-        - Logical names from `tables_overview()`: "FileRecords" for index
+        - Path-first: "<storage_id>" for per-file Content,
+          "<storage_id>.Tables.<label>" for per-file tables
+        - Logical names from `describe()`: "FileRecords" for index
         When None, only the FileRecords index is scanned.
     columns : list[str] | None
         Specific columns to return. When None, returns all columns
@@ -163,18 +217,18 @@ def filter_files(
         Flat list of rows collected from the index (when tables=None) or
         concatenated rows from all resolved contexts.
     """
+    dm = file_manager._data_manager
     normalized = normalize_filter_expr(filter)
+
     if tables is None:
-        excl = list_private_fields(self._ctx) if columns is None else None
-        logs = unify.get_logs(
-            context=self._ctx,
+        # Query the index directly via DataManager
+        return dm.filter(
+            context=file_manager._ctx,
             filter=normalized,
             offset=offset,
             limit=limit,
-            exclude_fields=excl,
-            from_fields=columns,
+            columns=columns,
         )
-        return [lg.entries for lg in logs]
 
     # Normalize tables to list
     if isinstance(tables, str):
@@ -185,28 +239,22 @@ def filter_files(
     # Resolve contexts for each table name
     to_contexts: List[tuple[str, str]] = []
     for name in table_names:
-        ctx = ctx_for_table(self, name)
+        ctx = resolve_table_ref(file_manager, name)
         to_contexts.append((name, ctx))
 
-    # Parallel filter across contexts (KM-style shape but flattened)
+    # Parallel filter across contexts via DataManager
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     results: List[Dict[str, Any]] = []
 
     def _fetch(_ctx: str) -> List[Dict[str, Any]]:
-        excl = list_private_fields(_ctx) if columns is None else None
-        rows = [
-            lg.entries
-            for lg in unify.get_logs(
-                context=_ctx,
-                filter=normalized,
-                offset=offset,
-                limit=limit,
-                exclude_fields=excl,
-                from_fields=columns,
-            )
-        ]
-        return rows
+        return dm.filter(
+            context=_ctx,
+            filter=normalized,
+            offset=offset,
+            limit=limit,
+            columns=columns,
+        )
 
     max_workers = min(8, max(1, len(to_contexts)))
     if len(to_contexts) <= 1:
@@ -227,7 +275,7 @@ def filter_files(
 
 
 def search_files(
-    self,
+    file_manager: "FileManager",
     *,
     references: Optional[Dict[str, str]] = None,
     k: int = 10,
@@ -246,8 +294,8 @@ def search_files(
     table: str | None
         Table reference to search. Accepted forms:
         - Full context path (preferred): Use describe() to get exact paths
-        - Path-first: "<file_path>" for per-file Content,
-          "<file_path>.Tables.<label>" for per-file tables
+        - Path-first: "<storage_id>" for per-file Content,
+          "<storage_id>.Tables.<label>" for per-file tables
         - Logical names: "FileRecords" for index
         When None, defaults to the global FileRecords index.
     filter: str | None
@@ -260,10 +308,10 @@ def search_files(
     normalized = normalize_filter_expr(filter)
 
     if table is None:
-        context = getattr(self, "_ctx", None)
+        context = getattr(file_manager, "_ctx", None)
         unique_id_field = "file_id"
     else:
-        context = ctx_for_table(self, table)
+        context = resolve_table_ref(file_manager, table)
         # Choose unique id based on context category
         if isinstance(context, str) and context.endswith("/Content"):
             unique_id_field = "row_id"
@@ -283,7 +331,7 @@ def search_files(
 
 
 def create_join(
-    self,
+    file_manager: "FileManager",
     *,
     dest_table_ctx: str,
     left_ref: str,
@@ -295,8 +343,8 @@ def create_join(
     right_where: Optional[str] = None,
 ) -> str:
     """Create a derived table by joining two per-file tables."""
-    left_ctx = resolve_table_ref(self, left_ref)
-    right_ctx = resolve_table_ref(self, right_ref)
+    left_ctx = resolve_table_ref(file_manager, left_ref)
+    right_ctx = resolve_table_ref(file_manager, right_ref)
 
     # Rewrite join/select to use table aliases A. and B. for join expressions
     # Unify's join_logs API requires column references to be prefixed with A. or B.
@@ -411,27 +459,25 @@ def create_join(
 
     select = _rewrite_select_with_aliases(select, left_ref, right_ref)
 
-    unify.join_logs(
-        pair_of_args=(
-            {
-                "context": left_ctx,
-                **({} if left_where is None else {"filter_expr": left_where}),
-            },
-            {
-                "context": right_ctx,
-                **({} if right_where is None else {"filter_expr": right_where}),
-            },
-        ),
+    # Delegate to DataManager.join_tables
+    dm = file_manager._data_manager
+    dm.join_tables(
+        left_table=left_ctx,
+        right_table=right_ctx,
         join_expr=join_expr,
+        dest_table=dest_table_ctx,
+        select=select,
         mode=mode,
-        new_context=dest_table_ctx,
-        columns=select,
+        left_where=left_where,
+        right_where=right_where,
     )
     return dest_table_ctx
 
 
-def ensure_tmp_ctx(self, ctx: str) -> None:
-    unify.create_context(
+def ensure_tmp_ctx(file_manager: "FileManager", ctx: str) -> None:
+    """Create a temporary join context via DataManager."""
+    dm = file_manager._data_manager
+    dm.create_table(
         ctx,
         unique_keys={"row_id": "int"},
         auto_counting={"row_id": None},
@@ -439,7 +485,7 @@ def ensure_tmp_ctx(self, ctx: str) -> None:
 
 
 def filter_join(
-    self,
+    file_manager: "FileManager",
     *,
     tables: Union[str, List[str]],
     join_expr: str,
@@ -458,10 +504,10 @@ def filter_join(
     ----------
     tables : str | list[str]
         Exactly two table references. Accepted forms:
-        - Path-first (preferred): "<file_path>" for per-file Content,
-          "<file_path>.Tables.<label>" for per-file tables
-        - Logical names from `tables_overview()` or legacy refs
-        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - Path-first (preferred): "<storage_id>" for per-file Content,
+          "<storage_id>.Tables.<label>" for per-file tables
+        - Logical names from `describe()` or legacy refs
+        - Legacy forms: "<storage_id>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
     join_expr : str
         Join expression using the same refs as provided in `tables`.
     select : dict[str, str]
@@ -485,10 +531,10 @@ def filter_join(
     if len(tables) != 2:
         raise ValueError("Exactly two tables are required as 'file_path:table'")
 
-    tmp_ctx = f"{self._ctx}/_tmp_join_{uuid.uuid4().hex[:6]}"
-    ensure_tmp_ctx(self, tmp_ctx)
+    tmp_ctx = f"{file_manager._ctx}/_tmp_join_{uuid.uuid4().hex[:6]}"
+    ensure_tmp_ctx(file_manager, tmp_ctx)
     create_join(
-        self,
+        file_manager,
         dest_table_ctx=tmp_ctx,
         left_ref=tables[0],
         right_ref=tables[1],
@@ -498,22 +544,19 @@ def filter_join(
         left_where=left_where,
         right_where=right_where,
     )
-    base_excl = list_private_fields(tmp_ctx)
-    rows = [
-        e.entries
-        for e in unify.get_logs(
-            context=tmp_ctx,
-            filter=result_where,
-            offset=result_offset,
-            limit=result_limit,
-            exclude_fields=base_excl,
-        )
-    ]
+    # Fetch results via DataManager
+    dm = file_manager._data_manager
+    rows = dm.filter(
+        context=tmp_ctx,
+        filter=result_where,
+        offset=result_offset,
+        limit=result_limit,
+    )
     return {"rows": rows}
 
 
 def search_join(
-    self,
+    file_manager: "FileManager",
     *,
     tables: Union[str, List[str]],
     join_expr: str,
@@ -532,10 +575,10 @@ def search_join(
     ----------
     tables : str | list[str]
         Exactly two table references. Accepted forms:
-        - Path-first (preferred): "<file_path>" for per-file Content,
-          "<file_path>.Tables.<label>" for per-file tables
-        - Logical names from `tables_overview()` or legacy refs
-        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - Path-first (preferred): "<storage_id>" for per-file Content,
+          "<storage_id>.Tables.<label>" for per-file tables
+        - Logical names from `describe()` or legacy refs
+        - Legacy forms: "<storage_id>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
     join_expr : str
         Join expression using the same refs as provided in `tables`.
     select : dict[str, str]
@@ -561,10 +604,10 @@ def search_join(
     if len(tables) != 2:
         raise ValueError("Exactly two tables are required as 'file_path:table'")
 
-    tmp_ctx = f"{self._ctx}/_tmp_join_{uuid.uuid4().hex[:6]}"
-    ensure_tmp_ctx(self, tmp_ctx)
+    tmp_ctx = f"{file_manager._ctx}/_tmp_join_{uuid.uuid4().hex[:6]}"
+    ensure_tmp_ctx(file_manager, tmp_ctx)
     create_join(
-        self,
+        file_manager,
         dest_table_ctx=tmp_ctx,
         left_ref=tables[0],
         right_ref=tables[1],
@@ -585,7 +628,7 @@ def search_join(
 
 
 def filter_multi_join(
-    self,
+    file_manager: "FileManager",
     *,
     joins: List[Dict[str, Any]],
     result_where: Optional[str] = None,
@@ -603,10 +646,10 @@ def filter_multi_join(
         Ordered steps; each step provides ``tables`` (two refs or "$prev"),
         ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
         Table references in ``tables`` accept:
-        - Path-first (preferred): "<file_path>" for per-file Content,
-          "<file_path>.Tables.<label>" for per-file tables
-        - Logical names from `tables_overview()` or legacy refs
-        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - Path-first (preferred): "<storage_id>" for per-file Content,
+          "<storage_id>.Tables.<label>" for per-file tables
+        - Logical names from `describe()` or legacy refs
+        - Legacy forms: "<storage_id>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
         - "$prev" to reference the previous join step's result
     result_where : str | None
         Predicate applied to the final joined result over projected columns.
@@ -639,11 +682,11 @@ def filter_multi_join(
         # Temporary join contexts should be under Files/<alias>, not FileRecords/<alias>
         from .ops import _per_file_root as _get_per_file_root
 
-        per_file_root = _get_per_file_root(self)
+        per_file_root = _get_per_file_root(file_manager)
         tmp_ctx = f"{per_file_root}/_tmp_mjoin_{uuid.uuid4().hex[:6]}_{idx}"
-        ensure_tmp_ctx(self, tmp_ctx)
+        ensure_tmp_ctx(file_manager, tmp_ctx)
         create_join(
-            self,
+            file_manager,
             dest_table_ctx=tmp_ctx,
             left_ref=left_ref,
             right_ref=right_ref,
@@ -655,22 +698,19 @@ def filter_multi_join(
         )
         prev_ctx = tmp_ctx
 
-    base_excl = list_private_fields(prev_ctx)
-    rows = [
-        e.entries
-        for e in unify.get_logs(
-            context=prev_ctx,
-            filter=result_where,
-            offset=result_offset,
-            limit=result_limit,
-            exclude_fields=base_excl,
-        )
-    ]
+    # Fetch results via DataManager
+    dm = file_manager._data_manager
+    rows = dm.filter(
+        context=prev_ctx,
+        filter=result_where,
+        offset=result_offset,
+        limit=result_limit,
+    )
     return {"rows": rows}
 
 
 def search_multi_join(
-    self,
+    file_manager: "FileManager",
     *,
     joins: List[Dict[str, Any]],
     references: Optional[Dict[str, str]] = None,
@@ -687,10 +727,10 @@ def search_multi_join(
         Ordered steps; each step provides ``tables`` (two refs or "$prev"),
         ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
         Table references in ``tables`` accept:
-        - Path-first (preferred): "<file_path>" for per-file Content,
-          "<file_path>.Tables.<label>" for per-file tables
-        - Logical names from `tables_overview()` or legacy refs
-        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - Path-first (preferred): "<storage_id>" for per-file Content,
+          "<storage_id>.Tables.<label>" for per-file tables
+        - Logical names from `describe()` or legacy refs
+        - Legacy forms: "<storage_id>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
         - "$prev" to reference the previous join step's result
     references : dict[str, str] | None
         Mapping of expressions in the final result → reference text for ranking.
@@ -707,21 +747,21 @@ def search_multi_join(
     if not joins:
         return []
     out = filter_multi_join(
-        self,
+        file_manager,
         joins=joins,
         result_where=None,
         result_limit=1000,
         result_offset=0,
     )
-    tmp_ctx = f"{self._ctx}/_tmp_search_mjoin_{uuid.uuid4().hex[:6]}"
-    ensure_tmp_ctx(self, tmp_ctx)
+    tmp_ctx = f"{file_manager._ctx}/_tmp_search_mjoin_{uuid.uuid4().hex[:6]}"
+    ensure_tmp_ctx(file_manager, tmp_ctx)
     rows = out.get("rows", [])
     if rows:
         unity_create_logs(
             context=tmp_ctx,
             entries=rows,
             batched=True,
-            add_to_all_context=self.include_in_multi_assistant_table,
+            add_to_all_context=file_manager.include_in_multi_assistant_table,
         )
     rows = table_search_top_k(
         context=tmp_ctx,
