@@ -340,7 +340,6 @@ _EXCLUDED_METHODS = frozenset(
         "ingest_files",
         "export_file",
         "export_directory",
-        "file_info",
         "rename_file",
         "move_file",
         "delete_file",
@@ -459,9 +458,8 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
         "description": "Received/downloaded files, document parsing, file metadata, data queries",
         "methods": {
             "ask": "Query about specific files, parse document contents, extract information from files",
-            "tables_overview": "Discover available tables with optional column info",
-            "list_columns": "Get column names and types for a table",
-            "schema_explain": "Natural language explanation of table structure",
+            "describe": "Discover file storage layout, contexts, and schemas",
+            "list_columns": "Get column names and types for a context",
             "reduce": "Aggregate data (count, sum, mean, min, max, etc.)",
             "filter_files": "Query raw records with filtering",
             "search_files": "Semantic search over table data",
@@ -490,9 +488,8 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
 # Tools exposed by get_tools() on files primitive (subset of all FileManager tools)
 _FILE_TOOLS_EXPOSED = frozenset(
     {
-        "tables_overview",
+        "describe",
         "list_columns",
-        "schema_explain",
         "reduce",
         "filter_files",
         "visualize",
@@ -819,32 +816,26 @@ class FileTools(TypedDict, total=False):
     that accept a `tools` parameter for data operations.
 
     For direct data operations in your own code, use method syntax instead:
-        result = await primitives.files.reduce(table=..., metric="count", ...)
+        result = await primitives.files.reduce(context=..., metric="count", ...)
 
     Keys
     ----
-    tables_overview : Callable
-        Discover available tables with optional column info
+    describe : Callable
+        Discover file storage layout, contexts, and schemas
     list_columns : Callable
-        Get column names and types for a table
-    schema_explain : Callable
-        Natural language explanation of table structure
+        Get column names and types for a context
     reduce : Callable
         Aggregate data (count, sum, mean, min, max, etc.)
     filter_files : Callable
         Query raw records with filtering
-    search_files : Callable
-        Semantic search over table data
     visualize : Callable
         Generate chart visualizations
     """
 
-    tables_overview: Callable[..., Dict[str, Any]]
+    describe: Callable[..., Any]
     list_columns: Callable[..., Dict[str, Any]]
-    schema_explain: Callable[..., str]
     reduce: Callable[..., Any]
     filter_files: Callable[..., List[Dict[str, Any]]]
-    search_files: Callable[..., List[Dict[str, Any]]]
     visualize: Callable[..., Any]
 
 
@@ -868,9 +859,8 @@ class _AsyncFileManagerWrapper:
 
     # Methods whose docstrings should be copied from the underlying FileManager
     _PROXIED_METHODS = (
-        "tables_overview",
+        "describe",
         "list_columns",
-        "schema_explain",
         "reduce",
         "filter_files",
         "search_files",
@@ -888,21 +878,23 @@ class _AsyncFileManagerWrapper:
             if wrapper and original and original.__doc__:
                 wrapper.__func__.__doc__ = original.__doc__
 
-    async def tables_overview(
+    @property
+    def _data_manager(self) -> "DataManager":
+        """Expose underlying DataManager for delegation tests."""
+        return self._fm._data_manager
+
+    async def describe(
         self,
         *,
-        include_column_info: bool = True,
-        file: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        file_path: Optional[str] = None,
+        file_id: Optional[int] = None,
+    ) -> Any:
         """
-        Show the information for all tables. Async wrapper for consistency.
+        Get file storage layout with contexts and schemas. Async wrapper for consistency.
 
-        See FileManager.tables_overview for full documentation.
+        See FileManager.describe for full documentation.
         """
-        return self._fm.tables_overview(
-            include_column_info=include_column_info,
-            file=file,
-        )
+        return self._fm.describe(file_path=file_path, file_id=file_id)
 
     async def list_columns(
         self,
@@ -921,33 +913,24 @@ class _AsyncFileManagerWrapper:
             table=table,
         )
 
-    async def schema_explain(self, *, table: str) -> str:
-        """
-        Return a natural-language explanation of a table's structure.
-        Async wrapper for consistency.
-
-        See FileManager.schema_explain for full documentation.
-        """
-        return self._fm.schema_explain(table=table)
-
     async def reduce(
         self,
         *,
-        table: Optional[str] = None,
+        context: Optional[str] = None,
         metric: str,
-        keys: Any,
+        columns: Any,
         filter: Optional[Any] = None,
         group_by: Optional[Any] = None,
     ) -> Any:
         """
-        Compute reduction metrics over a table. Async wrapper for consistency.
+        Compute reduction metrics over a context. Async wrapper for consistency.
 
         See FileManager.reduce for full documentation.
         """
         return self._fm.reduce(
-            table=table,
+            context=context,
             metric=metric,
-            keys=keys,
+            columns=columns,
             filter=filter,
             group_by=group_by,
         )
@@ -1034,7 +1017,7 @@ class _AsyncFileManagerWrapper:
         Get FileManager tools as a dictionary for passing to other functions.
 
         Returns ONLY the tools compatible with metric/analysis functions:
-        - tables_overview, list_columns, schema_explain
+        - describe, list_columns
         - reduce, filter_files, visualize
 
         Use this ONLY when calling a function that accepts a `tools: FileTools`
@@ -1050,10 +1033,9 @@ class _AsyncFileManagerWrapper:
         Returns
         -------
         FileTools
-            Dictionary with keys: tables_overview, list_columns, schema_explain,
-            reduce, filter_files, visualize
+            Dictionary with keys: describe, list_columns, reduce, filter_files, visualize
         """
-        all_tools = dict(self._fm.get_tools("ask", include_sub_tools=True))
+        all_tools = dict(self._fm.get_tools("ask_about_file", include_sub_tools=True))
         # Filter to only the tools exposed for external function use
         return {k: v for k, v in all_tools.items() if k in _FILE_TOOLS_EXPOSED}
 
@@ -1208,9 +1190,8 @@ class Primitives:
         All methods are async for consistency with other primitives - use `await`:
 
         Discovery tools:
-        - await tables_overview() - List all available tables
-        - await list_columns(table=...) - Get column names and types
-        - await schema_explain(table=...) - Get natural language schema explanation
+        - await describe(file_path=...) - Get file storage layout, contexts, and schemas
+        - await list_columns(context=...) - Get column names and types for a context
 
         Query tools:
         - await reduce(table, metric, keys, filter, group_by) - Aggregate data
