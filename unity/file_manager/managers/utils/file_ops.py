@@ -75,15 +75,29 @@ def build_compact_ingest_model(
     except Exception:
         pass
 
-    # Destination naming depends on ingest mode
-    dest_path = (
-        file_path
-        if config.ingest.mode == "per_file"
-        else (config.ingest.unified_label or "Unified")
-    )
+    # Resolve storage_id from file record
+    from .ingest_ops import get_file_id_from_path, get_storage_id_from_path
 
-    # Content reference
-    content_ctx = file_manager._ctx_for_file(dest_path)
+    dm = file_manager._data_manager
+    file_id = get_file_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    storage_id = get_storage_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    # Fallback: use str(file_id) if no storage_id found
+    if not storage_id and file_id is not None:
+        storage_id = str(file_id)
+    # Ultimate fallback: use config storage_id or file_path
+    if not storage_id:
+        storage_id = config.ingest.storage_id or file_path
+
+    # Content reference using storage_id
+    content_ctx = file_manager._ctx_for_file_content(storage_id)
     from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
 
     adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
@@ -107,10 +121,12 @@ def build_compact_ingest_model(
             label_safe = file_manager.safe(label)
             columns = list(getattr(tbl, "columns", []) or [])[:16]
             row_count = len(getattr(tbl, "rows", []) or [])
+            # Use storage_id-based context
+            table_ctx = file_manager._ctx_for_file_table(storage_id, label_safe)
             tables_meta.append(
                 _TableRef(
                     name=label_safe,
-                    context=file_manager._ctx_for_file_table(dest_path, label_safe),
+                    context=table_ctx,
                     row_count=row_count,
                     columns=columns,
                 ),
