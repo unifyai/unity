@@ -10,7 +10,7 @@ Tests cover all cases for the describe tooling:
 - Table contexts (CSV, XLSX sheets)
 - Schema information
 - Status fields (filesystem_exists, indexed_exists, parsed_status)
-- Ingest configuration (ingest_mode, unified_label, table_ingest)
+- Storage configuration (storage_id, table_ingest)
 """
 
 from __future__ import annotations
@@ -88,8 +88,8 @@ def test_describe_returns_ingest_config(file_manager, tmp_path: Path) -> None:
 
     storage = file_manager.describe(file_path=str(test_file))
 
-    # Ingest config fields should be present
-    assert storage.ingest_mode in ("per_file", "unified")
+    # Storage config fields should be present
+    assert isinstance(storage.storage_id, str) and len(storage.storage_id) > 0
     assert isinstance(storage.table_ingest, bool)
     assert storage.file_format is not None
 

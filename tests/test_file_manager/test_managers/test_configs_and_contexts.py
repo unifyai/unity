@@ -60,7 +60,7 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
     n2 = str(p2)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="unified", unified_label="Docs"),
+        ingest=IngestConfig(storage_id="Docs"),
     )
     res = fm.ingest_files([n1, n2], config=cfg)
     # All returns are now Pydantic models - use attribute access
@@ -108,7 +108,7 @@ def test_embedding_specs_smoke(file_manager, tmp_path: Path):
     name = str(p)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file"),
+        ingest=IngestConfig(),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="after",
             file_specs=[
@@ -171,7 +171,7 @@ def test_file_pipeline_config_defaults():
     assert cfg.parse.max_concurrent_parses == 3
     assert isinstance(cfg.parse.backend_class_paths_by_format, dict)
     assert cfg.parse.backend_class_paths_by_format  # non-empty mapping
-    assert cfg.ingest.mode == "per_file"
+    assert cfg.ingest.storage_id is None  # default per-file mode
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "compact"
     assert cfg.diagnostics.enable_progress is False
@@ -307,7 +307,7 @@ def test_config_from_file_empty(tmp_path: Path):
     cfg = FilePipelineConfig.from_file(str(config_file))
     assert isinstance(cfg, FilePipelineConfig)
     assert cfg.parse.max_concurrent_parses == 3
-    assert cfg.ingest.mode == "per_file"
+    assert cfg.ingest.storage_id is None  # default per-file mode
 
 
 def test_config_from_file_partial(tmp_path: Path):
@@ -325,7 +325,7 @@ def test_config_from_file_partial(tmp_path: Path):
     assert cfg.parse.max_concurrent_parses == 10
     assert cfg.output.return_mode == "full"
     # Other sections should have defaults
-    assert cfg.ingest.mode == "per_file"
+    assert cfg.ingest.storage_id is None  # default per-file mode
     assert cfg.embed.strategy == "after"
 
 
@@ -532,8 +532,7 @@ def test_config_from_file_full(tmp_path: Path):
         # parser_kwargs/plugins are ignored (legacy/removed); this test ensures unknown keys don't break loading.
         "parse": {"batch_size": 5, "parser_kwargs": {"key": "value"}},
         "ingest": {
-            "mode": "unified",
-            "unified_label": "FullTest",
+            "storage_id": "FullTest",
             "table_rows_batch_size": 3000,
             "business_contexts": {
                 "global_rules": ["Global rule"],
@@ -579,7 +578,7 @@ def test_config_from_file_full(tmp_path: Path):
 
     cfg = FilePipelineConfig.from_file(str(config_file))
     assert cfg.parse.max_concurrent_parses == 5
-    assert cfg.ingest.mode == "unified"
+    assert cfg.ingest.storage_id is not None  # unified mode (shared storage)
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "full"
     assert cfg.diagnostics.enable_progress is True
@@ -783,8 +782,7 @@ def test_config_all_sections_populated(tmp_path: Path):
             "parser_kwargs": {"custom_option": "value", "another": 123},
         },
         "ingest": {
-            "mode": "unified",
-            "unified_label": "AllSectionsTest",
+            "storage_id": "AllSectionsTest",
             "table_rows_batch_size": 5000,
             "content_rows_batch_size": 3000,
             "business_contexts": {
@@ -850,8 +848,7 @@ def test_config_all_sections_populated(tmp_path: Path):
     assert cfg.parse.max_concurrent_parses == 10
 
     # Verify ingest
-    assert cfg.ingest.mode == "unified"
-    assert cfg.ingest.unified_label == "AllSectionsTest"
+    assert cfg.ingest.storage_id == "AllSectionsTest"
     assert cfg.ingest.table_rows_batch_size == 5000
     assert cfg.ingest.business_contexts is not None
     assert len(cfg.ingest.business_contexts.global_rules) == 1
