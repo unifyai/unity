@@ -24,7 +24,22 @@ class LoopMessageDispatcher:
         self,
         msgs: list[dict],
         origin: str | None = None,
+        *,
+        skip_event_bus: bool = False,
     ) -> None:
         self._client.append_messages(msgs)
-        await to_event_bus(msgs, self._cfg, origin=origin)
+        if not skip_event_bus:
+            await to_event_bus(msgs, self._cfg, origin=origin)
         self._timer.reset()
+
+    async def publish_to_event_bus(
+        self,
+        msgs: list[dict],
+        origin: str | None = None,
+    ) -> None:
+        """Publish messages to EventBus without appending to client transcript.
+
+        Used when a message already exists in the transcript (e.g., placeholder
+        that was updated in-place) and just needs to be published to EventBus.
+        """
+        await to_event_bus(msgs, self._cfg, origin=origin)
