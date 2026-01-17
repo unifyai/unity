@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from unity.file_manager.types.ingest import IngestPipelineResult
+    from unity.data_manager.base import BaseDataManager as DataManager
 
 from .base import BaseFileManager, BaseGlobalFileManager
 from unity.data_manager.types import PlotResult as _VizPlotResult
@@ -345,6 +346,9 @@ class SimulatedFileManager(BaseFileManager):
         # Counter for simulated file IDs
         self._next_file_id = 1
 
+        # Lazy-initialized simulated data manager
+        self.__data_manager: Optional["DataManager"] = None
+
         # Shared, *stateful* **asynchronous** LLM
         self._llm = new_llm_client(stateful=True)
 
@@ -353,14 +357,10 @@ class SimulatedFileManager(BaseFileManager):
             ask_about_file_tools = mirror_file_manager_tools("ask_about_file")
         except (ImportError, AttributeError):
             ask_about_file_tools = {
-                "file_info": {
-                    "description": "Get comprehensive file status and identity",
+                "describe": {
+                    "description": "Get comprehensive file storage map with contexts and schemas",
                 },
                 "list_columns": {"description": "List available table columns"},
-                "tables_overview": {"description": "Get overview of available tables"},
-                "schema_explain": {
-                    "description": "Get natural-language schema explanation",
-                },
                 "filter_files": {
                     "description": "Filter files using boolean expressions",
                 },
@@ -387,6 +387,15 @@ class SimulatedFileManager(BaseFileManager):
             f"'ask_about_file' system message:\n{about_msg}\n\n"
             f"Back-story: {self._description}",
         )
+
+    @property
+    def _data_manager(self) -> "DataManager":
+        """Return a simulated DataManager for delegation tests."""
+        if self.__data_manager is None:
+            from unity.manager_registry import ManagerRegistry
+
+            self.__data_manager = ManagerRegistry.get_data_manager()
+        return self.__data_manager
 
     # --------------------------------------------------------------------- #
     # Synchronous methods that don't need handles                          #
@@ -709,170 +718,6 @@ class SimulatedFileManager(BaseFileManager):
 
         return files
 
-    def file_info(self, *, identifier: Union[str, int]) -> Any:
-        """
-        Return comprehensive information about a file's status and ingest identity.
-
-        This is a simulated implementation that derives all fields from the
-        in-memory `_files` registry.
-        """
-        from pathlib import Path
-
-        from unity.file_manager.file_parsers.types.formats import (
-            FileFormat,
-            extension_to_format,
-        )
-        from unity.file_manager.types.file import FileInfo
-
-        file_data: Optional[Dict[str, Any]] = None
-        file_path: str = str(identifier)
-
-        # Resolve file_id -> file_path when possible.
-        if isinstance(identifier, int):
-            for fname, fdata in self._files.items():
-                try:
-                    if int(fdata.get("file_id", -1)) == int(identifier):
-                        file_path = fname
-                        file_data = fdata
-                        break
-                except Exception:
-                    continue
-        else:
-            # Normalize string identifiers to match simulated keys (no leading '/')
-            file_path = str(identifier)
-            if file_path.startswith("/"):
-                file_path = file_path.lstrip("/")
-            file_data = self._files.get(file_path)
-
-        filesystem_exists = file_data is not None
-        indexed_exists = file_data is not None
-        parsed_status = None
-        file_format: Optional[FileFormat] = None
-
-        if file_data is not None:
-            parsed_status = file_data.get("status")
-            meta = file_data.get("metadata") or {}
-
-            # Best-effort file format inference.
-            fmt = meta.get("file_format")
-            if isinstance(fmt, FileFormat):
-                file_format = fmt
-            elif isinstance(fmt, str) and fmt.strip():
-                try:
-                    file_format = FileFormat(fmt.strip().lower())
-                except Exception:
-                    file_format = extension_to_format(Path(file_path).suffix.lower())
-            else:
-                file_format = extension_to_format(Path(file_path).suffix.lower())
-
-        # Keep identity fields stable but clearly simulated.
-        source_provider = "Simulated"
-        source_uri = f"simulated:///{file_path}"
-
-        return FileInfo(
-            file_path=file_path,
-            filesystem_exists=filesystem_exists,
-            indexed_exists=indexed_exists,
-            parsed_status=parsed_status,
-            source_provider=source_provider,
-            source_uri=source_uri,
-            ingest_mode="per_file",
-            unified_label=None,
-            table_ingest=True,
-            file_format=file_format,
-        )
-
-    def tables_overview(
-        self,
-        *,
-        include_column_info: bool = True,
-        file: Optional[str] = None,
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Return an overview of available tables/contexts managed by this FileManager.
-
-        This is a simulated implementation that provides stable, deterministic
-        context strings derived from the in-memory `_files` registry.
-        """
-        index = {
-            "context": "simulated/FileRecords",
-            "description": "Simulated FileRecords index (in-memory only).",
-        }
-        if include_column_info:
-            try:
-                index["columns"] = self.list_columns(include_types=True)
-            except Exception:
-                index["columns"] = {}
-
-        # Global-only view
-        if file is None:
-            return {"FileRecords": index}
-
-        file_key = str(file)
-        if file_key.startswith("/"):
-            file_key = file_key.lstrip("/")
-
-        out: Dict[str, Dict[str, Any]] = {"FileRecords": index}
-        out[file_key] = {
-            "Content": {
-                "context": f"simulated/{file_key}/Content",
-                "description": f"Simulated per-file Content context for '{file_key}'.",
-            },
-            # The simulated manager does not create per-table contexts, but we
-            # keep the shape consistent with the real manager.
-            "Tables": {},
-        }
-        return out
-
-    def schema_explain(self, *, table: str) -> str:
-        """
-        Return a natural-language explanation of a table's structure and purpose.
-
-        The simulated manager does not have real Unify contexts; this returns a
-        compact explanation based on the requested logical table reference.
-        """
-        t = str(table or "").strip()
-        if not t:
-            return "No schema information available (empty table reference)."
-
-        if t.lower() == "filerecords":
-            return (
-                "FileRecords is the simulated file index (one row per file). "
-                "It includes identifiers, status/error fields, lightweight metadata, "
-                f"and a short description. Approximate row count: {len(self._files)}."
-            )
-
-        # Per-table context reference: "<file>.Tables.<label>"
-        if ".tables." in t.lower():
-            return (
-                f"{t} is a simulated per-file table context. In the real FileManager, "
-                "this would contain extracted tabular rows for the given label. "
-                "In simulated mode, table contexts are not materialized."
-            )
-
-        # Otherwise, treat as per-file Content table reference.
-        file_key = t.lstrip("/")
-        recs = (self._files.get(file_key) or {}).get("records") or []
-        # Infer "columns" from the union of keys in record dicts.
-        cols: list[str] = []
-        try:
-            seen = set()
-            for r in list(recs):
-                if isinstance(r, dict):
-                    for k in r.keys():
-                        if k not in seen:
-                            seen.add(k)
-                            cols.append(str(k))
-        except Exception:
-            cols = []
-
-        cols_str = ", ".join(cols[:10]) if cols else "unknown"
-        return (
-            f"{t} refers to the simulated per-file Content context for '{file_key}'. "
-            f"It stores flattened content rows derived from the file. "
-            f"Approximate row count: {len(recs)}. Example columns: {cols_str}."
-        )
-
     def visualize(
         self,
         *,
@@ -1109,6 +954,60 @@ class SimulatedFileManager(BaseFileManager):
             "details": {"file_id": file_id, "file_path": filename},
         }
 
+    @functools.wraps(BaseFileManager.describe, updated=())
+    def describe(
+        self,
+        *,
+        file_path: Optional[str] = None,
+        file_id: Optional[int] = None,
+    ) -> Any:
+        """Simulated counterpart of describe().
+
+        Returns a minimal FileStorageMap-like dict for simulated files.
+        """
+        from unity.file_manager.types.describe import FileStorageMap
+
+        if file_path is None and file_id is None:
+            raise ValueError("Either file_path or file_id must be provided")
+
+        # Find in simulated storage
+        target_path = file_path
+        if file_id is not None:
+            for fp, meta in self._files.items():
+                if meta.get("file_id") == file_id:
+                    target_path = fp
+                    break
+
+        if target_path and target_path in self._files:
+            meta = self._files[target_path]
+            return FileStorageMap(
+                file_path=target_path,
+                file_id=meta.get("file_id"),
+                storage_id=str(meta.get("file_id", "")),
+                source_uri=meta.get("source_uri"),
+                source_provider="Simulated",
+                filesystem_exists=True,
+                indexed_exists=True,
+                parsed_status="success",
+                file_format=meta.get("file_format"),
+                table_ingest=False,
+                has_document=False,
+                has_tables=False,
+            )
+
+        # File not found - return minimal map
+        return FileStorageMap(
+            file_path=file_path or f"unknown_file_{file_id}",
+            file_id=file_id,
+            storage_id=str(file_id) if file_id else "",
+            filesystem_exists=False,
+            indexed_exists=False,
+            parsed_status=None,
+            table_ingest=False,
+            has_document=False,
+            has_tables=False,
+        )
+
     @functools.wraps(BaseFileManager.clear, updated=())
     def clear(self) -> None:  # type: ignore[override]
         """Re-initialise the simulated manager and reset stateful LLM."""
@@ -1131,9 +1030,9 @@ class SimulatedFileManager(BaseFileManager):
     def reduce(
         self,
         *,
-        table: Optional[str] = None,
+        context: Optional[str] = None,
         metric: str,
-        keys: str | list[str],
+        columns: str | list[str],
         filter: Optional[str | dict[str, str]] = None,
         group_by: Optional[str | list[str]] = None,
     ) -> Any:
@@ -1144,8 +1043,8 @@ class SimulatedFileManager(BaseFileManager):
         method computes deterministic placeholder metrics with the same return
         shapes as the concrete implementation:
 
-        * Single key, no grouping  → scalar.
-        * Multiple keys, no grouping → ``dict[key -> scalar]``.
+        * Single column, no grouping  → scalar.
+        * Multiple columns, no grouping → ``dict[column -> scalar]``.
         * With grouping             → nested ``dict[group -> value or dict]``.
         """
 
@@ -1153,19 +1052,19 @@ class SimulatedFileManager(BaseFileManager):
             base = len(self._files) or 1
             return float(base + len(str(k)))
 
-        key_list: list[str] = [keys] if isinstance(keys, str) else list(keys)
+        col_list: list[str] = [columns] if isinstance(columns, str) else list(columns)
 
         if group_by is None:
-            if isinstance(keys, str):
-                return _scalar(keys)
-            return {k: _scalar(k) for k in key_list}
+            if isinstance(columns, str):
+                return _scalar(columns)
+            return {k: _scalar(k) for k in col_list}
 
         groups: list[str] = (
             [group_by] if isinstance(group_by, str) else [str(g) for g in group_by]
         )
-        if isinstance(keys, str):
-            return {g: _scalar(keys) for g in groups}
-        return {g: {k: _scalar(k) for k in key_list} for g in groups}
+        if isinstance(columns, str):
+            return {g: _scalar(columns) for g in groups}
+        return {g: {k: _scalar(k) for k in col_list} for g in groups}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

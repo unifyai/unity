@@ -43,7 +43,6 @@ def build_cross_tool_orchestration(tools: Dict[str, Callable]) -> str:
     """
     describe_fname = _tool_name(tools, "describe")
     list_columns_fname = _tool_name(tools, "list_columns")
-    schema_explain_fname = _tool_name(tools, "schema_explain")
 
     return "\n".join(
         [
@@ -53,7 +52,6 @@ def build_cross_tool_orchestration(tools: Dict[str, Callable]) -> str:
             "Discovery phase (ALWAYS start here):",
             f"• `{describe_fname}` → get file_id, context paths, schemas (REQUIRED before filter/search/reduce)",
             f"• `{list_columns_fname}` → detailed column inspection for a specific context",
-            f"• `{schema_explain_fname}` → natural-language schema explanation",
             "",
             "Retrieval phase (use context paths from describe):",
             "• Counts/sums/statistics → `reduce`",
@@ -113,7 +111,6 @@ def build_file_manager_ask_about_file_prompt(
     """
     filter_files_fname = _tool_name(tools, "filter_files")
     search_files_fname = _tool_name(tools, "search_files")
-    schema_explain_fname = _tool_name(tools, "schema_explain")
     describe_fname = _tool_name(tools, "describe")
 
     # Require core ask_about_file tools
@@ -121,7 +118,6 @@ def build_file_manager_ask_about_file_prompt(
         {
             "filter_files": filter_files_fname,
             "search_files": search_files_fname,
-            "schema_explain": schema_explain_fname,
             "describe": describe_fname,
         },
         tools,
