@@ -137,7 +137,7 @@ class FileStorageMap(BaseModel):
     all information an agent needs to construct accurate queries:
 
     - Status: filesystem_exists, indexed_exists, parsed_status
-    - Identity: file_id, file_path, source_uri, source_provider
+    - Identity: file_id, file_path, storage_id, source_uri, source_provider
     - Storage: document (/Content), tables (/Tables/<name>), index_context
     - Schemas: column info with types and searchability
 
@@ -168,7 +168,7 @@ class FileStorageMap(BaseModel):
     """
 
     # -------------------------------------------------------------------------
-    # Status fields (from file_info)
+    # Status fields
     # -------------------------------------------------------------------------
     filesystem_exists: bool = Field(
         default=False,
@@ -193,18 +193,15 @@ class FileStorageMap(BaseModel):
     )
 
     # -------------------------------------------------------------------------
-    # Ingest configuration
+    # Storage configuration
     # -------------------------------------------------------------------------
-    ingest_mode: str = Field(
-        default="per_file",
+    storage_id: str = Field(
+        default="",
         description=(
-            "Ingest mode used: 'per_file' (file-specific contexts) or "
-            "'unified' (content merged into a shared context)."
+            "Context path identifier for this file's storage. "
+            "Use to query shared contexts or reference in filter/search operations. "
+            "Files sharing the same storage_id have their content in a shared context."
         ),
-    )
-    unified_label: Optional[str] = Field(
-        default=None,
-        description="Label for unified context when ingest_mode='unified'.",
     )
     table_ingest: bool = Field(
         default=True,

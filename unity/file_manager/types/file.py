@@ -71,13 +71,14 @@ class FileRecordFields(BaseModel):
     )
 
     # Ingestion layout metadata
-    ingest_mode: Literal["per_file", "unified"] = Field(
-        default="per_file",
-        description="Ingestion layout mode used for this file ('per_file' or 'unified').",
-    )
-    unified_label: Optional[str] = Field(
-        default=None,
-        description="Unified label bucket name when ingest_mode == 'unified' (otherwise None).",
+    storage_id: str = Field(
+        default="",
+        description=(
+            "Context path identifier for this file's storage. "
+            "Empty string means auto-assigned (uses str(file_id)). "
+            "When multiple files share the same storage_id, their content "
+            "is stored in a shared context."
+        ),
     )
     table_ingest: bool = Field(
         default=True,
@@ -138,8 +139,7 @@ class FileRecord(FileRecordFields):
         source_uri: Optional[str],
         source_provider: Optional[str],
         parse_result: "FileParseResult",
-        ingest_mode: Literal["per_file", "unified"],
-        unified_label: Optional[str],
+        storage_id: str,
         table_ingest: bool,
         file_size: Optional[int] = None,
         created_at: Optional[str] = None,
@@ -160,10 +160,8 @@ class FileRecord(FileRecordFields):
             Provider name.
         parse_result : FileParseResult
             Strict parse output produced by `unity.file_manager.file_parsers`.
-        ingest_mode : Literal["per_file", "unified"]
-            Ingestion mode.
-        unified_label : str | None
-            Unified label when ingest_mode is 'unified'.
+        storage_id : str
+            Context path identifier. Empty string for auto-assignment (str(file_id)).
         table_ingest : bool
             Whether tables are ingested.
 
@@ -219,8 +217,7 @@ class FileRecord(FileRecordFields):
             content_tags=(
                 getattr(meta, "content_tags", "") if meta is not None else ""
             ),
-            ingest_mode=ingest_mode,
-            unified_label=(unified_label if ingest_mode == "unified" else None),
+            storage_id=storage_id,
             table_ingest=bool(table_ingest),
         )
 
@@ -234,7 +231,7 @@ class FileInfo(BaseModel):
     - Whether the file exists on disk (filesystem_exists)
     - Whether it has been indexed (indexed_exists)
     - Its parse status (parsed_status)
-    - Its ingest layout (ingest_mode, unified_label, table_ingest)
+    - Its storage_id (context path identifier)
     """
 
     # Filesystem status
@@ -267,18 +264,17 @@ class FileInfo(BaseModel):
         description="Canonical provider URI (e.g., local:///abs/path, gdrive://fileId).",
     )
 
-    # Ingest layout
-    ingest_mode: Literal["per_file", "unified"] = Field(
-        default="per_file",
-        description="Ingestion layout: 'per_file' or 'unified'.",
-    )
-    unified_label: Optional[str] = Field(
-        default=None,
-        description="Unified bucket label when ingest_mode=='unified'.",
+    # Storage layout
+    storage_id: str = Field(
+        default="",
+        description=(
+            "Context path identifier for this file's storage. "
+            "Use with describe() or context builders to get full paths."
+        ),
     )
     table_ingest: bool = Field(
         default=True,
-        description="True when tables are in per-file /Tables/ contexts.",
+        description="True when tables are in /Tables/ contexts.",
     )
 
     # File metadata (when indexed)
