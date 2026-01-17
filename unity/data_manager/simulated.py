@@ -63,11 +63,20 @@ class SimulatedDataManager(BaseDataManager):
         # Table metadata: {context_path: description}
         self._descriptions: Dict[str, str] = {}
 
+        # Unique keys: {context_path: list of key column names}
+        self._unique_keys: Dict[str, Any] = {}
+
+        # Auto counting config: {context_path: auto_counting config}
+        self._auto_counting: Dict[str, Any] = {}
+
         # Embedding columns: {context_path: set of embedding column names}
         self._embeddings: Dict[str, set] = defaultdict(set)
 
         # Simulated base context
         self._base_ctx = "Data"
+
+        # Auto-incrementing log ID counter
+        self._next_log_id: int = 1
 
         logger.debug("SimulatedDataManager initialized")
 
@@ -96,6 +105,10 @@ class SimulatedDataManager(BaseDataManager):
             self._schemas[resolved] = dict(fields)
         if description:
             self._descriptions[resolved] = description
+        if unique_keys is not None:
+            self._unique_keys[resolved] = unique_keys
+        if auto_counting is not None:
+            self._auto_counting[resolved] = auto_counting
         # Ensure table exists in _tables
         if resolved not in self._tables:
             self._tables[resolved] = []
@@ -124,12 +137,47 @@ class SimulatedDataManager(BaseDataManager):
             embedding_columns=emb_cols,
         )
 
+    @functools.wraps(BaseDataManager.get_columns, updated=())
+    def get_columns(self, table: str) -> Dict[str, Any]:
+        resolved = self._resolve_context(table)
+        schema = self._schemas.get(resolved, {})
+        # Convert schema to column info format
+        columns: Dict[str, Any] = {}
+        for name, dtype in schema.items():
+            columns[name] = {"data_type": dtype}
+        return columns
+
+    @functools.wraps(BaseDataManager.get_table, updated=())
+    def get_table(self, context: str) -> Dict[str, Any]:
+        resolved = self._resolve_context(context)
+        if resolved not in self._tables:
+            raise ValueError(f"Table not found: {resolved}")
+        return {
+            "description": self._descriptions.get(resolved),
+            "unique_keys": self._unique_keys.get(resolved, []),
+            "auto_counting": self._auto_counting.get(resolved, {}),
+        }
+
     @functools.wraps(BaseDataManager.list_tables, updated=())
-    def list_tables(self, *, prefix: Optional[str] = None) -> List[str]:
+    def list_tables(
+        self,
+        *,
+        prefix: Optional[str] = None,
+        include_column_info: bool = True,
+    ) -> Union[List[str], Dict[str, Any]]:
         all_contexts = list(self._tables.keys())
         if prefix:
             all_contexts = [c for c in all_contexts if c.startswith(prefix)]
-        return sorted(all_contexts)
+
+        if include_column_info:
+            result: Dict[str, Any] = {}
+            for ctx in sorted(all_contexts):
+                result[ctx] = {
+                    "description": self._descriptions.get(ctx),
+                }
+            return result
+        else:
+            return sorted(all_contexts)
 
     @functools.wraps(BaseDataManager.delete_table, updated=())
     def delete_table(
@@ -150,6 +198,149 @@ class SimulatedDataManager(BaseDataManager):
         self._embeddings.pop(resolved, None)
         logger.debug("Simulated: deleted table %s", resolved)
 
+    @functools.wraps(BaseDataManager.rename_table, updated=())
+    def rename_table(
+        self,
+        old_context: str,
+        new_context: str,
+    ) -> Dict[str, str]:
+        old_resolved = self._resolve_context(old_context)
+        new_resolved = self._resolve_context(new_context)
+
+        if old_resolved not in self._tables:
+            raise ValueError(f"Table {old_resolved} does not exist")
+        if new_resolved in self._tables:
+            raise ValueError(f"Table {new_resolved} already exists")
+
+        # Move data
+        self._tables[new_resolved] = self._tables.pop(old_resolved)
+        if old_resolved in self._schemas:
+            self._schemas[new_resolved] = self._schemas.pop(old_resolved)
+        if old_resolved in self._descriptions:
+            self._descriptions[new_resolved] = self._descriptions.pop(old_resolved)
+        if old_resolved in self._embeddings:
+            self._embeddings[new_resolved] = self._embeddings.pop(old_resolved)
+
+        logger.debug("Simulated: renamed table %s -> %s", old_resolved, new_resolved)
+        return {
+            "status": "renamed",
+            "old_context": old_resolved,
+            "new_context": new_resolved,
+        }
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Column Operations
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @functools.wraps(BaseDataManager.create_column, updated=())
+    def create_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+        column_type: str,
+        mutable: bool = True,
+        backfill_logs: bool = False,
+    ) -> Dict[str, str]:
+        if column_name == "id":
+            raise ValueError("Cannot create a column with reserved name 'id'.")
+
+        resolved = self._resolve_context(context)
+        if resolved not in self._schemas:
+            self._schemas[resolved] = {}
+        self._schemas[resolved][column_name] = column_type
+        logger.debug("Simulated: created column %s in %s", column_name, resolved)
+        return {"status": "created", "column": column_name, "type": column_type}
+
+    @functools.wraps(BaseDataManager.delete_column, updated=())
+    def delete_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+    ) -> Dict[str, str]:
+        resolved = self._resolve_context(context)
+        if resolved in self._schemas and column_name in self._schemas[resolved]:
+            del self._schemas[resolved][column_name]
+
+        # Remove column from rows
+        for row in self._tables.get(resolved, []):
+            row.pop(column_name, None)
+
+        logger.debug("Simulated: deleted column %s from %s", column_name, resolved)
+        return {"status": "deleted", "column": column_name}
+
+    @functools.wraps(BaseDataManager.rename_column, updated=())
+    def rename_column(
+        self,
+        context: str,
+        *,
+        old_name: str,
+        new_name: str,
+    ) -> Dict[str, str]:
+        if old_name == new_name:
+            return {"info": "no-op: old and new names are identical"}
+        if new_name == "id":
+            raise ValueError("Cannot rename a column to reserved name 'id'.")
+
+        resolved = self._resolve_context(context)
+
+        # Rename in schema
+        if resolved in self._schemas and old_name in self._schemas[resolved]:
+            self._schemas[resolved][new_name] = self._schemas[resolved].pop(old_name)
+
+        # Rename in rows
+        for row in self._tables.get(resolved, []):
+            if old_name in row:
+                row[new_name] = row.pop(old_name)
+
+        logger.debug(
+            "Simulated: renamed column %s -> %s in %s",
+            old_name,
+            new_name,
+            resolved,
+        )
+        return {"status": "renamed", "old_name": old_name, "new_name": new_name}
+
+    @functools.wraps(BaseDataManager.create_derived_column, updated=())
+    def create_derived_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+        equation: str,
+    ) -> Dict[str, str]:
+        resolved = self._resolve_context(context)
+
+        # Add to schema
+        if resolved not in self._schemas:
+            self._schemas[resolved] = {}
+        self._schemas[resolved][column_name] = "derived"
+
+        # Compute values for existing rows (simple simulation)
+        for row in self._tables.get(resolved, []):
+            try:
+                # Replace {col} with row[col] for evaluation
+                eval_equation = equation
+                import re
+
+                for col in re.findall(r"\{(\w+)\}", equation):
+                    if col in row:
+                        eval_equation = eval_equation.replace(
+                            f"{{{col}}}",
+                            repr(row[col]),
+                        )
+                row[column_name] = eval(eval_equation, {"__builtins__": {}})
+            except Exception:
+                row[column_name] = None
+
+        logger.debug(
+            "Simulated: created derived column %s in %s",
+            column_name,
+            resolved,
+        )
+        return {"status": "created", "column": column_name, "equation": equation}
+
     # ──────────────────────────────────────────────────────────────────────────
     # Query Operations
     # ──────────────────────────────────────────────────────────────────────────
@@ -161,11 +352,13 @@ class SimulatedDataManager(BaseDataManager):
         *,
         filter: Optional[str] = None,
         columns: Optional[List[str]] = None,
+        exclude_columns: Optional[List[str]] = None,
         limit: int = 100,
         offset: int = 0,
         order_by: Optional[str] = None,
         descending: bool = False,
-    ) -> List[Dict[str, Any]]:
+        return_ids_only: bool = False,
+    ) -> Union[List[Dict[str, Any]], List[int]]:
         resolved = self._resolve_context(context)
         rows = list(self._tables.get(resolved, []))
 
@@ -194,9 +387,20 @@ class SimulatedDataManager(BaseDataManager):
         # Apply pagination
         rows = rows[offset : offset + limit]
 
+        # If return_ids_only, return actual log IDs
+        if return_ids_only:
+            return [row.get("_log_id", i + 1) for i, row in enumerate(rows)]
+
         # Select columns
         if columns:
             rows = [{k: row.get(k) for k in columns} for row in rows]
+
+        # Exclude columns
+        if exclude_columns:
+            rows = [
+                {k: v for k, v in row.items() if k not in exclude_columns}
+                for row in rows
+            ]
 
         return rows
 
@@ -396,6 +600,43 @@ class SimulatedDataManager(BaseDataManager):
 
         return results
 
+    @functools.wraps(BaseDataManager.join_tables, updated=())
+    def join_tables(
+        self,
+        *,
+        left_table: str,
+        right_table: str,
+        join_expr: str,
+        dest_table: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+    ) -> str:
+        left_ctx = self._resolve_context(left_table)
+        right_ctx = self._resolve_context(right_table)
+        dest_ctx = self._resolve_context(dest_table)
+
+        # Perform the join and store in dest_table
+        joined_rows = self._simple_join(
+            left_ctx,
+            right_ctx,
+            select,
+            left_where=left_where,
+            right_where=right_where,
+        )
+
+        # Store in dest context
+        self._tables[dest_ctx] = joined_rows
+        logger.debug(
+            "Simulated: join_tables %s + %s -> %s (%d rows)",
+            left_ctx,
+            right_ctx,
+            dest_ctx,
+            len(joined_rows),
+        )
+        return dest_ctx
+
     @functools.wraps(BaseDataManager.filter_join, updated=())
     def filter_join(
         self,
@@ -574,17 +815,20 @@ class SimulatedDataManager(BaseDataManager):
         rows: List[Dict[str, Any]],
         *,
         dedupe_key: Optional[str] = None,
-    ) -> int:
+        add_to_all_context: bool = False,
+        batched: bool = True,
+    ) -> List[int]:
+        # Note: add_to_all_context and batched are accepted but ignored in simulated mode
         if not rows:
-            return 0
+            return []
 
         resolved = self._resolve_context(context)
+
+        inserted_ids: List[int] = []
 
         if dedupe_key:
             # Upsert mode: remove existing rows with same key
             existing_keys = {row.get(dedupe_key) for row in self._tables[resolved]}
-            new_rows = []
-            updated = 0
             for row in rows:
                 key_val = row.get(dedupe_key)
                 if key_val in existing_keys:
@@ -594,13 +838,22 @@ class SimulatedDataManager(BaseDataManager):
                         for r in self._tables[resolved]
                         if r.get(dedupe_key) != key_val
                     ]
-                    updated += 1
-                new_rows.append(row)
-            self._tables[resolved].extend(new_rows)
-            return len(new_rows)
+                # Assign a log ID to each row for tracking
+                log_id = self._next_log_id
+                self._next_log_id += 1
+                row_with_id = {**row, "_log_id": log_id}
+                self._tables[resolved].append(row_with_id)
+                inserted_ids.append(log_id)
         else:
-            self._tables[resolved].extend(rows)
-            return len(rows)
+            for row in rows:
+                # Assign a log ID to each row for tracking
+                log_id = self._next_log_id
+                self._next_log_id += 1
+                row_with_id = {**row, "_log_id": log_id}
+                self._tables[resolved].append(row_with_id)
+                inserted_ids.append(log_id)
+
+        return inserted_ids
 
     @functools.wraps(BaseDataManager.update_rows, updated=())
     def update_rows(
@@ -631,8 +884,10 @@ class SimulatedDataManager(BaseDataManager):
         self,
         context: str,
         *,
-        filter: str,
+        filter: Optional[str] = None,
+        log_ids: Optional[List[int]] = None,
         dangerous_ok: bool = False,
+        delete_empty_rows: bool = False,
     ) -> int:
         if not dangerous_ok:
             raise ValueError(
@@ -640,19 +895,36 @@ class SimulatedDataManager(BaseDataManager):
                 "Set dangerous_ok=True to confirm.",
             )
 
+        if filter is None and log_ids is None:
+            raise ValueError(
+                "Either filter or log_ids must be provided for delete_rows",
+            )
+
         resolved = self._resolve_context(context)
         original_count = len(self._tables.get(resolved, []))
 
-        new_rows = []
-        for row in self._tables.get(resolved, []):
-            try:
-                if not eval(filter, {"__builtins__": {}}, row):
-                    new_rows.append(row)
-            except Exception:
-                new_rows.append(row)
+        if log_ids is not None:
+            # Delete rows matching the log IDs
+            log_id_set = set(log_ids)
+            rows = self._tables.get(resolved, [])
+            new_rows = [r for r in rows if r.get("_log_id") not in log_id_set]
+            deleted_count = len(rows) - len(new_rows)
+            self._tables[resolved] = new_rows
+            return deleted_count
 
-        self._tables[resolved] = new_rows
-        return original_count - len(new_rows)
+        if filter is not None:
+            new_rows = []
+            for row in self._tables.get(resolved, []):
+                try:
+                    if not eval(filter, {"__builtins__": {}}, row):
+                        new_rows.append(row)
+                except Exception:
+                    new_rows.append(row)
+
+            self._tables[resolved] = new_rows
+            return original_count - len(new_rows)
+
+        return 0
 
     # ──────────────────────────────────────────────────────────────────────────
     # Embedding Operations
@@ -756,5 +1028,8 @@ class SimulatedDataManager(BaseDataManager):
         self._tables.clear()
         self._schemas.clear()
         self._descriptions.clear()
+        self._unique_keys.clear()
+        self._auto_counting.clear()
         self._embeddings.clear()
+        self._next_log_id = 1
         logger.debug("SimulatedDataManager cleared")

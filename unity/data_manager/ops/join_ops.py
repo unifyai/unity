@@ -23,6 +23,82 @@ from unity.common.embed_utils import list_private_fields
 logger = logging.getLogger(__name__)
 
 
+def join_tables_impl(
+    *,
+    left_table: str,
+    right_table: str,
+    join_expr: str,
+    dest_table: str,
+    select: Dict[str, str],
+    mode: str = "inner",
+    left_where: Optional[str] = None,
+    right_where: Optional[str] = None,
+) -> str:
+    """
+    Implementation of join_tables operation.
+
+    Creates a joined table from two source tables. This is the low-level
+    primitive used by higher-level join operations (filter_join, search_join, etc.).
+
+    Parameters
+    ----------
+    left_table : str
+        Fully-qualified context path of the left table.
+    right_table : str
+        Fully-qualified context path of the right table.
+    join_expr : str
+        Join condition expression using table paths as prefixes.
+        Example: "Data/orders.customer_id == Data/customers.id"
+    dest_table : str
+        Fully-qualified context path for the destination (result) table.
+    select : dict[str, str]
+        Mapping of source columns to output column names.
+        Keys use table paths as prefixes; values are output aliases.
+        Example: {"Data/orders.amount": "order_amount", "Data/customers.name": "customer_name"}
+    mode : str, default "inner"
+        Join mode: "inner", "left", "right", "outer".
+    left_where : str | None
+        Optional filter expression for left table (applied before joining).
+    right_where : str | None
+        Optional filter expression for right table (applied before joining).
+
+    Returns
+    -------
+    str
+        The destination table path.
+
+    Notes
+    -----
+    - The destination table is created automatically.
+    - Caller is responsible for cleaning up the destination table if temporary.
+    - Column references in join_expr and select keys use full table paths as prefixes.
+    """
+    logger.debug(
+        "join_tables: %s JOIN %s -> %s",
+        left_table,
+        right_table,
+        dest_table,
+    )
+
+    unify.join_logs(
+        pair_of_args=(
+            {
+                "context": left_table,
+                **({} if left_where is None else {"filter_expr": left_where}),
+            },
+            {
+                "context": right_table,
+                **({} if right_where is None else {"filter_expr": right_where}),
+            },
+        ),
+        join_expr=join_expr,
+        mode=mode,
+        new_context=dest_table,
+        columns=select,
+    )
+    return dest_table
+
+
 def _create_join(
     *,
     dest_context: str,
@@ -34,55 +110,24 @@ def _create_join(
     right_where: Optional[str] = None,
 ) -> str:
     """
-    Create a joined context from two source contexts.
+    Internal helper: create a joined context from a list of two tables.
 
-    This is the core join operation that calls `unify.join_logs()`.
-    Follows the same pattern as KnowledgeManager._create_join.
-
-    Parameters
-    ----------
-    dest_context : str
-        Fully-qualified Unify context where join results will be stored.
-    tables : list[str]
-        Exactly TWO fully-qualified context paths to join.
-    join_expr : str
-        Join condition expression (already using context paths as prefixes).
-    select : dict[str, str]
-        Column mapping (already using context paths as prefixes).
-    mode : str, default "inner"
-        Join mode: "inner", "left", "right", "outer".
-    left_where : str | None
-        Pre-join filter for left table.
-    right_where : str | None
-        Pre-join filter for right table.
-
-    Returns
-    -------
-    str
-        The destination context path.
+    Delegates to join_tables_impl after unpacking the tables list.
+    Used by filter_join_impl, search_join_impl, etc.
     """
     if len(tables) != 2:
         raise ValueError("Exactly TWO tables are required.")
 
-    left_ctx, right_ctx = tables
-
-    unify.join_logs(
-        pair_of_args=(
-            {
-                "context": left_ctx,
-                **({} if left_where is None else {"filter_expr": left_where}),
-            },
-            {
-                "context": right_ctx,
-                **({} if right_where is None else {"filter_expr": right_where}),
-            },
-        ),
+    return join_tables_impl(
+        left_table=tables[0],
+        right_table=tables[1],
         join_expr=join_expr,
+        dest_table=dest_context,
+        select=select,
         mode=mode,
-        new_context=dest_context,
-        columns=select,
+        left_where=left_where,
+        right_where=right_where,
     )
-    return dest_context
 
 
 def filter_join_impl(

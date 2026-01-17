@@ -8,7 +8,7 @@ These are called by DataManager methods and should not be used directly.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import unify
 
@@ -157,39 +157,74 @@ def describe_table_impl(context: str) -> "TableDescription":
     )
 
 
-def list_tables_impl(*, prefix: Optional[str] = None) -> List[str]:
+def list_tables_impl(
+    *,
+    prefix: Optional[str] = None,
+    include_column_info: bool = True,
+) -> Union[List[str], Dict[str, Any]]:
     """
     Implementation of list_tables operation.
 
     Lists all table contexts, optionally filtered by prefix.
+    Returns either table names only or table names with metadata.
 
     Parameters
     ----------
     prefix : str | None
         Context prefix to filter by.
+    include_column_info : bool, default True
+        If True, returns dict mapping table paths to metadata.
+        If False, returns just a sorted list of table names.
 
     Returns
     -------
-    list[str]
-        Sorted list of context paths.
+    list[str] | dict[str, Any]
+        List of context paths (if include_column_info=False) or
+        mapping of context_path -> context_info dict.
 
     Raises
     ------
     Exception
         If context listing fails.
     """
-    logger.debug("Listing tables with prefix: %s", prefix)
+    logger.debug(
+        "Listing tables with prefix: %s, include_column_info: %s",
+        prefix,
+        include_column_info,
+    )
 
-    all_contexts = unify.get_contexts() or {}
-    context_names = list(all_contexts.keys())
+    raw_contexts = unify.get_contexts(prefix=prefix) if prefix else unify.get_contexts()
 
+    if not raw_contexts:
+        return {} if include_column_info else []
+
+    # unify.get_contexts returns either:
+    # - A list of dicts with 'name' and other fields (newer SDK)
+    # - A dict mapping context_path -> context_info (older SDK)
+    if isinstance(raw_contexts, list):
+        all_contexts = {ctx.get("name"): ctx for ctx in raw_contexts if ctx.get("name")}
+    elif isinstance(raw_contexts, dict):
+        # Check if it's {name: info_dict} or {name: string_description}
+        sample_val = next(iter(raw_contexts.values()), None) if raw_contexts else None
+        if isinstance(sample_val, dict):
+            all_contexts = dict(raw_contexts)
+        else:
+            # It's {name: description_string}, need to convert
+            all_contexts = {k: {"description": v} for k, v in raw_contexts.items()}
+    else:
+        all_contexts = {}
+
+    # Filter by prefix if needed (unify.get_contexts may not filter perfectly)
     if prefix:
-        context_names = [c for c in context_names if c.startswith(prefix)]
+        all_contexts = {k: v for k, v in all_contexts.items() if k.startswith(prefix)}
 
-    return sorted(context_names)
+    if include_column_info:
+        return all_contexts
+    else:
+        return sorted(all_contexts.keys())
 
 
-def delete_table_impl(context: str) -> None:
+def delete_table_impl(context: str, *, dangerous_ok: bool = False) -> None:
     """
     Implementation of delete_table operation.
 
@@ -199,16 +234,290 @@ def delete_table_impl(context: str) -> None:
     ----------
     context : str
         Fully-qualified Unify context path.
+    dangerous_ok : bool
+        Safety flag that must be True to confirm deletion.
+
+    Raises
+    ------
+    ValueError
+        If dangerous_ok is False.
+    Exception
+        If context deletion fails.
+    """
+    if not dangerous_ok:
+        raise ValueError(
+            "delete_table requires dangerous_ok=True to confirm deletion. "
+            "This is a safety guard to prevent accidental data loss.",
+        )
+    logger.info("Deleting table context: %s", context)
+    unify.delete_context(context)
+
+
+def get_columns_impl(table: str) -> Dict[str, Any]:
+    """
+    Implementation of get_columns operation.
+
+    Retrieves raw column definitions for a table.
+
+    Parameters
+    ----------
+    table : str
+        Fully-qualified Unify context path.
+
+    Returns
+    -------
+    dict[str, Any]
+        Mapping of column_name -> column_info dict.
+        Returns empty dict if table has no columns.
 
     Raises
     ------
     Exception
-        If context deletion fails.
+        If table does not exist or access fails.
+    """
+    logger.debug("Getting columns for table: %s", table)
+    try:
+        columns = unify.get_fields(context=table)
+        return dict(columns) if columns else {}
+    except Exception as e:
+        logger.warning("Failed to get columns for %s: %s", table, e)
+        raise
+
+
+def get_table_impl(context: str) -> Dict[str, Any]:
+    """
+    Implementation of get_table operation.
+
+    Retrieves context/table metadata without full schema.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+
+    Returns
+    -------
+    dict[str, Any]
+        Context metadata including unique_keys, auto_counting, description.
+
+    Raises
+    ------
+    Exception
+        If table does not exist or access fails.
+    """
+    logger.debug("Getting table metadata for: %s", context)
+    try:
+        ctx_info = unify.get_context(context)
+        return dict(ctx_info) if isinstance(ctx_info, dict) else {}
+    except Exception as e:
+        logger.warning("Failed to get table %s: %s", context, e)
+        raise
+
+
+def rename_table_impl(old_context: str, new_context: str) -> Dict[str, str]:
+    """
+    Implementation of rename_table operation.
+
+    Renames a table context to a new name.
+
+    Parameters
+    ----------
+    old_context : str
+        Current fully-qualified Unify context path.
+    new_context : str
+        New fully-qualified Unify context path.
+
+    Returns
+    -------
+    dict[str, str]
+        Backend response containing the operation result.
+
+    Raises
+    ------
+    Exception
+        If rename operation fails.
+    """
+    logger.info("Renaming table context: %s -> %s", old_context, new_context)
+    return unify.rename_context(old_context, new_context)
+
+
+def create_column_impl(
+    context: str,
+    *,
+    column_name: str,
+    column_type: str,
+    mutable: bool = True,
+    backfill_logs: bool = False,
+) -> Dict[str, str]:
+    """
+    Implementation of create_column operation.
+
+    Creates a new column in a table.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    column_name : str
+        Name for the new column.
+    column_type : str
+        Unify data type for the column.
+    mutable : bool
+        Whether values can be updated.
+    backfill_logs : bool
+        Whether to backfill existing rows.
+
+    Returns
+    -------
+    dict[str, str]
+        Backend response confirming column creation.
+
+    Raises
+    ------
+    ValueError
+        If column_name is reserved ('id').
+    Exception
+        If column creation fails.
+    """
+    if column_name == "id":
+        raise ValueError("Cannot create a column with reserved name 'id'.")
+
+    logger.debug(
+        "Creating column %s (type=%s) in %s",
+        column_name,
+        column_type,
+        context,
+    )
+    return unify.create_fields(
+        context=context,
+        fields={column_name: {"type": column_type, "mutable": mutable}},
+        backfill_logs=backfill_logs,
+    )
+
+
+def delete_column_impl(
+    context: str,
+    *,
+    column_name: str,
+) -> Dict[str, str]:
+    """
+    Implementation of delete_column operation.
+
+    Removes a column from a table.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    column_name : str
+        Name of the column to delete.
+
+    Returns
+    -------
+    dict[str, str]
+        Backend response confirming column deletion.
+
+    Raises
+    ------
+    Exception
+        If column deletion fails.
+    """
+    logger.info("Deleting column %s from %s", column_name, context)
+    return unify.delete_fields(fields=[column_name], context=context)
+
+
+def rename_column_impl(
+    context: str,
+    *,
+    old_name: str,
+    new_name: str,
+) -> Dict[str, str]:
+    """
+    Implementation of rename_column operation.
+
+    Renames a column in a table.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    old_name : str
+        Current name of the column.
+    new_name : str
+        New name for the column.
+
+    Returns
+    -------
+    dict[str, str]
+        Backend response confirming the rename.
+
+    Raises
+    ------
+    ValueError
+        If new_name is reserved ('id').
+    Exception
+        If rename operation fails.
+    """
+    if old_name == new_name:
+        return {
+            "info": "no-op: old and new names are identical",
+            "old_name": old_name,
+            "new_name": new_name,
+        }
+    if new_name == "id":
+        raise ValueError("Cannot rename a column to reserved name 'id'.")
+
+    logger.debug("Renaming column %s -> %s in %s", old_name, new_name, context)
+    return unify.rename_field(name=old_name, new_name=new_name, context=context)
+
+
+def create_derived_column_impl(
+    context: str,
+    *,
+    column_name: str,
+    equation: str,
+) -> Dict[str, str]:
+    """
+    Implementation of create_derived_column operation.
+
+    Creates a computed column based on an equation.
+
+    Parameters
+    ----------
+    context : str
+        Fully-qualified Unify context path.
+    column_name : str
+        Name for the new derived column.
+    equation : str
+        Python expression evaluated per-row.
+        Column references should use {column_name} syntax.
+
+    Returns
+    -------
+    dict[str, str]
+        Backend response confirming column creation.
+
+    Raises
+    ------
+    Exception
+        If derived column creation fails.
 
     Notes
     -----
-    The dangerous_ok check is performed at the DataManager level,
-    not in this implementation function.
+    The equation is transformed to use Unify's internal syntax
+    by prefixing column references with 'lg:'.
     """
-    logger.info("Deleting table context: %s", context)
-    unify.delete_context(context)
+    logger.debug(
+        "Creating derived column %s in %s with equation: %s",
+        column_name,
+        context,
+        equation,
+    )
+    # Transform equation to Unify's internal format
+    transformed_equation = equation.replace("{", "{lg:")
+    return unify.create_derived_logs(
+        context=context,
+        key=column_name,
+        equation=transformed_equation,
+        referenced_logs={"lg": {"context": context}},
+    )

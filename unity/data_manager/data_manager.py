@@ -21,8 +21,15 @@ from unity.data_manager.types.plot import PlotConfig, PlotResult
 from unity.data_manager.ops.table_ops import (
     create_table_impl,
     describe_table_impl,
+    get_columns_impl,
+    get_table_impl,
     list_tables_impl,
     delete_table_impl,
+    rename_table_impl,
+    create_column_impl,
+    delete_column_impl,
+    rename_column_impl,
+    create_derived_column_impl,
 )
 from unity.data_manager.ops.query_ops import (
     filter_impl,
@@ -35,6 +42,7 @@ from unity.data_manager.ops.mutation_ops import (
     delete_rows_impl,
 )
 from unity.data_manager.ops.join_ops import (
+    join_tables_impl,
     filter_join_impl,
     search_join_impl,
     filter_multi_join_impl,
@@ -165,10 +173,28 @@ class DataManager(BaseDataManager):
         resolved = self._resolve_context(context)
         return describe_table_impl(resolved)
 
+    @functools.wraps(BaseDataManager.get_columns, updated=())
+    def get_columns(self, table: str) -> Dict[str, Any]:
+        resolved = self._resolve_context(table)
+        return get_columns_impl(resolved)
+
+    @functools.wraps(BaseDataManager.get_table, updated=())
+    def get_table(self, context: str) -> Dict[str, Any]:
+        resolved = self._resolve_context(context)
+        return get_table_impl(resolved)
+
     @functools.wraps(BaseDataManager.list_tables, updated=())
-    def list_tables(self, *, prefix: Optional[str] = None) -> List[str]:
+    def list_tables(
+        self,
+        *,
+        prefix: Optional[str] = None,
+        include_column_info: bool = True,
+    ) -> Union[List[str], Dict[str, Any]]:
         resolved_prefix = self._resolve_context(prefix) if prefix else None
-        return list_tables_impl(prefix=resolved_prefix)
+        return list_tables_impl(
+            prefix=resolved_prefix,
+            include_column_info=include_column_info,
+        )
 
     @functools.wraps(BaseDataManager.delete_table, updated=())
     def delete_table(
@@ -179,6 +205,75 @@ class DataManager(BaseDataManager):
     ) -> None:
         resolved = self._resolve_context(context)
         delete_table_impl(resolved, dangerous_ok=dangerous_ok)
+
+    @functools.wraps(BaseDataManager.rename_table, updated=())
+    def rename_table(
+        self,
+        old_context: str,
+        new_context: str,
+    ) -> Dict[str, str]:
+        resolved_old = self._resolve_context(old_context)
+        resolved_new = self._resolve_context(new_context)
+        return rename_table_impl(resolved_old, resolved_new)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Column Operations
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @functools.wraps(BaseDataManager.create_column, updated=())
+    def create_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+        column_type: str,
+        mutable: bool = True,
+        backfill_logs: bool = False,
+    ) -> Dict[str, str]:
+        resolved = self._resolve_context(context)
+        return create_column_impl(
+            resolved,
+            column_name=column_name,
+            column_type=column_type,
+            mutable=mutable,
+            backfill_logs=backfill_logs,
+        )
+
+    @functools.wraps(BaseDataManager.delete_column, updated=())
+    def delete_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+    ) -> Dict[str, str]:
+        resolved = self._resolve_context(context)
+        return delete_column_impl(resolved, column_name=column_name)
+
+    @functools.wraps(BaseDataManager.rename_column, updated=())
+    def rename_column(
+        self,
+        context: str,
+        *,
+        old_name: str,
+        new_name: str,
+    ) -> Dict[str, str]:
+        resolved = self._resolve_context(context)
+        return rename_column_impl(resolved, old_name=old_name, new_name=new_name)
+
+    @functools.wraps(BaseDataManager.create_derived_column, updated=())
+    def create_derived_column(
+        self,
+        context: str,
+        *,
+        column_name: str,
+        equation: str,
+    ) -> Dict[str, str]:
+        resolved = self._resolve_context(context)
+        return create_derived_column_impl(
+            resolved,
+            column_name=column_name,
+            equation=equation,
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # Query Operations
@@ -191,20 +286,24 @@ class DataManager(BaseDataManager):
         *,
         filter: Optional[str] = None,
         columns: Optional[List[str]] = None,
+        exclude_columns: Optional[List[str]] = None,
         limit: int = 100,
         offset: int = 0,
         order_by: Optional[str] = None,
         descending: bool = False,
-    ) -> List[Dict[str, Any]]:
+        return_ids_only: bool = False,
+    ) -> Union[List[Dict[str, Any]], List[int]]:
         resolved = self._resolve_context(context)
         return filter_impl(
             resolved,
             filter=filter,
             columns=columns,
+            exclude_columns=exclude_columns,
             limit=limit,
             offset=offset,
             order_by=order_by,
             descending=descending,
+            return_ids_only=return_ids_only,
         )
 
     @functools.wraps(BaseDataManager.search, updated=())
@@ -248,6 +347,33 @@ class DataManager(BaseDataManager):
     # ──────────────────────────────────────────────────────────────────────────
     # Join Operations
     # ──────────────────────────────────────────────────────────────────────────
+
+    @functools.wraps(BaseDataManager.join_tables, updated=())
+    def join_tables(
+        self,
+        *,
+        left_table: str,
+        right_table: str,
+        join_expr: str,
+        dest_table: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+    ) -> str:
+        resolved_left = self._resolve_context(left_table)
+        resolved_right = self._resolve_context(right_table)
+        resolved_dest = self._resolve_context(dest_table)
+        return join_tables_impl(
+            left_table=resolved_left,
+            right_table=resolved_right,
+            join_expr=join_expr,
+            dest_table=resolved_dest,
+            select=select,
+            mode=mode,
+            left_where=left_where,
+            right_where=right_where,
+        )
 
     @functools.wraps(BaseDataManager.filter_join, updated=())
     def filter_join(
@@ -360,9 +486,17 @@ class DataManager(BaseDataManager):
         rows: List[Dict[str, Any]],
         *,
         dedupe_key: Optional[str] = None,
-    ) -> int:
+        add_to_all_context: bool = False,
+        batched: bool = True,
+    ) -> List[int]:
         resolved = self._resolve_context(context)
-        return insert_rows_impl(resolved, rows, dedupe_key=dedupe_key)
+        return insert_rows_impl(
+            resolved,
+            rows,
+            dedupe_key=dedupe_key,
+            add_to_all_context=add_to_all_context,
+            batched=batched,
+        )
 
     @functools.wraps(BaseDataManager.update_rows, updated=())
     def update_rows(
@@ -380,11 +514,19 @@ class DataManager(BaseDataManager):
         self,
         context: str,
         *,
-        filter: str,
+        filter: Optional[str] = None,
+        log_ids: Optional[List[int]] = None,
         dangerous_ok: bool = False,
+        delete_empty_rows: bool = False,
     ) -> int:
         resolved = self._resolve_context(context)
-        return delete_rows_impl(resolved, filter=filter, dangerous_ok=dangerous_ok)
+        return delete_rows_impl(
+            resolved,
+            filter=filter,
+            log_ids=log_ids,
+            dangerous_ok=dangerous_ok,
+            delete_empty_rows=delete_empty_rows,
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # Embedding Operations
