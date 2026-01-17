@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import uuid
 import unify
 import functools
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, TYPE_CHECKING
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from unity.data_manager.data_manager import DataManager
 
 import json
 from unity.common.tool_outcome import ToolOutcome
@@ -213,6 +218,24 @@ class KnowledgeManager(BaseKnowledgeManager):
             self._contacts_ctx = ContextRegistry.get_context(ContactManager, "Contacts")
         else:
             self._contacts_ctx = None
+
+        # Lazily-initialized DataManager for delegation
+        self.__data_manager: Optional["DataManager"] = None
+
+    @property
+    def _data_manager(self) -> "DataManager":
+        """
+        Lazily-initialized DataManager instance for delegation.
+
+        All low-level data operations (filter, search, insert, update, delete,
+        joins, etc.) are delegated to the DataManager to ensure consistency
+        and avoid direct ``unify`` calls in KnowledgeManager utilities.
+        """
+        if self.__data_manager is None:
+            from unity.data_manager.data_manager import DataManager
+
+            self.__data_manager = DataManager()
+        return self.__data_manager
 
     async def _maybe_build_show_all_seed(
         self,
