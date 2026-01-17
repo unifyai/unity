@@ -122,7 +122,7 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
     parse_result.graph = ContentGraph(root_id=doc_id, nodes=nodes)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file"),
+        ingest=IngestConfig(),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="off",
             file_specs=[
@@ -143,10 +143,14 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
 
     # Use process_single_file from executor
     from unity.file_manager.managers.utils.executor import process_single_file
+    from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
 
-    ctx = fm._ctx_for_file(file_path)
+    # Look up file_id and use storage_id-based context
+    file_id = get_file_id_from_path(index_context=fm._ctx, file_path=file_path)
+    assert file_id is not None, f"File record not found for {file_path}"
+    ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
     assert "_summary_emb" not in fields
 
@@ -205,7 +209,7 @@ def test_embed_after_creates_columns(file_manager, tmp_path: Path):
     parse_result.graph = ContentGraph(root_id=doc_id, nodes=nodes)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file"),
+        ingest=IngestConfig(),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="after",
             file_specs=[
@@ -226,10 +230,14 @@ def test_embed_after_creates_columns(file_manager, tmp_path: Path):
 
     # Use process_single_file from executor
     from unity.file_manager.managers.utils.executor import process_single_file
+    from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
 
-    ctx = fm._ctx_for_file(file_path)
+    # Look up file_id and use storage_id-based context
+    file_id = get_file_id_from_path(index_context=fm._ctx, file_path=file_path)
+    assert file_id is not None, f"File record not found for {file_path}"
+    ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
     assert "_summary_emb" in fields
 
@@ -296,7 +304,7 @@ def test_embed_along_content(file_manager, tmp_path: Path):
         calls["post"] += 1
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file", content_rows_batch_size=2),
+        ingest=IngestConfig(content_rows_batch_size=2),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="along",
             file_specs=[
@@ -317,12 +325,16 @@ def test_embed_along_content(file_manager, tmp_path: Path):
 
     # Use process_single_file from executor instead of removed _ingest_and_embed
     from unity.file_manager.managers.utils.executor import process_single_file
+    from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
     # Note: plugin hooks are optional and may be wired in/out depending on executor implementation.
     # The critical invariant for "along" is that embeddings are created successfully.
 
-    ctx = fm._ctx_for_file(file_path)
+    # Look up file_id and use storage_id-based context
+    file_id = get_file_id_from_path(index_context=fm._ctx, file_path=file_path)
+    assert file_id is not None, f"File record not found for {file_path}"
+    ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
     assert "_summary_emb" in fields
 

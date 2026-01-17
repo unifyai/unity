@@ -16,8 +16,7 @@ def test_unified_mode_rename_preserves_unified_content(file_manager, tmp_path: P
     name = str(p)
 
     cfg = FilePipelineConfig()
-    cfg.ingest.mode = "unified"
-    cfg.ingest.unified_label = "UnifiedDocs"
+    cfg.ingest.storage_id = "UnifiedDocs"
     cfg.ingest.table_ingest = False
 
     fm.ingest_files(name, config=cfg)

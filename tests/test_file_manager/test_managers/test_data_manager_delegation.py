@@ -64,7 +64,7 @@ def test_reduce_returns_result(file_manager, tmp_path: Path):
         file_manager.ingest_files(str(p))
 
     # Reduce should return count
-    result = file_manager.reduce(metric="count", column="file_id")
+    result = file_manager.reduce(metric="count", columns="file_id")
     assert isinstance(result, (int, float, dict, list))
 
 
@@ -149,10 +149,12 @@ def test_describe_includes_table_contexts(file_manager, tmp_path: Path):
         assert "/Tables/" in table.context_path
 
 
-def test_describe_raises_for_missing_file(file_manager):
-    """describe() should raise ValueError for non-existent file."""
-    with pytest.raises(ValueError, match="not found"):
-        file_manager.describe(file_path="/nonexistent/file.txt")
+def test_describe_returns_not_indexed_for_missing_file(file_manager):
+    """describe() returns FileStorageMap with indexed_exists=False for missing files."""
+    storage = file_manager.describe(file_path="/nonexistent/file.txt")
+    assert storage.indexed_exists is False
+    assert storage.filesystem_exists is False
+    assert storage.file_path == "/nonexistent/file.txt"
 
 
 def test_describe_raises_without_identifier(file_manager):
@@ -219,6 +221,6 @@ def test_describe_then_reduce_workflow(file_manager, tmp_path: Path):
     result = file_manager.reduce(
         context=table_ctx,
         metric="sum",
-        column="amount",
+        columns="amount",
     )
     assert result is not None
