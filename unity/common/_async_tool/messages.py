@@ -603,16 +603,22 @@ async def insert_tool_message_after_assistant(
     tool_msg,
     client,
     msg_dispatcher,
+    *,
+    skip_event_bus: bool = False,
 ) -> None:
     """
     Append *tool_msg* and move it directly after *parent_msg*, while
     updating the per-assistant `results_count` bookkeeping.
+
+    If *skip_event_bus* is True, the message is appended to the client
+    transcript but NOT published to the EventBus. This is used for
+    placeholder messages that will be updated in-place later.
     """
     meta = assistant_meta.setdefault(
         id(parent_msg),
         {"results_count": 0},
     )
-    await msg_dispatcher.append_msgs([tool_msg])
+    await msg_dispatcher.append_msgs([tool_msg], skip_event_bus=skip_event_bus)
     insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
     client.messages.insert(insert_pos, client.messages.pop())
     meta["results_count"] += 1
@@ -735,6 +741,7 @@ async def ensure_placeholders_for_pending(
             placeholder,
             client,
             msg_dispatcher,
+            skip_event_bus=True,  # Don't publish placeholders; publish when final
         )
         _inf.tool_reply_msg = placeholder
         created.append(_inf.call_id)

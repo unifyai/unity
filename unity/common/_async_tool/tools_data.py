@@ -403,6 +403,7 @@ class ToolsData:
                         placeholder,
                         self._client,
                         msg_dispatcher,
+                        skip_event_bus=True,  # Progress placeholder; final result published later
                     )
                     info.tool_reply_msg = placeholder
                 else:
@@ -504,6 +505,9 @@ class ToolsData:
             if self._at_tail(placeholder):
                 placeholder["content"] = result
                 tool_msg = placeholder
+                # Publish the now-complete tool message to EventBus
+                # (placeholder insertion skipped EventBus; now we have final content)
+                await msg_dispatcher.publish_to_event_bus([tool_msg])
             else:
                 placeholder["content"] = json.dumps(
                     {
@@ -600,6 +604,7 @@ class ToolsData:
                 ph,
                 self._client,
                 msg_dispatcher,
+                skip_event_bus=True,  # Nested placeholder; final result published when nested task completes
             )
             info.tool_reply_msg = ph
         else:
