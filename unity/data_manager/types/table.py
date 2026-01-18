@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ColumnInfo(BaseModel):
@@ -52,6 +52,24 @@ class TableSchema(BaseModel):
     columns: List[ColumnInfo] = Field(default_factory=list)
     unique_keys: Optional[Dict[str, str]] = None
     auto_counting: Optional[Dict[str, Optional[str]]] = None
+
+    # TODO: The Unify backend's `get_context` / `get_contexts` API returns `unique_keys`
+    # as a list (e.g., ["column_name"]) instead of a dict (e.g., {"column_name": "int"}).
+    # This is inconsistent with `create_context` which expects a dict.
+    #
+    # Failing example: Actor calls `primitives.data.describe_table("Data/Test/...")` which
+    # internally calls `unify.get_context()`. The response has `unique_keys: []` (empty list)
+    # which fails Pydantic validation expecting `dict[str, str] | None`.
+    #
+    # Workaround: Convert list to None until backend is updated to return dict format.
+    # See: unity/data_manager/ops/table_ops.py describe_table_impl
+    @field_validator("unique_keys", mode="before")
+    @classmethod
+    def _normalize_unique_keys(cls, v):
+        if isinstance(v, list):
+            # Backend returns list, but we need dict or None
+            return None
+        return v
 
     @property
     def column_names(self) -> List[str]:
