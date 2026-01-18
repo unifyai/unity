@@ -72,8 +72,11 @@ RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "htt
 RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
-RUN git clone --depth 1 --branch ${BRANCH} https://github.com/unifyai/unify.git /unify
-RUN git clone --depth 1 --branch ${BRANCH} https://github.com/unifyai/unillm.git /unillm
+# Branch logic mirrors CI: main→main, otherwise→staging
+# This ensures staging deployments get staging branches (with latest fixes)
+RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
+    git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
+    git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
 # Copy source and install unity with all dependencies
 COPY . /app
@@ -98,6 +101,13 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV UNIFY_KEY=${UNIFY_KEY}
+
+# Set UNIFY_BASE_URL based on branch (main→production, otherwise→staging orchestra)
+RUN if [ "$BRANCH" = "main" ]; then \
+      echo 'export UNIFY_BASE_URL="https://api.unify.ai/v0"' > /app/.env.orchestra; \
+    else \
+      echo 'export UNIFY_BASE_URL="https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0"' > /app/.env.orchestra; \
+    fi
 RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 # Download the turn detector model files

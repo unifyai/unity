@@ -35,19 +35,27 @@ class Renderer:
         self,
         active_conversations: dict[str, Contact],
         max_messages=5,
+        max_global_messages=50,
         last_snapshot=None,
     ):
         contacts = "\n\n".join(
             self.render_contact(
                 c,
                 max_messages=max_messages,
+                max_global_messages=max_global_messages,
                 last_snapshot=last_snapshot,
             )
             for c in active_conversations.values()
         )
         return "<active_conversations>\n" f"{contacts}\n" "</active_conversations>"
 
-    def render_contact(self, contact: Contact, max_messages=5, last_snapshot=None):
+    def render_contact(
+        self,
+        contact: Contact,
+        max_messages=5,
+        max_global_messages=50,
+        last_snapshot=None,
+    ):
         bio = f"<bio>{contact.bio}</bio>"
         rolling_summary = (
             f"<rolling_summary>{contact.rolling_summary}</rolling_summary>"
@@ -55,7 +63,17 @@ class Renderer:
         response_policy = (
             f"<response_policy>{contact.response_policy}</response_policy>"
         )
-        threads = "\n\n".join(
+        global_thread = (
+            self.render_thread(
+                "global",
+                contact.global_thread,
+                max_messages=max_global_messages,
+                last_snapshot=last_snapshot,
+            )
+            if contact.global_thread
+            else ""
+        )
+        per_medium_threads = "\n\n".join(
             self.render_thread(
                 t_name,
                 t,
@@ -65,13 +83,18 @@ class Renderer:
             for t_name, t in contact.threads.items()
             if t
         )
+        threads_content = (
+            f"{global_thread}\n\n{per_medium_threads}"
+            if global_thread
+            else per_medium_threads
+        )
         return (
             f"""<contact contact_id="{contact.contact_id}" first_name="{contact.first_name}" surname="{contact.surname}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email_address="{contact.email_address or ""}" on_call="{contact.on_call}">\n"""
             f"{bio}\n"
             f"{rolling_summary}\n"
             f"{response_policy}\n"
             "<threads>\n"
-            f"{threads}\n"
+            f"{threads_content}\n"
             "</threads>\n"
             "</contact>"
         )
@@ -83,6 +106,7 @@ class Renderer:
         return f"<{thread_name}>\n" f"{messages}\n" f"</{thread_name}>"
 
     def render_message(self, message: Message, last_snapshot: datetime = None):
+        # Mark all recent messages as NEW (both incoming and outbound)
         is_new = last_snapshot < message.timestamp
         if isinstance(message, EmailMessage):
             return (

@@ -4,17 +4,69 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from unity.conversation_manager.domains.actions import build_response_models
+from pydantic import BaseModel, Field, create_model
+
 from unity.conversation_manager.prompt_builders import build_system_prompt
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
-
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 
+def _build_response_models() -> dict:
+    """
+    Create response models for ConversationManager's main brain.
+
+    All actions (comms, task steering, etc.) are now tool calls.
+    The response model only captures the LLM's reasoning.
+
+    Returns:
+        dict: Response models for different modes (call, unify_meet, text)
+    """
+    # Text mode: just thoughts
+    TextResponse = create_model(
+        "TextResponse",
+        thoughts=(
+            str,
+            Field(..., description="Your concise reasoning before taking actions"),
+        ),
+        __base__=BaseModel,
+    )
+
+    # Voice mode: thoughts + guidance for the Voice Agent
+    # Both TTS and Realtime modes use call_guidance - the Main CM Brain
+    # provides guidance/data to the voice agent (fast brain) which handles
+    # the actual conversation.
+    VoiceResponse = create_model(
+        "VoiceResponse",
+        thoughts=(
+            str,
+            Field(..., description="Your concise reasoning before taking actions"),
+        ),
+        call_guidance=(
+            str,
+            Field(..., description="Guidance for the Voice Agent handling the call"),
+        ),
+        __base__=BaseModel,
+    )
+
+    return {
+        "call": VoiceResponse,
+        "unify_meet": VoiceResponse,
+        "text": TextResponse,
+    }
+
+
 # Cache the response models since they don't change
-_RESPONSE_MODELS = build_response_models()
+_RESPONSE_MODELS = _build_response_models()
+
+
+def build_response_models() -> dict:
+    """
+    Public accessor for response models used by ConversationManager's brain.
+
+    Returns cached models for different modes (call, unify_meet, text).
+    """
+    return _RESPONSE_MODELS
 
 
 @dataclass(frozen=True)

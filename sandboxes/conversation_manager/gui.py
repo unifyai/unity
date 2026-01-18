@@ -6,10 +6,10 @@ from textual.widgets import Button, Header, Footer, Input, Label
 from textual.containers import Horizontal
 from unity.conversation_manager.utils import publish_event
 from unity.conversation_manager.events import (
-    SMSMessageRecievedEvent,
-    EmailRecievedEvent,
-    PhoneCallStopEvent,
-    PhoneCallInitiatedEvent,
+    SMSReceived,
+    EmailReceived,
+    PhoneCallStarted,
+    PhoneCallEnded,
 )
 from dotenv import load_dotenv
 import sys, pathlib
@@ -21,13 +21,23 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 PROJECT_NAME = "ConversationManagerSandbox"
 
 
+def _get_simulated_user_contact() -> dict:
+    """Build a simulated user contact dict for sandbox events."""
+    return {
+        "contact_id": 1,
+        "first_name": os.getenv("USER_NAME", "User"),
+        "phone_number": os.getenv("USER_PHONE_NUMBER", "+15550001234"),
+        "email_address": os.getenv("USER_EMAIL", "user@example.com"),
+    }
+
+
 def send_sms(message: str) -> None:
     # Publish an SMS received event for the user
     ev = {
         "topic": os.getenv("USER_PHONE_NUMBER"),
-        "event": SMSMessageRecievedEvent(
+        "event": SMSReceived(
+            contact=_get_simulated_user_contact(),
             content=message,
-            role="User",
         ).to_dict(),
     }
     asyncio.create_task(publish_event(ev))
@@ -37,9 +47,10 @@ def send_email(message: str) -> None:
     # Publish an Email received event for the user
     ev = {
         "topic": os.getenv("USER_PHONE_NUMBER"),
-        "event": EmailRecievedEvent(
-            content=message,
-            role="User",
+        "event": EmailReceived(
+            contact=_get_simulated_user_contact(),
+            subject="Sandbox Email",
+            body=message,
         ).to_dict(),
     }
     asyncio.create_task(publish_event(ev))
@@ -114,15 +125,9 @@ class EmailScreen(Screen):
 class CallScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
-        # Task name and description inputs
-        yield Label("Task Name:")
-        yield Input(placeholder="Enter task name", id="task_name")
-        yield Label("Task Description:")
-        yield Input(placeholder="Enter task description", id="task_description")
-        yield Label("Purpose:")
-        yield Input(placeholder="Enter purpose", id="purpose", value="general")
+        yield Label("Simulate a phone call with the user")
         yield Horizontal(
-            Button("Call", id="send_call"),
+            Button("Start Call", id="send_call"),
             Button("End Call", id="end_call"),
             Button("Back", id="back"),
         )
@@ -130,23 +135,20 @@ class CallScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "send_call":
-            # Gather task details
-            task_name = self.query_one("#task_name", Input).value
-            task_description = self.query_one("#task_description", Input).value
-            purpose = self.query_one("#purpose", Input).value
-            # Publish a PhoneCallInitiatedEvent with task_context
+            # Publish a PhoneCallStarted event
             ev = {
                 "topic": os.getenv("USER_PHONE_NUMBER"),
-                "event": PhoneCallInitiatedEvent(
-                    purpose=purpose,
-                    task_context={"name": task_name, "description": task_description},
+                "event": PhoneCallStarted(
+                    contact=_get_simulated_user_contact(),
                 ).to_dict(),
             }
             asyncio.create_task(publish_event(ev))
         elif event.button.id == "end_call":
             ev = {
                 "topic": os.getenv("USER_PHONE_NUMBER"),
-                "event": PhoneCallStopEvent().to_dict(),
+                "event": PhoneCallEnded(
+                    contact=_get_simulated_user_contact(),
+                ).to_dict(),
             }
             asyncio.create_task(publish_event(ev))
         elif event.button.id == "back":

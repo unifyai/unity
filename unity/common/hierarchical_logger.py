@@ -72,6 +72,7 @@ CM_ICONS = {
     "event": "📣",
     "ping": "💓",
     "summarize": "📑",
+    "proactive_speech": "🗣️",
 }
 
 

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Sequence, Any
 import unillm
 import asyncio
 
@@ -11,7 +11,7 @@ _ASSISTANT_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
 _TOOL_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
 
 
-def count_assistant_tool_calls(msgs: List[dict], tool_name: str) -> int:
+def count_assistant_tool_calls(msgs: Sequence[Any], tool_name: str) -> int:
     """Return the number of *assistant* turns whose visible ``tool_calls``
     reference *tool_name* (exact match).
 

@@ -29,7 +29,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
   - `ActiveTask`: a per‑task, steerable handle that wraps the actor’s live plan. Mirrors status into the Tasks row on pause/resume/stop/result. Classifies interjections (cancel/defer) using the scheduler and triggers reinstatement on defer. Returned internally; the public execution surface uses `ActiveQueue`.
 
 - `active_queue.py`
-  - `ActiveQueue`: a composite handle that sequentially executes a queue (head→tail), adopting each `ActiveTask` in turn. Tracks completions and supports queue‑aware `interject` and `ask`. Provides a passthrough mode for singleton or isolated executions.
+  - `ActiveQueue`: a composite handle that sequentially executes a queue (head→tail), adopting each `ActiveTask` in turn. Tracks completions and supports queue‑aware `interject` and `ask`. Provides direct delegation for singleton or isolated executions.
 
 - `activation_ops.py`
   - Low‑level, activation‑time link manipulation. Implements detachment semantics for isolation vs chained execution and records a `ReintegrationPlan`.
@@ -70,7 +70,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
    - Exposes creation, deletion, cancellation, and queue manipulation tools, plus atomic materialization (`set_queue`) and bulk schedule edits. Enforces queue/schedule invariants via a single validated write funnel. Auto‑checkpoints queue edits for easy revert.
 
 3) Execute (run now)
-   - Guards single‑active. If given a numeric id, can run in isolation (detach, followers keep schedule) or as a chain (preserve links). This path does not use an async LLM tool loop or an execute system prompt; it returns an `ActiveQueue` handle (singleton passthrough for isolated/single‑task).
+   - Guards single‑active. If given a numeric id, can run in isolation (detach, followers keep schedule) or as a chain (preserve links). This path does not use an async LLM tool loop or an execute system prompt; it returns an `ActiveQueue` handle (direct delegation for isolated/single‑task).
 
 
 ### Queue/schedule invariants (enforced centrally)
@@ -98,7 +98,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 ### Execution handles
 
 - `ActiveTask`: internal steerable handle for a single running task; mirrors status and clears the scheduler’s active pointer when done.
-- `ActiveQueue`: public execution handle that sequences tasks using persisted `next_task` links, supports interjection routing across the queue, and provides a completion summary. Uses passthrough when the queue is a singleton/isolated.
+- `ActiveQueue`: public execution handle that sequences tasks using persisted `next_task` links, supports interjection routing across the queue, and provides a completion summary. Uses direct delegation when the queue is a singleton/isolated.
 
 
 ### Clarification and contacts

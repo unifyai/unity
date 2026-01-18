@@ -6,19 +6,7 @@ from dataclasses import dataclass, asdict, field
 
 from pydantic import BaseModel
 
-from unity.settings import SETTINGS
-
-
-def _get_now() -> datetime:
-    """Return current datetime.
-
-    In test mode (when UNITY_FIXED_DATETIME is set in SETTINGS), returns the
-    fixed datetime to ensure LLM cache hits across test runs. The value should
-    be an ISO format datetime string (e.g., "2025-06-13T12:00:00+00:00").
-    """
-    if SETTINGS.UNITY_FIXED_DATETIME:
-        return datetime.fromisoformat(SETTINGS.UNITY_FIXED_DATETIME)
-    return datetime.now()
+from unity.common.prompt_helpers import now as prompt_now
 
 
 def custom_dict_factory(kv):
@@ -33,9 +21,27 @@ def custom_dict_factory(kv):
     return d
 
 
+class _TruncatedReprMixin:
+    """Mixin for events that need truncated repr (to avoid logging huge payloads)."""
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        raise NotImplementedError
+
+
+def _now_datetime() -> datetime:
+    """Wrapper for prompt_now that returns datetime for dataclass default_factory."""
+    return prompt_now(as_string=False)
+
+
 @dataclass(kw_only=True)
 class Event:
-    timestamp: datetime = field(default_factory=_get_now)
+    timestamp: datetime = field(default_factory=_now_datetime)
 
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
@@ -256,7 +262,9 @@ class EmailSent(Event):
 
 
 @dataclass
-class StartupEvent(Event):
+class _SessionConfigBase(Event):
+    """Base class for session configuration events (StartupEvent, AssistantUpdateEvent)."""
+
     loggable: ClassVar[bool] = False
     api_key: str
     medium: str
@@ -277,6 +285,11 @@ class StartupEvent(Event):
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
+
+
+@dataclass
+class StartupEvent(_SessionConfigBase):
+    """Initial session configuration sent when ConversationManager starts."""
 
 
 @dataclass
@@ -287,27 +300,8 @@ class InitializationComplete(Event):
 
 
 @dataclass
-class AssistantUpdateEvent(Event):
-    loggable: ClassVar[bool] = False
-    api_key: str
-    medium: str
-    assistant_id: str
-    user_id: str
-    assistant_name: str
-    assistant_age: str
-    assistant_nationality: str
-    assistant_about: str
-    assistant_number: str
-    assistant_email: str
-    user_name: str
-    user_number: str
-    user_email: str
-    voice_id: str
-    voice_provider: str = "cartesia"
-    voice_mode: str = "tts"
-    assistant_timezone: str = (
-        ""  # IANA timezone identifier; default empty for backward compat
-    )
+class AssistantUpdateEvent(_SessionConfigBase):
+    """Updated session configuration sent to a running ConversationManager."""
 
 
 @dataclass
@@ -337,45 +331,27 @@ class ContactInfoResponse(Event):
     contact_details: dict[str, Any]
 
 
-@dataclass
-class StoreChatHistory(Event):
+@dataclass(repr=False)
+class StoreChatHistory(_TruncatedReprMixin, Event):
     chat_history: list[dict]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(chat_history_len={len(self.chat_history)})"
 
 
-@dataclass
-class GetChatHistory(Event):
+@dataclass(repr=False)
+class GetChatHistory(_TruncatedReprMixin, Event):
     loggable: ClassVar[bool] = False
     chat_history: list[dict]
 
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
-
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(chat_history_len={len(self.chat_history)})"
 
 
-@dataclass
-class GetBusEventsResponse(Event):
+@dataclass(repr=False)
+class GetBusEventsResponse(_TruncatedReprMixin, Event):
     loggable: ClassVar[bool] = False
     events: list[dict[str, Any]]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(events_len={len(self.events)})"
@@ -431,19 +407,13 @@ class NotificationUnpinnedEvent(Event):
 # --------------------------------------------------------------------------- #
 
 
-@dataclass
-class ActorRequest(Event):
+@dataclass(repr=False)
+class ActorRequest(_TruncatedReprMixin, Event):
     """Event to ask or request the Actor to perform a task."""
 
     action_name: str
     query: str
     parent_chat_context: list[dict]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return (
@@ -463,20 +433,14 @@ class ActorResponse(Event):
     response: str
 
 
-@dataclass
-class ActorHandleRequest(Event):
+@dataclass(repr=False)
+class ActorHandleRequest(_TruncatedReprMixin, Event):
     """Event to any action on an existing Actor handle."""
 
     handle_id: int
     action_name: str
     query: str
     parent_chat_context: list[dict]
-
-    def __str__(self) -> str:
-        return self._repr_truncated()
-
-    def __repr__(self) -> str:
-        return self._repr_truncated()
 
     def _repr_truncated(self) -> str:
         return (

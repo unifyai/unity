@@ -26,7 +26,7 @@ from sandboxes.utils import (
     activate_project,
 )
 
-LG = logging.getLogger("contact_sandbox")
+LG = logging.getLogger("conversation_sandbox")
 
 
 # Graceful shutdown handler

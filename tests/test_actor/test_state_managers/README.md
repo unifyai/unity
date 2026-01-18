@@ -150,7 +150,7 @@ async with make_actor(impl="simulated", can_compose=True) as actor:
 
 ## Test Organization Notes
 
-Actor tests focus on code-first plan generation and execution. Some infrastructure-level tests (like handle serialization, pause/resume behavior, and steering passthrough) are tested at the Actor level rather than state manager level, reflecting Actor's role as the central orchestrator.
+Actor tests focus on code-first plan generation and execution. Some infrastructure-level tests (like handle serialization, pause/resume behavior, and steering forwarding) are tested at the Actor level rather than state manager level, reflecting Actor's role as the central orchestrator.
 
 ## Running the Tests
 

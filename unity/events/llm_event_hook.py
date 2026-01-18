@@ -34,60 +34,13 @@ def _llm_event_to_eventbus(event: "LLMEvent") -> None:
         from .event_bus import EVENT_BUS, Event
         from .types.llm import LLMPayload
 
-        # Extract message and tool counts from request kwargs
-        request_kw = event.request_kw or {}
-        messages = request_kw.get("messages", [])
-        tools = request_kw.get("tools", [])
-
-        # Build the payload with both request and response info
-        payload_data = {
-            "endpoint": event.endpoint,
-            "model": event.model,
-            "provider": event.provider,
-            "stream": event.stream,
-            "messages_count": len(messages) if isinstance(messages, list) else 0,
-            "tools_count": len(tools) if isinstance(tools, list) else 0,
-            "cache_status": event.cache_status,
-            "provider_cost": event.provider_cost,
-            "billed_cost": event.billed_cost,
-        }
-
-        # Extract error message if present
-        if event.error is not None:
-            payload_data["error"] = str(event.error)
-
-        # Extract response metadata if available
-        if event.response is not None:
-            # Response model
-            if hasattr(event.response, "model"):
-                payload_data["response_model"] = event.response.model
-
-            # Token usage
-            if hasattr(event.response, "usage") and event.response.usage:
-                usage = event.response.usage
-                if hasattr(usage, "prompt_tokens"):
-                    payload_data["prompt_tokens"] = usage.prompt_tokens
-                if hasattr(usage, "completion_tokens"):
-                    payload_data["completion_tokens"] = usage.completion_tokens
-                if hasattr(usage, "total_tokens"):
-                    payload_data["total_tokens"] = usage.total_tokens
-
-            # Content preview (truncated for storage efficiency)
-            try:
-                choices = getattr(event.response, "choices", None)
-                if choices and len(choices) > 0:
-                    message = getattr(choices[0], "message", None)
-                    if message:
-                        content = getattr(message, "content", None)
-                        if content:
-                            preview = (
-                                content[:200] + "..." if len(content) > 200 else content
-                            )
-                            payload_data["content_preview"] = preview
-            except Exception:
-                pass
-
-        payload = LLMPayload(**payload_data)
+        # Pass through the simplified event data directly
+        payload = LLMPayload(
+            request=event.request,
+            response=event.response,
+            provider_cost=event.provider_cost,
+            billed_cost=event.billed_cost,
+        )
         llm_event = Event(type="LLM", payload=payload)
 
         # Publish asynchronously to avoid blocking the LLM call
@@ -112,6 +65,11 @@ def install_llm_event_hook() -> None:
     after the first successful installation.
 
     Should be called during unity.init() after the EventBus is initialized.
+
+    Uses set_global_llm_event_hook() to ensure the hook is process-wide and
+    works across all threads. This is critical because unity.init() may be
+    called from a worker thread (via asyncio.to_thread in managers_utils.py)
+    while LLM calls happen from the main async context.
     """
     global _HOOK_INSTALLED
 
@@ -121,7 +79,10 @@ def install_llm_event_hook() -> None:
     try:
         import unillm
 
-        unillm.set_llm_event_hook(_llm_event_to_eventbus)
+        # Use global hook to ensure it works across all threads/contexts.
+        # This is essential because unity.init() may run in a thread pool
+        # worker while LLM calls happen from the main async context.
+        unillm.set_global_llm_event_hook(_llm_event_to_eventbus)
         _HOOK_INSTALLED = True
     except ImportError:
         # unillm not available - skip hook installation

@@ -87,6 +87,16 @@ clone_repo() {
 clone_repo "unify"
 clone_repo "unillm"
 
+# Clone magnitude for browser automation (optional - only needed for agent-service)
+# This is a Node.js dependency, not Python, so it's cloned but not installed via uv
+if [[ "${CLONE_MAGNITUDE:-false}" == "true" ]]; then
+    clone_repo "magnitude"
+    if [[ -d "$REPO_ROOT/magnitude" ]]; then
+        echo "Checking out unity-modifications branch for magnitude..."
+        (cd "$REPO_ROOT/magnitude" && git checkout unity-modifications 2>/dev/null) || true
+    fi
+fi
+
 # Update pyproject.toml to use workspace-relative paths (same as GitHub Actions CI)
 echo ""
 echo "Updating pyproject.toml paths for cloud environment..."

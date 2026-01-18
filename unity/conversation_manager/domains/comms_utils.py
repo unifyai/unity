@@ -8,7 +8,7 @@ from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
 
 load_dotenv()
-headers = {"Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}"}
+headers = {"Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()}"}
 
 # Lazily initialized publisher (avoids import-time GCP auth failures in tests)
 _publisher = None

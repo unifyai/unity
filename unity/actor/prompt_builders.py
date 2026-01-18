@@ -14,6 +14,40 @@ from unity.common.async_tool_loop import SteerableToolHandle
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
 
+from unity.image_manager.types import AnnotatedImageRef, ImageRefs, RawImageRef
+
+
+def _build_simplicity_first_principles() -> str:
+    """Shared guidance: prefer elegant, minimal plans that leverage powerful tool loops.
+
+    This block is intentionally reused across:
+    - initial plan generation
+    - dynamic implementation
+    - interjection decisions
+    """
+    return textwrap.dedent(
+        """
+        ### Simplicity-First Planning (CRITICAL)
+
+        **Default to the simplest plan that could plausibly work.** Your tools are powerful:
+        - Calls like `computer_primitives.act(...)`, `computer_primitives.observe(...)`, and many `primitives.*` methods
+          accept natural language and often run their own internal tool loops.
+        - High-quality plans are usually **short and elegant**, with **high-quality instructions** to these tools.
+
+        **Progressive elaboration rule:**
+        - Start simple.
+        - Only add complexity when evidence shows it is warranted (e.g., an error occurred, UI ambiguity, repeated flakiness,
+          missing preconditions, or a previous simple attempt failed).
+
+        **Avoid premature complexity:**
+        - Don’t create many helper functions “just in case”.
+        - Don’t implement multi-path fallbacks unless there is evidence you need them.
+        - Prefer a single clear `act(...)` / `observe(...)` loop over brittle micro-steps.
+
+        **When complexity is justified**, explain why in a short comment/docstring (evidence-based reasoning).
+        """,
+    ).strip()
+
 
 def _build_verification_static_prefix(
     environments: Mapping[str, "BaseEnvironment"] | None = None,
@@ -101,6 +135,9 @@ def _build_dynamic_implement_static_prefix(
     return textwrap.dedent(
         f"""
         You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for a function.
+
+        ---
+        {_build_simplicity_first_principles()}
 
         ---
         **CRITICAL: You must choose one of four actions:**
@@ -434,6 +471,9 @@ def _build_interjection_static_prefix(
         You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
 
         ---
+        {_build_simplicity_first_principles()}
+
+        ---
         ### Cache Invalidation Rules (CRITICAL)
         1.  **No Phantom Invalidations**: Only list functions in `invalidate_functions` if they appear in the `Cache Status` list above.
         2.  **Surgical Invalidation**: Use `invalidate_functions` to clear the entire cache for a function, or `invalidate_steps` to clear only a portion of it. Be as minimal as possible to ensure an efficient replay.
@@ -444,18 +484,30 @@ def _build_interjection_static_prefix(
         **1. Analyze Intent:** Choose the best action from the Decision Tree below.
 
         **2. Decide: Routing-only vs Plan Patching (CRITICAL)**
-            - **Routing-only is the default** when the user’s interjection is a *preference update* for what is already running
-              (tone, conciseness, formatting, minor scope constraints like “focus only on Q4” for the summaries currently being produced).
-            - If the user changes scope/selection for an **already in-flight** tool call and the plan has **not yet consumed the result**,
-              prefer **routing-only to that in-flight handle**. Downstream work will
-              naturally use the corrected result; do **not** patch/restart “for consistency”.
-            - Users will **not** say “broadcast this” or “don’t modify main_plan”. You must infer intent from natural language.
-            - **Patches are expensive and disruptive**: they cancel/restart execution and may invalidate caches. Do not patch unless strictly required.
-            - **Never create patches just to restate/echo the user’s preference into tool prompts** when routing to in-flight handles can apply it immediately.
-            - **Do NOT use circular reasoning** like “patch so replay won’t revert to the old instruction.” Adding `patches` is what *causes* a replay/restart.
-              If routing-only is sufficient, avoid patching and avoid the restart entirely.
-            - Prefer **targeted routing** when the interjection clearly applies to only one handle (e.g., “make the outreach email tone more casual”
-              should route to the in-flight `primitives.transcripts.*` handle generating that content, not to an unrelated contact-list handle).
+
+            **FIRST: Check the pane snapshot. Are there in-flight handles?**
+            - If **NO in-flight handles** → Patching is REQUIRED (routing is impossible).
+            - If **YES in-flight handles** → Consider whether routing can satisfy the interjection.
+
+            **Routing-only (no patches) when:**
+            - User's interjection is a *preference update* for what is already running
+              (tone, conciseness, formatting, minor scope constraints like "focus only on Q4").
+            - User corrects scope/selection for an **already in-flight** handle whose result **has NOT been consumed**.
+              Downstream work will naturally use the corrected result.
+
+            **Patching required when:**
+            - There are **no in-flight handles** to route to.
+            - User is **demonstrating/teaching** a new action.
+            - User requests **new functionality** not in the current plan.
+            - The corrected result has **already been consumed** by downstream code.
+            - The interjection changes **plan structure** (add/remove steps, change logic flow).
+
+            **Anti-patterns to avoid:**
+            - Users will **not** say "broadcast this" or "don't modify main_plan". Infer intent from natural language.
+            - **Never create patches just to restate/echo the user's preference** when routing can apply it immediately.
+            - **Do NOT use circular reasoning** like "patch so replay won't revert to the old instruction."
+              Adding `patches` is what *causes* a replay/restart. If routing is sufficient, avoid patching.
+            - Prefer **targeted routing** when the interjection clearly applies to only one handle.
 
         **3. Generate Patches (ONLY if modifying code is required):**
             - Read entire `plan_source_code`; identify all changes (implementation, call sites, docstrings).
@@ -822,8 +874,13 @@ def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20)
     return "\n".join(summary_lines)
 
 
-def _format_images_for_prompt(images: Optional[dict[str, Any]]) -> str:
-    """Creates a markdown section for images if they are provided."""
+def _format_images_for_prompt(
+    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]],
+) -> str:
+    """Creates a markdown section for images if they are provided.
+
+    Supports: ImageRefs | list[RawImageRef | AnnotatedImageRef]
+    """
     if not images:
         return ""
 
@@ -831,10 +888,21 @@ def _format_images_for_prompt(images: Optional[dict[str, Any]]) -> str:
         "The user has provided the following images for additional context. ",
         "Refer to these images to better understand the user's intent and any relevant visual details.",
     ]
-    for key, handle in images.items():
+
+    # Support ImageRefs (RootModel with .root) or plain list
+    items = getattr(images, "root", images) if hasattr(images, "root") else images
+
+    for i, ref in enumerate(items or []):
         try:
-            caption = getattr(handle, "caption", "No caption provided.")
-            image_lines.append(f"- Image `{key}`: {caption}")
+            if isinstance(ref, AnnotatedImageRef):
+                annotation = ref.annotation or "No annotation"
+                image_lines.append(f"- Image {i}: {annotation}")
+            elif isinstance(ref, RawImageRef):
+                image_lines.append(f"- Image {i}: (raw image, no annotation)")
+            else:
+                # Fallback for any object with annotation attribute
+                annotation = getattr(ref, "annotation", "No annotation")
+                image_lines.append(f"- Image {i}: {annotation}")
         except Exception:
             continue
 
@@ -1725,7 +1793,7 @@ def build_initial_plan_prompt(
     *,
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
-    images: Optional[dict[str, Any]] = None,
+    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
 ) -> str:
     """
     Dynamically builds the system prompt for the Hierarchical Actor.
@@ -1810,6 +1878,8 @@ def build_initial_plan_prompt(
         You are an expert strategist. Your task is to generate a high-level Python script that outlines the **strategy** to achieve a user's goal.
 
         **Primary Goal:** "{goal}"
+        ---
+        {_build_simplicity_first_principles()}
         {rules_and_examples}
         {env_section}
         ---
@@ -1840,7 +1910,7 @@ def build_dynamic_implement_prompt(
     environments: Mapping[str, "BaseEnvironment"] | None = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
-    images: Optional[dict[str, Any]] = None,
+    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
 ) -> tuple[str, str]:
     """
     Builds the system prompt for dynamically implementing or modifying a function.
@@ -2267,7 +2337,7 @@ def build_interjection_prompt(
     *,
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
-    images: Optional[dict[str, Any]] = None,
+    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     pane_snapshot: Optional[dict[str, Any]] = None,
 ) -> tuple[str, str]:
     """

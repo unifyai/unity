@@ -60,7 +60,9 @@ class EventHandler:
 
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
-    print("ping received - keeping conversation manager alive")
+    log_str = "Ping received - keeping conversation manager alive"
+    print(log_str)  # need console logging of ping to detect idle containers
+    cm._session_logger.debug("ping", log_str)
 
 
 CallEvents = Union[
@@ -172,7 +174,10 @@ async def _(
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     # publish transcript
-    print("publishing transcript", event)
+    cm._session_logger.debug(
+        "event",
+        f"Publishing transcript: {event.__class__.__name__}",
+    )
     await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
     # push message to contact index
@@ -197,7 +202,10 @@ async def _(
     *args,
     **kwargs,
 ):
-    print("received call guidance", event)
+    cm._session_logger.info(
+        "call_guidance",
+        f"Received guidance: {event.content[:50]}...",
+    )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
     cm.contact_index.push_message(contact, "voice", event.content, role="Guidance")
@@ -342,7 +350,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
-    print("Received start up event")
+    cm._session_logger.info("startup", "Received startup event")
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
     cm.call_manager.set_config(cm.get_call_config())
@@ -360,24 +368,17 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(GetContactsResponse)
 async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwargs):
-    print("Received and setting contacts")
+    cm._session_logger.info("state_update", f"Setting {len(event.contacts)} contacts")
     cm.contact_index.set_contacts(event.contacts)
     # print(cm.contact_index.contacts)
 
 
-@EventHandler.register(StoreChatHistory)
-async def _(
-    event: StoreChatHistory,
-    cm: "ConversationManager",
-    *args,
-    **kwargs,
-):
-    print("Received store chat history")
-
-
 @EventHandler.register(GetChatHistory)
 async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
-    print("Received get chat history")
+    cm._session_logger.debug(
+        "state_update",
+        f"Received chat history ({len(event.chat_history)} messages)",
+    )
     cm.chat_history = event.chat_history + cm.chat_history
 
 
@@ -399,7 +400,10 @@ async def _(
     *args,
     **kwargs,
 ):
-    print(f"Received NotificationInjectedEvent: {event.content}")
+    cm._session_logger.info(
+        "notification_injected",
+        f"Notification: {event.content[:50]}...",
+    )
 
     # Push to notification bar
     cm.notifications_bar.push_notif(
@@ -424,7 +428,10 @@ async def _(
     *args,
     **kwargs,
 ):
-    print(f"Received NotificationUnpinnedEvent: {event.interjection_id}")
+    cm._session_logger.info(
+        "notification_unpinned",
+        f"Unpinned interjection: {event.interjection_id}",
+    )
 
     # Remove from notification bar
     cm.notifications_bar.remove_notif(event.interjection_id)
@@ -453,8 +460,8 @@ async def _(
     *args,
     **kwargs,
 ):
-    print("Received task pause/resume event", event.to_dict())
     action = "pause" if isinstance(event, ActorPause) else "resume"
+    cm._session_logger.info("actor_request", f"Received task {action} event")
     reason = getattr(event, "reason", "")
     affected: list[int] = []
     for hid, data in list(cm.active_tasks.items()):
@@ -479,7 +486,10 @@ async def _(
                     await resume_r
             affected.append(int(hid))
         except Exception as e:
-            print(f"Failed to {action} task {hid}: {e}")
+            cm._session_logger.error(
+                "actor_request",
+                f"Failed to {action} task {hid}: {e}",
+            )
 
     # notify per handle without triggering LLM runs
     for hid in affected:
@@ -492,7 +502,8 @@ async def _(
                 ).to_json(),
             )
         except Exception as e:
-            print(
+            cm._session_logger.error(
+                "actor_request",
                 f"Failed to publish {action} notification for task {hid}: {e}",
             )
 
@@ -504,15 +515,18 @@ async def _(
     *args,
     **kwargs,
 ):
-    print(f"Received SyncContacts event: {event.reason}")
+    cm._session_logger.info(
+        "state_update",
+        f"SyncContacts: {event.reason or 'no reason'}",
+    )
 
     async def _sync_contacts_task():
         def _sync():
             try:
                 cm.contact_manager._sync_required_contacts()
-                print("[SyncContacts] Contacts synced successfully")
+                cm._session_logger.info("state_update", "Contacts synced successfully")
             except Exception as e:
-                print(f"[SyncContacts] Error syncing contacts: {e}")
+                cm._session_logger.error("state_update", f"Error syncing contacts: {e}")
 
         await asyncio.to_thread(_sync)
 
@@ -546,7 +560,10 @@ async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
 async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs):
     # Skip if MemoryManager is disabled
     if cm.memory_manager is None:
-        print("[ManagersWorker] SummarizeContext skipped (MemoryManager disabled)")
+        cm._session_logger.debug(
+            "summarize",
+            "SummarizeContext skipped (MemoryManager disabled)",
+        )
         cm.is_summarizing = False
         cm.chat_history = []
         return
@@ -581,20 +598,29 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
                     updated_active_contacts.values(),
                 )
             }
-            print("updated contact", updated_active_contacts)
+            cm._session_logger.debug(
+                "state_update",
+                f"Updated {len(updated_active_contacts)} contacts",
+            )
             cm.contact_index.active_conversations = updated_active_contacts
             cm.is_summarizing = False
             cm.chat_history = []
-            print("[ManagersWorker] Contact rolling summary updated")
+            cm._session_logger.info("summarize", "Contact rolling summary updated")
         except Exception as e:
-            print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
+            cm._session_logger.error(
+                "summarize",
+                f"Error updating rolling summary: {e}",
+            )
 
     asyncio.create_task(summarize_task())
 
 
 @EventHandler.register(DirectMessageEvent)
 async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwargs):
-    print(f"Received DirectMessageEvent: {event.content}")
+    cm._session_logger.info(
+        "direct_message",
+        f"Direct message: {event.content[:50]}...",
+    )
 
     # Send to Voice Agent via call_guidance channel
     if cm.mode in ["call", "unify_meet"]:
@@ -604,7 +630,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
         )
 
     # Record in contact_index for transcript access
-    contact = cm.call_manager.call_contact or cm.contact_index.get_contact(contact_id=1)
+    contact = cm.get_active_contact()
     cm.contact_index.push_message(
         contact,
         "voice",

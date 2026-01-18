@@ -142,3 +142,77 @@ async def test_interjection_publishes_user_event(model) -> None:
     assert any(
         "interjected" in c for c in user_contents
     ), "Interjection should be recorded"
+
+
+# --------------------------------------------------------------------------- #
+#          Tool results contain actual content, not placeholders              #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_tool_result_content_is_not_placeholder(model) -> None:
+    """
+    Verify that tool messages published to EventBus contain actual tool results,
+    not placeholder text like "Streaming..." or "In progress...".
+
+    This is a regression test for an issue where ToolData objects were passed
+    by reference to the EventBus, and the content was still a placeholder when
+    the event was published (before the actual result was available).
+    """
+    # Use a deterministic tool that returns known content
+    expected_result = "EXPECTED_TOOL_OUTPUT_12345"
+
+    async def deterministic_tool(input_text: str) -> str:
+        """A tool that returns a predictable result for testing."""
+        return expected_result
+
+    client = new_llm_client(model=model).set_system_message(
+        "You are an automated test agent.\n"
+        "You MUST call the tool named `deterministic_tool` exactly once, "
+        "passing any text as the `input_text` argument.\n"
+        "After the tool returns, reply with the tool result.",
+    )
+
+    pause_event = asyncio.Event()
+    pause_event.set()
+
+    async with capture_events("ToolLoop") as captured_events:
+        await async_tool_loop_inner(
+            client=client,
+            message="please call the tool",
+            tools={"deterministic_tool": deterministic_tool},
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+            pause_event=pause_event,
+            prune_tool_duplicates=True,
+        )
+
+    # Filter out internal runtime context events
+    events = _filter_runtime_context(captured_events)
+
+    # Find tool result events
+    tool_events = [evt for evt in events if evt.payload["message"]["role"] == "tool"]
+
+    assert len(tool_events) >= 1, "Should have at least one tool result event"
+
+    # Verify tool result content is the actual result, not a placeholder
+    tool_content = tool_events[0].payload["message"]["content"]
+
+    # Check it's NOT a placeholder
+    placeholder_patterns = [
+        "Streaming...",
+        "In progress...",
+        "Loading...",
+        "Pending...",
+        "...",  # Common placeholder suffix
+    ]
+    for pattern in placeholder_patterns:
+        assert (
+            pattern not in tool_content or expected_result in tool_content
+        ), f"Tool content appears to be a placeholder: {tool_content!r}"
+
+    # Check it IS the expected result
+    assert (
+        expected_result in tool_content
+    ), f"Tool content should contain '{expected_result}', got: {tool_content!r}"
