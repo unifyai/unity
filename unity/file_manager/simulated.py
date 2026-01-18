@@ -479,7 +479,7 @@ class SimulatedFileManager(BaseFileManager):
     @functools.wraps(BaseFileManager.ask_about_file, updated=())
     async def ask_about_file(
         self,
-        filename: str,
+        file_path: str,
         question: str,
         *,
         _return_reasoning_steps: bool = False,
@@ -491,14 +491,14 @@ class SimulatedFileManager(BaseFileManager):
         _call_id: Optional[str] = None,
         response_format: Optional[Any] = None,
     ) -> SteerableToolHandle:
-        if filename not in self._files:
-            raise FileNotFoundError(filename)
+        if file_path not in self._files:
+            raise FileNotFoundError(file_path)
         instruction = build_simulated_method_prompt(
             "ask_about_file",
-            f"File: {filename}\nQuestion: {question}",
+            f"File: {file_path}\nQuestion: {question}",
             parent_chat_context=_parent_chat_context,
         )
-        file_info = self._files[filename]
+        file_info = self._files[file_path]
         instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
         handle = _SimulatedFileHandle(
             self._llm,
@@ -1065,6 +1065,87 @@ class SimulatedFileManager(BaseFileManager):
         if isinstance(columns, str):
             return {g: _scalar(columns) for g in groups}
         return {g: {k: _scalar(k) for k in col_list} for g in groups}
+
+    # --------------------------------------------------------------------- #
+    # Join methods (simulated placeholders)                                  #
+    # --------------------------------------------------------------------- #
+    @functools.wraps(BaseFileManager.filter_join, updated=())
+    def filter_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Simulated filter_join: returns placeholder empty results.
+
+        In simulated mode, no real join is performed. Returns an empty list
+        to satisfy the API contract.
+        """
+        return {"rows": []}
+
+    @functools.wraps(BaseFileManager.search_join, updated=())
+    def search_join(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        join_expr: str,
+        select: Dict[str, str],
+        mode: str = "inner",
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+        filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Simulated search_join: returns placeholder empty results.
+
+        In simulated mode, no real join or semantic search is performed.
+        Returns an empty list to satisfy the API contract.
+        """
+        return []
+
+    @functools.wraps(BaseFileManager.filter_multi_join, updated=())
+    def filter_multi_join(
+        self,
+        *,
+        joins: List[Dict[str, Any]],
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Simulated filter_multi_join: returns placeholder empty results.
+
+        In simulated mode, no real multi-join is performed. Returns an empty
+        list to satisfy the API contract.
+        """
+        return {"rows": []}
+
+    @functools.wraps(BaseFileManager.search_multi_join, updated=())
+    def search_multi_join(
+        self,
+        *,
+        joins: List[Dict[str, Any]],
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+        filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Simulated search_multi_join: returns placeholder empty results.
+
+        In simulated mode, no real multi-join or semantic search is performed.
+        Returns an empty list to satisfy the API contract.
+        """
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1489,7 +1489,10 @@ class FileManager(BaseFileManager):
         response_format: Optional[Any] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:  # type: ignore[override]
-        if not self.exists(file_path):
+        # Check if file is indexed in Unify (not just filesystem existence)
+        # This allows asking about files that were ingested but may not exist on local FS
+        storage = self.describe(file_path=file_path)
+        if not storage.indexed_exists:
             raise FileNotFoundError(file_path)
         client = new_llm_client()
 
