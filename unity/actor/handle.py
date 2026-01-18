@@ -516,7 +516,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         ]
         if self._computer_primitives and self._computer_primitives.browser:
             try:
-                screenshot = await self._computer_primitives.browser.get_screenshot()
+                screenshot = await self._computer_primitives.computer.get_screenshot()
                 if isinstance(screenshot, str):
                     screenshot_b64 = screenshot
                 else:
