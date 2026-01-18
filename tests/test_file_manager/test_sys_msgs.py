@@ -36,13 +36,9 @@ def _make_mock_tools() -> dict:
         """List columns in a table."""
         return {}
 
-    def tables_overview(*, file: str = None) -> dict:
-        """Get tables overview."""
+    def describe(*, file_path: str = None, file_id: int = None) -> dict:
+        """Get file storage layout with contexts and schemas."""
         return {}
-
-    def schema_explain(*, table: str) -> str:
-        """Explain a table schema."""
-        return ""
 
     def filter_files(
         *,
@@ -108,10 +104,6 @@ def _make_mock_tools() -> dict:
         """Get file stat."""
         return {}
 
-    def file_info(*, identifier: str) -> dict:
-        """Get file info."""
-        return {}
-
     def visualize(
         *,
         tables: str,
@@ -126,8 +118,7 @@ def _make_mock_tools() -> dict:
         "exists": exists,
         "list": list_dir,
         "list_columns": list_columns,
-        "tables_overview": tables_overview,
-        "schema_explain": schema_explain,
+        "describe": describe,
         "filter_files": filter_files,
         "search_files": search_files,
         "reduce": reduce,
@@ -136,7 +127,6 @@ def _make_mock_tools() -> dict:
         "filter_multi_join": filter_multi_join,
         "search_multi_join": search_multi_join,
         "stat": stat,
-        "file_info": file_info,
         "visualize": visualize,
     }
 
@@ -208,8 +198,7 @@ def _build_prompt_in_subprocess(method: str) -> str:
         def exists(path: str) -> bool: return True
         def list_dir(path: str = "/") -> list: return []
         def list_columns(table: str, *, include_types: bool = True) -> dict: return {{}}
-        def tables_overview(*, file: str = None) -> dict: return {{}}
-        def schema_explain(*, table: str) -> str: return ""
+        def describe(*, file_path: str = None, file_id: int = None) -> dict: return {{}}
         def filter_files(*, filter: str = None, tables: list = None, offset: int = 0, limit: int = 100) -> list: return []
         def search_files(*, references: dict, table: str = None, filter: str = None, k: int = 10) -> list: return []
         def reduce(*, table: str, metric: str, keys: str, filter: str = None, group_by: str = None) -> dict: return {{}}
@@ -218,17 +207,16 @@ def _build_prompt_in_subprocess(method: str) -> str:
         def filter_multi_join(*, joins: list, result_where: str = None) -> list: return []
         def search_multi_join(*, joins: list, references: dict, k: int = 10) -> list: return []
         def stat(path_or_uri: str) -> dict: return {{}}
-        def file_info(*, identifier: str) -> dict: return {{}}
         def visualize(*, tables: str, plot_type: str, x_axis: str, y_axis: str = None) -> dict: return {{}}
 
         tools = {{
             "exists": exists, "list": list_dir, "list_columns": list_columns,
-            "tables_overview": tables_overview, "filter_files": filter_files,
-            "schema_explain": schema_explain, "search_files": search_files,
+            "describe": describe, "filter_files": filter_files,
+            "search_files": search_files,
             "reduce": reduce, "filter_join": filter_join,
             "search_join": search_join, "filter_multi_join": filter_multi_join,
             "search_multi_join": search_multi_join, "stat": stat,
-            "file_info": file_info, "visualize": visualize,
+            "visualize": visualize,
         }}
 
         prompt = build_file_manager_ask_about_file_prompt(

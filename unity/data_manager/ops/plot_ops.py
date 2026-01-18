@@ -1,17 +1,12 @@
 """
-Visualization utilities for FileManager.
+Plot operations for DataManager.
 
-This module provides low-level functions for generating plot visualizations
-via the Console Plot API. It handles API communication, error handling, and
-result formatting.
+Implementation functions for plot, plot_batch.
+These are called by DataManager methods and should not be used directly.
 
 Architecture Note:
     Currently uses Console API (POST {CONSOLE_BASE_URL}/api/plot/create).
     This is the integration path until the Plot API is migrated to Orchestra.
-
-Usage:
-    These utilities are called by FileManager.visualize() and should not be
-    invoked directly by external code. Use the high-level visualize tool instead.
 """
 
 from __future__ import annotations
@@ -19,12 +14,11 @@ from __future__ import annotations
 import logging
 import time
 import traceback
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
 
+from unity.data_manager.types.plot import PlotConfig, PlotResult
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
@@ -32,109 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# ENUMERATIONS
-# =============================================================================
-
-
-class PlotType(str, Enum):
-    """
-    Supported plot types from the Plot API.
-
-    Values:
-        SCATTER: Scatter plot for correlations between two numeric variables
-        BAR: Bar chart for comparing values across categories
-        HISTOGRAM: Histogram for distribution of a single variable
-        LINE: Line chart for trends over time/sequences
-    """
-
-    SCATTER = "scatter"
-    BAR = "bar"
-    HISTOGRAM = "histogram"
-    LINE = "line"
-
-
-# =============================================================================
-# PYDANTIC MODELS
-# =============================================================================
-
-
-class PlotConfig(BaseModel):
-    """
-    Configuration for a single plot visualization.
-
-    This model defines the parameters needed to generate a plot via the
-    Plot API. It maps to the 'plot_config' object in the API request body.
-    """
-
-    model_config = ConfigDict(use_enum_values=True)
-
-    plot_type: str
-    x_axis: str
-    y_axis: Optional[str] = None
-    group_by: Optional[str] = None
-    metric: Optional[str] = None
-    aggregate: Optional[str] = None
-    scale_x: Optional[str] = None
-    scale_y: Optional[str] = None
-    bin_count: Optional[int] = None
-    show_regression: Optional[bool] = None
-    title: Optional[str] = None
-
-
-class PlotResult(BaseModel):
-    """
-    Result of a plot generation attempt.
-
-    Contains either a successful plot URL or error information if generation
-    failed.
-    """
-
-    url: Optional[str] = None
-    token: Optional[str] = None
-    expires_in_hours: Optional[int] = None
-    title: Optional[str] = None
-    table: Optional[str] = None
-    error: Optional[str] = None
-    traceback_str: Optional[str] = Field(default=None, alias="traceback")
-
-    @property
-    def succeeded(self) -> bool:
-        """Return True if plot generation succeeded (has URL, no error)."""
-        return self.url is not None and self.error is None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for API response."""
-        result: Dict[str, Any] = {}
-        if self.url is not None:
-            result["url"] = self.url
-        if self.token is not None:
-            result["token"] = self.token
-        if self.expires_in_hours is not None:
-            result["expires_in_hours"] = self.expires_in_hours
-        if self.title is not None:
-            result["title"] = self.title
-        if self.table is not None:
-            result["table"] = self.table
-        if self.error is not None:
-            result["error"] = self.error
-        return result
-
-
-# =============================================================================
 # AUTHENTICATION
 # =============================================================================
 
 
-def get_auth_headers() -> Dict[str, str]:
+def _get_auth_headers() -> Dict[str, str]:
     """
     Get authentication headers for the Plot API request.
 
     Uses SESSION_DETAILS.unify_key for authentication.
-
-    Returns
-    -------
-    dict
-        Dictionary with Authorization header.
     """
     unify_key = SESSION_DETAILS.unify_key
     if not unify_key:
@@ -153,21 +53,11 @@ def get_auth_headers() -> Dict[str, str]:
 # =============================================================================
 
 
-def build_plot_config_dict(config: PlotConfig) -> Dict[str, Any]:
+def _build_plot_config_dict(config: PlotConfig) -> Dict[str, Any]:
     """
     Build the plot_config dictionary for the API request.
 
     Only includes non-None fields to keep the request minimal.
-
-    Parameters
-    ----------
-    config : PlotConfig
-        PlotConfig with visualization parameters.
-
-    Returns
-    -------
-    dict
-        Dictionary suitable for plot_config field in API request.
     """
     result: Dict[str, Any] = {
         "type": config.plot_type,
@@ -194,7 +84,7 @@ def build_plot_config_dict(config: PlotConfig) -> Dict[str, Any]:
     return result
 
 
-def build_project_config_dict(
+def _build_project_config_dict(
     *,
     project_name: str,
     context: str,
@@ -205,26 +95,6 @@ def build_project_config_dict(
 ) -> Dict[str, Any]:
     """
     Build the project_config dictionary for the API request.
-
-    Parameters
-    ----------
-    project_name : str
-        Unify project name.
-    context : str
-        Fully-qualified table context path.
-    filter_expr : str | None
-        Optional filter expression.
-    randomize : bool
-        Whether to randomize the data order.
-    exclude_fields : list[str] | None
-        Fields to exclude from the response.
-    group_by : str | None
-        Column to group data by in the project config.
-
-    Returns
-    -------
-    dict
-        Dictionary suitable for project_config field in API request.
     """
     result: Dict[str, Any] = {
         "project_name": project_name,
@@ -254,31 +124,10 @@ def _make_plot_request(
 ) -> httpx.Response:
     """
     Make HTTP POST request to Plot API with retry and exponential backoff.
-
-    Parameters
-    ----------
-    endpoint : str
-        Full URL for the Plot API endpoint.
-    request_body : dict
-        JSON body for the request.
-    headers : dict
-        HTTP headers including authorization.
-
-    Returns
-    -------
-    httpx.Response
-        The successful response.
-
-    Raises
-    ------
-    httpx.HTTPStatusError
-        If all retries fail with HTTP errors.
-    httpx.RequestError
-        If all retries fail with connection errors.
     """
-    max_retries = SETTINGS.file.PLOT_API_MAX_RETRIES
-    backoff = SETTINGS.file.PLOT_API_RETRY_BACKOFF
-    timeout = SETTINGS.file.PLOT_API_TIMEOUT
+    max_retries = getattr(SETTINGS.file, "PLOT_API_MAX_RETRIES", 3)
+    backoff = getattr(SETTINGS.file, "PLOT_API_RETRY_BACKOFF", 1.0)
+    timeout = getattr(SETTINGS.file, "PLOT_API_TIMEOUT", 30.0)
 
     last_exception: Optional[Exception] = None
 
@@ -318,14 +167,9 @@ def _make_plot_request(
 # =============================================================================
 
 
-def get_active_project() -> str:
+def _get_active_project() -> str:
     """
     Get the currently active Unify project name.
-
-    Returns
-    -------
-    str
-        Project name string, or empty string if not available.
     """
     try:
         import unify
@@ -339,9 +183,9 @@ def get_active_project() -> str:
 def generate_plot(
     *,
     config: PlotConfig,
-    project_name: str,
     context: str,
     filter_expr: Optional[str] = None,
+    project_name: Optional[str] = None,
     randomize: bool = False,
     exclude_fields: Optional[List[str]] = None,
     project_group_by: Optional[str] = None,
@@ -357,12 +201,12 @@ def generate_plot(
     ----------
     config : PlotConfig
         PlotConfig defining the visualization parameters.
-    project_name : str
-        Unify project name.
     context : str
         Fully-qualified table context path.
     filter_expr : str | None
         Optional filter expression.
+    project_name : str | None
+        Unify project name. If None, uses the active project.
     randomize : bool
         Whether to randomize the data order.
     exclude_fields : list[str] | None
@@ -378,13 +222,23 @@ def generate_plot(
         Result with either successful URL or error information.
         Never raises exceptions - errors are captured in the result.
     """
+    # Get project name if not provided
+    if project_name is None:
+        project_name = _get_active_project()
+        if not project_name:
+            return PlotResult(
+                error="No active Unify project. Set project with unify.activate().",
+                title=config.title,
+                context=context,
+            )
+
     # Compute final title
     base_title = config.title or f"{config.plot_type} chart"
     title = f"{base_title} ({title_suffix})" if title_suffix else base_title
 
     # Build request
-    plot_config_dict = build_plot_config_dict(config)
-    project_config_dict = build_project_config_dict(
+    plot_config_dict = _build_plot_config_dict(config)
+    project_config_dict = _build_project_config_dict(
         project_name=project_name,
         context=context,
         filter_expr=filter_expr,
@@ -400,11 +254,18 @@ def generate_plot(
     }
 
     try:
-        endpoint = f"{SETTINGS.file.CONSOLE_BASE_URL}{SETTINGS.file.PLOT_API_ENDPOINT}"
+        console_base = getattr(
+            SETTINGS.file,
+            "CONSOLE_BASE_URL",
+            "https://console.unify.ai",
+        )
+        plot_endpoint = getattr(SETTINGS.file, "PLOT_API_ENDPOINT", "/api/plot/create")
+        endpoint = f"{console_base}{plot_endpoint}"
+
         response = _make_plot_request(
             endpoint=endpoint,
             request_body=request_body,
-            headers=get_auth_headers(),
+            headers=_get_auth_headers(),
         )
         data = response.json()
 
@@ -413,6 +274,7 @@ def generate_plot(
             token=data.get("token"),
             expires_in_hours=data.get("expires_in_hours"),
             title=title,
+            context=context,
         )
 
     except httpx.HTTPStatusError as e:
@@ -420,8 +282,9 @@ def generate_plot(
         logger.warning(f"Plot API HTTP error: {error_msg}")
         return PlotResult(
             title=title,
+            context=context,
             error=error_msg,
-            traceback=traceback.format_exc(),
+            traceback_str=traceback.format_exc(),
         )
 
     except httpx.RequestError as e:
@@ -429,8 +292,9 @@ def generate_plot(
         logger.warning(f"Plot API request error: {error_msg}")
         return PlotResult(
             title=title,
+            context=context,
             error=error_msg,
-            traceback=traceback.format_exc(),
+            traceback_str=traceback.format_exc(),
         )
 
     except Exception as e:
@@ -438,8 +302,9 @@ def generate_plot(
         logger.warning(f"Plot generation failed unexpectedly: {error_msg}")
         return PlotResult(
             title=title,
+            context=context,
             error=error_msg,
-            traceback=traceback.format_exc(),
+            traceback_str=traceback.format_exc(),
         )
 
 
@@ -447,8 +312,8 @@ def generate_plots_batch(
     *,
     contexts: List[str],
     config: PlotConfig,
-    project_name: Optional[str] = None,
     filter_expr: Optional[str] = None,
+    project_name: Optional[str] = None,
     randomize: bool = False,
     exclude_fields: Optional[List[str]] = None,
     project_group_by: Optional[str] = None,
@@ -463,13 +328,13 @@ def generate_plots_batch(
     Parameters
     ----------
     contexts : list[str]
-        List of fully-qualified context paths (resolved from tables).
+        List of fully-qualified context paths.
     config : PlotConfig
         PlotConfig defining the visualization parameters.
-    project_name : str | None
-        Unify project name. If None, uses the active project.
     filter_expr : str | None
         Optional filter expression.
+    project_name : str | None
+        Unify project name. If None, uses the active project.
     randomize : bool
         Whether to randomize the data order.
     exclude_fields : list[str] | None
@@ -484,7 +349,7 @@ def generate_plots_batch(
     """
     # Get project name if not provided
     if project_name is None:
-        project_name = get_active_project()
+        project_name = _get_active_project()
         if not project_name:
             # Return error results for all contexts
             base_title = config.title or f"{config.plot_type} chart"
@@ -492,7 +357,7 @@ def generate_plots_batch(
                 PlotResult(
                     error="No active Unify project. Set project with unify.activate().",
                     title=base_title,
-                    table=ctx,
+                    context=ctx,
                 )
                 for ctx in contexts
             ]
@@ -506,17 +371,15 @@ def generate_plots_batch(
         # Generate plot for this context
         result = generate_plot(
             config=config,
-            project_name=project_name,
             context=context,
             filter_expr=filter_expr,
+            project_name=project_name,
             randomize=randomize,
             exclude_fields=exclude_fields,
             project_group_by=project_group_by,
             title_suffix=table_label if len(contexts) > 1 else None,
         )
 
-        # Add table reference to result (use context as table)
-        result.table = context
         results.append(result)
 
         # Log result

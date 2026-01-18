@@ -889,10 +889,8 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     if kind == "ask":
         return methods_to_tool_dict(
             # Schema discovery
+            FileManager.describe,
             FileManager.list_columns,
-            FileManager.tables_overview,
-            FileManager.schema_explain,
-            FileManager.file_info,
             # Retrieval helpers
             FileManager.filter_files,
             FileManager.search_files,
@@ -912,10 +910,8 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     elif kind == "ask_about_file":
         return methods_to_tool_dict(
             # Schema discovery
-            FileManager.file_info,
+            FileManager.describe,
             FileManager.list_columns,
-            FileManager.tables_overview,
-            FileManager.schema_explain,
             # Retrieval helpers
             FileManager.filter_files,
             FileManager.search_files,
@@ -943,10 +939,8 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     else:
         # Default to ask tools
         return methods_to_tool_dict(
+            FileManager.describe,
             FileManager.list_columns,
-            FileManager.tables_overview,
-            FileManager.schema_explain,
-            FileManager.file_info,
             FileManager.filter_files,
             FileManager.search_files,
             FileManager.reduce,

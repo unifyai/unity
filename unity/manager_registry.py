@@ -25,6 +25,7 @@ Available typed methods:
     - get_actor()
     - get_contact_manager()
     - get_conversation_manager_handle()
+    - get_data_manager()
     - get_file_manager()
     - get_function_manager()
     - get_guidance_manager()
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from .actor.base import BaseActor
     from .contact_manager.base import BaseContactManager
     from .conversation_manager.base import BaseConversationManagerHandle
+    from .data_manager.base import BaseDataManager
     from .file_manager.managers.base import BaseFileManager
     from .function_manager.base import BaseFunctionManager
     from .guidance_manager.base import BaseGuidanceManager
@@ -365,6 +367,25 @@ class ManagerRegistry:
         )
 
     @classmethod
+    def get_data_manager(
+        cls,
+        *,
+        _force_new: bool = False,
+        **kwargs: Any,
+    ) -> "BaseDataManager":
+        """Get the DataManager singleton (respects IMPL settings).
+
+        DataManager provides canonical data operations (filter, search, reduce,
+        join, vectorize, plot) that work on any Unify context. It owns the
+        Data/* namespace but can operate on any context including Files/*.
+        """
+        return cls.get(
+            "data",
+            _force_new=_force_new,
+            **kwargs,
+        )
+
+    @classmethod
     def get_file_manager(
         cls,
         *,
@@ -593,6 +614,7 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("guidance", lambda: SETTINGS.guidance)
     ManagerRegistry.register_settings("secrets", lambda: SETTINGS.secret)
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
+    ManagerRegistry.register_settings("data", lambda: SETTINGS.data)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
     ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
     ManagerRegistry.register_settings("images", lambda: SETTINGS.image)
@@ -690,6 +712,15 @@ def _populate_registry() -> None:
 
     ManagerRegistry.register_class("web_search", "real", WebSearcher)
     ManagerRegistry.register_class("web_search", "simulated", SimulatedWebSearcher)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DataManager implementations
+    # ─────────────────────────────────────────────────────────────────────────
+    from .data_manager.data_manager import DataManager
+    from .data_manager.simulated import SimulatedDataManager
+
+    ManagerRegistry.register_class("data", "real", DataManager)
+    ManagerRegistry.register_class("data", "simulated", SimulatedDataManager)
 
     # ─────────────────────────────────────────────────────────────────────────
     # FileManager implementations

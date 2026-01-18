@@ -114,7 +114,8 @@ def _sanitize_filename(name: str, max_length: int = 200) -> str:
     import hashlib
 
     # Replace invalid characters with underscore or dash
-    name = re.sub(r'["\:<>|*?\r\n\\]', "_", name)
+    # Also replace / which appears in test params like text/plain
+    name = re.sub(r'["\:<>|*?\r\n\\/]', "_", name)
     # Collapse multiple underscores/dashes
     name = re.sub(r"[_-]{2,}", "-", name)
     # Remove leading/trailing underscores/dashes

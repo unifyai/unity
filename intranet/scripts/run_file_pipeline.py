@@ -197,12 +197,11 @@ def main() -> int:
         f"      • backend_class_paths_by_format: {len(backend_overrides)} format(s) configured",
     )
     print(f"   Ingest:")
-    print(f"      • mode: {cfg.ingest.mode}")
+    print(f"      • storage_id: {cfg.ingest.storage_id or 'per-file (auto)'}")
     print(f"      • table_ingest: {cfg.ingest.table_ingest}")
     print(f"      • content_rows_batch_size: {cfg.ingest.content_rows_batch_size}")
     print(f"      • table_rows_batch_size: {cfg.ingest.table_rows_batch_size}")
-    if cfg.ingest.unified_label:
-        print(f"      • unified_label: {cfg.ingest.unified_label}")
+    # storage_id already printed above
     print(f"   Embed:")
     print(f"      • strategy: {cfg.embed.strategy}")
     embed_specs_count = len(cfg.embed.file_specs) if cfg.embed.file_specs else 0

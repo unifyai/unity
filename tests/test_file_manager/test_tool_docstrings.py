@@ -16,9 +16,9 @@ def _unwrap_callable(tool):
 
 
 def test_all_ask_tools_have_sufficient_docstrings(file_manager):
-    tools = file_manager.get_tools("ask")
+    tools = file_manager.get_tools("ask_about_file")
 
-    assert tools, "FileManager.ask should expose at least one tool"
+    assert tools, "FileManager.ask_about_file should expose at least one tool"
 
     for name, value in tools.items():
         fn = _unwrap_callable(value)
@@ -36,7 +36,7 @@ def _build_tools_schema_in_subprocess(method: str, test_context: str) -> str:
     The test_context is passed via environment variable to ensure the subprocess
     uses an isolated context rather than the shared default context.
     """
-    assert method == "ask"
+    assert method == "ask_about_file"
     code = textwrap.dedent(
         f"""
 		import os, sys, json
@@ -81,8 +81,8 @@ def _build_tools_schema_in_subprocess(method: str, test_context: str) -> str:
 def test_ask_tool_schemas_are_stable_across_python_sessions():
     # Build a test-specific context path matching _handle_project pattern
     test_ctx = f"tests/test_file_manager/test_tool_docstrings/test_ask_tool_schemas_are_stable_across_python_sessions/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
-    p1 = _build_tools_schema_in_subprocess("ask", test_ctx)
-    p2 = _build_tools_schema_in_subprocess("ask", test_ctx)
+    p1 = _build_tools_schema_in_subprocess("ask_about_file", test_ctx)
+    p2 = _build_tools_schema_in_subprocess("ask_about_file", test_ctx)
     if p1 != p2:
         snippet = first_diff_block(
             p1,
@@ -92,6 +92,6 @@ def test_ask_tool_schemas_are_stable_across_python_sessions():
             label_b="Second JSON",
         )
         raise AssertionError(
-            "Tool schemas for ask-tools changed between separate Python sessions.\n\n"
+            "Tool schemas for ask_about_file tools changed between separate Python sessions.\n\n"
             + snippet,
         )

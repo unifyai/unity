@@ -12,7 +12,7 @@ Types Defined:
     - PlotConfig: Configuration for a single plot (re-exported from viz_utils)
     - PlotResult: Result of a plot generation attempt (re-exported from viz_utils)
     - MetricResult: Standard result shape for all metrics
-    - FileTools: Type alias for file manager tools dictionary
+    - FileTools: Generic type alias for tools dictionary (callables by name)
 """
 
 from __future__ import annotations
@@ -22,15 +22,16 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
-# Re-export plot types from viz_utils (canonical source)
-from unity.file_manager.managers.utils.viz_utils import (
+# Re-export plot types from DataManager (canonical source)
+from unity.data_manager.types import (
     PlotConfig,
     PlotResult,
     PlotType,
 )
 
-# Import FileTools from primitives (canonical source for tools dict type)
-from unity.function_manager.primitives import FileTools
+# Generic type alias for tools dictionaries (e.g., from FileManager.get_tools())
+# Keys are tool names, values are callable tool functions
+FileTools = Dict[str, Callable[..., Any]]
 
 # Type alias for the visualize tool function signature
 VisualizeTool = Callable[..., Union[PlotResult, List[PlotResult]]]

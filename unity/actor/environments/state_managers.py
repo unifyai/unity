@@ -197,9 +197,8 @@ class StateManagerEnvironment(BaseEnvironment):
             "filter_files",  # FileManager read-only
             "search_files",  # FileManager read-only
             "visualize",  # FileManager read-only (generates plots, no mutation)
-            "tables_overview",  # FileManager read-only
+            "describe",  # FileManager read-only
             "list_columns",  # FileManager read-only
-            "schema_explain",  # FileManager read-only
         }
 
         tools: Dict[str, ToolMetadata] = {}

@@ -162,11 +162,14 @@ async def test_filter_by_content_id_dict(file_manager, supported_file_examples: 
     display_name = str(example_data["path"])  # absolute path
     # Parse file to create per-file Content rows
     fm.ingest_files(display_name)
-    # Use file_path directly instead of legacy root from tables_overview
+    # Use describe() to get the proper context path
+    storage = fm.describe(file_path=display_name)
+    assert storage.document is not None, "File should have a document context"
+    ctx = storage.document.context_path
     # Filter for the document row using dict-based content_id
     rows = fm.filter_files(
         filter="content_type == 'document' and content_id.get('document') == 0",
-        tables=[display_name],
+        context=ctx,
     )
     assert isinstance(rows, list)
     assert rows, "Expected at least one Content row for the document"

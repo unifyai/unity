@@ -41,23 +41,19 @@ def build_cross_tool_orchestration(tools: Dict[str, Callable]) -> str:
     Tool-specific details (syntax, examples) now live in rich tool docstrings.
     This function provides only the high-level decision framework.
     """
-    tables_overview_fname = _tool_name(tools, "tables_overview")
+    describe_fname = _tool_name(tools, "describe")
     list_columns_fname = _tool_name(tools, "list_columns")
-    file_info_fname = _tool_name(tools, "file_info")
-    schema_explain_fname = _tool_name(tools, "schema_explain")
 
     return "\n".join(
         [
             "Cross-tool orchestration",
             "------------------------",
             "",
-            "Discovery phase (understand what data exists):",
-            f"• `{file_info_fname}` → file status, ingest mode, storage layout",
-            f"• `{tables_overview_fname}` → available contexts (global index or per-file)",
-            f"• `{list_columns_fname}` → column names for a specific table",
-            f"• `{schema_explain_fname}` → natural-language schema explanation",
+            "Discovery phase (ALWAYS start here):",
+            f"• `{describe_fname}` → get file_id, context paths, schemas (REQUIRED before filter/search/reduce)",
+            f"• `{list_columns_fname}` → detailed column inspection for a specific context",
             "",
-            "Retrieval phase (choose based on goal):",
+            "Retrieval phase (use context paths from describe):",
             "• Counts/sums/statistics → `reduce`",
             "• Semantic meaning/topics → `search_files`",
             "• Exact matches (ids, statuses) → `filter_files`",
@@ -115,17 +111,14 @@ def build_file_manager_ask_about_file_prompt(
     """
     filter_files_fname = _tool_name(tools, "filter_files")
     search_files_fname = _tool_name(tools, "search_files")
-    schema_explain_fname = _tool_name(tools, "schema_explain")
-    tables_overview_fname = _tool_name(tools, "tables_overview")
-    file_info_fname = _tool_name(tools, "file_info")
+    describe_fname = _tool_name(tools, "describe")
 
     # Require core ask_about_file tools
     _require_tools(
         {
             "filter_files": filter_files_fname,
             "search_files": search_files_fname,
-            "schema_explain": schema_explain_fname,
-            "tables_overview": tables_overview_fname,
+            "describe": describe_fname,
         },
         tools,
     )
@@ -148,9 +141,9 @@ def build_file_manager_ask_about_file_prompt(
     parts.append(
         "Important: When calling tools, use the filename exactly as provided in the user message. Do not construct or modify file paths.",
     )
-    if file_info_fname:
+    if describe_fname:
         parts.append(
-            f"Use `{file_info_fname}` to check file status, ingest mode, and storage layout.",
+            f"ALWAYS call `{describe_fname}` first to get exact context paths before using filter/search/reduce.",
         )
     parts.append("")
 

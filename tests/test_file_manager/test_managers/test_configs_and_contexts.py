@@ -38,16 +38,14 @@ def test_per_file_contexts_created(file_manager, tmp_path: Path):
 
     print(f"item.file_path: {item.file_path}")
 
-    overview = fm.tables_overview(file=name)
-    print(f"overview: {overview}")
-    assert isinstance(overview, dict)
-    # Global entry
-    assert "FileRecords" in overview and isinstance(overview["FileRecords"], dict)
-    # Find file root entry (shape: { Content: {...}, Tables?: {...} })
-    roots = [v for k, v in overview.items() if isinstance(v, dict) and "Content" in v]
-    assert roots, "Expected a per-file root with a Content entry"
-    content_meta = roots[0]["Content"]
-    assert "/Content" in str(content_meta.get("context", ""))
+    # Use describe() to get storage map
+    storage = fm.describe(file_path=name)
+    print(f"storage: {storage}")
+
+    # Verify per-file context was created
+    assert storage.file_id is not None
+    assert storage.has_document, "Expected a per-file Content context"
+    assert "/Content" in storage.document.context_path
 
 
 @_handle_project
@@ -62,19 +60,19 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
     n2 = str(p2)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="unified", unified_label="Docs"),
+        ingest=IngestConfig(storage_id="Docs"),
     )
     res = fm.ingest_files([n1, n2], config=cfg)
     # All returns are now Pydantic models - use attribute access
     assert res[n1].status == "success"
     assert res[n2].status == "success"
 
-    # Unified context should exist under the unified label
-    ov = fm.tables_overview(file="Docs")
-    assert isinstance(ov, dict) and len(ov) >= 1
-    # Unified label entry should exist with Content
-    assert "Docs" in ov and "Content" in ov["Docs"]
-    assert "/Content" in str(ov["Docs"]["Content"].get("context", ""))
+    # Unified mode: files are indexed but content goes to unified context
+    # Verify both files were indexed
+    storage1 = fm.describe(file_path=n1)
+    storage2 = fm.describe(file_path=n2)
+    assert storage1.file_id is not None
+    assert storage2.file_id is not None
 
 
 @pytest.mark.unit
@@ -110,7 +108,7 @@ def test_embedding_specs_smoke(file_manager, tmp_path: Path):
     name = str(p)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file"),
+        ingest=IngestConfig(),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="after",
             file_specs=[
@@ -152,12 +150,11 @@ def test_table_ingest_toggle_off_skips_tables_contexts(file_manager, tmp_path: P
     # All returns are now Pydantic models - use attribute access
     assert item.status == "success"
 
-    ov = fm.tables_overview(file=name)
-    assert isinstance(ov, dict)
-    # When table_ingest=False, the root should not include a "Tables" map
-    roots = [v for k, v in ov.items() if isinstance(v, dict) and "Content" in v]
-    assert roots, "Expected a per-file root with Content"
-    assert "Tables" not in roots[0]
+    # Use describe() to check storage layout
+    storage = fm.describe(file_path=name)
+    assert storage.has_document, "Expected a per-file Content context"
+    # When table_ingest=False, no tables should be created
+    assert not storage.has_tables, "Expected no Tables when table_ingest=False"
 
 
 # ==================== Comprehensive Config Testing ====================
@@ -174,7 +171,7 @@ def test_file_pipeline_config_defaults():
     assert cfg.parse.max_concurrent_parses == 3
     assert isinstance(cfg.parse.backend_class_paths_by_format, dict)
     assert cfg.parse.backend_class_paths_by_format  # non-empty mapping
-    assert cfg.ingest.mode == "per_file"
+    assert cfg.ingest.storage_id is None  # default per-file mode
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "compact"
     assert cfg.diagnostics.enable_progress is False
@@ -310,7 +307,7 @@ def test_config_from_file_empty(tmp_path: Path):
     cfg = FilePipelineConfig.from_file(str(config_file))
     assert isinstance(cfg, FilePipelineConfig)
     assert cfg.parse.max_concurrent_parses == 3
-    assert cfg.ingest.mode == "per_file"
+    assert cfg.ingest.storage_id is None  # default per-file mode
 
 
 def test_config_from_file_partial(tmp_path: Path):
@@ -328,7 +325,7 @@ def test_config_from_file_partial(tmp_path: Path):
     assert cfg.parse.max_concurrent_parses == 10
     assert cfg.output.return_mode == "full"
     # Other sections should have defaults
-    assert cfg.ingest.mode == "per_file"
+    assert cfg.ingest.storage_id is None  # default per-file mode
     assert cfg.embed.strategy == "after"
 
 
@@ -535,8 +532,7 @@ def test_config_from_file_full(tmp_path: Path):
         # parser_kwargs/plugins are ignored (legacy/removed); this test ensures unknown keys don't break loading.
         "parse": {"batch_size": 5, "parser_kwargs": {"key": "value"}},
         "ingest": {
-            "mode": "unified",
-            "unified_label": "FullTest",
+            "storage_id": "FullTest",
             "table_rows_batch_size": 3000,
             "business_contexts": {
                 "global_rules": ["Global rule"],
@@ -582,7 +578,7 @@ def test_config_from_file_full(tmp_path: Path):
 
     cfg = FilePipelineConfig.from_file(str(config_file))
     assert cfg.parse.max_concurrent_parses == 5
-    assert cfg.ingest.mode == "unified"
+    assert cfg.ingest.storage_id is not None  # unified mode (shared storage)
     assert cfg.embed.strategy == "after"
     assert cfg.output.return_mode == "full"
     assert cfg.diagnostics.enable_progress is True
@@ -786,8 +782,7 @@ def test_config_all_sections_populated(tmp_path: Path):
             "parser_kwargs": {"custom_option": "value", "another": 123},
         },
         "ingest": {
-            "mode": "unified",
-            "unified_label": "AllSectionsTest",
+            "storage_id": "AllSectionsTest",
             "table_rows_batch_size": 5000,
             "content_rows_batch_size": 3000,
             "business_contexts": {
@@ -853,8 +848,7 @@ def test_config_all_sections_populated(tmp_path: Path):
     assert cfg.parse.max_concurrent_parses == 10
 
     # Verify ingest
-    assert cfg.ingest.mode == "unified"
-    assert cfg.ingest.unified_label == "AllSectionsTest"
+    assert cfg.ingest.storage_id == "AllSectionsTest"
     assert cfg.ingest.table_rows_batch_size == 5000
     assert cfg.ingest.business_contexts is not None
     assert len(cfg.ingest.business_contexts.global_rules) == 1

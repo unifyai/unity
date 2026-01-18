@@ -33,6 +33,7 @@ def _apply_impl_overrides(
     monkeypatch.setenv("UNITY_SECRET_IMPL", impl)
     monkeypatch.setenv("UNITY_WEB_IMPL", impl)
     monkeypatch.setenv("UNITY_FILE_IMPL", impl)
+    monkeypatch.setenv("UNITY_DATA_IMPL", impl)
 
     # Optional managers are disabled by default; enable them for simulated manager tests.
     # This keeps routing tests meaningful (the Actor can actually call these tools).
@@ -53,6 +54,7 @@ def _apply_impl_overrides(
     monkeypatch.setattr(SETTINGS.secret, "IMPL", impl, raising=False)
     monkeypatch.setattr(SETTINGS.web, "IMPL", impl, raising=False)
     monkeypatch.setattr(SETTINGS.file, "IMPL", impl, raising=False)
+    monkeypatch.setattr(SETTINGS.data, "IMPL", impl, raising=False)
 
     monkeypatch.setattr(SETTINGS.file, "ENABLED", True, raising=False)
     monkeypatch.setattr(SETTINGS.guidance, "ENABLED", True, raising=False)

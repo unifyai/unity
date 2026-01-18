@@ -234,52 +234,6 @@ def get_embedding_specs_for_file(
     return specs
 
 
-def get_content_specs(
-    specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]],
-) -> List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]]:
-    """
-    Filter specs to only those targeting content contexts.
-
-    Parameters
-    ----------
-    specs : list[tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
-        All embedding specs.
-
-    Returns
-    -------
-    list[tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
-        Specs where context is "per_file" or "unified".
-    """
-    return [
-        (file_spec, table_spec)
-        for file_spec, table_spec in specs
-        if file_spec.context in ("per_file", "unified")
-    ]
-
-
-def get_table_specs(
-    specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]],
-) -> List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]]:
-    """
-    Filter specs to only those targeting table contexts.
-
-    Parameters
-    ----------
-    specs : list[tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
-        All embedding specs.
-
-    Returns
-    -------
-    list[tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
-        Specs where context is "per_file_table".
-    """
-    return [
-        (file_spec, table_spec)
-        for file_spec, table_spec in specs
-        if file_spec.context == "per_file_table"
-    ]
-
-
 def has_embedding_work(
     config: FilePipelineConfig,
     file_path: str,

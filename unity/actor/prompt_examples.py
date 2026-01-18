@@ -515,8 +515,8 @@ def get_primitives_files_get_tools_example() -> str:
 # primitives.files provides TWO interfaces:
 #
 # 1. DIRECT METHOD CALLS (use for your own data operations):
-#    result = await primitives.files.reduce(table=..., metric="count", ...)
-#    tables = await primitives.files.tables_overview()
+#    storage = await primitives.files.describe(file_path="path/to/file.xlsx")
+#    result = await primitives.files.reduce(context=storage.tables[0].context_path, ...)
 #
 # 2. GET_TOOLS (use ONLY when passing to functions that accept `tools: FileTools`):
 #    tools = primitives.files.get_tools()
