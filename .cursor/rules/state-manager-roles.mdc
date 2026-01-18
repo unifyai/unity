@@ -11,11 +11,11 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Scope**: Conversation‑level control and message flow; returns/relays steerable handles from inner tools.
 - **Connections**:
   - **Steered by**: Top-level UI/controller (outside managers).
-  - **Steers**: `Actor.act` (central intelligence); relays in‑flight handles from `Actor.act` and `TaskScheduler.execute` (passthrough steering of pause/resume/interject/stop).
+  - **Steers**: `Actor.act` (central intelligence); relays in‑flight handles from `Actor.act` and `TaskScheduler.execute`.
 
 ### Actor
 - **Role**: Central intelligence that orchestrates all state managers through code-first plans. Generates and executes Python plans that call primitives directly.
-- **Scope**: Code-first execution via `act()` method. Generates Python plans that orchestrate `primitives.contacts.*`, `primitives.knowledge.*`, `primitives.tasks.*`, etc. Wires in‑flight handles to `ConversationManager` for real‑time steering passthrough.
+- **Scope**: Code-first execution via `act()` method. Generates Python plans that orchestrate `primitives.contacts.*`, `primitives.knowledge.*`, `primitives.tasks.*`, etc. Wires in‑flight handles to `ConversationManager` for real‑time steering.
 - **Connections**:
   - **Steered by**: `ConversationManager` (primary caller of `act()`).
   - **Steers**: All state manager primitives (`primitives.contacts.*`, `primitives.knowledge.*`, `primitives.tasks.*`, etc.), `TaskScheduler`, and the `ConversationManager` handle (`ask`/`interject`/`get_full_transcript`). Uses `FunctionManager` for function discovery and execution.
@@ -89,10 +89,10 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 ### TaskScheduler
 - **Role**: Owner of durable tasks and their execution.
 - **Scope**: ask (read‑only about tasks), update (create/edit/delete/reorder tasks), execute (start tasks; returns live handle).
-- **Edge**: Never use `update` to “start” work; always start via `execute` (after any needed updates).
+- **Edge**: Never use `update` to "start" work; always start via `execute` (after any needed updates).
 - **Connections**:
   - **Steered by**: `Actor` (via `primitives.tasks.*`); `ConversationManager` (for direct task management).
-  - **Steers**: `Actor` (to run tasks via `execute`); exposes a live `ActiveTask` handle that is wired back through `ConversationManager` for passthrough steering.
+  - **Steers**: `Actor` (to run tasks via `execute`); exposes a live `ActiveTask` handle that is wired back through `ConversationManager` for steering.
 
 ### KnowledgeManager
 - **Role**: Source of truth for domain knowledge.
