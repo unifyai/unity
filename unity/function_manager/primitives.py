@@ -31,7 +31,7 @@ import functools
 import hashlib
 import inspect
 import logging
-from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -39,6 +39,7 @@ from unity.common.llm_client import new_llm_client
 
 # Direct class imports - IDE refactoring will track renames
 from unity.contact_manager.contact_manager import ContactManager
+from unity.data_manager.data_manager import DataManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.task_scheduler.task_scheduler import TaskScheduler
@@ -307,7 +308,7 @@ class ComputerPrimitives:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Primitive Registry
+# Primitive Registry - Auto-Discovery with Per-Manager Configuration
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -317,6 +318,7 @@ class ComputerPrimitives:
 PRIMITIVE_CLASSES: List[Type] = [
     # State managers
     ContactManager,
+    DataManager,
     TranscriptManager,
     KnowledgeManager,
     TaskScheduler,
@@ -329,35 +331,74 @@ PRIMITIVE_CLASSES: List[Type] = [
 ]
 
 
-# Methods to EXCLUDE from auto-discovery (not user-facing primitives)
-_EXCLUDED_METHODS = frozenset(
+# Methods excluded from ALL managers (not user-facing primitives)
+_COMMON_EXCLUDED_METHODS = frozenset(
     {
-        # State management
+        # State management / lifecycle
         "clear",
-        # Internal/admin operations
-        "exists",
-        "list",
-        "ingest_files",
-        "export_file",
-        "export_directory",
-        "file_info",
-        "rename_file",
-        "move_file",
-        "delete_file",
-        "sync",
-        # Low-level contact operations (use ask/update instead)
-        "filter_contacts",
-        "update_contact",
         # Internal helpers
         "add_tools",
         "get_tools",
-        # Knowledge manager internals
-        "filter",
-        "search",
-        # Task scheduler internals
-        "get_active_singleton_handle",
     },
 )
+
+
+# Per-manager configuration for primitive exposure.
+#
+# Keys:
+#   - "exclude": Set of ADDITIONAL method names to exclude (added to _COMMON_EXCLUDED_METHODS)
+#
+# Methods are auto-discovered from @abstractmethod definitions on Base* classes.
+# Only methods NOT in (_COMMON_EXCLUDED_METHODS | config["exclude"]) are exposed.
+#
+# Sync/async detection is automatic via asyncio.iscoroutinefunction() - no config needed.
+#
+PRIMITIVE_CONFIG: Dict[str, Dict[str, Any]] = {
+    "ContactManager": {
+        # Low-level contact operations (use ask/update instead)
+        "exclude": {"filter_contacts", "update_contact"},
+    },
+    "DataManager": {
+        "exclude": set(),
+    },
+    "TranscriptManager": {
+        "exclude": set(),
+    },
+    "KnowledgeManager": {
+        # Knowledge manager internals (use ask/update instead)
+        "exclude": {"filter", "search"},
+    },
+    "TaskScheduler": {
+        # Internal handle management
+        "exclude": {"get_active_singleton_handle"},
+    },
+    "SecretManager": {
+        "exclude": set(),
+    },
+    "GuidanceManager": {
+        "exclude": set(),
+    },
+    "WebSearcher": {
+        "exclude": set(),
+    },
+    "FileManager": {
+        # Internal/admin file operations
+        "exclude": {
+            "exists",
+            "list",
+            "ingest_files",
+            "export_file",
+            "export_directory",
+            "rename_file",
+            "move_file",
+            "delete_file",
+            "sync",
+        },
+    },
+    "ComputerPrimitives": {
+        "exclude": set(),
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +418,27 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
         "use_when": "Questions about specific people, contact info, 'who is X?', 'find contact in Y location'",
         "examples": "'Who is our contact at Acme Corp?', 'Find Alice's email', 'Contacts in Berlin?'",
         "priority": 3,
+    },
+    "data": {
+        "domain": "Data Operations & Pipelines",
+        "description": "Low-level data operations on any Unify context (filter, search, reduce, join, vectorize, plot)",
+        "methods": {
+            "filter": "Query rows with exact-match filter expressions",
+            "search": "Semantic search over embedded columns",
+            "reduce": "Aggregate metrics (count, sum, mean, min, max, etc.)",
+            "join": "Join two contexts on specified columns",
+            "insert_rows": "Insert new rows into a context",
+            "update_rows": "Update existing rows matching a filter",
+            "delete_rows": "Delete rows matching a filter",
+            "vectorize": "Create embeddings for a column",
+            "plot": "Generate visualizations from context data",
+            "create_table": "Create a new table context with schema",
+            "describe_table": "Get metadata and schema for a context",
+        },
+        "use_when": "Direct data operations on any context, pipeline transformations, cross-context joins",
+        "examples": "'Filter rows where amount > 1000', 'Join repairs with telematics', 'Sum revenue by region'",
+        "priority": 9,
+        "special_note": "DataManager operates on ANY Unify context. For file-specific operations with file_path resolution, use FileManager instead.",
     },
     "tasks": {
         "domain": "Durable Work & Tracking",
@@ -438,9 +500,8 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
         "description": "Received/downloaded files, document parsing, file metadata, data queries",
         "methods": {
             "ask": "Query about specific files, parse document contents, extract information from files",
-            "tables_overview": "Discover available tables with optional column info",
-            "list_columns": "Get column names and types for a table",
-            "schema_explain": "Natural language explanation of table structure",
+            "describe": "Discover file storage layout, contexts, and schemas",
+            "list_columns": "Get column names and types for a context",
             "reduce": "Aggregate data (count, sum, mean, min, max, etc.)",
             "filter_files": "Query raw records with filtering",
             "search_files": "Semantic search over table data",
@@ -493,10 +554,12 @@ def _discover_primitive_methods(cls: Type) -> List[str]:
     Auto-discover primitive methods from a class by inspecting its base classes.
 
     Finds all @abstractmethod definitions on Base* classes in the MRO,
-    excluding methods in _EXCLUDED_METHODS.
+    then filters out methods in:
+    - _COMMON_EXCLUDED_METHODS (applies to all managers)
+    - Per-class "exclude" set from PRIMITIVE_CONFIG
 
     For ComputerPrimitives (which has no base class), discovers public
-    methods directly.
+    methods from the class's _PRIMITIVE_METHODS constant.
 
     Args:
         cls: The class to inspect.
@@ -504,13 +567,20 @@ def _discover_primitive_methods(cls: Type) -> List[str]:
     Returns:
         List of method names that should be exposed as primitives.
     """
+    class_name = cls.__name__
+    config = PRIMITIVE_CONFIG.get(class_name, {})
+    per_class_exclude = config.get("exclude", set())
+
+    # Combine common exclusions with per-class exclusions
+    exclude = _COMMON_EXCLUDED_METHODS | per_class_exclude
+
     methods = []
 
     # Special case: ComputerPrimitives has dynamically-created methods
     # that are added via setattr in __init__, so we can't discover them
     # from the class itself. Use the class's _PRIMITIVE_METHODS constant.
-    if cls.__name__ == "ComputerPrimitives":
-        return sorted(cls._PRIMITIVE_METHODS)
+    if class_name == "ComputerPrimitives":
+        return sorted([m for m in cls._PRIMITIVE_METHODS if m not in exclude])
 
     # Standard case: find @abstractmethod definitions in Base* classes
     for base in cls.__mro__:
@@ -526,13 +596,32 @@ def _discover_primitive_methods(cls: Type) -> List[str]:
         for name, method in vars(base).items():
             if name.startswith("_"):
                 continue
-            if name in _EXCLUDED_METHODS:
+            if name in exclude:
                 continue
             if getattr(method, "__isabstractmethod__", False):
                 if name not in methods:
                     methods.append(name)
 
     return sorted(methods)
+
+
+def _get_primitive_methods(class_name: str) -> List[str]:
+    """
+    Get the list of primitive methods for a class.
+
+    Finds the class in PRIMITIVE_CLASSES and runs discovery on it.
+
+    Args:
+        class_name: The class name (e.g., "ContactManager").
+
+    Returns:
+        List of method names that should be exposed as primitives.
+    """
+    for cls in PRIMITIVE_CLASSES:
+        if cls.__name__ == class_name:
+            return _discover_primitive_methods(cls)
+    logger.warning(f"No primitive class found for {class_name}")
+    return []
 
 
 def _get_method_metadata(
@@ -639,7 +728,8 @@ def collect_primitives() -> Dict[str, Dict[str, Any]]:
     Introspect all registered primitive classes and return their metadata.
 
     Auto-discovers primitive methods from each class by inspecting @abstractmethod
-    definitions on base classes, then extracts signature and docstring information.
+    definitions on base classes (minus per-class exclusions), then extracts
+    signature and docstring information.
 
     Each primitive receives a stable `function_id` derived from a hash of its
     fully-qualified name (e.g., "ContactManager.ask"). This ensures IDs are:
@@ -656,7 +746,7 @@ def collect_primitives() -> Dict[str, Dict[str, Any]]:
     for cls in PRIMITIVE_CLASSES:
         class_name = cls.__name__
 
-        # Auto-discover which methods should be primitives
+        # Auto-discover which methods should be primitives (with exclusions)
         method_names = _discover_primitive_methods(cls)
 
         for method_name in method_names:
@@ -709,6 +799,7 @@ def compute_primitives_hash(primitives: Dict[str, Dict[str, Any]]) -> str:
 # Mapping from class names to ManagerRegistry getter method names
 _CLASS_TO_GETTER: Dict[str, str] = {
     "ContactManager": "get_contact_manager",
+    "DataManager": "get_data_manager",
     "TranscriptManager": "get_transcript_manager",
     "KnowledgeManager": "get_knowledge_manager",
     "TaskScheduler": "get_task_scheduler",
@@ -772,81 +863,60 @@ def get_primitive_callable(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# FileTools TypedDict - Tools dictionary type for FileManager operations
+# In-Place Async Patching for Sync Managers
 # ────────────────────────────────────────────────────────────────────────────
 
+# Marker attribute to track patched instances (idempotent patching)
+_ASYNC_PATCHED_MARKER = "_primitives_async_patched"
 
-class FileTools(TypedDict, total=False):
+
+class _AsyncPrimitiveWrapper:
     """
-    Dictionary of FileManager tool callables.
+    Wrapper that provides async versions of sync manager methods.
 
-    Returned by `primitives.files.get_tools()` for passing to functions
-    that accept a `tools` parameter for data operations.
+    This wrapper delegates to the original manager without modifying it,
+    ensuring internal code that uses the manager synchronously continues to work.
 
-    For direct data operations in your own code, use method syntax instead:
-        result = await primitives.files.reduce(table=..., metric="count", ...)
-
-    Keys
-    ----
-    tables_overview : Callable
-        Discover available tables with optional column info
-    list_columns : Callable
-        Get column names and types for a table
-    schema_explain : Callable
-        Natural language explanation of table structure
-    reduce : Callable
-        Aggregate data (count, sum, mean, min, max, etc.)
-    filter_files : Callable
-        Query raw records with filtering
-    search_files : Callable
-        Semantic search over table data
-    visualize : Callable
-        Generate chart visualizations
+    Uses asyncio.to_thread() for sync methods to avoid blocking the event loop.
+    This follows the same pattern as the async tool loop.
     """
 
-    tables_overview: Callable[..., Dict[str, Any]]
-    list_columns: Callable[..., Dict[str, Any]]
-    schema_explain: Callable[..., str]
-    reduce: Callable[..., Any]
-    filter_files: Callable[..., List[Dict[str, Any]]]
-    search_files: Callable[..., List[Dict[str, Any]]]
-    visualize: Callable[..., Any]
+    def __init__(self, manager: Any, class_name: str):
+        """
+        Initialize the wrapper.
 
-
-# ────────────────────────────────────────────────────────────────────────────
-# Async Method Proxy
-# ────────────────────────────────────────────────────────────────────────────
-
-
-class _AsyncMethodProxy:
-    """
-    Generic proxy that makes public methods on an object awaitable.
-
-    Only exposes public methods (those not starting with '_'). Sync methods
-    are automatically wrapped with asyncio.to_thread so callers can consistently
-    use `await` without knowing the underlying implementation. Async methods
-    are called directly.
-
-    This uses the same pattern as the async tool loop (see _async_tool/tools_data.py).
-    """
-
-    def __init__(self, wrapped: Any):
-        object.__setattr__(self, "_wrapped", wrapped)
+        Args:
+            manager: The original sync manager instance.
+            class_name: The class name to look up in PRIMITIVE_CONFIG.
+        """
+        object.__setattr__(self, "_wrapped_manager", manager)
+        object.__setattr__(self, "_class_name", class_name)
+        object.__setattr__(
+            self,
+            "_primitive_methods",
+            _get_primitive_methods(class_name),
+        )
 
     def __getattr__(self, name: str) -> Any:
-        # Block access to private/internal attributes
-        if name.startswith("_"):
-            raise AttributeError(
-                f"'{type(self._wrapped).__name__}' primitive has no attribute '{name}'",
-            )
+        """
+        Get an attribute - returns async wrapper for primitive methods, else delegates.
 
-        attr = getattr(self._wrapped, name)
+        For primitive methods: wraps sync methods with asyncio.to_thread() so they
+        don't block the event loop. Async methods are called directly.
+
+        For non-primitive attributes: delegates to the wrapped manager.
+        """
+        attr = getattr(self._wrapped_manager, name)
+
+        # Only wrap methods that are in our primitive methods set
+        if name not in self._primitive_methods:
+            return attr
 
         # Non-callable attributes pass through directly
         if not callable(attr):
             return attr
 
-        # For callable attributes, return an async wrapper
+        # Create async wrapper that uses to_thread for sync methods
         @functools.wraps(attr)
         async def async_method_wrapper(*args, **kwargs):
             if asyncio.iscoroutinefunction(attr):
@@ -855,6 +925,29 @@ class _AsyncMethodProxy:
                 return await asyncio.to_thread(attr, *args, **kwargs)
 
         return async_method_wrapper
+
+
+def _create_async_wrapper(manager: Any, class_name: str) -> _AsyncPrimitiveWrapper:
+    """
+    Create an async wrapper for a sync manager.
+
+    This creates a wrapper that provides async versions of primitive methods
+    without modifying the original manager instance. This ensures:
+    - Internal code using the manager synchronously continues to work
+    - primitives.data/files returns async-compatible interface
+    - The original singleton is never mutated
+
+    Args:
+        manager: The original sync manager instance.
+        class_name: The class name to look up in PRIMITIVE_CONFIG.
+
+    Returns:
+        An async wrapper around the manager.
+    """
+    if class_name not in PRIMITIVE_CONFIG:
+        raise ValueError(f"No primitive config for {class_name}")
+
+    return _AsyncPrimitiveWrapper(manager, class_name)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -874,6 +967,11 @@ class Primitives:
     All state managers are obtained via ManagerRegistry typed methods
     (e.g., get_contact_manager()) to respect IMPL settings (real vs simulated).
 
+    Sync managers (DataManager, FileManager) are wrapped with async interfaces
+    for consistency - the LLM can safely use `await` on all primitives. The
+    wrapper delegates to the original manager without modifying it, ensuring
+    internal code that uses the managers synchronously continues to work.
+
     Usage in stored functions:
         async def my_function():
             # Only ContactManager is imported/initialized
@@ -881,11 +979,16 @@ class Primitives:
 
             # Only if accessed: browser/desktop infrastructure loaded
             await primitives.computer.navigate("https://example.com")
+
+            # Sync managers are wrapped - use await for consistency
+            result = await primitives.data.filter(context="...", filter="...")
+            files = await primitives.files.filter_files(filter="...")
     """
 
     def __init__(self):
         # All managers lazily initialized via ManagerRegistry
         self._contacts: Optional["ContactManager"] = None
+        self._data: Optional[_AsyncPrimitiveWrapper] = None
         self._transcripts: Optional["TranscriptManager"] = None
         self._knowledge: Optional["KnowledgeManager"] = None
         self._tasks: Optional["TaskScheduler"] = None
@@ -893,7 +996,7 @@ class Primitives:
         self._guidance: Optional["GuidanceManager"] = None
         self._web: Optional["WebSearcher"] = None
         self._computer: Optional[ComputerPrimitives] = None
-        self._files: Optional[_AsyncMethodProxy] = None
+        self._files: Optional[_AsyncPrimitiveWrapper] = None
 
     @property
     def contacts(self) -> "ContactManager":
@@ -903,6 +1006,34 @@ class Primitives:
 
             self._contacts = ManagerRegistry.get_contact_manager()
         return self._contacts
+
+    @property
+    def data(self) -> "DataManager":
+        """
+        Data operations primitives for any Unify context.
+
+        Provides canonical data operations (filter, search, reduce, join,
+        vectorize, plot) that work on any context including Data/* and Files/*.
+
+        All methods are async for consistency with other primitives - use `await`:
+        - await filter(context, filter=...) - Exact-match filtering
+        - await search(context, references=...) - Semantic search
+        - await reduce(context, metric=..., column=...) - Aggregations
+        - await join(left, right, on=...) - Cross-context joins
+        - await insert_rows(context, rows=...) - Insert data
+        - await update_rows(context, filter=..., updates=...) - Update data
+        - await delete_rows(context, filter=...) - Delete data
+        - await vectorize(context, column=...) - Create embeddings
+        - await plot(context, config=...) - Generate visualizations
+
+        For file-specific operations with path resolution, use primitives.files instead.
+        """
+        if self._data is None:
+            from unity.manager_registry import ManagerRegistry
+
+            dm = ManagerRegistry.get_data_manager()
+            self._data = _create_async_wrapper(dm, "DataManager")
+        return self._data
 
     @property
     def transcripts(self) -> "TranscriptManager":
@@ -972,16 +1103,15 @@ class Primitives:
         return self._computer
 
     @property
-    def files(self) -> _AsyncMethodProxy:
+    def files(self) -> "FileManager":
         """
         File management primitives for data discovery, querying, and visualization.
 
         All methods are async for consistency with other primitives - use `await`:
 
         Discovery tools:
-        - await tables_overview() - List all available tables
-        - await list_columns(table=...) - Get column names and types
-        - await schema_explain(table=...) - Get natural language schema explanation
+        - await describe(file_path=...) - Get file storage layout, contexts, and schemas
+        - await list_columns(context=...) - Get column names and types for a context
 
         Query tools:
         - await reduce(table, metric, keys, filter, group_by) - Aggregate data
@@ -989,11 +1119,14 @@ class Primitives:
         - await search_files(references, k, table) - Semantic search
         - await visualize(tables, plot_type, x_axis, y_axis, ...) - Generate charts
 
+        Returns the actual FileManager instance (with sync methods patched to async).
+        Non-primitive methods (get_tools, etc.) work directly.
+
         Only imported and initialized when actually accessed.
         """
         if self._files is None:
             from unity.manager_registry import ManagerRegistry
 
             fm = ManagerRegistry.get_file_manager()
-            self._files = _AsyncMethodProxy(fm)
+            self._files = _create_async_wrapper(fm, "FileManager")
         return self._files
