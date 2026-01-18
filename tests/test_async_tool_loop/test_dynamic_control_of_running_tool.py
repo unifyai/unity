@@ -570,14 +570,14 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
     pausable_fn.__qualname__ = "pausable_fn"
 
     client.set_system_message(
-        "1️⃣ Call `pausable_fn`.\n"
-        "2️⃣ When the user says 'hold', call the helper whose name starts with `pause_`.\n"
-        "3️⃣ When the user says 'go',   call the helper whose name starts with `resume_` immediately.\n"
-        "4️⃣ Repeat the pause→resume cycle twice.\n"
-        "5️⃣ IMPORTANT: Do NOT call the `wait` helper in response to 'go'. If both `resume_…` and `wait` are offered, ALWAYS choose `resume_…`.\n"
-        "6️⃣ You may use `wait` only when you intend to remain paused without resuming; do NOT use it right after 'go'.\n"
-        "7️⃣ Do NOT call any legacy `continue_` helper.\n"
-        "8️⃣ After the second resume, wait for completion and reply with 'done'.",
+        "️1. Call `pausable_fn`.\n"
+        "2. When the user says 'hold', call the helper whose name starts with `pause_`.\n"
+        "3. When the user says 'go',   call the helper whose name starts with `resume_` immediately.\n"
+        "4. Repeat the pause→resume cycle twice.\n"
+        "5. IMPORTANT: Do NOT call the `wait` helper in response to 'go'. If both `resume_…` and `wait` are offered, ALWAYS choose `resume_…`.\n"
+        "6. You may use `wait` only when you intend to remain paused without resuming; do NOT use it right after 'go'.\n"
+        "7. Do NOT call any legacy `continue_` helper.\n"
+        "8. After the second resume, wait for completion and reply with 'done'.",
     )
 
     # Spy tool exposure at the exact callsite by wrapping the symbol actually used in the loop
