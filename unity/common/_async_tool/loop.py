@@ -357,9 +357,6 @@ async def async_tool_loop_inner(
     # - Claude: extended thinking incompatible with tool_choice="required"; we
     #   disable thinking on forced-tool turns and transform those messages later.
     _claude_thinking_disabled = False
-    # Track seeded message count - messages at indices < this need transformation
-    # for Claude because they lack thinking blocks (manually constructed).
-    _seeded_msg_count = 0
 
     def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
         """Handle reasoning model compatibility. Returns effective preprocess."""
@@ -374,13 +371,9 @@ async def async_tool_loop_inner(
         # client's _reasoning_effort so the generate call won't enable thinking.
         if _is_claude:
             if tool_choice != "required":
-                # Always apply transformation wrapper for Claude to handle:
-                # 1. Seeded messages without thinking blocks (manually constructed)
-                # 2. Synthetic check_status_ messages (chronological ordering pairs)
-                #
-                # We do NOT transform real loop-generated assistant messages (those
-                # have thinking blocks from Claude). Transforming those caused
-                # infinite loops where Claude couldn't understand the context.
+                # Apply transformation wrapper for Claude to handle synthetic
+                # check_status_ messages (chronological ordering pairs). These are
+                # loop-internal bookkeeping that lack thinking blocks.
                 outer_preprocess = effective_preprocess
 
                 def claude_wrapper(msgs):
@@ -393,9 +386,6 @@ async def async_tool_loop_inner(
                     if not gen_kwargs.get("tools"):
                         return outer_preprocess(msgs) if outer_preprocess else msgs
 
-                    # Build index lookup for efficiency
-                    msg_indices = {id(m): i for i, m in enumerate(msgs)}
-
                     def needs_transformation(m: dict) -> bool:
                         if not isinstance(m, dict):
                             return False
@@ -404,10 +394,10 @@ async def async_tool_loop_inner(
                         if not m.get("tool_calls"):
                             return False
 
-                        # Check 1: Synthetic check_status_ messages always need
-                        # transformation. These are loop-internal bookkeeping for
-                        # chronological tool result ordering and don't have thinking
-                        # blocks (they're synthesized, not from Claude).
+                        # Synthetic check_status_ messages need transformation.
+                        # These are loop-internal bookkeeping for chronological
+                        # tool result ordering and don't have thinking blocks
+                        # (they're synthesized, not from Claude).
                         for tc in m.get("tool_calls") or []:
                             func = tc.get("function", {})
                             name = func.get("name", "")
@@ -416,24 +406,7 @@ async def async_tool_loop_inner(
                             ):
                                 return True
 
-                        # Check 2: Seeded messages without thinking blocks (those
-                        # passed in initially via the message parameter). These
-                        # are manually constructed and lack Claude's thinking.
-                        #
-                        # IMPORTANT: Check if loop-generated FIRST. Loop-generated
-                        # messages should never be transformed
-                        idx = msg_indices.get(id(m), 999999)
-                        if idx >= _seeded_msg_count:
-                            return False  # Loop-generated message - never transform
-
-                        # Only for seeded messages: transform if no thinking blocks
-                        provider_fields = m.get("provider_specific_fields") or {}
-                        thinking_blocks = provider_fields.get("thinking_blocks")
-
-                        if thinking_blocks is None:
-                            return True
-
-                        return False  # Seeded message but has thinking blocks
+                        return False
 
                     msgs = transform_tool_calls_to_context(
                         msgs,
@@ -668,18 +641,7 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
-        # NOTE: Claude models with extended thinking require special metadata on
-        # assistant messages containing tool_calls. We handle this via LAZY
-        # transformation in _apply_reasoning_model_compat → claude_wrapper,
-        # which transforms non-thinking assistant turns in the copy sent to
-        # the API, NOT in client.messages. This allows backfill to find and
-        # execute seeded tool_calls before transformation occurs.
-
         await _msg_dispatcher.append_msgs(seeded_batch)
-
-        # Track seeded message count for Claude transformation (must only
-        # transform seeded messages, not loop-generated ones)
-        _seeded_msg_count = len(client.messages)
 
         # Inject an initial snapshot of live images (if any) immediately by
         # appending assistant→tool messages directly to the client transcript.
