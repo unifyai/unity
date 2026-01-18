@@ -154,8 +154,10 @@ class SimulatedDataManager(BaseDataManager):
             raise ValueError(f"Table not found: {resolved}")
         return {
             "description": self._descriptions.get(resolved),
-            "unique_keys": self._unique_keys.get(resolved, []),
-            "auto_counting": self._auto_counting.get(resolved, {}),
+            # Note: Real Unify API returns [] for unique_keys, which gets normalized
+            # to None by TableSchema validator. SimulatedDataManager mimics this.
+            "unique_keys": self._unique_keys.get(resolved),
+            "auto_counting": self._auto_counting.get(resolved),
         }
 
     @functools.wraps(BaseDataManager.list_tables, updated=())
