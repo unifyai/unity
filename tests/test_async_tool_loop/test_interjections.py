@@ -484,7 +484,7 @@ async def test_interjections_processed_successfully(model):
         (
             "Follow STRICTLY these steps:\n"
             '1) Call the tool `echo` with {"txt":"A"}.\n'
-            "2) When you see a user interjection of the form 'X please' (arriving as a system message), "
+            "2) When you see a user interjection of the form 'X please', "
             "immediately call `echo` with {\"txt\": \"X\"}. I will interject 'B please' then 'C please'.\n"
             "3) Only after ALL echo calls (A, B, and C) have completed, reply with exactly the single word: done.\n"
             "Never include 'B' or 'C' in your assistant messages; produce them only via tool calls. "
