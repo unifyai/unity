@@ -11,16 +11,22 @@ used by other managers and available for composition by the Actor.
 """
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DataSettings(BaseSettings):
     """DataManager configuration.
 
-    DataManager only has a 'real' implementation - no simulated mode.
+    Supports both 'real' and 'simulated' implementations.
     """
 
     IMPL: str = Field(
         default="real",
-        description="DataManager implementation: 'real' only.",
+        description="DataManager implementation: 'real' or 'simulated'.",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="UNITY_DATA_",
+        case_sensitive=True,
+        extra="ignore",
     )
