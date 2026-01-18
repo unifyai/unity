@@ -195,7 +195,9 @@ def test_get_table(simulated_dm):
         "test/get_table_demo",
         description="Demo for get_table",
         fields={"id": "int", "name": "str"},
-        unique_keys=["id"],
+        unique_keys={
+            "id": "int",
+        },  # Dict format per BaseDataManager.create_table signature
         auto_counting={"key": "id"},
     )
 
@@ -203,7 +205,7 @@ def test_get_table(simulated_dm):
 
     assert isinstance(ctx_info, dict)
     assert ctx_info.get("description") == "Demo for get_table"
-    assert ctx_info.get("unique_keys") == ["id"]
+    assert ctx_info.get("unique_keys") == {"id": "int"}
     assert ctx_info.get("auto_counting") == {"key": "id"}
 
 

@@ -6,6 +6,9 @@ actual data operations against the Unify backend.
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 import pytest
 
 from tests.helpers import _handle_project
@@ -14,6 +17,19 @@ from tests.test_actor.test_state_managers.utils import (
     make_actor,
 )
 from unity.manager_registry import ManagerRegistry
+
+
+async def _safe_call(method, *args, **kwargs) -> Any:
+    """
+    Call a method that may be sync or async (due to in-place patching).
+
+    After primitives.data is accessed, the DataManager singleton gets patched
+    to have async methods. This helper handles both cases.
+    """
+    if asyncio.iscoroutinefunction(method):
+        return await method(*args, **kwargs)
+    else:
+        return method(*args, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -29,11 +45,13 @@ async def test_filter_calls_data_manager(mock_verification):
 
         # Create test context and seed data
         test_context = "Data/Test/actor_filter_test"
-        dm.create_table(
+        await _safe_call(
+            dm.create_table,
             context=test_context,
-            columns={"name": "str", "amount": "int", "region": "str"},
+            fields={"name": "str", "amount": "int", "region": "str"},
         )
-        dm.insert_rows(
+        await _safe_call(
+            dm.insert_rows,
             context=test_context,
             rows=[
                 {"name": "Item A", "amount": 100, "region": "North"},
@@ -63,8 +81,8 @@ async def test_filter_calls_data_manager(mock_verification):
             ), f"Expected data primitive calls, saw: {state_manager_tools}"
 
         finally:
-            # Cleanup
-            dm.delete_table(context=test_context, dangerous_ok=True)
+            # Cleanup - handles both sync and async cases
+            await _safe_call(dm.delete_table, context=test_context, dangerous_ok=True)
 
 
 @pytest.mark.asyncio
@@ -80,11 +98,13 @@ async def test_reduce_calls_data_manager(mock_verification):
 
         # Create test context and seed data
         test_context = "Data/Test/actor_reduce_test"
-        dm.create_table(
+        await _safe_call(
+            dm.create_table,
             context=test_context,
-            columns={"product": "str", "revenue": "int"},
+            fields={"product": "str", "revenue": "int"},
         )
-        dm.insert_rows(
+        await _safe_call(
+            dm.insert_rows,
             context=test_context,
             rows=[
                 {"product": "Widget", "revenue": 1000},
@@ -114,8 +134,8 @@ async def test_reduce_calls_data_manager(mock_verification):
             ), f"Expected data primitive calls, saw: {state_manager_tools}"
 
         finally:
-            # Cleanup
-            dm.delete_table(context=test_context, dangerous_ok=True)
+            # Cleanup - handles both sync and async cases
+            await _safe_call(dm.delete_table, context=test_context, dangerous_ok=True)
 
 
 @pytest.mark.asyncio
@@ -131,9 +151,10 @@ async def test_describe_table_calls_data_manager(mock_verification):
 
         # Create test context
         test_context = "Data/Test/actor_describe_test"
-        dm.create_table(
+        await _safe_call(
+            dm.create_table,
             context=test_context,
-            columns={"id": "int", "name": "str", "score": "float"},
+            fields={"id": "int", "name": "str", "score": "float"},
         )
 
         try:
@@ -162,5 +183,5 @@ async def test_describe_table_calls_data_manager(mock_verification):
             ), f"Expected data primitive calls, saw: {state_manager_tools}"
 
         finally:
-            # Cleanup
-            dm.delete_table(context=test_context, dangerous_ok=True)
+            # Cleanup - handles both sync and async cases
+            await _safe_call(dm.delete_table, context=test_context, dangerous_ok=True)

@@ -6,6 +6,9 @@ compose DataManager primitives for complex data workflows.
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 import pytest
 
 from tests.helpers import _handle_project
@@ -14,6 +17,19 @@ from tests.test_actor.test_state_managers.utils import (
     make_actor,
 )
 from unity.manager_registry import ManagerRegistry
+
+
+async def _safe_call(method, *args, **kwargs) -> Any:
+    """
+    Call a method that may be sync or async (due to in-place patching).
+
+    After primitives.data is accessed, the DataManager singleton gets patched
+    to have async methods. This helper handles both cases.
+    """
+    if asyncio.iscoroutinefunction(method):
+        return await method(*args, **kwargs)
+    else:
+        return method(*args, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -29,11 +45,13 @@ async def test_code_act_composes_data_operations(mock_verification):
 
         # Create sales table
         sales_context = "Data/Test/code_act_sales"
-        dm.create_table(
+        await _safe_call(
+            dm.create_table,
             context=sales_context,
-            columns={"region": "str", "amount": "int"},
+            fields={"region": "str", "amount": "int"},
         )
-        dm.insert_rows(
+        await _safe_call(
+            dm.insert_rows,
             context=sales_context,
             rows=[
                 {"region": "North", "amount": 1000},
@@ -73,8 +91,8 @@ async def test_code_act_composes_data_operations(mock_verification):
             ), f"Expected data primitive calls, saw: {state_manager_tools}"
 
         finally:
-            # Cleanup
-            dm.delete_table(context=sales_context, dangerous_ok=True)
+            # Cleanup - handles both sync and async cases
+            await _safe_call(dm.delete_table, context=sales_context, dangerous_ok=True)
 
 
 @pytest.mark.asyncio
@@ -89,11 +107,13 @@ async def test_code_act_data_pipeline(mock_verification):
         dm = ManagerRegistry.get_data_manager()
 
         source_context = "Data/Test/code_act_source"
-        dm.create_table(
+        await _safe_call(
+            dm.create_table,
             context=source_context,
-            columns={"name": "str", "score": "int", "category": "str"},
+            fields={"name": "str", "score": "int", "category": "str"},
         )
-        dm.insert_rows(
+        await _safe_call(
+            dm.insert_rows,
             context=source_context,
             rows=[
                 {"name": "Alice", "score": 85, "category": "A"},
@@ -122,5 +142,5 @@ async def test_code_act_data_pipeline(mock_verification):
             assert "primitives." in handle.plan_source_code
 
         finally:
-            # Cleanup
-            dm.delete_table(context=source_context, dangerous_ok=True)
+            # Cleanup - handles both sync and async cases
+            await _safe_call(dm.delete_table, context=source_context, dangerous_ok=True)
