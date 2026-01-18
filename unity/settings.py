@@ -10,7 +10,7 @@ All settings can be overridden via environment variables or .env file.
 
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from unity.actor.settings import ActorSettings
@@ -68,14 +68,14 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # LLM Provider Credentials
     # ─────────────────────────────────────────────────────────────────────────
-    OPENAI_API_KEY: str = ""
-    ANTHROPIC_API_KEY: str = ""
+    OPENAI_API_KEY: SecretStr = SecretStr("")
+    ANTHROPIC_API_KEY: SecretStr = SecretStr("")
     UNITY_VALIDATE_LLM_PROVIDERS: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
-    ORCHESTRA_ADMIN_KEY: str = ""
+    ORCHESTRA_ADMIN_KEY: SecretStr = SecretStr("")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
@@ -120,9 +120,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure
     # ─────────────────────────────────────────────────────────────────────────
-    # Fixed datetime for LLM cache consistency in tests (ISO format string)
-    # When set, _get_now() returns this fixed datetime instead of datetime.now()
-    UNITY_FIXED_DATETIME: str = ""
     # Log subdirectory for LLM I/O log files (datetime-prefixed for ordering)
     UNITY_LOG_SUBDIR: str = ""
     # Terminal socket name for tmux isolation; also used as log subdir fallback
@@ -136,7 +133,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
     # ─────────────────────────────────────────────────────────────────────────
-    UNITY_SEMANTIC_CACHE: bool = False
     UNITY_READONLY_ASK_GUARD: bool = True
     FIRST_ASK_TOOL_IS_SEARCH: bool = True
     FIRST_MUTATION_TOOL_IS_ASK: bool = True
@@ -183,7 +179,6 @@ class ProductionSettings(BaseSettings):
         "ASYNCIO_DEBUG",
         "ASYNCIO_DEBUG_VERBOSE",
         "PYTEST_LOG_TO_FILE",
-        "UNITY_SEMANTIC_CACHE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
         "FIRST_MUTATION_TOOL_IS_ASK",

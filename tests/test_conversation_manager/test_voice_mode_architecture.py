@@ -83,10 +83,10 @@ class TestModelSelection:
 
         # The client should use the default model when not specified
         client = new_llm_client(model=None)
-        # The Unify client may normalize the model name (strip provider suffix)
-        # So we check that the model base name matches
+        # The Unify client stores the model in _model (private attribute)
+        # It may normalize the model name (strip provider suffix)
         expected_base = SETTINGS.UNIFY_MODEL.split("@")[0]
-        assert client.model == expected_base or client.model == SETTINGS.UNIFY_MODEL
+        assert client._model == expected_base or client._model == SETTINGS.UNIFY_MODEL
 
     def test_llm_client_explicit_model_override(self):
         """new_llm_client() respects explicit model parameter."""
@@ -94,24 +94,26 @@ class TestModelSelection:
 
         explicit_model = "gpt-4o-mini@openai"
         client = new_llm_client(model=explicit_model)
-        # The Unify client may normalize the model name (strip provider suffix)
+        # The Unify client stores the model in _model (private attribute)
+        # It may normalize the model name (strip provider suffix)
         expected_base = explicit_model.split("@")[0]
-        assert client.model == expected_base or client.model == explicit_model
+        assert client._model == expected_base or client._model == explicit_model
 
     def test_main_cm_brain_model_configuration(self):
         """
         [Stage 1] Main CM Brain LLM should use SETTINGS.UNIFY_MODEL.
 
-        After the refactoring, the ConversationManager's LLM should be
-        initialized with the system default model, not a hardcoded value.
+        Verifies that new_llm_client correctly configures the model when called
+        with SETTINGS.UNIFY_MODEL, matching how ConversationManager._run_llm() uses it.
         """
-        from unity.conversation_manager.domains.llm import LLM
+        from unity.common.llm_client import new_llm_client
 
-        # Create an LLM instance the way ConversationManager does
-        # After refactoring, this should use SETTINGS.UNIFY_MODEL
-        llm = LLM(SETTINGS.UNIFY_MODEL, event_broker=None)
-        # The LLM class stores the model as provided
-        assert llm.model == SETTINGS.UNIFY_MODEL
+        # Create an LLM client the way ConversationManager._run_llm() does
+        client = new_llm_client(SETTINGS.UNIFY_MODEL, reasoning_effort="low")
+
+        # The client should be configured with the expected model
+        expected_base = SETTINGS.UNIFY_MODEL.split("@")[0]
+        assert client._model == expected_base or client._model == SETTINGS.UNIFY_MODEL
 
 
 class TestResponseModelConstruction:
@@ -119,7 +121,7 @@ class TestResponseModelConstruction:
 
     def test_text_mode_response_model_structure(self):
         """Text mode response model has thoughts only (actions are tool calls)."""
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
         text_model = models["text"]
@@ -142,7 +144,7 @@ class TestResponseModelConstruction:
         Both TTS and Realtime modes use the unified guidance-based architecture
         where the Main CM Brain provides guidance to the Voice Agent.
         """
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
         voice_model = models["call"]
@@ -159,7 +161,7 @@ class TestResponseModelConstruction:
 
     def test_voice_model_realtime_mode_uses_guidance(self):
         """Realtime mode uses call_guidance instead of voice_utterance."""
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
         voice_model = models["call"]
@@ -176,7 +178,7 @@ class TestResponseModelConstruction:
 
     def test_unify_meet_model_matches_call_model(self):
         """unify_meet mode uses the same model as call mode."""
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
 
@@ -198,7 +200,7 @@ class TestResponseModelConstruction:
 
         Stage 2 is complete - TTS mode now uses the same guidance pattern as Realtime.
         """
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
         voice_model = models["call"]
@@ -226,7 +228,6 @@ class TestPromptBuilders:
             phone_number="+15551234567",
             email_address="test@example.com",
             is_voice_call=False,
-            active_tasks={},
         )
 
         # Basic structure checks
@@ -251,7 +252,6 @@ class TestPromptBuilders:
             phone_number="+15551234567",
             email_address="test@example.com",
             is_voice_call=True,
-            active_tasks={},
         )
 
         # Stage 2: All voice modes use guidance-based architecture
@@ -292,7 +292,6 @@ class TestPromptBuilders:
             first_name="Test",
             surname="User",
             is_voice_call=False,  # TTS mode
-            active_tasks={},
         )
 
         # Stage 2 complete: TTS mode uses call_guidance
@@ -699,7 +698,7 @@ class TestRegressionBaseline:
 
     def test_text_mode_does_not_include_voice_fields(self):
         """Text mode response model excludes voice-specific fields."""
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
         text_model = models["text"]
@@ -769,14 +768,14 @@ class TestStage1MainBrainModel:
         # Check that SETTINGS is imported in the module
         assert hasattr(cm_module, "SETTINGS"), "SETTINGS should be imported"
 
-        # Verify the source code uses SETTINGS.UNIFY_MODEL (not hardcoded)
-        source = inspect.getsource(cm_module.ConversationManager.__init__)
+        # Verify the source code uses SETTINGS.UNIFY_MODEL in _run_llm (not hardcoded)
+        source = inspect.getsource(cm_module.ConversationManager._run_llm)
         assert (
             "SETTINGS.UNIFY_MODEL" in source
-        ), "ConversationManager should use SETTINGS.UNIFY_MODEL for LLM"
+        ), "ConversationManager._run_llm should use SETTINGS.UNIFY_MODEL for LLM"
         assert (
             '"gpt-5-mini@openai"' not in source
-        ), "ConversationManager should not have hardcoded model name"
+        ), "ConversationManager._run_llm should not have hardcoded model name"
 
 
 class TestStage2UnifiedVoiceResponse:
@@ -791,7 +790,7 @@ class TestStage2UnifiedVoiceResponse:
 
     def test_tts_mode_response_model_has_guidance(self):
         """TTS mode response model uses call_guidance field."""
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
         voice_model = models["call"]
@@ -803,7 +802,7 @@ class TestStage2UnifiedVoiceResponse:
 
     def test_tts_and_realtime_models_match(self):
         """TTS and Realtime modes use identical response model structure."""
-        from unity.conversation_manager.domains.actions import build_response_models
+        from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
 

@@ -71,12 +71,23 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return {name: _stable(str(inspect.signature(fn))) for name, fn in tools.items()}
 
 
-def now(time_only: bool = False) -> str:
+def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     """Return the current timestamp in the assistant's timezone.
 
     The assistant is the system contact with ``contact_id == 0`` in the
     Contacts table. We read its ``timezone`` field (an IANA timezone
     identifier like "America/New_York") and convert UTC to local time.
+
+    Args:
+        time_only: If True and as_string=True, return only the time portion.
+        as_string: If True, return formatted string. If False, return datetime object.
+
+    Returns:
+        If as_string=True: "Thursday, January 15, 2026 at 02:09 PM UTC" (or time only)
+        If as_string=False: datetime object
+
+    In tests, this function is monkeypatched by tests/conftest.py to return
+    fixed or incrementing datetimes for cache consistency.
     """
     from datetime import datetime, timezone as dt_timezone
     from zoneinfo import ZoneInfo
@@ -118,11 +129,13 @@ def now(time_only: bool = False) -> str:
         local_dt = utc_now
         label = "UTC"
 
-    return (
-        local_dt.strftime("%H:%M:%S ") + label
-        if time_only
-        else local_dt.strftime("%Y-%m-%d %H:%M:%S ") + label
-    )
+    if not as_string:
+        return local_dt
+
+    if time_only:
+        return local_dt.strftime("%I:%M %p ") + label
+
+    return local_dt.strftime("%A, %B %d, %Y at %I:%M %p ") + label
 
 
 def tool_name(tools: Dict[str, Callable], needle: str) -> str | None:

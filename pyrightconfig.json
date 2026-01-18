@@ -1,0 +1,4 @@
+{
+  "extraPaths": ["../unillm", "../unify"],
+  "typeCheckingMode": "off"
+}

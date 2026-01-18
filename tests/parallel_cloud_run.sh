@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Trigger CI tests on the current code state via GitHub Actions.
+# Trigger CI tests via GitHub Actions.
 #
-# If the branch is clean and pushed, triggers CI directly on the current branch.
-# If there are local changes (uncommitted or unpushed), creates a unique staging
-# branch with a datetime suffix, pushes the current state, triggers CI, then
-# restores the local state.
+# By default, tests whatever is currently on the remote branch (safe, non-invasive).
+# If local changes exist (uncommitted or unpushed), a warning is printed but CI
+# runs against the remote state.
 #
-# Use --remote-only to skip local change detection and run against whatever is
-# currently on the remote branch (ignores uncommitted and unpushed changes).
+# Use --push-local to explicitly opt-in to testing local state. This creates a
+# unique staging branch (ci-staging-{user}-{datetime}), commits any uncommitted
+# changes on top of unpushed commits, pushes, and triggers CI.
 #
 # Environment variables from .env are automatically passed to CI. Explicit --env
 # args override .env values (later values win).
@@ -21,9 +21,7 @@ set -euo pipefail
 #   parallel_cloud_run.sh -s                   # All tests, serial mode (implicit ".")
 #   parallel_cloud_run.sh -s tests/            # Specific path, serial mode
 #   parallel_cloud_run.sh --env UNIFY_CACHE=false tests/  # Override .env
-#   parallel_cloud_run.sh --remote-only tests/ # Ignore local changes, use remote
-#
-# Each run creates a unique branch (ci-staging-{user}-{datetime}) for isolation.
+#   parallel_cloud_run.sh --push-local tests/  # Include local uncommitted/unpushed changes
 
 REPO="unifyai/unity"
 WORKFLOW="tests.yml"
@@ -33,6 +31,9 @@ POLL_TIMEOUT=30  # seconds to wait for run to appear
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
+
+# Source shared argument parsing (used by both parallel_run.sh and parallel_cloud_run.sh)
+source "$SCRIPT_DIR/_parse_args.sh"
 
 # ============================================================================
 # Helper: Poll for the workflow run URL after triggering
@@ -136,72 +137,52 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 # ============================================================================
-# Parse arguments: separate flags from test paths
+# Parse arguments using shared helper
 # ============================================================================
+# First extract --push-local (cloud-specific), then parse the rest with shared helper.
 
-declare -a EXTRA_ENV_ARGS=()
-declare -a PASSTHROUGH_ARGS=()
-declare -a TEST_PATHS=()
-REMOTE_ONLY=0
+PUSH_LOCAL=0
+declare -a REMAINING_ARGS=()
 
-while (( $# > 0 )); do
-  case "$1" in
-    --remote-only)
-      # Skip local change detection, run against remote branch as-is
-      REMOTE_ONLY=1
-      shift
-      ;;
-    --env)
-      if [[ -n "${2:-}" ]]; then
-        EXTRA_ENV_ARGS+=("--env" "$2")
-        shift 2
-      else
-        echo "Error: --env requires a KEY=VALUE argument" >&2
-        exit 1
-      fi
-      ;;
-    --env=*)
-      EXTRA_ENV_ARGS+=("--env" "${1#--env=}")
-      shift
-      ;;
-    -*)
-      # Any other flag (e.g., -s, --timeout, --no-cache) passes through to parallel_run.sh
-      PASSTHROUGH_ARGS+=("$1")
-      shift
-      ;;
-    *)
-      TEST_PATHS+=("$1")
-      shift
-      ;;
-  esac
-done
-
-# ============================================================================
-# Normalize test paths (resolve shorthand like "test_foo" -> "tests/test_foo")
-# ============================================================================
-# This runs after cd "$REPO_ROOT", so all paths are relative to repo root.
-
-declare -a RESOLVED_PATHS=()
-for path in "${TEST_PATHS[@]}"; do
-  if [[ -e "$path" ]]; then
-    # Path exists as-is (e.g., "tests/test_contact_manager" or ".")
-    RESOLVED_PATHS+=("$path")
-  elif [[ -e "tests/$path" ]]; then
-    # Path exists with tests/ prefix (e.g., "test_contact_manager" -> "tests/test_contact_manager")
-    RESOLVED_PATHS+=("tests/$path")
+for arg in "$@"; do
+  if [[ "$arg" == "--push-local" ]]; then
+    PUSH_LOCAL=1
   else
-    echo "Error: Path not found: $path" >&2
-    echo "  Also tried: tests/$path" >&2
-    echo "  (paths are relative to repo root: $REPO_ROOT)" >&2
-    exit 1
+    REMAINING_ARGS+=("$arg")
   fi
 done
 
+# Parse remaining arguments using shared helper
+# Returns: 0=success, 1=help requested, 2=error
+parse_test_args "${REMAINING_ARGS[@]}"
+_parse_result=$?
+if (( _parse_result == 1 )); then
+  # Help requested - show cloud-specific help
+  HELP_SCRIPT_NAME="parallel_cloud_run.sh"
+  HELP_EXTRA_OPTIONS="  --push-local         Push local uncommitted/unpushed changes to CI
+"
+  print_help
+  exit 0
+elif (( _parse_result == 2 )); then
+  # Error (already printed)
+  exit 1
+fi
+unset _parse_result REMAINING_ARGS
+
+# ============================================================================
+# Resolve and validate test paths
+# ============================================================================
+# This runs after cd "$REPO_ROOT", so all paths are relative to repo root.
+
+if ! resolve_test_paths "$REPO_ROOT"; then
+  exit 1
+fi
+
 # Build test_path from resolved arguments (default to "." for full suite)
-if (( ${#RESOLVED_PATHS[@]} == 0 )); then
+if (( ${#RESOLVED_TEST_PATHS[@]} == 0 )); then
   TEST_PATH="."
 else
-  TEST_PATH="${RESOLVED_PATHS[*]}"
+  TEST_PATH="${RESOLVED_TEST_PATHS[*]}"
 fi
 
 # ============================================================================
@@ -216,15 +197,9 @@ if [[ -f "$ENV_FILE" ]]; then
   ENV_FILE_CONTENT_B64=$(base64 < "$ENV_FILE" | tr -d '\n')
 fi
 
-# Build parallel_run_args from passthrough flags and explicit --env CLI args
-# These are intentionally visible in logs since user explicitly passed them
-PARALLEL_RUN_ARGS=""
-if (( ${#PASSTHROUGH_ARGS[@]} > 0 )); then
-  PARALLEL_RUN_ARGS="${PASSTHROUGH_ARGS[*]}"
-fi
-if (( ${#EXTRA_ENV_ARGS[@]} > 0 )); then
-  PARALLEL_RUN_ARGS="${PARALLEL_RUN_ARGS:+$PARALLEL_RUN_ARGS }${EXTRA_ENV_ARGS[*]}"
-fi
+# Build parallel_run_args from parsed flags using shared helper
+# include-env ensures --env flags are included (visible in CI logs since user passed them)
+PARALLEL_RUN_ARGS="$(reconstruct_parallel_run_args include-env)"
 
 # ============================================================================
 # Check if we need the staging branch approach
@@ -244,14 +219,21 @@ has_unpushed_commits() {
   fi
 }
 
-# If clean and pushed (or --remote-only), use simple path
-if (( REMOTE_ONLY )) || { ! has_uncommitted_changes && ! has_unpushed_commits; }; then
-  if (( REMOTE_ONLY )); then
-    echo "Running against remote (--remote-only). Ignoring local changes."
-    echo "Triggering CI on: $CURRENT_BRANCH"
-  else
-    echo "Branch is clean and pushed. Triggering CI on: $CURRENT_BRANCH"
+# Default: test against remote branch
+if (( ! PUSH_LOCAL )); then
+  # Check for local changes and warn (but proceed with remote)
+  UNCOMMITTED=$(has_uncommitted_changes && echo 1 || echo 0)
+  UNPUSHED=$(has_unpushed_commits && echo 1 || echo 0)
+
+  if (( UNCOMMITTED || UNPUSHED )); then
+    echo "Note: Local changes detected but not included in this CI run."
+    (( UNCOMMITTED )) && echo "  - Uncommitted changes present"
+    (( UNPUSHED )) && echo "  - Unpushed commits present"
+    echo "Use --push-local to test local state instead."
+    echo ""
   fi
+
+  echo "Triggering CI on remote: origin/$CURRENT_BRANCH"
   echo "Test path: $TEST_PATH"
   [[ -n "$PARALLEL_RUN_ARGS" ]] && echo "Explicit overrides: $PARALLEL_RUN_ARGS"
   [[ -n "$ENV_FILE_CONTENT_B64" ]] && echo "Environment: .env file (contents hidden)"
@@ -282,10 +264,10 @@ if (( REMOTE_ONLY )) || { ! has_uncommitted_changes && ! has_unpushed_commits; }
 fi
 
 # ============================================================================
-# Staging branch approach for local changes
+# --push-local: Push local state to a staging branch
 # ============================================================================
 
-echo "Local changes detected. Creating unique staging branch..."
+echo "Pushing local state to staging branch (--push-local)..."
 echo ""
 
 # Generate unique staging branch name with datetime suffix
@@ -293,61 +275,30 @@ TEMP_USER=$(git config user.name 2>/dev/null | tr ' ' '-' | tr '[:upper:]' '[:lo
 DATETIME=$(date +%Y-%m-%dT%H-%M-%S)
 STAGING_BRANCH="ci-staging-${TEMP_USER}-${DATETIME}"
 
-# Save list of staged files for restoration (preserves staged vs unstaged distinction)
-STAGED_FILES=$(git diff --cached --name-only)
-
-# Track state for cleanup
-NEED_RESTORE=""
+# Track if we made a temporary commit (for cleanup)
+DID_TEMP_COMMIT=0
 
 cleanup() {
-  local current
-  current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-
-  # Return to original branch if not already there
-  if [[ "$current" != "$CURRENT_BRANCH" ]]; then
-    git checkout "$CURRENT_BRANCH" 2>/dev/null || true
-  fi
-
-  # Restore stashed changes if we created a stash
-  if [[ -n "$NEED_RESTORE" ]]; then
-    if git stash pop 2>/dev/null; then
-      # Re-stage files that were originally staged
-      if [[ -n "$STAGED_FILES" ]]; then
-        echo "$STAGED_FILES" | while IFS= read -r file; do
-          [[ -n "$file" ]] && git add "$file" 2>/dev/null || true
-        done
-      fi
-    else
-      echo "Warning: Could not restore stash. Check 'git stash list'." >&2
-    fi
+  # If we made a temporary commit, undo it (returns changes to working directory)
+  if (( DID_TEMP_COMMIT )); then
+    git reset HEAD~1 >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
 
-# Stash uncommitted changes if any
+# Commit uncommitted changes on top of current HEAD (if any)
 if has_uncommitted_changes; then
-  echo "Stashing uncommitted changes..."
-  git stash push -u -m "parallel_cloud_run staging"
-  NEED_RESTORE="yes"
-fi
-
-# Create unique staging branch from current HEAD (includes unpushed commits)
-echo "Creating branch: $STAGING_BRANCH"
-git checkout -b "$STAGING_BRANCH"
-
-# Apply and commit stashed changes if we stashed anything
-if [[ -n "$NEED_RESTORE" ]]; then
-  git stash apply stash@{0}
+  echo "Committing local changes temporarily..."
   git add -A
   git commit -m "CI: local changes from $CURRENT_BRANCH ($(date +%Y-%m-%d\ %H:%M))"
+  DID_TEMP_COMMIT=1
 fi
 
-# Push to remote (new unique branch, no force needed)
+# Push current HEAD to the staging branch (no local branch switch needed)
 echo "Pushing to origin/$STAGING_BRANCH..."
-git push origin "$STAGING_BRANCH"
+git push origin "HEAD:refs/heads/$STAGING_BRANCH"
 
-# Return to original branch (cleanup will handle stash restoration)
-git checkout "$CURRENT_BRANCH"
+# Cleanup will reset the temporary commit, restoring uncommitted changes
 
 # Trigger CI
 echo ""

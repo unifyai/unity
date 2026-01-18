@@ -16,6 +16,61 @@ from unity.common.simulated import (
     SimulatedHandleMixin,
 )
 from unity.common.llm_client import new_llm_client
+from unity.common.async_tool_loop import SteerableToolHandle
+
+
+class _StaticAnswerHandle(SteerableToolHandle):
+    """Trivial handle that wraps a static answer string for ask() returns."""
+
+    def __init__(self, answer: str) -> None:
+        self._answer = answer
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: object | None = None,
+    ) -> "SteerableToolHandle":
+        return self
+
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: object | None = None,
+    ) -> Optional[str]:
+        return None
+
+    def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> Optional[str]:
+        return None
+
+    async def pause(self) -> str:
+        return "Already completed."
+
+    async def resume(self) -> str:
+        return "Already completed."
+
+    def done(self) -> bool:
+        return True
+
+    async def result(self) -> str:
+        return self._answer
+
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        pass
 
 
 class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
@@ -555,7 +610,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         *,
         parent_chat_context_cont: list[dict] | None = None,
         images: object | None = None,
-    ) -> str:
+    ) -> SteerableToolHandle:
         """Ask a question about the current state.
 
         Args:
@@ -564,6 +619,9 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 Accepted for API parity with real handles but not currently used.
             images: Optional image references. Accepted for API parity with real handles
                 but not currently used.
+
+        Returns:
+            A SteerableToolHandle whose result() returns the answer string.
         """
         if not self._description:
             raise Exception("No actions are currently being performed.")
@@ -601,7 +659,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             label=q_label,
             prompt=prompt,
         )
-        return answer
+        return _StaticAnswerHandle(answer)
 
     def done(self) -> bool:
         return self._done_event.is_set()

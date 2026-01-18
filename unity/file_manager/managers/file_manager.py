@@ -1525,12 +1525,7 @@ class FileManager(BaseFileManager):
             {"filesystem": self._fs_type, "file_path": file_path, "question": question},
             indent=2,
         )
-        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
-        tool_policy_fn = (
-            None
-            if use_semantic_cache in ("read", "both")
-            else self._default_ask_about_file_tool_policy
-        )
+        tool_policy_fn = self._default_ask_about_file_tool_policy
         handle = start_async_tool_loop(
             client,
             user_blob,
@@ -1542,8 +1537,6 @@ class FileManager(BaseFileManager):
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.ask_about_file",
             response_format=response_format,
         )
         if _return_reasoning_steps:

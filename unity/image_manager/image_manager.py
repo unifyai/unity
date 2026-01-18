@@ -412,9 +412,11 @@ class ImageHandle:
                     "role": "system",
                     "_ctx_header": True,
                     "content": (
-                        "Broader context (read-only):\n"
+                        "You are the `ask_image` tool being invoked from a parent conversation. "
+                        "The parent conversation below shows why this image question was asked:\n\n"
                         f"{json.dumps(parent_chat_context_cont, indent=2)}\n\n"
-                        "Resolve the *next* user request in light of this."
+                        "Your task: Analyze the provided image and answer the question. "
+                        "You are a leaf tool - respond with plain text only, do not attempt to call other tools."
                     ),
                 },
             )

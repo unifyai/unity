@@ -777,8 +777,10 @@ jobs:
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
         # parallel_run.sh handles starting local orchestra automatically
-        echo "Running: parallel_run.sh --timeout $TIMEOUT $EXTRA_ARGS $TEST_PATH"
-        tests/parallel_run.sh --timeout "$TIMEOUT" $EXTRA_ARGS "$TEST_PATH"
+        # Note: TEST_PATH must come before EXTRA_ARGS because EXTRA_ARGS may contain
+        # "-- pytest-args" and everything after -- is treated as pytest arguments
+        echo "Running: parallel_run.sh --timeout $TIMEOUT $TEST_PATH $EXTRA_ARGS"
+        tests/parallel_run.sh --timeout "$TIMEOUT" "$TEST_PATH" $EXTRA_ARGS
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE

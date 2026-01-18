@@ -167,9 +167,9 @@ const wsInstance = expressWs(app);
 app.use(express.json({ limit: '10mb' }));
 
 // --- Authorization (Bearer) middleware ---
-function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise<boolean> {
+function verifyApiKeyWithUnify(apiKey: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const url = new URL(`${process.env.UNIFY_BASE_URL}/assistant?email=${assistant_email}`);
+    const url = new URL(`${process.env.UNIFY_BASE_URL}/user/basic-info`);
     const options = {
       method: 'GET',
       hostname: url.hostname,
@@ -180,7 +180,6 @@ function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise
       },
     };
 
-    // Use the appropriate request method based on protocol
     const requestLib = url.protocol === 'https:' ? https : http;
     const req = requestLib.request(options, (res) => {
       const code = res.statusCode || 0;
@@ -188,30 +187,10 @@ function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
         if (!(code >= 200 && code < 300)) return resolve(false);
-        if (!body || body.trim().length === 0) return resolve(false);
-        try {
-          // Using default assistant for testing, auth passes since apikey is valid
-          if (assistant_email.includes('agent') || assistant_email.includes('assistant')) {
-            return resolve(true);
-          }
-
-          const json = JSON.parse(body);
-          // Treat empty payloads as invalid: {"info": []}, {}, []
-          if (Array.isArray(json)) return resolve(json.length > 0);
-          if (json && typeof json === 'object') {
-            if (Array.isArray((json as any).info)) return resolve((json as any).info.length > 0);
-            return resolve(Object.keys(json).length > 0);
-          }
-          if (typeof json === 'string') return resolve(json.trim().length > 0);
-          return resolve(!!json);
-        } catch (_e) {
-          // Non-JSON: accept only if non-empty body
-          return resolve(body.trim().length > 0);
-        }
+        return resolve(true);
       });
     });
-    req.on('error', (err) => {
-
+    req.on('error', () => {
       resolve(false);
     });
     req.end();
@@ -224,17 +203,20 @@ async function auth(req: Request, res: Response, next: Function) {
   if (!match) {
     return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid API key' });
   }
-  const keys = match[1].split(' ');
-  const apikey = keys[0];
-  const assistant_email = keys[1];
+  const apiKey = match[1];
 
+  // Check 1: Bearer token must match UNIFY_KEY
+  if (apiKey !== process.env.UNIFY_KEY) {
+    return res.status(401).json({ error: 'unauthorized', message: 'Invalid API key' });
+  }
+
+  // Check 2: Verify with /user/basic-info endpoint
   try {
-    const ok = await verifyApiKeyWithUnify(apikey, assistant_email);
+    const ok = await verifyApiKeyWithUnify(apiKey);
     if (!ok) {
       return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
     }
   } catch (e) {
-
     return res.status(401).json({ error: 'unauthorized', message: 'API key verification failed' });
   }
 
@@ -314,12 +296,18 @@ wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
     return;
   }
 
-  const keys = match[1].split(' ');
-  const apikey = keys[0];
-  const assistant_email = keys[1];
+  const apiKey = match[1];
 
+  // Check 1: Bearer token must match UNIFY_KEY
+  if (apiKey !== process.env.UNIFY_KEY) {
+    console.log('WebSocket connection rejected: Invalid API key');
+    ws.close(1008, 'Invalid API key');
+    return;
+  }
+
+  // Check 2: Verify with /user/basic-info endpoint
   try {
-    const ok = await verifyApiKeyWithUnify(apikey, assistant_email);
+    const ok = await verifyApiKeyWithUnify(apiKey);
     if (!ok) {
       console.log('WebSocket connection rejected: Auth failed');
       ws.close(1008, 'API key verification failed');

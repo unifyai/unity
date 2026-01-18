@@ -320,29 +320,6 @@ async def wait_for_tool_call(handle: Any, tool_name: str, timeout: int = 60) -> 
 # ---------------------------------------------------------------------------
 
 
-class NoKeychainBrowser:
-    """Minimal browser stub to prevent Keychain prompts during tests.
-
-    DEPRECATED: With computer_mode="mock", this class is no longer needed.
-    Kept for backward compatibility with tests that import it.
-    """
-
-    def __init__(self, *, url: str = "", screenshot: str = "") -> None:
-        self._url = url
-        self._screenshot = screenshot
-        # Some codepaths introspect backend attributes; keep a simple object.
-        self.backend = object()
-
-    async def get_current_url(self) -> str:
-        return self._url
-
-    async def get_screenshot(self) -> str:
-        return self._screenshot
-
-    def stop(self) -> None:
-        return None
-
-
 async def _mock_observe(*args: Any, **kwargs: Any) -> Any:
     """Return a reasonable observation for browser plans without invoking real backends."""
     import inspect

@@ -120,32 +120,52 @@ def stub_external_deps(monkeypatch):
     monkeypatch.setattr("redis.Redis", _FakeRedis)
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
-    # Two sources of timestamps appear in LLM prompts:
-    # 1. prompt_helpers.now() -> string for "Current UTC time is..." footer
-    # 2. Event/Message timestamps -> datetime for "@ Friday, June 13, 2025..." in messages
-    # We stub both to the same fixed point in time for cache consistency.
+    # All timestamps in prompts come from prompt_helpers.now() which returns either:
+    # - A formatted string (as_string=True): "Friday, June 13, 2025 at 12:00 PM UTC"
+    # - A datetime object (as_string=False): for timestamp comparisons
+    #
+    # When UNITY_INCREMENTING_TIMESTAMPS is enabled (e.g., ConversationManager tests),
+    # datetime objects auto-increment by microseconds so last_snapshot < message.timestamp
+    # comparisons work correctly for **NEW** markers.
 
-    def _static_now(time_only: bool = False):
-        """Return a fixed timestamp string for prompt footers."""
+    from datetime import timedelta
+
+    _timestamp_counter = {"value": 0}
+
+    def _static_now(time_only: bool = False, as_string: bool = True):
+        """Return a fixed timestamp for testing."""
+        if SETTINGS.UNITY_INCREMENTING_TIMESTAMPS and not as_string:
+            # Return incrementing datetime for **NEW** marker comparisons
+            _timestamp_counter["value"] += 1
+            return _FIXED_DATETIME + timedelta(microseconds=_timestamp_counter["value"])
+
+        if not as_string:
+            return _FIXED_DATETIME
+
         label = "UTC"
-        return (
-            _FIXED_DATETIME.strftime("%H:%M:%S ") + label
-            if time_only
-            else _FIXED_DATETIME.strftime("%Y-%m-%d %H:%M:%S ") + label
-        )
+        if time_only:
+            return _FIXED_DATETIME.strftime("%I:%M %p ") + label
+        return _FIXED_DATETIME.strftime("%A, %B %d, %Y at %I:%M %p ") + label
 
-    # Patch prompt_helpers.now for prompt footers
+    # Patch prompt_helpers.now everywhere it's imported
     monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
     monkeypatch.setattr("unity.guidance_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.secret_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.memory_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.file_manager.prompt_builders.now", _static_now)
-
-    # Patch events._get_now for Event/Message timestamps in renderer output
+    monkeypatch.setattr("unity.conversation_manager.events.prompt_now", _static_now)
     monkeypatch.setattr(
-        "unity.conversation_manager.events._get_now",
-        lambda: _FIXED_DATETIME,
+        "unity.conversation_manager.domains.contact_index.prompt_now",
+        _static_now,
+    )
+    monkeypatch.setattr(
+        "unity.conversation_manager.domains.managers_utils.prompt_now",
+        _static_now,
+    )
+    monkeypatch.setattr(
+        "unity.conversation_manager.conversation_manager.prompt_now",
+        _static_now,
     )
 
 
@@ -444,7 +464,7 @@ def pytest_configure(config):
         config.option.showcapture = "no"
         config.option.capture = "no"
 
-    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
+    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump(mode="json")
 
     # ------------------------------------------------------------------ #
     # Prune non-pytest console handlers so only pytest live logs appear. #

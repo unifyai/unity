@@ -6,12 +6,13 @@ from typing import Literal
 from pydantic import Field
 
 from unity.contact_manager.types.contact import Contact as ContactType
-from unity.conversation_manager.events import _get_now
+from unity.common.prompt_helpers import now as prompt_now
 
 
 class Contact(ContactType):
     is_boss: bool = False
     on_call: bool = False
+    global_thread: deque = Field(default_factory=lambda: deque(maxlen=50))
     threads: dict[str, deque] = Field(
         default_factory=lambda: {
             "sms": deque(maxlen=25),
@@ -81,7 +82,7 @@ class ContactIndex:
         role: Literal["user", "assistant"] = "user",
     ):
         if not timestamp:
-            timestamp = _get_now()
+            timestamp = prompt_now(as_string=False)
         contact_id = contact["contact_id"]
         if contact_id not in self.active_conversations:
             self.active_conversations[contact_id] = Contact(**contact)
@@ -109,6 +110,7 @@ class ContactIndex:
                 timestamp,
             )
         contact.threads[thread_name].append(message)
+        contact.global_thread.append(message)
 
     # should check if the contact exists
     def get_contact(
@@ -130,4 +132,4 @@ class ContactIndex:
                 (c for c in self.contacts.values() if c.email_address == email),
                 None,
             )
-        return c.model_dump(exclude={"threads"}) if c else None
+        return c.model_dump(exclude={"threads", "global_thread"}) if c else None
