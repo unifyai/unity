@@ -45,6 +45,7 @@ async def very_slow_task() -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.enable_eventbus
 @_handle_project
 async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
     model,
