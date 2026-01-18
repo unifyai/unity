@@ -148,7 +148,11 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
 
     # Look up file_id and use storage_id-based context
-    file_id = get_file_id_from_path(index_context=fm._ctx, file_path=file_path)
+    file_id = get_file_id_from_path(
+        data_manager=fm._data_manager,
+        index_context=fm._ctx,
+        file_path=file_path,
+    )
     assert file_id is not None, f"File record not found for {file_path}"
     ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
@@ -235,7 +239,11 @@ def test_embed_after_creates_columns(file_manager, tmp_path: Path):
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
 
     # Look up file_id and use storage_id-based context
-    file_id = get_file_id_from_path(index_context=fm._ctx, file_path=file_path)
+    file_id = get_file_id_from_path(
+        data_manager=fm._data_manager,
+        index_context=fm._ctx,
+        file_path=file_path,
+    )
     assert file_id is not None, f"File record not found for {file_path}"
     ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
@@ -332,7 +340,11 @@ def test_embed_along_content(file_manager, tmp_path: Path):
     # The critical invariant for "along" is that embeddings are created successfully.
 
     # Look up file_id and use storage_id-based context
-    file_id = get_file_id_from_path(index_context=fm._ctx, file_path=file_path)
+    file_id = get_file_id_from_path(
+        data_manager=fm._data_manager,
+        index_context=fm._ctx,
+        file_path=file_path,
+    )
     assert file_id is not None, f"File record not found for {file_path}"
     ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
