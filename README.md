@@ -2,6 +2,40 @@
 
 Unity is an AI Assistant framework implemented as a heavily distributed multi-node system. Each node communicates via English-language APIs, with the assistant's intelligence emerging from specialized **state managers** that handle different aspects of cognition, memory, and action.
 
+## System Architecture
+
+Unity is the central "brain" in a multi-repository system:
+
+```
+         User (Console/Phone/SMS/Email)
+                      │
+    ┌─────────────────┴──────────────────┐
+    │           Communication            │
+    │    (Webhooks, Voice, SMS, Email)   │
+    └────┬───────────────────────────────┘
+         │
+    ┌────┴────┐    ┌─────────┐    ┌─────────┐
+    │  Unity  │    │  Unify  │    │Orchestra│
+    │ (Brain) │───▶│  (SDK)  │───▶│  (API)  │
+    │         │    │         │    │  (DB)   │
+    └────┬────┘    └────┬────┘    └────┬────┘
+         │              ▲              ▲
+         │              │              │
+         │    ┌─────────┴─┐       ┌────┴───────┐
+         └───▶│  UniLLM   │       │  Console   │
+              │ (LLM API) │       │(Interfaces)│
+              └───────────┘       └────────────┘
+```
+
+**This repo (Unity)** is the AI assistant's cognitive core. It depends on:
+- **Unify** — Python SDK for persistence and logging
+- **UniLLM** — LLM client for all inference calls
+
+Related repositories:
+- [Orchestra](https://github.com/unifyai/orchestra) — Backend API and database
+- [Communication](https://github.com/unifyai/communication) — External communication gateway (voice, SMS, email)
+- [Console](https://github.com/unifyai/console) — Web UI and observability dashboard
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
