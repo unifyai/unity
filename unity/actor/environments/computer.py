@@ -95,8 +95,8 @@ class ComputerEnvironment(BaseEnvironment):
     async def capture_state(self) -> Dict[str, Any]:
         """Captures visual browser state (screenshot + URL)."""
         try:
-            screenshot = await self._computer_primitives.browser.get_screenshot()
-            url = await self._computer_primitives.browser.get_current_url()
+            screenshot = await self._computer_primitives.computer.get_screenshot()
+            url = await self._computer_primitives.computer.get_current_url()
             return {
                 "type": "visual",
                 "screenshot": screenshot,
