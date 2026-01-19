@@ -26,7 +26,7 @@ from tests.test_actor.test_state_managers.utils import (
     wait_for_pane_handle_count,
     wait_for_pane_steering_event,
 )
-from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+from tests.async_helpers import _wait_for_condition
 
 from .helpers import release_gate_and_finish, start_canned_plan
 from .timeouts import (

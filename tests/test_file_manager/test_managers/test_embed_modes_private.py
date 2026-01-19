@@ -122,7 +122,7 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
     parse_result.graph = ContentGraph(root_id=doc_id, nodes=nodes)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file"),
+        ingest=IngestConfig(),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="off",
             file_specs=[
@@ -143,10 +143,18 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
 
     # Use process_single_file from executor
     from unity.file_manager.managers.utils.executor import process_single_file
+    from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
 
-    ctx = fm._ctx_for_file(file_path)
+    # Look up file_id and use storage_id-based context
+    file_id = get_file_id_from_path(
+        data_manager=fm._data_manager,
+        index_context=fm._ctx,
+        file_path=file_path,
+    )
+    assert file_id is not None, f"File record not found for {file_path}"
+    ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
     assert "_summary_emb" not in fields
 
@@ -205,7 +213,7 @@ def test_embed_after_creates_columns(file_manager, tmp_path: Path):
     parse_result.graph = ContentGraph(root_id=doc_id, nodes=nodes)
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file"),
+        ingest=IngestConfig(),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="after",
             file_specs=[
@@ -226,10 +234,18 @@ def test_embed_after_creates_columns(file_manager, tmp_path: Path):
 
     # Use process_single_file from executor
     from unity.file_manager.managers.utils.executor import process_single_file
+    from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
 
-    ctx = fm._ctx_for_file(file_path)
+    # Look up file_id and use storage_id-based context
+    file_id = get_file_id_from_path(
+        data_manager=fm._data_manager,
+        index_context=fm._ctx,
+        file_path=file_path,
+    )
+    assert file_id is not None, f"File record not found for {file_path}"
+    ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
     assert "_summary_emb" in fields
 
@@ -296,7 +312,7 @@ def test_embed_along_content(file_manager, tmp_path: Path):
         calls["post"] += 1
 
     cfg = FilePipelineConfig(
-        ingest=IngestConfig(mode="per_file", content_rows_batch_size=2),
+        ingest=IngestConfig(content_rows_batch_size=2),  # default per-file storage
         embed=EmbeddingsConfig(
             strategy="along",
             file_specs=[
@@ -317,12 +333,20 @@ def test_embed_along_content(file_manager, tmp_path: Path):
 
     # Use process_single_file from executor instead of removed _ingest_and_embed
     from unity.file_manager.managers.utils.executor import process_single_file
+    from unity.file_manager.managers.utils.ingest_ops import get_file_id_from_path
 
     process_single_file(fm, parse_result=parse_result, file_path=file_path, config=cfg)
     # Note: plugin hooks are optional and may be wired in/out depending on executor implementation.
     # The critical invariant for "along" is that embeddings are created successfully.
 
-    ctx = fm._ctx_for_file(file_path)
+    # Look up file_id and use storage_id-based context
+    file_id = get_file_id_from_path(
+        data_manager=fm._data_manager,
+        index_context=fm._ctx,
+        file_path=file_path,
+    )
+    assert file_id is not None, f"File record not found for {file_path}"
+    ctx = fm._ctx_for_file_content(str(file_id))
     fields = unify.get_fields(context=ctx)
     assert "_summary_emb" in fields
 
@@ -429,15 +453,15 @@ def test_table_embeddings_along_for_csv_and_xlsx(
 
     process_single_file(fm, parse_result=parse_result, file_path=file_name, config=cfg)
 
-    # Locate a per-file table in the overview and assert the embedding columns exist
-    ov = fm.tables_overview(file=file_name)
-    roots = [k for k, v in ov.items() if isinstance(v, dict) and "Tables" in v]
-    assert roots, "Expected per-file root with Tables"
-    tables = ov[roots[0]]["Tables"]
-    assert isinstance(tables, dict) and len(tables) >= 1
-    logical = next(iter(tables.keys()))
-    # Use file_path directly instead of legacy root from tables_overview
-    cols = fm.list_columns(table=f"{file_name}.Tables.{logical}")
+    # Locate a per-file table using describe() and assert the embedding columns exist
+    storage = fm.describe(file_path=file_name)
+    assert storage.has_tables, "Expected per-file tables"
+    assert len(storage.tables) >= 1
+
+    # Use the exact context path from describe()
+    table_context = storage.tables[0].context_path
+    cols = fm.list_columns(context=table_context)
+
     # Verify all target columns were created (consolidated spec with multiple columns)
     for target_col in target_columns:
         assert target_col in cols, f"Expected embedding column {target_col} to exist"

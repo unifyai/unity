@@ -15,6 +15,7 @@ import functools
 import websockets
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
+from unity.image_manager.utils import make_solid_png_base64
 
 logger = logging.getLogger("websockets")
 
@@ -76,9 +77,9 @@ class ComputerBackend(ABC):
         """Cleanly shut down the backend."""
 
 
-# A valid 1x1 white PNG image encoded as base64 - used as default mock screenshot
+# A valid 32x32 white PNG image encoded as base64 - used as default mock screenshot
 # This ensures screenshot values don't cause "invalid image format" errors when sent to LLMs
-VALID_MOCK_SCREENSHOT_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
+VALID_MOCK_SCREENSHOT_PNG = make_solid_png_base64(32, 32, (255, 255, 255))
 
 
 class MockComputerBackend(ComputerBackend):

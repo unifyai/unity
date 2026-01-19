@@ -101,8 +101,14 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
 
     # Verify a per-table context exists
     ctxs = unify.get_contexts()
+    # unify.get_contexts() returns a list of dicts with 'name' field
+    ctx_names = (
+        [ctx.get("name", "") for ctx in ctxs]
+        if isinstance(ctxs, list)
+        else list(ctxs.keys())
+    )
     table_ctx_candidates = [
-        name for name in ctxs.keys() if "/Tables/" in name and "people" in name
+        name for name in ctx_names if "/Tables/" in name and "people" in name
     ]
     assert table_ctx_candidates, "No table context candidates found"
 
@@ -205,9 +211,15 @@ async def test_xlsx_multi_tab_per_table_context(file_manager, tmp_path: Path):
     import unify
 
     ctxs = unify.get_contexts()
+    # unify.get_contexts() returns a list of dicts with 'name' field
+    ctx_names = (
+        [ctx.get("name", "") for ctx in ctxs]
+        if isinstance(ctxs, list)
+        else list(ctxs.keys())
+    )
     table_ctx_candidates = [
         name
-        for name in ctxs.keys()
+        for name in ctx_names
         if "/Tables/" in name
         and any(k in name for k in ["retail_data", "workforce_data"])
     ]

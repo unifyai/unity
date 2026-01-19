@@ -284,8 +284,8 @@ Example workflow:
 **❌ ANTI-PATTERN (AVOID THIS):**
 ```python
 # DON'T explore tables when a function already exists!
-tables = await primitives.files.tables_overview()  # Unnecessary!
-schema = await primitives.files.schema_explain(...)  # Unnecessary!
+storage = await primitives.files.describe(file_path="...")  # Unnecessary!
+columns = await primitives.files.list_columns(context="...")  # Unnecessary!
 ```
 
 **✅ CORRECT WORKFLOW:**

@@ -2267,6 +2267,7 @@ class _PrimitivesProxy:
             "guidance",
             "web",
             "files",
+            "data",
         }:
             env = None
             if hasattr(self._plan, "environments") and isinstance(

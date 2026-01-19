@@ -25,7 +25,6 @@ from .messages import (
     find_unreplied_assistant_entries,
     chat_context_repr,
     generate_with_preprocess,
-    transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -248,8 +247,8 @@ async def async_tool_loop_inner(
     tools : ``dict[str, Callable]``
         A mapping ``name → function`` describing every callable the LLM may
         invoke.  Each function must be fully type-hinted and have a concise
-        docstring – these are automatically converted to an OpenAI *tool
-        schema* via :pyfunc:`method_to_schema`.
+        docstring – these are automatically converted to a *tool schema*
+        via :pyfunc:`method_to_schema`.
 
     interject_queue : ``asyncio.Queue[str | dict]``
         Thread-safe channel through which the *outer* application can push
@@ -346,106 +345,14 @@ async def async_tool_loop_inner(
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
-    # ── Model family detection (centralized) ──────────────────────────────────────
-    _model_name = str(getattr(client, "_model", "") or "")
-    _model_base = _model_name.split("@")[0]
-    _is_claude = _model_base.startswith("claude")
-
     # ── Reasoning model compatibility ────────────────────────────────────────────
-    # Handle reasoning model constraints:
-    # - Claude: extended thinking incompatible with tool_choice="required"; we
-    #   disable thinking on forced-tool turns and transform those messages later.
-    _claude_thinking_disabled = False
-    # Track seeded message count - messages at indices < this need transformation
-    # for Claude because they lack thinking blocks (manually constructed).
-    _seeded_msg_count = 0
+    # Provider-specific thinking mode compliance is handled automatically by
+    # unillm's provider preprocessing. The async tool loop is provider-agnostic.
 
     def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
         """Handle reasoning model compatibility. Returns effective preprocess."""
-        nonlocal _claude_thinking_disabled
-
-        effective_preprocess = preprocess_msgs
-
-        # Claude: Handle thinking/tool_choice incompatibility
-        # Anthropic's API prohibits extended thinking with tool_choice="required".
-        # LiteLLM converts reasoning_effort to thinking for Claude models, so we
-        # must prevent reasoning_effort from being sent. We temporarily clear the
-        # client's _reasoning_effort so the generate call won't enable thinking.
-        if _is_claude:
-            if tool_choice != "required":
-                # Always apply transformation wrapper for Claude to handle:
-                # 1. Seeded messages without thinking blocks (manually constructed)
-                # 2. Synthetic check_status_ messages (chronological ordering pairs)
-                #
-                # We do NOT transform real loop-generated assistant messages (those
-                # have thinking blocks from Claude). Transforming those caused
-                # infinite loops where Claude couldn't understand the context.
-                outer_preprocess = effective_preprocess
-
-                def claude_wrapper(msgs):
-                    # Skip transformation when no tools available. The check_status_
-                    # synthetic messages are internal bookkeeping for chronological
-                    # ordering. When tools are exhausted, Claude just needs to produce
-                    # a final text response. Transforming to "[Continue from here]"
-                    # confuses Claude into producing empty responses when there's
-                    # nothing left to do.
-                    if not gen_kwargs.get("tools"):
-                        return outer_preprocess(msgs) if outer_preprocess else msgs
-
-                    # Build index lookup for efficiency
-                    msg_indices = {id(m): i for i, m in enumerate(msgs)}
-
-                    def needs_transformation(m: dict) -> bool:
-                        if not isinstance(m, dict):
-                            return False
-                        if m.get("role") != "assistant":
-                            return False
-                        if not m.get("tool_calls"):
-                            return False
-
-                        # Check 1: Synthetic check_status_ messages always need
-                        # transformation. These are loop-internal bookkeeping for
-                        # chronological tool result ordering and don't have thinking
-                        # blocks (they're synthesized, not from Claude).
-                        for tc in m.get("tool_calls") or []:
-                            func = tc.get("function", {})
-                            name = func.get("name", "")
-                            if isinstance(name, str) and name.startswith(
-                                "check_status_",
-                            ):
-                                return True
-
-                        # Check 2: Seeded messages without thinking blocks (those
-                        # passed in initially via the message parameter). These
-                        # are manually constructed and lack Claude's thinking.
-                        #
-                        # IMPORTANT: Check if loop-generated FIRST. Loop-generated
-                        # messages should never be transformed
-                        idx = msg_indices.get(id(m), 999999)
-                        if idx >= _seeded_msg_count:
-                            return False  # Loop-generated message - never transform
-
-                        # Only for seeded messages: transform if no thinking blocks
-                        provider_fields = m.get("provider_specific_fields") or {}
-                        thinking_blocks = provider_fields.get("thinking_blocks")
-
-                        if thinking_blocks is None:
-                            return True
-
-                        return False  # Seeded message but has thinking blocks
-
-                    msgs = transform_tool_calls_to_context(
-                        msgs,
-                        marker_key="_claude_thinking_compat",
-                        context_header="[Prior tool execution context]",
-                        context_footer="[Continue from here]",
-                        predicate=needs_transformation,
-                    )
-                    return outer_preprocess(msgs) if outer_preprocess else msgs
-
-                effective_preprocess = claude_wrapper
-
-        return effective_preprocess
+        # All provider-specific compliance is handled by unillm's preprocessing.
+        return preprocess_msgs
 
     _img_token = None
     _imglog_token = None
@@ -528,8 +435,7 @@ async def async_tool_loop_inner(
     # 2. The user only sees the initial request and any interjection messages
     # 3. The user sees the final plain-text response from the assistant
     #
-    # For Claude/Gemini: appended to the global system message via LiteLLM.
-    # For OpenAI: inserted positionally right before the first interjection.
+    # Appended to the global system message via LiteLLM preprocessing.
     # -------------------------------------------------------------------------
     _user_visibility_guidance = (
         "## User Visibility Context\n"
@@ -667,19 +573,10 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
-        # NOTE: Claude models with extended thinking require special metadata on
-        # assistant messages containing tool_calls. We handle this via LAZY
-        # transformation in _apply_reasoning_model_compat → claude_wrapper,
-        # which transforms non-thinking assistant turns in the copy sent to
-        # the API, NOT in client.messages. This allows backfill to find and
-        # execute seeded tool_calls before transformation occurs.
-
         await _msg_dispatcher.append_msgs(seeded_batch)
 
-        # Track seeded message count for Claude transformation (must only
-        # transform seeded messages, not loop-generated ones)
-        _seeded_msg_count = len(client.messages)
-
+        # Inject an initial snapshot of live images (if any) immediately by
+        # appending assistant→tool messages directly to the client transcript.
         try:
             if has_live_images_context():
                 system_msg, _ = build_live_images_overview_msgs("initial_images")
@@ -1657,10 +1554,10 @@ async def async_tool_loop_inner(
                     except Exception:
                         history_lines = []
 
-                # Support dict-style interjections carrying continued parent context
-                # Interjections are now sent as simple user messages (not system messages)
-                # because Claude and Gemini models do not support in-chat system messages.
-                # The user-visibility context has been moved to the topmost system message.
+                # Support dict-style interjections carrying continued parent context.
+                # Interjections are sent as user messages (not system messages) for
+                # broad provider compatibility. User-visibility context is in the
+                # topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
@@ -2379,7 +2276,7 @@ async def async_tool_loop_inner(
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
 
-                    # Parse arguments - handle both string (OpenAI) and dict formats
+                    # Parse arguments - handle both string and dict formats
                     _raw_args = call["function"]["arguments"]
                     if isinstance(_raw_args, str):
                         args = json.loads(_raw_args)

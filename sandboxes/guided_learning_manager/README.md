@@ -4,7 +4,7 @@ Interactive sandbox for testing the `GuidedLearningManager` keyframe capture sys
 
 ## Demo
 
-Loom walkthrough: https://www.loom.com/share/97828f64397f4fa39b4c558c0a2d090a
+Loom walkthrough: https://www.loom.com/share/6e46c5100f81477a8fa576ceee78681d
 
 ## Quick Start
 
@@ -66,7 +66,7 @@ from unity.guided_learning_manager import GuidedLearningManager, GuidedLearningS
 | `--llm-model` | `gemini-2.5-flash@vertex-ai` | Vision model |
 | `--llm-fps` | `0.5` | Frame buffer rate |
 | `--llm-resolution` | `768x432` | Frame resolution |
-| `--llm-max-frames` | `20` | Max frames per segment |
+| `--llm-max-frames` | `40` | Max frames per segment (applied after pre-filter) |
 | `--no-prefilter` | off | Disable SSIM duplicate removal (LLM + DIRECT modes) |
 | `--prefilter-threshold` | `0.98` | SSIM threshold |
 

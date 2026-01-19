@@ -27,7 +27,7 @@ def _get_base_url() -> str | None:
 
 def _get_admin_key() -> str | None:
     """Return admin key or None if not configured."""
-    return SETTINGS.ORCHESTRA_ADMIN_KEY
+    return SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

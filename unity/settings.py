@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from unity.actor.settings import ActorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.conversation_manager.settings import ConversationSettings
+from unity.data_manager.settings import DataSettings
 from unity.file_manager.settings import FileSettings
 from unity.function_manager.settings import FunctionSettings
 from unity.guidance_manager.settings import GuidanceSettings
@@ -154,6 +155,7 @@ class ProductionSettings(BaseSettings):
     actor: ActorSettings = Field(default_factory=ActorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
+    data: DataSettings = Field(default_factory=DataSettings)
     file: FileSettings = Field(default_factory=FileSettings)
     function: FunctionSettings = Field(default_factory=FunctionSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)

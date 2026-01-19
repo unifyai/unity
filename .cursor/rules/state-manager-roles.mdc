@@ -119,10 +119,17 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 
 ### FileManager
 - **Role**: Read‑only registry and parsing for received/downloaded files.
-- **Scope**: exists/list, parse, ask about a specific file (read‑only tool loop).
+- **Scope**: exists/list, parse, ask about a specific file (read‑only tool loop), describe (storage discovery).
 - **Connections**:
-  - **Steered by**: `KnowledgeManager` (for parse/ingest in update/refactor flows).
-  - **Steers**: —
+  - **Steered by**: `Actor` (via `primitives.files.*`).
+  - **Steers**: `DataManager` (internally delegates filter/search/reduce/join operations).
+
+### DataManager
+- **Role**: Low‑level data operations on any Unify context.
+- **Scope**: Canonical implementation of filter, search, reduce, join, insert, update, delete, vectorize, plot.
+- **Connections**:
+  - **Steered by**: `FileManager` (delegates data ops), `Actor` (via `primitives.data.*`).
+  - **Steers**: — (pure primitives module, no high‑level tool loops).
 
 ### WebSearcher
 - **Role**: External/web research orchestration.

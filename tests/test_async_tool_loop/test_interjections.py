@@ -19,7 +19,7 @@ import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
-from tests.test_async_tool_loop.async_helpers import (
+from tests.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
     _wait_for_condition,
@@ -497,9 +497,9 @@ async def test_interjections_processed_successfully(model):
     await _wait_for_tool_request(client, "echo")
     await handle.interject("B please")
 
-    # Wait for the NEXT echo request (echo("B")) using event-based helper.
+    # Wait for the NEXT echo request (echo("B")) using polling-based helper.
     # Can't use _wait_for_tool_request again since it only checks count >= 1.
-    await _wait_for_any_assistant_tool_call("echo")
+    await _wait_for_any_assistant_tool_call(client, "echo")
     await handle.interject("C please")
 
     final = await handle.result()

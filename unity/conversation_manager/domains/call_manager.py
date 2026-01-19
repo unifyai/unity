@@ -9,6 +9,18 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 
+# Preload LiveKit OpenAI plugin on the main thread.
+# LiveKit requires plugins to be registered on the main thread, but the voice
+# agent script runs in a background thread. Importing here ensures the plugin
+# registration happens before the thread is spawned.
+try:
+    from livekit.plugins.openai import (
+        realtime as _openai_realtime_preload,
+    )  # noqa: F401
+except ImportError:
+    # livekit-plugins-openai is optional; STS mode will fail at runtime if missing
+    pass
+
 
 @dataclass
 class CallConfig:
@@ -48,8 +60,31 @@ class LivekitCallManager:
         """
 
         def _runner() -> None:
+            import signal as _signal
             import sys as _sys
 
+            # Monkey-patch signal.signal to handle the "main thread only" restriction.
+            # LiveKit's dev mode uses watchfiles which tries to register SIGTERM
+            # handlers, but signal handlers can only be set from the main thread.
+            # This patch ONLY applies to the LivekitVoiceAgent thread - other threads
+            # and the main thread use normal signal handling.
+            _original_signal = _signal.signal
+
+            def _thread_safe_signal(signalnum, handler):
+                current_thread = threading.current_thread()
+                # Only apply workaround for the LiveKit voice agent thread
+                if current_thread.name == "LivekitVoiceAgent":
+                    try:
+                        return _original_signal(signalnum, handler)
+                    except ValueError as e:
+                        if "signal only works in main thread" in str(e):
+                            # Silently ignore signal registration from this thread
+                            return _signal.SIG_DFL
+                        raise
+                # All other threads/main thread: normal behavior
+                return _original_signal(signalnum, handler)
+
+            _signal.signal = _thread_safe_signal
             old_argv = list(_sys.argv)
             try:
                 _sys.argv = [str(script_path), *argv]
@@ -61,6 +96,7 @@ class LivekitCallManager:
                 print(f"[LivekitCallManager] Voice agent crashed: {e}")
             finally:
                 _sys.argv = old_argv
+                _signal.signal = _original_signal  # Restore original
 
         # Best-effort: stop any previously running agent thread.
         # (In normal operation there should only be one active call.)
