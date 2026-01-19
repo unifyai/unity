@@ -27,3 +27,9 @@ class NotificationBar:
         self.notifications.append(
             Notification(type, notif_content, timestamp, pinned, id),
         )
+
+    def remove_notif(self, interjection_id: str):
+        """Remove a notification by its interjection_id."""
+        self.notifications = [
+            n for n in self.notifications if n.interjection_id != interjection_id
+        ]
