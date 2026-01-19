@@ -52,7 +52,9 @@ def _llm_event_to_eventbus(event: "LLMEvent") -> None:
             time_hour=ts.replace(minute=0, second=0, microsecond=0).isoformat(),
             time_day=ts.strftime("%Y-%m-%d"),
             time_month=ts.replace(day=1).strftime("%Y-%m-%d"),  # First day of month
-            time_year=ts.replace(month=1, day=1).strftime("%Y-%m-%d"),  # First day of year
+            time_year=ts.replace(month=1, day=1).strftime(
+                "%Y-%m-%d",
+            ),  # First day of year
         )
         llm_event = Event(type="LLM", payload=payload, timestamp=ts)
 
