@@ -53,7 +53,7 @@ def _resolve_windows_vm_liveview(assistant_id: str) -> str | None:
     Returns the desktop_url when vm_ready=True, or None if resolution fails.
     """
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
+    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
     if not comms_url or not admin_key:
         print("[Liveview] Skipping: COMMS_URL or admin key not configured")
         return None
@@ -108,7 +108,7 @@ def _resolve_k8s_liveview(job_name: str) -> str | None:
     Returns the liveview URL when ready, or None if resolution fails.
     """
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
+    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
     if not comms_url or not admin_key:
         print("[Liveview] Skipping: COMMS_URL or admin key not configured")
         return None
@@ -251,7 +251,7 @@ def _stop_windows_vm(assistant_id: str) -> None:
     """
     try:
         comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         if not comms_url or not admin_key:
             print(
                 "[debug_logger] Skipping Windows VM stop: "
@@ -312,7 +312,7 @@ def mark_job_done(job_name: str):
     # delete the job service
     try:
         comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         svc = f"unity-svc-{job_name}"
         response = requests.delete(
             f"{comms_url}/infra/job/service",
