@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
-from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+from tests.async_helpers import _wait_for_condition
 from tests.helpers import _handle_project
 from unity.actor.environments import StateManagerEnvironment
 from unity.actor.hierarchical_actor import HierarchicalActor, HierarchicalActorHandle

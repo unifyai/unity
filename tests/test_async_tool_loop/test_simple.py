@@ -29,7 +29,7 @@ import time
 from tests.helpers import _handle_project
 from tests.settings import SETTINGS
 from unity.common.llm_client import new_llm_client
-from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
+from tests.async_helpers import _wait_for_tool_request
 
 import pytest
 import unillm
