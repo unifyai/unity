@@ -245,8 +245,13 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             )
 
             try:
+                # If an interjection already provided the answer (patient mode),
+                # return it immediately instead of creating a new future.
                 if user_reply_future.done():
+                    user_msg = user_reply_future.result()
+                    # Reset for potential future questions
                     user_reply_future = asyncio.Future()
+                    return f"User replied: {user_msg}"
 
                 user_msg = await asyncio.wait_for(user_reply_future, timeout=120)
                 return f"User replied: {user_msg}"
