@@ -25,7 +25,6 @@ from .messages import (
     find_unreplied_assistant_entries,
     chat_context_repr,
     generate_with_preprocess,
-    acknowledge_helper_call,
     transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
@@ -44,7 +43,7 @@ from .images import (
     LIVE_IMAGES_LOG,
     build_live_images_overview_msgs,
 )
-from ..llm_helpers import method_to_schema, _dumps, short_id
+from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
@@ -681,16 +680,13 @@ async def async_tool_loop_inner(
         # transform seeded messages, not loop-generated ones)
         _seeded_msg_count = len(client.messages)
 
-        # Inject an initial snapshot of live images (if any) immediately by
-        # appending assistant→tool messages directly to the client transcript.
         try:
             if has_live_images_context():
-                asst_msg, tool_msg = build_live_images_overview_msgs("initial_images")
+                system_msg, _ = build_live_images_overview_msgs("initial_images")
                 try:
-                    client.append_messages([asst_msg, tool_msg])
+                    client.append_messages([system_msg])
                     try:
-                        await to_event_bus(asst_msg, cfg)
-                        await to_event_bus(tool_msg, cfg)
+                        await to_event_bus(system_msg, cfg)
                     except Exception:
                         pass
                 except Exception:
@@ -779,60 +775,20 @@ async def async_tool_loop_inner(
                     msg_dispatcher=_msg_dispatcher,
                 )
 
-    # Helper: inject a synthetic image-overview tool call/result so the full
-    # set of live images persists in the transcript (independent of tool policy).
     async def _inject_live_images_overview(reason: str = "") -> None:
         try:
-            asst_msg, tool_msg = build_live_images_overview_msgs(reason)
-
-            await _msg_dispatcher.append_msgs([asst_msg])
+            system_msg, _ = build_live_images_overview_msgs(reason)
+            await _msg_dispatcher.append_msgs([system_msg])
             try:
-                await to_event_bus(asst_msg, cfg)
-            except Exception:
-                pass
-
-            # Ensure assistant_meta bookkeeping before inserting tool result
-            assistant_meta[id(asst_msg)] = {"results_count": 0}
-            await insert_tool_message_after_assistant(
-                assistant_meta,
-                asst_msg,
-                tool_msg,
-                client,
-                _msg_dispatcher,
-            )
-            try:
-                await to_event_bus(tool_msg, cfg)
+                await to_event_bus(system_msg, cfg)
             except Exception:
                 pass
 
             if log_steps:
                 try:
-                    # Log the synthetic assistant tool selection in the same style as real LLM output
-                    from .utils import (
-                        try_parse_json as _try_parse_json,
-                    )  # local import to avoid cycles
-
-                    _msg_for_logging = copy.deepcopy(asst_msg)
-                    _tcs = _msg_for_logging.get("tool_calls") or []
-                    for _tc in _tcs:
-                        _fn = _tc.get("function", {})
-                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
                     logger.info(
-                        f"{json.dumps(_msg_for_logging, indent=4)}",
-                        prefix="🤖",
-                    )
-
-                    # Log the synthetic tool response to mirror a normal tool result (pretty content)
-                    _tool_for_logging = copy.deepcopy(tool_msg)
-                    try:
-                        _tool_for_logging["content"] = _try_parse_json(
-                            _tool_for_logging.get("content"),
-                        )
-                    except Exception:
-                        pass
-                    logger.info(
-                        f"{json.dumps(_tool_for_logging, indent=4)}",
-                        prefix=f"✅  ToolCall Completed [0.00s]",
+                        f"Live images overview injected: {reason}",
+                        prefix="📷",
                     )
                 except Exception:
                     pass
@@ -1027,9 +983,8 @@ async def async_tool_loop_inner(
         payload: dict | None = None,
     ) -> None:
         """
-        Create an assistant message containing helper tool_calls that mirror a steering
-        command and immediately insert acknowledgement tool messages, then forward the
-        steering to the target child handles. This does NOT call the LLM.
+        Inject a system context message describing a steering command and forward
+        the steering to target child handles. Does NOT call the LLM.
         """
         payload = payload or {}
         # NEW: allow "inject-only" mode so we do not double-execute child steering
@@ -1085,8 +1040,6 @@ async def async_tool_loop_inner(
             except Exception:
                 pass
 
-        # Minimal transcript-only path: when a helper label is provided, synthesize
-        # a single helper tool_call and acknowledgement, then return (no dispatch).
         try:
             helper_label = payload.get("helper_label")
         except Exception:
@@ -1097,53 +1050,26 @@ async def async_tool_loop_inner(
             except Exception:
                 base = ""
             if base:
-                try:
-                    call_id = f"mirror_{short_id(6)}"
-                except Exception:
-                    call_id = "mirror_unknown"
-                # Minimal args for readability
-                args_json: dict[str, Any] = {}
+                context_parts = [f"[Steering: {base}]"]
                 try:
                     if base == "interject":
                         msg = payload.get("message") or payload.get("content")
                         if msg is not None:
-                            args_json["content"] = msg
+                            context_parts.append(f"content={msg}")
                         if "images" in payload:
-                            args_json["images_present"] = True
+                            context_parts.append("images=present")
                     elif base == "stop" and "reason" in payload:
-                        args_json["reason"] = payload.get("reason")
+                        context_parts.append(f"reason={payload.get('reason')}")
                 except Exception:
                     pass
-                helper_name = f"{base}_{helper_label}_{str(call_id)[-6:]}"
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": helper_name,
-                                "arguments": json.dumps(args_json or {}),
-                            },
-                        },
-                    ],
+                context_msg = {
+                    "role": "system",
+                    "content": " | ".join(context_parts) + " | acknowledged",
+                    "_steering_context": True,
                 }
-                await _msg_dispatcher.append_msgs([assistant_msg])
+                await _msg_dispatcher.append_msgs([context_msg])
                 with suppress(Exception):
-                    await to_event_bus(assistant_msg, cfg)
-                assistant_meta[id(assistant_msg)] = {"results_count": 0}
-                # Ack
-                with suppress(Exception):
-                    await acknowledge_helper_call(  # type: ignore[name-defined]
-                        assistant_msg,
-                        call_id,
-                        helper_name,
-                        json.dumps(args_json or {}),
-                        assistant_meta=assistant_meta,
-                        client=client,
-                        msg_dispatcher=_msg_dispatcher,
-                    )
+                    await to_event_bus(context_msg, cfg)
             return
 
         # Select targets via central policy
@@ -1154,9 +1080,8 @@ async def async_tool_loop_inner(
         if not targets:
             return
 
-        # Build one assistant message with multiple tool_calls
-        tool_calls = []
-        args_by_id: dict[str, Any] = {}
+        context_lines = []
+        forward_info: list[tuple[str, dict, Any]] = []
         for _t, inf in targets:
             try:
                 base = str(method or "").lower().strip()
@@ -1172,83 +1097,53 @@ async def async_tool_loop_inner(
                     except Exception:
                         pass
 
-                # Minimal helper args for transcript readability
-                args_json: dict[str, Any] = {}
+                args_desc = []
                 if base == "interject":
                     msg = payload.get("message") or payload.get("content")
                     if msg is not None:
-                        args_json["content"] = msg
+                        args_desc.append(f'content="{msg}"')
                     if "images" in payload:
-                        args_json["images_present"] = True
+                        args_desc.append("images=present")
                 elif base == "ask":
                     q = payload.get("question")
                     if q is not None:
-                        args_json["question"] = q
+                        args_desc.append(f'question="{q}"')
                     if "images" in payload:
-                        args_json["images_present"] = True
+                        args_desc.append("images=present")
                 elif base == "stop":
                     if "reason" in payload:
-                        args_json["reason"] = payload.get("reason")
+                        args_desc.append(f'reason="{payload.get("reason")}"')
                 elif base == "clarify":
                     if "answer" in payload:
-                        args_json["answer"] = payload.get("answer")
-                # pause/resume carry no helper args
-                call_id = f"mirror_{short_id(6)}"
-                tool_calls.append(
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": helper_name,
-                            "arguments": json.dumps(args_json or {}),
-                        },
-                    },
-                )
-                # Use full forward kwargs for dispatch
-                args_by_id[call_id] = (helper_name, forward_args, inf)
+                        args_desc.append(f'answer="{payload.get("answer")}"')
+                args_str = ", ".join(args_desc) if args_desc else ""
+                context_lines.append(f"• {helper_name}({args_str}) → acknowledged")
+                forward_info.append((helper_name, forward_args, inf))
             except Exception:
                 continue
-        if not tool_calls:
+
+        if not context_lines:
             return
 
-        # Append assistant message with tool_calls
-        assistant_msg = {"role": "assistant", "content": "", "tool_calls": tool_calls}
-        await _msg_dispatcher.append_msgs([assistant_msg])
+        context_msg = {
+            "role": "system",
+            "content": f"[Steering: {method}]\n" + "\n".join(context_lines),
+            "_steering_context": True,
+        }
+        await _msg_dispatcher.append_msgs([context_msg])
         with suppress(Exception):
-            await to_event_bus(assistant_msg, cfg)
-        assistant_meta[id(assistant_msg)] = {"results_count": 0}
+            await to_event_bus(context_msg, cfg)
 
-        # If images accompany interject/ask, append to live registry and inject overview
         with suppress(Exception):
             imgs = payload.get("images")
             if imgs is not None and append_images_with_source(imgs):
                 await _inject_live_images_overview(f"{method}_helper_images")
 
-        # Insert ack tool messages and forward steering immediately to target handles
-        for call in tool_calls:
+        for helper_name, forward_args, inf in forward_info:
             try:
-                cid = call.get("id")
-                if not isinstance(cid, str):
-                    continue
-                name, args, inf = args_by_id.get(cid, (None, None, None))
-                if not isinstance(name, str):
-                    continue
-                # Ack message
-                with suppress(Exception):
-                    await acknowledge_helper_call(  # type: ignore[name-defined]
-                        assistant_msg,
-                        cid,
-                        name,
-                        call["function"].get("arguments", "{}"),
-                        assistant_meta=assistant_meta,
-                        client=client,
-                        msg_dispatcher=_msg_dispatcher,
-                    )
-                # Forward steering to child handle or channels
-                # Centralized steering dispatch (unless inject-only)
                 if (not inject_only) and (inf is not None):
                     base = str(method or "").lower().strip()
-                    await _dispatch_steering_to_child(base, args, inf)
+                    await _dispatch_steering_to_child(base, forward_args, inf)
             except Exception:
                 continue
 

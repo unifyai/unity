@@ -4,8 +4,7 @@ from contextvars import ContextVar
 from contextlib import suppress
 from typing import Any, List, Optional
 import inspect
-from .tools_utils import create_tool_call_message
-from ..llm_helpers import _dumps, short_id
+from ..llm_helpers import _dumps
 
 # New typed container for image references
 from unity.image_manager.types.image_refs import ImageRefs, AnnotatedImageRefs
@@ -561,13 +560,12 @@ def has_live_images_context() -> bool:
         return False
 
 
-# Helper: build a synthetic assistant→tool pair for the live images overview
-def build_live_images_overview_msgs(reason: str = "") -> tuple[dict, dict]:
-    """Return (assistant_msg, tool_msg) representing a live images overview call.
+def build_live_images_overview_msgs(reason: str = "") -> tuple[dict, None]:
+    """Return (system_msg, None) representing a live images overview.
 
-    The assistant message contains a single tool_call to "live_images_overview" and
-    the tool message carries a structured payload with AnnotatedImageRefs and
-    lightweight per-image metadata (caption, timestamp).
+    Returns a system context message with the live images payload.
+    Uses system messages to avoid Claude extended thinking compatibility
+    issues with synthetic assistant messages containing tool_calls.
     """
     try:
         reg = LIVE_IMAGES_REGISTRY.get() or {}
@@ -634,24 +632,9 @@ def build_live_images_overview_msgs(reason: str = "") -> tuple[dict, dict]:
         ),
     }
 
-    call_id = short_id(8)
-    asst_msg = {
-        "role": "assistant",
-        "content": "",
-        "tool_calls": [
-            {
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "live_images_overview",
-                    "arguments": "{}",
-                },
-            },
-        ],
+    system_msg = {
+        "role": "system",
+        "content": "[Live Images Overview]\n" + _dumps(payload, indent=2),
+        "_live_images_overview": True,
     }
-    tool_msg = create_tool_call_message(
-        name="live_images_overview",
-        call_id=call_id,
-        content=_dumps(payload, indent=4),
-    )
-    return asst_msg, tool_msg
+    return system_msg, None
