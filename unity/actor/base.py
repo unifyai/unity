@@ -216,10 +216,46 @@ class BaseActor(ABC):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Start performing work from a free‑form natural language description and
-        return a steerable handle for controlling the ongoing activity.
+        Perform work from a natural language description and return a steerable handle.
 
-        Use this for live, conversational, sandbox-style execution within the
-        current session. The returned handle supports pause/resume/interject/
-        stop and ultimately yields a single result string.
+        This is the all-purpose method for engaging with knowledge, resources, and
+        the world beyond immediate conversational context. Use ``act`` for any work
+        that requires searching, retrieving, manipulating, or acting on information.
+
+        **Capabilities include (but are not limited to):**
+
+        - **Retrieval**: Search contact records, query knowledge bases, look up past
+          conversations, find calendar events, search the web, retrieve files
+        - **Action**: Send communications, update records, modify spreadsheets, control
+          the desktop/browser, schedule tasks, create reminders
+        - **Combined**: Find information and then act on it (e.g., "find David's email
+          and send him a meeting invite")
+
+        **When to use ``act``:**
+
+        Call ``act`` whenever you need to access or manipulate anything beyond your
+        immediate context. When uncertain whether information exists or an action is
+        possible, **call ``act`` anyway** — if it cannot help, it will simply report
+        back explaining what it couldn't do. There is no penalty for speculative
+        delegation; it is better to try and fail than to not try at all.
+
+        **Key properties:**
+
+        - The returned handle supports pause/resume/interject/stop for mid-flight control
+        - Results are returned as strings (or structured output if ``response_format`` specified)
+        - The actor has access to persistent storage, external APIs, and system capabilities
+        - Multiple ``act`` calls can run concurrently
+
+        Args:
+            description: Natural language description of what to do. Can be a question
+                ("What is David's email?"), a command ("Send an email to David"), or
+                a combination ("Find David's email and send him a reminder").
+            clarification_enabled: Whether the actor can ask clarifying questions.
+            response_format: Optional Pydantic model for structured output.
+            _parent_chat_context: Optional conversation context for continuity.
+            _clarification_up_q: Queue for clarification requests (internal).
+            _clarification_down_q: Queue for clarification answers (internal).
+
+        Returns:
+            A SteerableToolHandle for controlling and awaiting the result.
         """

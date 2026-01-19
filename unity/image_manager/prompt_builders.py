@@ -33,6 +33,7 @@ def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -
         Requirements
         -----------
         • Look at the provided image and answer the user's question clearly and concisely.
+        • Respond with plain text only. Do NOT attempt to call tools or output JSON/function calls.
         • Do not include raw image data or base64 in your response.
         • If relevant, you may cite visual evidence (colors, objects, text seen).
         • If uncertain, state the uncertainty and what would resolve it.

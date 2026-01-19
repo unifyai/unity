@@ -18,6 +18,9 @@ unset _ENV_FILE
 # Source common utilities (socket derivation, locale, timeout handling)
 source "$SCRIPT_DIR/_shell_common.sh"
 
+# Source shared argument parsing (used by both parallel_run.sh and parallel_cloud_run.sh)
+source "$SCRIPT_DIR/_parse_args.sh"
+
 # ---- Increase file descriptor limit ----
 # Parallel tests open many network connections. Each connection uses a file
 # descriptor. macOS defaults to 256 per process, which is easily exceeded.
@@ -166,197 +169,26 @@ trap '_cleanup_sessions TERM; exit 143' TERM
 # They get run explicitly by the test harness (e.g., test_parallel_run tests).
 EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode fixtures )
 
-# ---- Modes ----
-# Default: one session per test (maximum parallelism).
-# With -s/--serial: one session per file (tests within a file run serially).
-SERIAL=0
-
-# Timeout in seconds (0 = no timeout, wait indefinitely)
-# With --timeout N: abort if tests don't complete within N seconds
-TIMEOUT=0
-
-# Optional filename match (glob-like, e.g., "*_tool_docstring*")
-NAME_PATTERN=""
-
-# Test category filters (symbolic ↔ eval spectrum)
-# With --eval-only: run only tests marked with pytest.mark.eval
-# With --symbolic-only: run only tests NOT marked with pytest.mark.eval
-EVAL_ONLY=0
-SYMBOLIC_ONLY=0
-
-# Repeat count for statistical sampling
-# With --repeat N: run each test N times (useful for eval tests)
-REPEAT_COUNT=1
-
-# Overwrite scenarios flag
-# With --overwrite-scenarios: delete and recreate test scenarios from scratch
-OVERWRITE_SCENARIOS=0
-
-# Maximum concurrent sessions (default: number of CPU cores)
-# With -j/--jobs N: limit to N concurrent running sessions
-# Use -j 0 (or -j none/unlimited) for no limit (not recommended for large test suites)
-# Detect CPU cores for default MAX_JOBS (works on macOS and Linux/GitHub Actions)
-if [[ "$(uname)" == "Darwin" ]]; then
-  _NUM_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-else
-  _NUM_CORES=$(nproc 2>/dev/null || echo 4)
-fi
-MAX_JOBS=$_NUM_CORES
-
-# Environment variable overrides (accumulated via --env KEY=VALUE)
-declare -a ENV_OVERRIDES=()
-
-# Tags (accumulated via --tags, shorthand for UNIFY_TEST_TAGS)
-declare -a TAGS=()
-
-# Extra pytest arguments (passed through via -- separator)
-declare -a PYTEST_EXTRA_ARGS=()
-
 # Resolve repo root (parent of this script's directory)
-# SCRIPT_DIR is already set by sourcing _shell_common.sh
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
-# Parse flags; collect positional args
-declare -a POSITIONAL_ARGS=()
-while (( "$#" )); do
-  case "$1" in
-    -t|--timeout)
-      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
-        TIMEOUT="$2"
-        shift 2
-      else
-        echo "Error: --timeout requires a positive integer (seconds)." >&2
-        exit 2
-      fi
-      ;;
-    -s|--serial)
-      SERIAL=1
-      shift
-      ;;
-    -m|--match)
-      if [[ -n "${2-}" ]]; then
-        NAME_PATTERN="$2"
-        shift 2
-      else
-        echo "Error: -m|--match requires a pattern argument (e.g., \"*_tool_docstring*\")." >&2
-        exit 2
-      fi
-      ;;
-    -e|--env)
-      if [[ -n "${2-}" && "$2" == *=* ]]; then
-        ENV_OVERRIDES+=( "$2" )
-        shift 2
-      else
-        echo "Error: -e|--env requires KEY=VALUE argument (e.g., --env UNIFY_CACHE=false)." >&2
-        exit 2
-      fi
-      ;;
-    --eval-only)
-      EVAL_ONLY=1
-      shift
-      ;;
-    --symbolic-only)
-      SYMBOLIC_ONLY=1
-      shift
-      ;;
-    --repeat)
-      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
-        REPEAT_COUNT="$2"
-        shift 2
-      else
-        echo "Error: --repeat requires a positive integer argument (e.g., --repeat 5)." >&2
-        exit 2
-      fi
-      ;;
-    --overwrite-scenarios)
-      OVERWRITE_SCENARIOS=1
-      shift
-      ;;
-    --tags)
-      if [[ -n "${2-}" ]]; then
-        # Split on comma and add each tag to TAGS array
-        IFS=',' read -ra tag_parts <<< "$2"
-        for tag in "${tag_parts[@]}"; do
-          [[ -n "$tag" ]] && TAGS+=( "$tag" )
-        done
-        shift 2
-      else
-        echo "Error: --tags requires a value (e.g., --tags experiment-1 or --tags \"foo,bar\")." >&2
-        exit 2
-      fi
-      ;;
-    -j|--jobs)
-      if [[ -z "${2-}" ]]; then
-        echo "Error: -j|--jobs requires an argument (e.g., --jobs 8, --jobs 0, --jobs none)." >&2
-        exit 2
-      fi
-      # Accept positive integers, 0, or keywords for unlimited
-      arg_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
-      if [[ "$2" =~ ^[0-9]+$ ]]; then
-        MAX_JOBS="$2"
-      elif [[ "$arg_lower" == "none" || "$arg_lower" == "unlimited" || "$arg_lower" == "inf" ]]; then
-        MAX_JOBS=0
-      else
-        echo "Error: -j|--jobs requires a non-negative integer or 'none'/'unlimited' (e.g., --jobs 8, --jobs 0, --jobs none)." >&2
-        exit 2
-      fi
-      shift 2
-      ;;
-    -h|--help)
-      echo "Usage: parallel_run.sh [options] [targets...]"
-      echo ""
-      echo "Run pytest tests in parallel tmux sessions."
-      echo "Always blocks until all tests complete (or timeout)."
-      echo ""
-      echo "Options:"
-      echo "  -t, --timeout N      Abort if tests don't complete within N seconds"
-      echo "  -s, --serial         One session per file (default: one per test)"
-      echo "  -m, --match PATTERN  Filter files by glob pattern"
-      echo "  -e, --env KEY=VALUE  Set environment variable (repeatable)"
-      echo "  -j, --jobs N         Max concurrent sessions (default: CPU cores, currently $_NUM_CORES)"
-      echo "  --eval-only          Run only @pytest.mark.eval tests"
-      echo "  --symbolic-only      Run only non-eval tests"
-      echo "  --repeat N           Run each test N times"
-      echo "  --tags TAG           Tag runs for filtering (repeatable)"
-      echo "  --overwrite-scenarios  Delete and recreate test scenarios"
-      echo "  -h, --help           Show this help"
-      echo "  --                   Pass remaining args directly to pytest"
-      echo ""
-      echo "Examples:"
-      echo "  parallel_run.sh tests/                    # Run all tests"
-      echo "  parallel_run.sh tests/test_foo.py        # Run one file"
-      echo "  parallel_run.sh --timeout 300 tests/     # 5-minute timeout"
-      echo "  parallel_run.sh -s tests/                # Serial mode (per-file)"
-      echo "  parallel_run.sh -j 8 tests/              # Limit to 8 concurrent"
-      echo "  parallel_run.sh --eval-only tests/       # Only eval tests"
-      echo "  parallel_run.sh -e UNIFY_CACHE=false tests/"
-      echo "  parallel_run.sh tests/ -- -v --tb=short  # Pass args to pytest"
-      exit 0
-      ;;
-    --)
-      shift
-      PYTEST_EXTRA_ARGS=("$@")
-      break
-      ;;
-    -*)
-      echo "Error: Unknown option: $1" >&2
-      echo "To pass pytest options (like -k, -v, -x), use -- before them:" >&2
-      echo "  Example: parallel_run.sh tests/foo.py -- -k 'pattern'" >&2
-      echo "Run with -h for all options." >&2
-      exit 2
-      ;;
-    *)
-      POSITIONAL_ARGS+=( "$1" )
-      shift
-      ;;
-  esac
-done
-
-# Validate mutually exclusive flags
-if (( EVAL_ONLY && SYMBOLIC_ONLY )); then
-  echo "Error: --eval-only and --symbolic-only are mutually exclusive." >&2
+# Parse arguments using shared helper
+# Returns: 0=success, 1=help requested, 2=error
+parse_test_args "$@"
+_parse_result=$?
+if (( _parse_result == 1 )); then
+  # Help requested
+  HELP_SCRIPT_NAME="parallel_run.sh"
+  print_help
+  exit 0
+elif (( _parse_result == 2 )); then
+  # Error (already printed)
   exit 2
 fi
+unset _parse_result
+
+# For backward compatibility, expose _NUM_CORES (used in some places)
+_NUM_CORES=$DETECTED_CPU_CORES
 
 # ---------------------------------------------------------------------------
 # Local Orchestra Setup
@@ -450,8 +282,24 @@ _create_orchestra_log_symlinks() {
 }
 
 # Resolve orchestra repo path (default: sibling directory)
-_orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$REPO_ROOT/../orchestra}"
+# For worktrees, look relative to the MAIN repo, not the worktree
+_orchestra_search_base="$REPO_ROOT"
+if _git_common_dir="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
+  # git rev-parse --git-common-dir returns a relative path ".git" for regular repos,
+  # but an absolute path for worktrees. Normalize to absolute for consistent comparison.
+  if [[ "$_git_common_dir" != /* ]]; then
+    _git_common_dir="$REPO_ROOT/$_git_common_dir"
+  fi
+  # If git-common-dir differs from $REPO_ROOT/.git, we're in a worktree
+  # Use the main repo's parent as the search base for orchestra
+  _main_repo_git="${_git_common_dir%/}"
+  if [[ "$_main_repo_git" != "$REPO_ROOT/.git" ]]; then
+    _orchestra_search_base="$(dirname "$_main_repo_git")"
+  fi
+fi
+_orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$_orchestra_search_base/../orchestra}"
 _local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
+unset _git_common_dir _main_repo_git _orchestra_search_base
 
 if _is_local_url "${UNIFY_BASE_URL:-}"; then
   if [[ -x "$_local_orchestra_script" ]]; then
@@ -719,7 +567,7 @@ build_env_exports() {
   # NOT propagated to individual sessions. They are handled at the script level to avoid race
   # conditions where multiple sessions try to delete the shared project simultaneously.
   # Exception: In random projects mode, deletion is safe per-session (handled in run_cmd).
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH"
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH ANTHROPIC_API_KEY OPENAI_API_KEY"
   for var_name in $propagate_vars; do
     if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
       # Quote values containing special characters (paths, URLs with colons/slashes)
@@ -1249,9 +1097,21 @@ collect_nodes_batch() {
     quoted_targets+=" $(printf '%q' "$t")"
   done
 
-  # Build collection command with optional marker filter
+  # Build collection filter args (marker filter + any -k/-m from PYTEST_EXTRA_ARGS)
+  local collection_filters=""
   if [[ -n "$marker_arg" ]]; then
-    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$marker_arg" "$quoted_targets")
+    collection_filters="$marker_arg"
+  fi
+  # Append collection-relevant args from PYTEST_EXTRA_ARGS (e.g., -k "pattern")
+  if (( ${#PYTEST_COLLECTION_ARGS[@]} > 0 )); then
+    for carg in "${PYTEST_COLLECTION_ARGS[@]}"; do
+      collection_filters+=" $(printf '%q' "$carg")"
+    done
+  fi
+
+  # Build collection command with filters
+  if [[ -n "$collection_filters" ]]; then
+    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$collection_filters" "$quoted_targets")
   else
     cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$quoted_targets")
   fi

@@ -1,0 +1,615 @@
+"""
+tests/test_conversation_manager/test_multi_action.py
+====================================================
+
+Tests that verify ConversationManager correctly handles multiple concurrent
+`act` requests and disambiguates when to create new tasks vs steer existing ones.
+
+These tests build upon test_take_action.py and test_steer_action.py to cover
+more complex realistic scenarios involving:
+- Multiple concurrent in-flight tasks
+- Disambiguating new tasks vs interjections to existing tasks
+- Steering specific tasks when multiple are running
+- Sequential task creation with context
+
+Uses SimulatedActor under the hood with configurable `steps` to ensure
+tasks remain in-flight long enough for multi-task scenarios.
+"""
+
+import pytest
+
+from tests.helpers import _handle_project
+from tests.test_conversation_manager.conftest import TEST_CONTACTS
+from unity.conversation_manager.events import (
+    SMSReceived,
+    ActorHandleStarted,
+)
+
+pytestmark = pytest.mark.eval
+
+# Convenience references to test contacts
+BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
+
+# Maximum LLM steps for efficient tool calling
+# - Ideal: 2 steps (action + acknowledge concurrent, then wait)
+# - Acceptable: 3 steps (action, acknowledge, wait - or action + query + wait)
+MAX_EFFICIENT_STEPS = 3
+
+
+def _only(events, typ):
+    """Filter events by type."""
+    return [e for e in events if isinstance(e, typ)]
+
+
+def _assert_efficient(result, context: str = ""):
+    """Assert that the LLM completed efficiently (concurrent tool calls + wait)."""
+    assert result.llm_step_count <= MAX_EFFICIENT_STEPS, (
+        f"Expected efficient concurrent tool calling (<= {MAX_EFFICIENT_STEPS} steps), "
+        f"but took {result.llm_step_count} steps. "
+        f"LLM should call tools concurrently in one step, then wait. {context}"
+    )
+
+
+def _get_active_task_count(cm):
+    """Get the number of active tasks."""
+    return len(cm.cm.active_tasks or {})
+
+
+def _count_act_calls(cm):
+    """Count how many times 'act' was called."""
+    return sum(1 for tool in cm.all_tool_calls if tool == "act")
+
+
+def _has_steering_in_handle_actions(cm, operation_prefix):
+    """Check if any steering tool with the given operation prefix was called."""
+    for tool_name in cm.all_tool_calls:
+        if tool_name.startswith(operation_prefix):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+#  Sequential independent tasks - each should trigger new act
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_two_unrelated_requests_create_two_tasks(initialized_cm):
+    """
+    Two completely unrelated requests should create two separate tasks.
+
+    Flow:
+    1. User asks for a web search about one topic
+    2. User asks for a completely unrelated contact lookup
+    3. Both should trigger separate act calls
+    """
+    cm = initialized_cm
+
+    # Step 1: First task - web search
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for the latest news about climate change.",
+        ),
+    )
+    actor_events1 = _only(result1.output_events, ActorHandleStarted)
+    assert len(actor_events1) >= 1, "Expected act to be called for first task"
+    task_count_after_first = _get_active_task_count(cm)
+    _assert_efficient(result1, "Step 1: first task")
+
+    # Step 2: Second task - completely unrelated contact lookup
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Also, find Alice's phone number for me.",
+        ),
+    )
+    actor_events2 = _only(result2.output_events, ActorHandleStarted)
+    _assert_efficient(result2, "Step 2: second task")
+
+    # Should have created a second task (either now or total of 2)
+    assert (
+        len(actor_events2) >= 1 or _get_active_task_count(cm) >= 2
+    ), "Expected second act call for unrelated request"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_parallel_searches_different_topics(initialized_cm):
+    """
+    Two explicit search requests on different topics should create separate tasks.
+
+    Flow:
+    1. User asks to search for topic A
+    2. User explicitly requests a NEW separate search for topic B
+    3. Both should be independent act calls
+    """
+    cm = initialized_cm
+
+    # Step 1: First search - web search
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for information about renewable energy.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first search")
+
+    # Step 2: Explicitly request a NEW task (make it very clear)
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="I need a second thing: look up Bob's phone number in my contacts.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: second task")
+
+    # Should have called act at least twice
+    assert (
+        _count_act_calls(cm) >= 2
+    ), "Expected two separate act calls for explicitly different requests"
+
+
+# ---------------------------------------------------------------------------
+#  New task vs interject disambiguation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_also_search_creates_new_task_not_interject(initialized_cm):
+    """
+    "Also do X" after task Y should create a new task when topics are different.
+
+    Flow:
+    1. User asks for a web search
+    2. User explicitly requests a different type of task (contact lookup)
+    3. Should create a new act, not interject
+    """
+    cm = initialized_cm
+
+    # Step 1: First task - web search
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for information about electric vehicles.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    initial_act_count = _count_act_calls(cm)
+    _assert_efficient(result1, "Step 1: first task")
+
+    # Step 2: Different task type - contact lookup (clearly not an interject)
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Also, I need you to find Sarah's email address in my contacts.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: different task type")
+
+    # Should have called act again (new task) for different task type
+    # Alternatively, may have multiple active tasks
+    new_act_count = _count_act_calls(cm)
+    task_count = _get_active_task_count(cm)
+
+    assert (
+        new_act_count > initial_act_count or task_count >= 2
+    ), "Expected new act call for different task type"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_add_detail_to_same_topic_interjects(initialized_cm):
+    """
+    Adding a detail to the same topic should interject, not create new task.
+
+    Flow:
+    1. User asks to search for a topic
+    2. User adds a constraint to that same search
+    3. Should interject existing task, not create new one
+    """
+    cm = initialized_cm
+
+    # Step 1: Initial search
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for AI regulation news.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    act_count_after_first = _count_act_calls(cm)
+    _assert_efficient(result1, "Step 1: initial search")
+
+    # Step 2: Add constraint to the SAME search
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="For that search, focus on European regulations specifically.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: add constraint")
+
+    # Should have interjected, not created new task
+    has_interject = _has_steering_in_handle_actions(cm, "interject_")
+    new_act_count = _count_act_calls(cm)
+
+    # Either interjected OR didn't create a new act (both acceptable)
+    assert (
+        has_interject or new_act_count == act_count_after_first
+    ), "Expected interject for adding constraint to same topic, not new act"
+
+
+# ---------------------------------------------------------------------------
+#  Multiple tasks with selective steering
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_two_tasks_stop_one_specifically(initialized_cm):
+    """
+    With two tasks running, user stops one by name/topic.
+
+    Flow:
+    1. User starts a web search task
+    2. User starts a contact lookup task
+    3. User cancels the web search specifically
+    4. Contact lookup should still be running (or at least stop_ called)
+    """
+    cm = initialized_cm
+
+    # Step 1: First task - web search
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for the latest stock market news.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
+
+    # Step 2: Second task - contact lookup
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Also find Bob's contact information.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: second task")
+
+    # Step 3: Stop the web search specifically
+    result3 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Cancel the stock market search, I don't need that anymore.",
+        ),
+    )
+    _assert_efficient(result3, "Step 3: cancel specific task")
+
+    # Should have called stop_ at some point
+    assert _has_steering_in_handle_actions(
+        cm,
+        "stop_",
+    ), "Expected stop_* steering tool for canceling specific task"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_two_tasks_ask_about_one_specifically(initialized_cm):
+    """
+    With two tasks running, user asks about one by name/topic.
+
+    Flow:
+    1. User starts a transcript search
+    2. User starts a web search
+    3. User asks about progress on the transcript search specifically
+    """
+    cm = initialized_cm
+
+    # Step 1: First task - transcript search
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search my past conversations for anything about the Henderson deal.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
+
+    # Step 2: Second task - web search
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Also search the web for Henderson Company's latest quarterly report.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: second task")
+
+    # Step 3: Ask about the transcript search specifically
+    result3 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="How's the search through my past conversations going?",
+        ),
+    )
+    _assert_efficient(result3, "Step 3: ask about specific task")
+
+    # Should have called ask_ at some point
+    assert _has_steering_in_handle_actions(
+        cm,
+        "ask_",
+    ), "Expected ask_* steering tool for querying specific task"
+
+
+# ---------------------------------------------------------------------------
+#  Task completion then new task
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_task_then_start_new_unrelated(initialized_cm):
+    """
+    User stops a task, then starts a completely new one.
+
+    Flow:
+    1. User starts a task
+    2. User cancels it
+    3. User starts a new unrelated task
+    4. New task should be fresh act call
+    """
+    cm = initialized_cm
+
+    # Step 1: First task
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search for information about project deadlines.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
+
+    # Step 2: Cancel it
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Never mind, cancel that search.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: cancel task")
+
+    act_count_after_cancel = _count_act_calls(cm)
+
+    # Step 3: Start new unrelated task
+    result3 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Actually, look up the weather in Tokyo for next week.",
+        ),
+    )
+    _assert_efficient(result3, "Step 3: new unrelated task")
+
+    # Should have called act again for the new task
+    assert (
+        _count_act_calls(cm) > act_count_after_cancel
+    ), "Expected new act call after canceling previous task"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_sequential_tasks_after_completion_context(initialized_cm):
+    """
+    After one task, user starts another that could seem related but is new.
+
+    Flow:
+    1. User asks about contacts in NYC
+    2. Small talk / acknowledgment
+    3. User asks about contacts in LA (different query, should be new act)
+    """
+    cm = initialized_cm
+
+    # Step 1: First task - NYC contacts
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Find all my contacts who are based in New York City.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: NYC contacts")
+
+    # Step 2: Small talk
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Thanks, that's helpful.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: small talk")
+
+    act_count_midpoint = _count_act_calls(cm)
+
+    # Step 3: New request - LA contacts (similar pattern but different query)
+    result3 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Now find all my contacts in Los Angeles.",
+        ),
+    )
+    _assert_efficient(result3, "Step 3: LA contacts")
+
+    # Should have called act again for the new location
+    assert (
+        _count_act_calls(cm) > act_count_midpoint
+    ), "Expected new act call for different location query, not just using old results"
+
+
+# ---------------------------------------------------------------------------
+#  Complex multi-task scenarios
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interject_first_then_start_second(initialized_cm):
+    """
+    User starts a task, interjects it, then starts a second unrelated task.
+
+    Flow:
+    1. User starts web search
+    2. User interjects to narrow the search
+    3. User starts a completely different task
+    4. Should have interject AND second act
+    """
+    cm = initialized_cm
+
+    # Step 1: First task
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for restaurant reviews.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: restaurant search")
+
+    # Step 2: Interject to narrow
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="For those restaurants, only look at Italian places.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: narrow search")
+
+    # Step 3: Start unrelated task
+    result3 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="By the way, find Alice's email address.",
+        ),
+    )
+    _assert_efficient(result3, "Step 3: unrelated task")
+
+    # Should have both interject (or modification) and multiple act calls
+    act_count = _count_act_calls(cm)
+    has_interject = _has_steering_in_handle_actions(cm, "interject_")
+
+    assert act_count >= 2 or (
+        act_count >= 1 and has_interject
+    ), "Expected interject for narrowing search AND new act for contact lookup"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_three_tasks_rapid_succession(initialized_cm):
+    """
+    User rapidly requests three different things.
+
+    Flow:
+    1. User asks for weather
+    2. User asks for contacts
+    3. User asks for transcript search
+    4. All should trigger separate act calls
+    """
+    cm = initialized_cm
+
+    # Task 1: Weather
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="What's the weather in London?",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Task 1: weather")
+
+    # Task 2: Contacts
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Find Bob's phone number.",
+        ),
+    )
+    _assert_efficient(result2, "Task 2: contacts")
+
+    # Task 3: Transcript
+    result3 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search my messages for anything about the budget meeting.",
+        ),
+    )
+    _assert_efficient(result3, "Task 3: transcript")
+
+    # Should have at least 3 act calls for 3 different tasks
+    assert (
+        _count_act_calls(cm) >= 3
+    ), "Expected at least 3 act calls for 3 independent requests"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_first_start_second_resume_first(initialized_cm):
+    """
+    User pauses first task, starts second, then resumes first.
+
+    Flow:
+    1. User starts web search
+    2. User pauses it
+    3. User starts a different task
+    4. User resumes the first task
+    """
+    cm = initialized_cm
+
+    # Step 1: First task
+    result1 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Search the web for competitor pricing information.",
+        ),
+    )
+    assert _get_active_task_count(cm) >= 1, "Expected at least one active task"
+    _assert_efficient(result1, "Step 1: first task")
+
+    # Step 2: Pause it
+    result2 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Hold on that search for a moment.",
+        ),
+    )
+    _assert_efficient(result2, "Step 2: pause request")
+
+    # Step 3: Start different task
+    result3 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="While that's on hold, find Sarah's contact info.",
+        ),
+    )
+    _assert_efficient(result3, "Step 3: new task while paused")
+
+    # Step 4: Resume first task
+    result4 = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="OK, go ahead with that competitor pricing search now.",
+        ),
+    )
+    _assert_efficient(result4, "Step 4: resume first task")
+
+    # Should have pause, second act, and resume
+    has_pause = _has_steering_in_handle_actions(cm, "pause_")
+    has_resume = _has_steering_in_handle_actions(cm, "resume_")
+    act_count = _count_act_calls(cm)
+
+    assert act_count >= 2, "Expected at least 2 act calls"
+    assert (
+        has_pause or has_resume
+    ), "Expected pause and/or resume steering for the first task"

@@ -431,19 +431,19 @@ async def test_reasoning_steps_toggle(simulated_file_manager):
 def test_simulated_file_manager_reduce_shapes(simulated_file_manager):
     fm = simulated_file_manager
 
-    scalar = fm.reduce(metric="sum", keys="file_id")
+    scalar = fm.reduce(metric="sum", columns="file_id")
     assert isinstance(scalar, (int, float))
 
-    multi = fm.reduce(metric="max", keys=["file_id"])
+    multi = fm.reduce(metric="max", columns=["file_id"])
     assert isinstance(multi, dict)
     assert set(multi.keys()) == {"file_id"}
 
-    grouped_str = fm.reduce(metric="sum", keys="file_id", group_by="status")
+    grouped_str = fm.reduce(metric="sum", columns="file_id", group_by="status")
     assert isinstance(grouped_str, dict)
 
     grouped_list = fm.reduce(
         metric="sum",
-        keys=["file_id"],
+        columns=["file_id"],
         group_by=["status", "file_id"],
     )
     assert isinstance(grouped_list, dict)

@@ -9,10 +9,18 @@ stable hash-based function_id values, while user-defined functions are in
 Functions/Compositional with auto-incrementing IDs.
 """
 
+import asyncio
+
 import pytest
 
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import (
+    Primitives,
+    PRIMITIVE_CONFIG,
+    _AsyncPrimitiveWrapper,
+    _COMMON_EXCLUDED_METHODS,
+    _create_async_wrapper,
+    _discover_primitive_methods,
     collect_primitives,
     compute_primitives_hash,
     get_primitive_sources,
@@ -378,3 +386,146 @@ def test_sync_after_clear_restores_primitives(function_manager_factory):
 
     count_after = len(function_manager.list_primitives())
     assert count_after == count_before
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 5. Async patching tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_primitive_config_only_has_exclude():
+    """PRIMITIVE_CONFIG entries should only contain 'exclude' key."""
+    for class_name, config in PRIMITIVE_CONFIG.items():
+        # Only 'exclude' should be present
+        assert "exclude" in config, f"{class_name} missing 'exclude' key"
+        # No sync/async_methods keys (auto-detected now)
+        assert "sync" not in config, f"{class_name} should not have 'sync' key"
+        assert (
+            "async_methods" not in config
+        ), f"{class_name} should not have 'async_methods' key"
+
+
+def test_common_excluded_methods():
+    """Common excluded methods should include lifecycle and internal helpers."""
+    assert "clear" in _COMMON_EXCLUDED_METHODS
+    assert "add_tools" in _COMMON_EXCLUDED_METHODS
+    assert "get_tools" in _COMMON_EXCLUDED_METHODS
+
+
+def test_discover_primitive_methods_respects_exclusions():
+    """_discover_primitive_methods should exclude methods in config."""
+    from unity.contact_manager.contact_manager import ContactManager
+
+    methods = _discover_primitive_methods(ContactManager)
+
+    # Should not include excluded methods
+    assert "filter_contacts" not in methods
+    assert "update_contact" not in methods
+    assert "clear" not in methods  # Common exclusion
+
+    # Should include public methods
+    assert "ask" in methods
+    assert "update" in methods
+
+
+def test_async_patching_auto_detects_sync_methods():
+    """Patching should auto-detect sync methods without config."""
+    from unity.manager_registry import ManagerRegistry
+
+    dm = ManagerRegistry.get_data_manager()
+
+    # Before patching, filter is sync
+    original_filter = dm.filter
+    is_originally_sync = not asyncio.iscoroutinefunction(original_filter)
+
+    # Patch
+    _patch_sync_methods_to_async(dm, "DataManager")
+
+    # After patching, filter should be async
+    assert asyncio.iscoroutinefunction(
+        dm.filter,
+    ), "filter should be async after patching"
+
+    # Verify it was originally sync (this confirms auto-detection worked)
+    assert is_originally_sync, "filter should have been sync before patching"
+
+
+def test_async_patching_preserves_docstrings():
+    """Patched methods should preserve their original docstrings."""
+    primitives = Primitives()
+    dm = primitives.data
+
+    # Patched method should have a docstring
+    assert dm.filter.__doc__ is not None, "Patched method should have docstring"
+    assert len(dm.filter.__doc__) > 0, "Docstring should not be empty"
+
+
+def test_async_patching_preserves_signatures():
+    """Patched methods should preserve their original signatures."""
+    import inspect
+
+    primitives = Primitives()
+    dm = primitives.data
+
+    # Patched method should have a signature
+    sig = inspect.signature(dm.filter)
+    assert sig is not None, "Patched method should have signature"
+
+    # Should have expected parameters
+    params = list(sig.parameters.keys())
+    assert "context" in params, "filter should have 'context' parameter"
+
+
+def test_primitives_data_is_actual_data_manager():
+    """primitives.data should return actual DataManager, not wrapper."""
+    from unity.data_manager.base import BaseDataManager
+
+    primitives = Primitives()
+    dm = primitives.data
+
+    assert isinstance(dm, BaseDataManager)
+
+
+def test_primitives_files_is_actual_file_manager():
+    """primitives.files should return actual FileManager, not wrapper."""
+    from unity.file_manager.base import BaseFileManager
+
+    primitives = Primitives()
+    fm = primitives.files
+
+    assert isinstance(fm, BaseFileManager)
+
+
+def test_primitives_returns_async_wrapper():
+    """primitives.data should return an async wrapper."""
+    primitives = Primitives()
+
+    # Access data
+    dm = primitives.data
+
+    # Should be a wrapper
+    assert isinstance(dm, _AsyncPrimitiveWrapper), "Should return async wrapper"
+
+
+def test_async_wrapper_preserves_async_methods():
+    """Wrapper should preserve methods that are already async."""
+    from unity.manager_registry import ManagerRegistry
+
+    fm = ManagerRegistry.get_file_manager()
+
+    # ask_about_file is already async
+    original_ask = fm.ask_about_file
+    assert asyncio.iscoroutinefunction(original_ask), "ask_about_file should be async"
+
+    # Create wrapper
+    wrapper = _create_async_wrapper(fm, "FileManager")
+
+    # Wrapped method should also be async
+    assert asyncio.iscoroutinefunction(
+        wrapper.ask_about_file,
+    ), "Wrapped method should be async"
+
+    # Original should be unchanged
+    assert asyncio.iscoroutinefunction(
+        fm.ask_about_file,
+    ), "Original should remain async"

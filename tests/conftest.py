@@ -154,7 +154,6 @@ def stub_external_deps(monkeypatch):
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.memory_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.file_manager.prompt_builders.now", _static_now)
-    monkeypatch.setattr("unity.screen_share_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.conversation_manager.events.prompt_now", _static_now)
     monkeypatch.setattr(
         "unity.conversation_manager.domains.contact_index.prompt_now",
@@ -465,7 +464,7 @@ def pytest_configure(config):
         config.option.showcapture = "no"
         config.option.capture = "no"
 
-    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
+    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump(mode="json")
 
     # ------------------------------------------------------------------ #
     # Prune non-pytest console handlers so only pytest live logs appear. #

@@ -514,9 +514,9 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                 "content": f"--- Main Task History ---\n{json.dumps(current_context_to_share, indent=2)}",
             },
         ]
-        if self._computer_primitives and self._computer_primitives.browser:
+        if self._computer_primitives and self._computer_primitives.computer:
             try:
-                screenshot = await self._computer_primitives.browser.get_screenshot()
+                screenshot = await self._computer_primitives.computer.get_screenshot()
                 if isinstance(screenshot, str):
                     screenshot_b64 = screenshot
                 else:

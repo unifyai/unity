@@ -844,7 +844,7 @@ class TaskScheduler(BaseTaskScheduler):
         ---------
         - Does not mutate scheduling fields (e.g., start_at) purely to run.
         - Preserves existing queue membership and chaining semantics; followers remain attached.
-        - Returns a live handle that is marked for passthrough so outer loops can adopt it directly.
+        - Returns a live handle that can be adopted by outer loops.
 
         Returns
         -------
@@ -869,7 +869,7 @@ class TaskScheduler(BaseTaskScheduler):
         ---------
         - Detaches the task from its queue for this run so followers do not chain automatically.
         - Does not rewrite scheduling fields merely to run.
-        - Returns a steerable handle marked for passthrough so the caller can adopt it immediately.
+        - Returns a steerable handle that the caller can use directly.
 
         Returns
         -------

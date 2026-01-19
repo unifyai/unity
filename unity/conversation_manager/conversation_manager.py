@@ -513,10 +513,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(self.inactivity_check_interval)
             current_time = self.loop.time()
             if current_time - self.last_activity_time > self.inactivity_timeout:
-                self._session_logger.info(
-                    "session_end",
-                    f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown",
-                )
+                log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
+                print(
+                    log_str,
+                )  # need console logging of inactivity to detect idle containers
+                self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
 
@@ -537,6 +538,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.voice_mode = payload["voice_mode"]
+        self.is_user_desktop = payload.get("is_user_desktop", False)
+        self.desktop_mode = payload.get("desktop_mode", "ubuntu")
+        self.desktop_url = payload.get("desktop_url")
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -557,6 +561,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             voice_mode=self.voice_mode,
+            is_user_desktop=self.is_user_desktop,
+            desktop_mode=self.desktop_mode,
+            desktop_url=self.desktop_url,
         )
         # Export to env vars for subprocess inheritance
         SESSION_DETAILS.export_to_env()

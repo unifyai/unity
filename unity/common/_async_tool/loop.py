@@ -13,7 +13,6 @@ from typing import (
     Set,
     Optional,
     TYPE_CHECKING,
-    Literal,
 )
 from contextlib import suppress
 from pydantic import BaseModel
@@ -27,7 +26,6 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
-    transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -60,7 +58,6 @@ from .messages import (
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
-from . import semantic_cache as sc
 
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
@@ -141,16 +138,6 @@ class LoopLogger:
             self._defer_after_first_llm.append((prefix, msg))
 
 
-def _via(replay_origin: str | None) -> str:
-    if not replay_origin:
-        return ""
-    return (
-        " – via deserialize 📦"
-        if replay_origin == "deserialize"
-        else f" – via {replay_origin}"
-    )
-
-
 class _LoopToolFailureTracker:
     def __init__(self, max_consecutive_failures: int):
         self._consecutive_failures = 0
@@ -215,11 +202,7 @@ async def async_tool_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
-    semantic_cache_namespace: Optional[str] = None,
     images: "ImageRefs | None" = None,
-    resume_children: Optional[list[dict]] = None,
-    replay_origin: Optional[str] = None,
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
 ) -> str:
@@ -265,8 +248,8 @@ async def async_tool_loop_inner(
     tools : ``dict[str, Callable]``
         A mapping ``name → function`` describing every callable the LLM may
         invoke.  Each function must be fully type-hinted and have a concise
-        docstring – these are automatically converted to an OpenAI *tool
-        schema* via :pyfunc:`method_to_schema`.
+        docstring – these are automatically converted to a *tool schema*
+        via :pyfunc:`method_to_schema`.
 
     interject_queue : ``asyncio.Queue[str | dict]``
         Thread-safe channel through which the *outer* application can push
@@ -363,106 +346,14 @@ async def async_tool_loop_inner(
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
-    # ── Model family detection (centralized) ──────────────────────────────────────
-    _model_name = str(getattr(client, "_model", "") or "")
-    _model_base = _model_name.split("@")[0]
-    _is_claude = _model_base.startswith("claude")
-
     # ── Reasoning model compatibility ────────────────────────────────────────────
-    # Handle reasoning model constraints:
-    # - Claude: extended thinking incompatible with tool_choice="required"; we
-    #   disable thinking on forced-tool turns and transform those messages later.
-    _claude_thinking_disabled = False
-    # Track seeded message count - messages at indices < this need transformation
-    # for Claude because they lack thinking blocks (manually constructed).
-    _seeded_msg_count = 0
+    # Provider-specific thinking mode compliance is handled automatically by
+    # unillm's provider preprocessing. The async tool loop is provider-agnostic.
 
     def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
         """Handle reasoning model compatibility. Returns effective preprocess."""
-        nonlocal _claude_thinking_disabled
-
-        effective_preprocess = preprocess_msgs
-
-        # Claude: Handle thinking/tool_choice incompatibility
-        # Anthropic's API prohibits extended thinking with tool_choice="required".
-        # LiteLLM converts reasoning_effort to thinking for Claude models, so we
-        # must prevent reasoning_effort from being sent. We temporarily clear the
-        # client's _reasoning_effort so the generate call won't enable thinking.
-        if _is_claude:
-            if tool_choice != "required":
-                # Always apply transformation wrapper for Claude to handle:
-                # 1. Seeded messages without thinking blocks (manually constructed)
-                # 2. Synthetic check_status_ messages (chronological ordering pairs)
-                #
-                # We do NOT transform real loop-generated assistant messages (those
-                # have thinking blocks from Claude). Transforming those caused
-                # infinite loops where Claude couldn't understand the context.
-                outer_preprocess = effective_preprocess
-
-                def claude_wrapper(msgs):
-                    # Skip transformation when no tools available. The check_status_
-                    # synthetic messages are internal bookkeeping for chronological
-                    # ordering. When tools are exhausted, Claude just needs to produce
-                    # a final text response. Transforming to "[Continue from here]"
-                    # confuses Claude into producing empty responses when there's
-                    # nothing left to do.
-                    if not gen_kwargs.get("tools"):
-                        return outer_preprocess(msgs) if outer_preprocess else msgs
-
-                    # Build index lookup for efficiency
-                    msg_indices = {id(m): i for i, m in enumerate(msgs)}
-
-                    def needs_transformation(m: dict) -> bool:
-                        if not isinstance(m, dict):
-                            return False
-                        if m.get("role") != "assistant":
-                            return False
-                        if not m.get("tool_calls"):
-                            return False
-
-                        # Check 1: Synthetic check_status_ messages always need
-                        # transformation. These are loop-internal bookkeeping for
-                        # chronological tool result ordering and don't have thinking
-                        # blocks (they're synthesized, not from Claude).
-                        for tc in m.get("tool_calls") or []:
-                            func = tc.get("function", {})
-                            name = func.get("name", "")
-                            if isinstance(name, str) and name.startswith(
-                                "check_status_",
-                            ):
-                                return True
-
-                        # Check 2: Seeded messages without thinking blocks (those
-                        # passed in initially via the message parameter). These
-                        # are manually constructed and lack Claude's thinking.
-                        #
-                        # IMPORTANT: Check if loop-generated FIRST. Loop-generated
-                        # messages should never be transformed
-                        idx = msg_indices.get(id(m), 999999)
-                        if idx >= _seeded_msg_count:
-                            return False  # Loop-generated message - never transform
-
-                        # Only for seeded messages: transform if no thinking blocks
-                        provider_fields = m.get("provider_specific_fields") or {}
-                        thinking_blocks = provider_fields.get("thinking_blocks")
-
-                        if thinking_blocks is None:
-                            return True
-
-                        return False  # Seeded message but has thinking blocks
-
-                    msgs = transform_tool_calls_to_context(
-                        msgs,
-                        marker_key="_claude_thinking_compat",
-                        context_header="[Prior tool execution context]",
-                        context_footer="[Continue from here]",
-                        predicate=needs_transformation,
-                    )
-                    return outer_preprocess(msgs) if outer_preprocess else msgs
-
-                effective_preprocess = claude_wrapper
-
-        return effective_preprocess
+        # All provider-specific compliance is handled by unillm's preprocessing.
+        return preprocess_msgs
 
     _img_token = None
     _imglog_token = None
@@ -545,8 +436,7 @@ async def async_tool_loop_inner(
     # 2. The user only sees the initial request and any interjection messages
     # 3. The user sees the final plain-text response from the assistant
     #
-    # For Claude/Gemini: appended to the global system message via LiteLLM.
-    # For OpenAI: inserted positionally right before the first interjection.
+    # Appended to the global system message via LiteLLM preprocessing.
     # -------------------------------------------------------------------------
     _user_visibility_guidance = (
         "## User Visibility Context\n"
@@ -599,15 +489,10 @@ async def async_tool_loop_inner(
                         )
                     # mark images up to current length as already logged
                     image_log_last_len = len(logs)
-                # If this loop is resuming from a snapshot, annotate this initial message log
-                suffix = _via(replay_origin)
-                if suffix:
-                    combined_lines[0] = combined_lines[0] + suffix
                 logger.info("\n".join(combined_lines), prefix="🧑‍💻")
         except Exception:
-            suffix = _via(replay_origin)
             if not isinstance(message, list):
-                logger.info(f"User Message: {message}{suffix}", prefix="🧑‍💻")
+                logger.info(f"User Message: {message}", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
@@ -689,121 +574,8 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
-        # NOTE: Claude models with extended thinking require special metadata on
-        # assistant messages containing tool_calls. We handle this via LAZY
-        # transformation in _apply_reasoning_model_compat → claude_wrapper,
-        # which transforms non-thinking assistant turns in the copy sent to
-        # the API, NOT in client.messages. This allows backfill to find and
-        # execute seeded tool_calls before transformation occurs.
+        await _msg_dispatcher.append_msgs(seeded_batch)
 
-        await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
-
-        # Track seeded message count for Claude transformation (must only
-        # transform seeded messages, not loop-generated ones)
-        _seeded_msg_count = len(client.messages)
-        # Emit concise one-time banner and replay logs for seeded history (if requested)
-        if replay_origin:
-            try:
-                # One-time banner indicating number of replayed messages
-                try:
-                    n_msgs = sum(1 for _m in seeded_batch if isinstance(_m, dict))
-                except Exception:
-                    n_msgs = len(seeded_batch or [])
-                try:
-                    logger.info(
-                        f"Deserializing {n_msgs} Message(s)…",
-                        prefix="📦",
-                    )
-                except Exception:
-                    pass
-                import copy as _copy  # local import
-                from .utils import try_parse_json as _try_parse_json  # noqa: WPS433
-            except Exception:
-                _copy = None
-                _try_parse_json = lambda v: v  # type: ignore
-            try:
-                for _m in seeded_batch:
-                    if not isinstance(_m, dict):
-                        continue
-                    _role = _m.get("role")
-                    if _role == "assistant":
-                        # Content-only assistant replay log; summarize tool_calls if no content
-                        _content = _m.get("content")
-                        if isinstance(_content, str) and _content.strip():
-                            logger.info(
-                                f"Assistant: {_content}{_via(replay_origin)}",
-                                prefix="🤖",
-                            )
-                        else:
-                            try:
-                                names = [
-                                    str(tc.get("function", {}).get("name"))
-                                    for tc in (_m.get("tool_calls") or [])
-                                    if isinstance(tc, dict)
-                                ]
-                                names = [n for n in names if n and n != "None"]
-                                if names:
-                                    logger.info(
-                                        f"Assistant scheduled: {', '.join(names)}{_via(replay_origin)}",
-                                        prefix="🤖",
-                                    )
-                                else:
-                                    logger.info(
-                                        f"Assistant (replayed){_via(replay_origin)}",
-                                        prefix="🤖",
-                                    )
-                            except Exception:
-                                logger.info(
-                                    f"Assistant (replayed){_via(replay_origin)}",
-                                    prefix="🤖",
-                                )
-                    elif _role == "user":
-                        # Content-only user replay log
-                        _content = _m.get("content")
-                        if isinstance(_content, str):
-                            logger.info(
-                                f"User Message: {_content}{_via(replay_origin)}",
-                                prefix="🧑‍💻",
-                            )
-                        else:
-                            try:
-                                logger.info(
-                                    f"User Message: {json.dumps(_content, indent=2)}{_via(replay_origin)}",
-                                    prefix="🧑‍💻",
-                                )
-                            except Exception:
-                                logger.info(
-                                    f"User Message (replayed){_via(replay_origin)}",
-                                    prefix="🧑‍💻",
-                                )
-                    elif _role == "tool":
-                        try:
-                            _tool_for_logging = (
-                                _copy.deepcopy(_m) if _copy else dict(_m)
-                            )
-                            try:
-                                if isinstance(_tool_for_logging.get("content"), str):
-                                    _tool_for_logging["content"] = _try_parse_json(
-                                        _tool_for_logging.get("content"),
-                                    )
-                            except Exception:
-                                pass
-                            logger.info(
-                                f"ToolCall Completed (replayed){_via(replay_origin)}",
-                                prefix="✅  ",
-                            )
-                            logger.info(f"{json.dumps(_tool_for_logging, indent=4)}")
-                        except Exception:
-                            pass
-            except Exception:
-                # Never let replay logging break the loop
-                pass
-        # Emit end-of-deserialization banner after replayed messages
-        try:
-            if replay_origin == "deserialize":
-                logger.info("Deserialization complete", prefix="📦")
-        except Exception:
-            pass
         # Inject an initial snapshot of live images (if any) immediately by
         # appending assistant→tool messages directly to the client transcript.
         try:
@@ -851,42 +623,6 @@ async def async_tool_loop_inner(
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
-    semantic_closest_match = None
-    last_valid_user_history = []
-    if semantic_cache in ("read", "both"):
-        if semantic_closest_match := sc.search_semantic_cache(
-            message,
-            semantic_cache_namespace,
-        ):
-            msgs = await sc.get_dummy_tool(
-                semantic_closest_match,
-                tools_data.normalized,
-            )
-            if log_steps == "full":
-                logger.info(
-                    f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
-                    prefix="🔍",
-                )
-            client.append_messages(msgs)
-            # Append semantic cache hint as a new system message (never mutate the original)
-            await _msg_dispatcher.append_msgs(
-                [
-                    {
-                        "role": "system",
-                        "_semantic_cache_hint": True,
-                        "content": sc.get_system_msg_hint(),
-                    },
-                ],
-            )
-            tools_data.normalized["semantic_search"] = ToolSpec(
-                fn=sc.semantic_search_placeholder,
-            )
-        else:
-            if log_steps == "full":
-                logger.info(
-                    "Semantic cache miss, no entry for the user message",
-                    prefix="🔍",
-                )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
@@ -909,20 +645,6 @@ async def async_tool_loop_inner(
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
-        # If resuming with children, do not re-schedule those call_ids; they'll be adopted below
-        resume_children_call_ids: set[str] = set()
-        try:
-            if resume_children:
-                for _rec in resume_children:
-                    try:
-                        _cid = _rec.get("call_id")
-                        if isinstance(_cid, str) and _cid:
-                            resume_children_call_ids.add(_cid)
-                    except Exception:
-                        continue
-        except Exception:
-            resume_children_call_ids = set()
-
         unreplied = find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
@@ -938,8 +660,7 @@ async def async_tool_loop_inner(
                         entry["missing"] = [
                             cid for cid in entry["missing"] if cid not in pruned
                         ]
-                # Exclude any call_ids that will be adopted as resume_children
-                missing_ids = set(entry["missing"]) - resume_children_call_ids
+                missing_ids = set(entry["missing"])
                 if not missing_ids:
                     continue
                 await schedule_missing_for_message(
@@ -952,100 +673,6 @@ async def async_tool_loop_inner(
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
                 )
-
-    # Adopt any nested children provided for resume (after backfill so placeholders exist)
-    try:
-        if resume_children:
-            # ToolCallMetadata is imported at module level; avoid local import to prevent
-            # function-scope shadowing that leads to UnboundLocalError on other paths.
-
-            # Build indices:
-            #  - call_index: call_id -> (assistant_msg, tool_call, tool_idx)
-            #  - reply_index: call_id -> existing tool reply message (if any)
-            call_index: dict[str, tuple[dict, dict, int]] = {}
-            reply_index: dict[str, dict] = {}
-            for m in client.messages:
-                try:
-                    if m.get("role") != "assistant":
-                        # capture existing tool reply messages
-                        if m.get("role") == "tool":
-                            try:
-                                cid = m.get("tool_call_id")
-                                if isinstance(cid, str):
-                                    reply_index[cid] = m
-                            except Exception:
-                                pass
-                        continue
-                    for i, tc in enumerate(m.get("tool_calls") or []):
-                        cid = tc.get("id")
-                        if isinstance(cid, str):
-                            call_index[cid] = (m, tc, i)
-                except Exception:
-                    continue
-
-            for child in resume_children:
-                try:
-                    cid = child.get("call_id")
-                    tool_name = str(child.get("tool_name") or "")
-                    ch = child.get("handle")
-                    if not cid or not tool_name or ch is None:
-                        continue
-                    tup = call_index.get(cid)
-                    if not tup:
-                        continue
-                    amsg, tc, idx = tup
-
-                    # Compute tool schema if available
-                    schema = {}
-                    try:
-                        spec = tools_data.normalized.get(tool_name)
-                        if spec is not None:
-                            schema = method_to_schema(spec.fn, tool_name)
-                    except Exception:
-                        schema = {}
-
-                    raw_args = "{}"
-                    try:
-                        raw_args = tc.get("function", {}).get("arguments", "{}")
-                    except Exception:
-                        raw_args = "{}"
-
-                    # Reuse existing placeholder tool message if present to avoid duplicates
-                    existing_tool_msg = reply_index.get(str(cid))
-
-                    info = ToolCallMetadata(
-                        name=tool_name,
-                        call_id=str(cid),
-                        call_dict=tc,
-                        call_idx=int(idx),
-                        chat_context=None,
-                        assistant_msg=amsg,
-                        is_interjectable=hasattr(ch, "interject"),
-                        tool_schema=schema,
-                        llm_arguments={},
-                        raw_arguments_json=str(raw_args),
-                        is_passthrough=bool(child.get("is_passthrough", False)),
-                        tool_reply_msg=existing_tool_msg,
-                    )
-
-                    await tools_data.adopt_nested(
-                        info,
-                        ch,
-                        msg_dispatcher=_msg_dispatcher,
-                        assistant_meta=assistant_meta,
-                        outer_handle_container=outer_handle_container,
-                    )
-                    try:
-                        logger.info(
-                            f"Adopted child handle for call_id={cid} tool={tool_name}",
-                            prefix="🔗",
-                        )
-                    except Exception:
-                        pass
-                except Exception:
-                    continue
-    except Exception:
-        pass
 
     # Helper: inject a synthetic image-overview tool call/result so the full
     # set of live images persists in the transcript (independent of tool policy).
@@ -1118,10 +745,8 @@ async def async_tool_loop_inner(
         Choose which child tool calls should receive a steering signal.
         Policy:
           - clarify: target the specified call_id only (exact or suffix match)
-          - pause/resume/stop: target ALL children (treat as if passthrough)
-          - interject/ask: target only passthrough children
-          - custom methods (payload['_custom']): target only passthrough children
-            whose adopted handle implements the method (or one of its aliases)
+          - pause/resume/stop: target ALL children
+          - interject/ask/custom: not auto-forwarded to children
         """
         base = str(method or "").lower().strip()
         payload = payload or {}
@@ -1152,60 +777,7 @@ async def async_tool_loop_inner(
                 except Exception:
                     continue
             return selected
-        # Message-like signals go only to passthrough children
-        if base in ("interject", "ask"):
-            for t, inf in list(tools_data.info.items()):
-                try:
-                    if getattr(inf, "is_passthrough", False):
-                        selected.append((t, inf))
-                except Exception:
-                    continue
-            return selected
-        # Custom steering routing: only passthrough children that implement method/alias
-        try:
-            is_custom = bool(payload.get("_custom"))
-        except Exception:
-            is_custom = False
-        if is_custom:
-            try:
-                original_name = str(method or "")
-            except Exception:
-                original_name = base
-            try:
-                aliases = list(payload.get("_aliases") or [])
-            except Exception:
-                aliases = []
-            name_candidates: list[str] = []
-            if original_name:
-                name_candidates.append(original_name)
-            # include provided aliases
-            for nm in aliases:
-                if isinstance(nm, str) and nm:
-                    name_candidates.append(nm)
-            # add lowercased base as last resort
-            if base and base not in name_candidates:
-                name_candidates.append(base)
-            for t, inf in list(tools_data.info.items()):
-                try:
-                    if not getattr(inf, "is_passthrough", False):
-                        continue
-                    h = getattr(inf, "handle", None)
-                    if h is None:
-                        continue
-                    matched = False
-                    for nm in name_candidates:
-                        try:
-                            attr = getattr(h, nm, None)
-                            if callable(attr):
-                                matched = True
-                                break
-                        except Exception:
-                            continue
-                    if matched:
-                        selected.append((t, inf))
-                except Exception:
-                    continue
-            return selected
+        # interject/ask/custom methods are not auto-forwarded to children
         return selected
 
     async def _dispatch_steering_to_child(
@@ -1572,29 +1144,6 @@ async def async_tool_loop_inner(
                 if (not inject_only) and (inf is not None):
                     base = str(method or "").lower().strip()
                     await _dispatch_steering_to_child(base, args, inf)
-                    # Track that this call_id was forwarded in the steer_log
-                    # so adopt_nested won't dispatch again for late-adopted handles
-                    with suppress(Exception):
-                        if outer_handle_container and outer_handle_container[0]:
-                            _steer_log = getattr(
-                                outer_handle_container[0],
-                                "_steer_log",
-                                [],
-                            )
-                            for rec in reversed(_steer_log):
-                                if rec.get(
-                                    "method",
-                                    "",
-                                ).lower().strip() == base and str(
-                                    inf.call_id,
-                                ) not in rec.get(
-                                    "forwarded_to",
-                                    [],
-                                ):
-                                    rec.setdefault("forwarded_to", []).append(
-                                        str(inf.call_id),
-                                    )
-                                    break
             except Exception:
                 continue
 
@@ -2108,10 +1657,10 @@ async def async_tool_loop_inner(
                     except Exception:
                         history_lines = []
 
-                # Support dict-style interjections carrying continued parent context
-                # Interjections are now sent as simple user messages (not system messages)
-                # because Claude and Gemini models do not support in-chat system messages.
-                # The user-visibility context has been moved to the topmost system message.
+                # Support dict-style interjections carrying continued parent context.
+                # Interjections are sent as user messages (not system messages) for
+                # broad provider compatibility. User-visibility context is in the
+                # topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
@@ -2830,7 +2379,7 @@ async def async_tool_loop_inner(
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
 
-                    # Parse arguments - handle both string (OpenAI) and dict formats
+                    # Parse arguments - handle both string and dict formats
                     _raw_args = call["function"]["arguments"]
                     if isinstance(_raw_args, str):
                         args = json.loads(_raw_args)
@@ -3307,17 +2856,6 @@ async def async_tool_loop_inner(
                                         "clarify_helper_images",
                                     )
 
-                            # Update the original clarification_request placeholder to
-                            # reflect that the answer has been delivered. This ensures
-                            # Claude's transcript transformation sees a coherent state
-                            # even after the clarify assistant turn is collapsed.
-                            orig_placeholder = tools_data.info[tgt_task].tool_reply_msg
-                            if orig_placeholder is not None:
-                                orig_placeholder["content"] = (
-                                    f"Clarification answered: {ans!r}\n"
-                                    "(Waiting for tool to complete...)"
-                                )
-
                             # Always publish a tool reply acknowledging the clarify helper
                             tool_reply_msg = create_tool_call_message(
                                 name=name,
@@ -3333,6 +2871,12 @@ async def async_tool_loop_inner(
                                 tool_reply_msg,
                                 client,
                                 _msg_dispatcher,
+                            )
+                            # Store the clarify helper's reply so that when the tool
+                            # completes, the final result goes here (not into the
+                            # clarification_request_* message which preserves the question)
+                            tools_data.info[tgt_task].clarify_placeholder = (
+                                tool_reply_msg
                             )
                             continue  # handled clarify helper for live target
 
@@ -3755,16 +3299,3 @@ async def async_tool_loop_inner(
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
         reset_live_images_context(_img_token, _imglog_token)
-
-        if semantic_cache in ("write", "both"):
-            sc.save_semantic_cache(
-                _initial_user_message,
-                last_valid_user_history,
-                client.messages,
-                namespace=semantic_cache_namespace,
-                previous_tool_trajectory=(
-                    semantic_closest_match.tool_trajectory
-                    if semantic_closest_match
-                    else None
-                ),
-            )

@@ -76,7 +76,7 @@ def test_search_single_reference_basic(file_manager, tmp_path: Path):
 
     # Search for chocolate cookies related content
     query = "olympic medals"
-    results = fm.search_files(references={"summary": query}, k=3)
+    results = fm.search_files(references={"summary": query}, limit=3)
 
     assert len(results) >= 1
     # Should find sports report first
@@ -111,7 +111,7 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
 
     # Search using both content and metadata
     refs = {"summary": "Shakespeare performances", "file_path": "analysis"}
-    results = fm.search_files(references=refs, k=2)
+    results = fm.search_files(references=refs, limit=2)
 
     assert len(results) >= 1
     assert any(r.get("file_path", "").endswith("theatre_review.txt") for r in results)
@@ -159,7 +159,7 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
 
     # Search for AI/ML content - should rank ml_research.txt highest
     query = "artificial intelligence machine learning research algorithms"
-    results = fm.search_files(references={"summary": query}, k=1)
+    results = fm.search_files(references={"summary": query}, limit=1)
 
     assert len(results) == 1
     print(f"results: {[(f.get('file_id'), f.get('file_path')) for f in results]}")
@@ -207,7 +207,7 @@ def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
 
     # Search for AI content
     query = "artificial intelligence machine learning algorithms and AI applications"
-    results = fm.search_files(references={"summary": query}, k=3)
+    results = fm.search_files(references={"summary": query}, limit=3)
 
     assert len(results) >= 3
 
@@ -252,7 +252,7 @@ def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
 
     # Search for exact terms that appear in exact_match.txt
     query = "machine learning artificial intelligence neural networks"
-    results = fm.search_files(references={"summary": query}, k=1)
+    results = fm.search_files(references={"summary": query}, limit=1)
 
     assert len(results) == 1
     assert any(r.get("file_path", "").endswith("exact_match.txt") for r in results)
@@ -282,7 +282,7 @@ def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
         "summary": "neural networks deep learning algorithms",
         "file_path": "both",
     }
-    results = fm.search_files(references=refs, k=1)
+    results = fm.search_files(references=refs, limit=1)
 
     assert len(results) == 1
     assert any(r.get("file_path", "").endswith("signal_in_both.txt") for r in results)
@@ -329,7 +329,7 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
     medical_query = "artificial intelligence medical diagnosis healthcare clinical"
     medical_results = fm.search_files(
         references={"summary": medical_query},
-        k=1,
+        limit=1,
     )
 
     assert len(medical_results) == 1
@@ -339,7 +339,7 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
 
     # Search for automotive AI - should rank automotive_ai.txt first
     auto_query = "artificial intelligence automotive self-driving autonomous vehicles"
-    auto_results = fm.search_files(references={"summary": auto_query}, k=1)
+    auto_results = fm.search_files(references={"summary": auto_query}, limit=1)
 
     assert len(auto_results) == 1
     assert any(
@@ -390,8 +390,12 @@ def test_filter_metadata(file_manager, tmp_path: Path):
     n_small = str(p_small)
     fm.ingest_files(n_small)
 
-    # Filter by file format
-    large_files = fm.filter_files(filter="file_format == 'txt'")
+    # Filter by file format - both files are txt, so should return 2
+    txt_files = fm.filter_files(filter="file_format == 'txt'")
+    assert len(txt_files) == 2
+
+    # Filter by specific file path
+    large_files = fm.filter_files(filter="file_path.endswith('large_file.txt')")
     assert len(large_files) == 1
     assert str(large_files[0].get("file_path", "")).endswith("large_file.txt")
 
@@ -410,7 +414,7 @@ def test_search_no_results_backfill(file_manager, tmp_path: Path):
     # Search for something completely unrelated
     results = fm.search_files(
         references={"summary": "quantum physics molecules"},
-        k=5,
+        limit=5,
     )
 
     # Should still return files (backfill behavior)

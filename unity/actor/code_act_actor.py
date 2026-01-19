@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import inspect
 import io
 import traceback
@@ -283,8 +284,8 @@ Example workflow:
 **❌ ANTI-PATTERN (AVOID THIS):**
 ```python
 # DON'T explore tables when a function already exists!
-tables = await primitives.files.tables_overview()  # Unnecessary!
-schema = await primitives.files.schema_explain(...)  # Unnecessary!
+storage = await primitives.files.describe(file_path="...")  # Unnecessary!
+columns = await primitives.files.list_columns(context="...")  # Unnecessary!
 ```
 
 **✅ CORRECT WORKFLOW:**
@@ -416,7 +417,7 @@ class CodeExecutionSandbox:
 
             def __getattr__(self, name: str) -> Any:
                 # Treat any access as potential "use" since callers may invoke nested objects
-                # like `computer_primitives.browser.get_screenshot()`.
+                # like `computer_primitives.computer.get_screenshot()`.
                 self._on_use()
                 attr = getattr(self._target, name)
                 if callable(attr):
@@ -718,9 +719,9 @@ class CodeActActor(BaseActor):
                 and execution_result.get("browser_used")
             ):
                 try:
-                    url = await self._computer_primitives.browser.get_current_url()
+                    url = await self._computer_primitives.computer.get_current_url()
                     screenshot_b64 = (
-                        await self._computer_primitives.browser.get_screenshot()
+                        await self._computer_primitives.computer.get_screenshot()
                     )
 
                     browser_state_summary = f"--- BROWSER STATE ---\nURL: {url}"
@@ -942,6 +943,7 @@ class CodeActActor(BaseActor):
 
         return tools
 
+    @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
         description: str,
@@ -957,9 +959,6 @@ class CodeActActor(BaseActor):
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> SteerableToolHandle:
-        """
-        Creates and starts a new ActorHandle for the CodeAct agent.
-        """
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
 
@@ -1051,7 +1050,6 @@ class CodeActActor(BaseActor):
                 entrypoint_id=entrypoint_id,
                 execution_task=entry_task,
             )
-            setattr(entry_handle, "__passthrough__", True)
             return entry_handle
 
         system_prompt = build_code_act_system_prompt(
@@ -1081,4 +1079,4 @@ class CodeActActor(BaseActor):
         await self._shell_pool.close()
 
         if self._computer_primitives:
-            self._computer_primitives.browser.stop()
+            self._computer_primitives.computer.stop()

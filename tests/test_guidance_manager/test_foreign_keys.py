@@ -25,7 +25,7 @@ from unity.image_manager.image_manager import ImageManager
 
 
 def _make_test_image_b64(
-    size: int = 8,
+    size: int = 32,
     color: tuple[int, int, int] = (255, 0, 0),
 ) -> str:
     """Create a minimal valid base64-encoded PNG for testing."""

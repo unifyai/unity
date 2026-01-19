@@ -13,7 +13,7 @@ from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, Annotated
 from unity.contact_manager.types.contact import Contact
 
 
-PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
+PNG_BLUE_B64 = make_solid_png_base64(32, 32, (0, 0, 255))
 
 
 @_handle_project

@@ -19,17 +19,17 @@ def test_by_caption_semantics():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "a scenic mountain landscape at sunrise",
-                "data": make_solid_png_base64(8, 8, (200, 200, 255)),
+                "data": make_solid_png_base64(32, 32, (200, 200, 255)),
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "a cat sitting on a red sofa",
-                "data": make_solid_png_base64(8, 8, (255, 0, 0)),
+                "data": make_solid_png_base64(32, 32, (255, 0, 0)),
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "blue pixel art icon",
-                "data": make_solid_png_base64(8, 8, (0, 0, 255)),
+                "data": make_solid_png_base64(32, 32, (0, 0, 255)),
             },
         ],
     )

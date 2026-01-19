@@ -6,7 +6,11 @@ import pytest
 from pydantic import BaseModel, Field
 
 from tests.helpers import _handle_project
-from unity.common.single_shot import single_shot_tool_decision, SingleShotResult
+from unity.common.single_shot import (
+    single_shot_tool_decision,
+    SingleShotResult,
+    ToolExecution,
+)
 from unity.common.llm_client import new_llm_client
 
 
@@ -99,34 +103,105 @@ def do_nothing() -> str:
     return "Nothing done."
 
 
+def send_notification(*, message: str) -> str:
+    """Send a notification message.
+
+    Parameters
+    ----------
+    message : str
+        The notification message to send.
+
+    Returns
+    -------
+    str
+        Confirmation that the notification was sent.
+    """
+    return f"Notification sent: {message}"
+
+
+def start_background_task(*, task_name: str) -> str:
+    """Start a background task.
+
+    Parameters
+    ----------
+    task_name : str
+        Name of the task to start.
+
+    Returns
+    -------
+    str
+        Confirmation that the task was started.
+    """
+    return f"Task '{task_name}' started"
+
+
 # --------------------------------------------------------------------------- #
 #  Unit tests: result structure                                               #
 # --------------------------------------------------------------------------- #
 
 
-def test_single_shot_result_dataclass():
-    """SingleShotResult has expected fields."""
+def test_tool_execution_dataclass():
+    """ToolExecution has expected fields."""
+    execution = ToolExecution(
+        name="greet",
+        args={"name": "Alice"},
+        result="Hello, Alice!",
+    )
+    assert execution.name == "greet"
+    assert execution.args == {"name": "Alice"}
+    assert execution.result == "Hello, Alice!"
+
+
+def test_single_shot_result_single_tool():
+    """SingleShotResult with a single tool provides backward-compatible properties."""
     result = SingleShotResult(
-        tool_name="greet",
-        tool_args={"name": "Alice"},
-        tool_result="Hello, Alice!",
+        tools=[
+            ToolExecution(name="greet", args={"name": "Alice"}, result="Hello, Alice!"),
+        ],
         text_response=None,
     )
+    # New API
+    assert len(result.tools) == 1
+    assert result.tools[0].name == "greet"
+    assert result.tools[0].args == {"name": "Alice"}
+    assert result.tools[0].result == "Hello, Alice!"
+    # Backward-compatible properties
     assert result.tool_name == "greet"
     assert result.tool_args == {"name": "Alice"}
     assert result.tool_result == "Hello, Alice!"
     assert result.text_response is None
 
 
+def test_single_shot_result_multiple_tools():
+    """SingleShotResult can hold multiple tool executions."""
+    result = SingleShotResult(
+        tools=[
+            ToolExecution(name="greet", args={"name": "Alice"}, result="Hello, Alice!"),
+            ToolExecution(name="add_numbers", args={"a": 2, "b": 3}, result=5),
+        ],
+        text_response=None,
+    )
+    # New API - all tools accessible
+    assert len(result.tools) == 2
+    assert result.tools[0].name == "greet"
+    assert result.tools[1].name == "add_numbers"
+    assert result.tools[1].result == 5
+    # Backward-compatible properties return first tool
+    assert result.tool_name == "greet"
+    assert result.tool_args == {"name": "Alice"}
+    assert result.tool_result == "Hello, Alice!"
+
+
 def test_single_shot_result_no_tool():
     """SingleShotResult can represent no-tool case."""
     result = SingleShotResult(
-        tool_name=None,
-        tool_args=None,
-        tool_result=None,
+        tools=[],
         text_response="I don't need to use any tools.",
     )
+    assert len(result.tools) == 0
+    # Backward-compatible properties return None when no tools
     assert result.tool_name is None
+    assert result.tool_args is None
     assert result.tool_result is None
     assert result.text_response is not None
 
@@ -135,9 +210,9 @@ def test_single_shot_result_with_structured_output():
     """SingleShotResult can include structured_output."""
     structured = ThoughtsResponse(thoughts="This is my reasoning")
     result = SingleShotResult(
-        tool_name="greet",
-        tool_args={"name": "Alice"},
-        tool_result="Hello, Alice!",
+        tools=[
+            ToolExecution(name="greet", args={"name": "Alice"}, result="Hello, Alice!"),
+        ],
         text_response='{"thoughts": "This is my reasoning"}',
         structured_output=structured,
     )
@@ -355,3 +430,95 @@ async def test_single_shot_structured_output_complex():
     # Should be a positive sentiment, likely "approve"
     assert result.structured_output.decision in ("approve", "reject")
     assert result.structured_output.thoughts  # Non-empty reasoning
+
+
+# --------------------------------------------------------------------------- #
+#  Integration tests: multiple concurrent tool calls                          #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_single_shot_multiple_concurrent_tools():
+    """LLM can call multiple tools concurrently in a single thinking step.
+
+    This tests the core behavior: one LLM decision can trigger multiple parallel
+    tool executions, all of which are executed and returned.
+    """
+    client = new_llm_client()
+    client.set_system_message(
+        "You are an efficient assistant. When asked to do multiple things, "
+        "call ALL relevant tools in parallel in a single response. Do not call "
+        "them one at a time - use parallel tool calls.",
+    )
+
+    tools = {
+        "send_notification": send_notification,
+        "start_background_task": start_background_task,
+    }
+
+    result = await single_shot_tool_decision(
+        client,
+        "Start a background task called 'data_sync' AND send a notification "
+        "saying 'Sync started'. Do both in parallel.",
+        tools,
+        tool_choice="required",
+    )
+
+    # Should have called both tools
+    assert len(result.tools) == 2, (
+        f"Expected 2 concurrent tool calls, got {len(result.tools)}: "
+        f"{[t.name for t in result.tools]}"
+    )
+
+    # Check that both tools were called (order may vary)
+    tool_names = {t.name for t in result.tools}
+    assert tool_names == {"send_notification", "start_background_task"}
+
+    # Check results
+    for tool in result.tools:
+        if tool.name == "send_notification":
+            assert "Notification sent:" in tool.result
+            assert "Sync started" in tool.result
+        elif tool.name == "start_background_task":
+            assert "data_sync" in tool.result
+            assert "started" in tool.result
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_single_shot_multiple_tools_same_type():
+    """LLM can call the same tool multiple times concurrently."""
+    client = new_llm_client()
+    client.set_system_message(
+        "You are an efficient assistant. When asked to do multiple things, "
+        "call ALL relevant tools in parallel in a single response.",
+    )
+
+    tools = {
+        "greet": greet,
+    }
+
+    result = await single_shot_tool_decision(
+        client,
+        "Greet both Alice and Bob. Call the greet tool twice in parallel - "
+        "once for Alice and once for Bob.",
+        tools,
+        tool_choice="required",
+    )
+
+    # Should have called greet twice
+    assert (
+        len(result.tools) == 2
+    ), f"Expected 2 concurrent greet calls, got {len(result.tools)}"
+
+    # Both should be greet tool
+    assert all(t.name == "greet" for t in result.tools)
+
+    # Check that both names were greeted
+    greeted_names = {t.args["name"] for t in result.tools}
+    assert greeted_names == {"Alice", "Bob"}
+
+    # Check results
+    results = {t.result for t in result.tools}
+    assert results == {"Hello, Alice!", "Hello, Bob!"}

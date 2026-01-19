@@ -9,7 +9,7 @@ from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 from unity.image_manager.types import RawImageRef, ImageRefs
-from tests.test_async_tool_loop.async_helpers import (
+from tests.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
 )
@@ -21,7 +21,7 @@ from tests.test_async_tool_loop.async_helpers import (
 def _solid_png_bytes() -> bytes:
     from unity.image_manager.utils import make_solid_png_base64
 
-    b64 = make_solid_png_base64(2, 2, (0, 0, 255))
+    b64 = make_solid_png_base64(32, 32, (0, 0, 255))
     return base64.b64decode(b64)
 
 
@@ -127,7 +127,7 @@ async def test_overview_after_clarification_images(model, static_now) -> None:
         [
             {
                 "caption": "clar",
-                "data": make_solid_png_base64(2, 2, (0, 0, 255)),
+                "data": make_solid_png_base64(32, 32, (0, 0, 255)),
                 "timestamp": static_now,
             },
         ],

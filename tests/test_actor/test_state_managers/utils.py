@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Literal, Optional
 from unittest.mock import AsyncMock
 
-from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+from tests.async_helpers import _wait_for_condition
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.hierarchical_actor import HierarchicalActor
 from unity.actor.environments import StateManagerEnvironment
@@ -318,29 +318,6 @@ async def wait_for_tool_call(handle: Any, tool_name: str, timeout: int = 60) -> 
 # ---------------------------------------------------------------------------
 # Actor construction helpers (mirror legacy orchestrator-style tests: construct in test body)
 # ---------------------------------------------------------------------------
-
-
-class NoKeychainBrowser:
-    """Minimal browser stub to prevent Keychain prompts during tests.
-
-    DEPRECATED: With computer_mode="mock", this class is no longer needed.
-    Kept for backward compatibility with tests that import it.
-    """
-
-    def __init__(self, *, url: str = "", screenshot: str = "") -> None:
-        self._url = url
-        self._screenshot = screenshot
-        # Some codepaths introspect backend attributes; keep a simple object.
-        self.backend = object()
-
-    async def get_current_url(self) -> str:
-        return self._url
-
-    async def get_screenshot(self) -> str:
-        return self._screenshot
-
-    def stop(self) -> None:
-        return None
 
 
 async def _mock_observe(*args: Any, **kwargs: Any) -> Any:

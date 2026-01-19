@@ -22,14 +22,21 @@ def test_filter_join_with_logical_names(file_manager, tmp_path: Path):
     fa, fb = str(a), str(b)
     fm.ingest_files([fa, fb], config=FilePipelineConfig())
 
-    # Use file_path directly instead of legacy root from tables_overview
-    # We will join Content contexts by a trivial select; this is a smoke test for file_path resolution
+    # Use describe() to get the actual context paths
+    storage_a = fm.describe(file_path=fa)
+    storage_b = fm.describe(file_path=fb)
+    assert storage_a.document is not None, "File A should have a document context"
+    assert storage_b.document is not None, "File B should have a document context"
+    ctx_a = storage_a.document.context_path
+    ctx_b = storage_b.document.context_path
+
+    # Join Content contexts by row_id; this is a smoke test for context path resolution
     out = fm.filter_join(
-        tables=[fa, fb],
-        join_expr=f"{fa}.row_id == {fb}.row_id",
+        tables=[ctx_a, ctx_b],
+        join_expr=f"{ctx_a}.row_id == {ctx_b}.row_id",
         select={
-            f"{fa}.file_id": "left_id",
-            f"{fb}.file_id": "right_id",
+            f"{ctx_a}.file_id": "left_id",
+            f"{ctx_b}.file_id": "right_id",
         },
         mode="inner",
         left_where=None,
@@ -38,4 +45,5 @@ def test_filter_join_with_logical_names(file_manager, tmp_path: Path):
         result_limit=10,
         result_offset=0,
     )
-    assert isinstance(out, dict) and "rows" in out
+    # filter_join returns a list of dicts
+    assert isinstance(out, list), f"Expected list, got {type(out)}"

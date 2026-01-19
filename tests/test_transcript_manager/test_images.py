@@ -11,7 +11,7 @@ from tests.helpers import _handle_project
 from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
 
 
-PNG_1x1_BLUE = make_solid_png_base64(8, 8, (0, 0, 255))
+PNG_BLUE = make_solid_png_base64(32, 32, (0, 0, 255))
 
 
 @_handle_project
