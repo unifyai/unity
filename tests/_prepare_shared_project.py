@@ -18,6 +18,14 @@ import logging
 logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
 import sys
+from pathlib import Path
+
+# Ensure repo root is in sys.path so we can import unity.
+# This script is invoked directly by parallel_run.sh, not via pytest
+# which handles path setup automatically.
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 from dotenv import load_dotenv
 
