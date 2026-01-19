@@ -61,101 +61,6 @@ async def _wait_for_tool_request(
     await _wait_for_condition(_predicate, poll=poll, timeout=timeout)
 
 
-async def _wait_for_tool_scheduled(
-    outer_handle,
-    tool_name: str,
-    *,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-) -> None:
-    """Wait until the async tool loop has actually scheduled `tool_name`
-    into its live `task_info` mapping (not just visible in assistant tool_calls).
-    """
-    import time as _time
-
-    start = _time.perf_counter()
-    while _time.perf_counter() - start < timeout:
-        try:
-            ti = getattr(outer_handle._task, "task_info", {})  # type: ignore[attr-defined]
-            if isinstance(ti, dict):
-                if any(
-                    getattr(_inf, "name", None) == tool_name for _inf in ti.values()
-                ):
-                    return
-        except Exception:
-            pass
-        await asyncio.sleep(poll)
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for {tool_name!r} to be scheduled",
-    )
-
-
-async def _wait_for_tools_scheduled(
-    outer_handle,
-    tool_names: list[str],
-    *,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-) -> None:
-    """Wait until all `tool_names` are present in the loop's live `task_info`."""
-    import time as _time
-
-    pending = set(tool_names or [])
-    start = _time.perf_counter()
-    while _time.perf_counter() - start < timeout:
-        try:
-            ti = getattr(outer_handle._task, "task_info", {})  # type: ignore[attr-defined]
-            if isinstance(ti, dict):
-                have = {getattr(_inf, "name", None) for _inf in ti.values()}
-                if pending.issubset(have):
-                    return
-        except Exception:
-            pass
-        await asyncio.sleep(poll)
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for tools to be scheduled: {sorted(pending)}",
-    )
-
-
-async def _wait_for_tool_requested_and_scheduled(
-    client: "unillm.AsyncUnify",
-    outer_handle,
-    tool_name: str,
-    *,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-) -> None:
-    """Wait until an assistant tool_call for `tool_name` is visible AND the loop
-    has scheduled it (present in task_info)."""
-    await _wait_for_tool_request(client, tool_name, timeout=timeout, poll=poll)
-    await _wait_for_tool_scheduled(
-        outer_handle,
-        tool_name,
-        timeout=timeout,
-        poll=poll,
-    )
-
-
-async def _wait_for_tools_requested_and_scheduled(
-    client: "unillm.AsyncUnify",
-    outer_handle,
-    tool_names: list[str],
-    *,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-) -> None:
-    """Wait until assistant has requested all `tool_names` AND the loop
-    has scheduled each one into task_info."""
-    for name in tool_names or []:
-        await _wait_for_tool_request(client, name, timeout=timeout, poll=poll)
-    await _wait_for_tools_scheduled(
-        outer_handle,
-        tool_names or [],
-        timeout=timeout,
-        poll=poll,
-    )
-
-
 async def _wait_for_tool_result(
     client: "unillm.AsyncUnify",
     tool_name: str | None = None,
@@ -393,25 +298,8 @@ def first_tool_message_by_name(msgs: List[dict], name: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 # Per-(client, key) baseline tracking for detecting NEW occurrences
-_INTERJECTION_COUNTS: dict[tuple[int, str | None], int] = {}
 _ASSISTANT_TOOL_CALL_COUNTS: dict[tuple[int, str], int] = {}
-_TOOL_MESSAGE_NAME_COUNTS: dict[tuple[int, str], int] = {}
 _ASSISTANT_RESPONSE_COUNTS: dict[int, int] = {}
-
-
-def _count_user_interjections(msgs: Sequence[Any], contains: str | None) -> int:
-    """Count user messages after the first one (interjections) matching optional substring."""
-    first_user_seen = False
-    count = 0
-    for m in msgs or []:
-        if m.get("role") == "user":
-            if not first_user_seen:
-                first_user_seen = True
-                continue
-            # This is an interjection (user message after the first)
-            if contains is None or contains in (m.get("content") or ""):
-                count += 1
-    return count
 
 
 def _count_assistant_tool_calls_for_name(msgs: Sequence[Any], tool_name: str) -> int:
@@ -424,13 +312,6 @@ def _count_assistant_tool_calls_for_name(msgs: Sequence[Any], tool_name: str) ->
             (tc.get("function") or {}).get("name") == tool_name
             for tc in (m.get("tool_calls") or [])
         )
-    )
-
-
-def _count_tool_messages_by_name(msgs: Sequence[Any], tool_name: str) -> int:
-    """Count tool messages with the specified name."""
-    return sum(
-        1 for m in msgs or [] if m.get("role") == "tool" and m.get("name") == tool_name
     )
 
 
@@ -460,57 +341,6 @@ def _count_non_synthetic_assistant_messages(msgs: Sequence[Any]) -> int:
             continue
         count += 1
     return count
-
-
-async def _wait_for_interjection_event(
-    client: "unillm.AsyncUnify",
-    *,
-    contains: str | None = None,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-):
-    """Poll for a NEW user interjection (user message after the first one).
-
-    Uses baseline counting to detect new occurrences since the wait started.
-
-    Args:
-        client: The LLM client whose messages to monitor.
-        contains: Optional substring that must appear in the interjection content.
-        timeout: Maximum time to wait in seconds.
-        poll: Polling interval in seconds.
-    """
-    import time as _time
-
-    start_ts = _time.perf_counter()
-    key = (id(client), contains)
-
-    # Capture baseline count at start
-    try:
-        current = _count_user_interjections(client.messages or [], contains)
-    except Exception:
-        current = 0
-
-    baseline = _INTERJECTION_COUNTS.get(key)
-    if baseline is None:
-        _INTERJECTION_COUNTS[key] = current
-        baseline = current
-
-    while _time.perf_counter() - start_ts < timeout:
-        msgs = client.messages or []
-        cnt = _count_user_interjections(msgs, contains)
-        if cnt > baseline:
-            _INTERJECTION_COUNTS[key] = cnt
-            return
-        await asyncio.sleep(poll)
-
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for interjection"
-        + (f" containing {contains!r}" if contains else ""),
-    )
-
-
-# Backwards compatibility alias
-_wait_for_system_interjection_event = _wait_for_interjection_event
 
 
 async def _wait_for_any_assistant_tool_call(
@@ -557,148 +387,6 @@ async def _wait_for_any_assistant_tool_call(
 
     raise TimeoutError(
         f"Timed out after {timeout}s waiting for assistant to call {tool_name!r}",
-    )
-
-
-async def _wait_for_any_tool_message_by_name(
-    client: "unillm.AsyncUnify",
-    tool_name: str,
-    *,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-):
-    """Poll for a NEW tool message with name == tool_name.
-
-    Uses baseline counting to detect new occurrences since the wait started.
-
-    Args:
-        client: The LLM client whose messages to monitor.
-        tool_name: The exact tool name to wait for.
-        timeout: Maximum time to wait in seconds.
-        poll: Polling interval in seconds.
-    """
-    import time as _time
-
-    start_ts = _time.perf_counter()
-    key = (id(client), tool_name)
-
-    # Capture baseline count at start
-    try:
-        current = _count_tool_messages_by_name(client.messages or [], tool_name)
-    except Exception:
-        current = 0
-
-    baseline = _TOOL_MESSAGE_NAME_COUNTS.get(key)
-    if baseline is None:
-        _TOOL_MESSAGE_NAME_COUNTS[key] = current
-        baseline = current
-
-    while _time.perf_counter() - start_ts < timeout:
-        msgs = client.messages or []
-        cnt = _count_tool_messages_by_name(msgs, tool_name)
-        if cnt > baseline:
-            _TOOL_MESSAGE_NAME_COUNTS[key] = cnt
-            return
-        await asyncio.sleep(poll)
-
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for tool message with name {tool_name!r}",
-    )
-
-
-async def _wait_for_any_tool_message_prefix(
-    client: "unillm.AsyncUnify",
-    prefix: str,
-    *,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-):
-    """Poll for a NEW tool message whose name starts with `prefix`.
-
-    Uses baseline counting to detect new occurrences since the wait started.
-    This is similar to `_wait_for_tool_message_prefix` but uses the same
-    baseline tracking pattern as other helpers in this section.
-
-    Args:
-        client: The LLM client whose messages to monitor.
-        prefix: The prefix that the tool name must start with.
-        timeout: Maximum time to wait in seconds.
-        poll: Polling interval in seconds.
-    """
-    # Delegate to the existing implementation which already uses baseline tracking
-    await _wait_for_tool_message_prefix(
-        client,
-        prefix,
-        timeout=timeout,
-        poll=poll,
-    )
-
-
-async def _wait_for_assistant_tool_calls(
-    client: "unillm.AsyncUnify",
-    tool_names: list[str],
-    *,
-    timeout: float = 300.0,
-    poll: float = 0.05,
-):
-    """Poll until assistant has called all tools in `tool_names` at least once.
-
-    Uses baseline counting per tool to detect new occurrences.
-
-    Args:
-        client: The LLM client whose messages to monitor.
-        tool_names: List of tool names that must all be called.
-        timeout: Maximum time to wait in seconds.
-        poll: Polling interval in seconds.
-    """
-    import time as _time
-
-    if not tool_names:
-        return
-
-    start_ts = _time.perf_counter()
-    required = set(tool_names)
-
-    # Capture baseline counts for each tool at start
-    baselines: dict[str, int] = {}
-    for name in required:
-        key = (id(client), name)
-        try:
-            current = _count_assistant_tool_calls_for_name(client.messages or [], name)
-        except Exception:
-            current = 0
-        baseline = _ASSISTANT_TOOL_CALL_COUNTS.get(key)
-        if baseline is None:
-            _ASSISTANT_TOOL_CALL_COUNTS[key] = current
-            baseline = current
-        baselines[name] = baseline
-
-    while _time.perf_counter() - start_ts < timeout:
-        msgs = client.messages or []
-        all_seen = True
-        for name in required:
-            cnt = _count_assistant_tool_calls_for_name(msgs, name)
-            if cnt <= baselines[name]:
-                all_seen = False
-                break
-            # Update the global baseline for this tool
-            key = (id(client), name)
-            _ASSISTANT_TOOL_CALL_COUNTS[key] = cnt
-
-        if all_seen:
-            return
-
-        await asyncio.sleep(poll)
-
-    # Build informative error message
-    msgs = client.messages or []
-    missing = [
-        name
-        for name in required
-        if _count_assistant_tool_calls_for_name(msgs, name) <= baselines[name]
-    ]
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for assistant to call tools: {sorted(missing)}",
     )
 
 
