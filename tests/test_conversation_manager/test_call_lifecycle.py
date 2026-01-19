@@ -1180,17 +1180,13 @@ class TestCallErrorHandling:
         return TEST_CONTACTS[2]
 
     async def test_call_ended_without_started(self, initialized_cm, alice_contact):
-        """PhoneCallEnded when not in call mode should not crash.
+        """PhoneCallEnded when no active conversation exists should not crash.
 
-        KNOWN ISSUE: This test currently fails because the PhoneCallEnded handler
-        tries to access active_conversations[contact_id] without checking if the
-        conversation exists first. This causes a KeyError when a call ends but
-        was never properly started (no active conversation).
-
-        The handler at event_handlers.py line ~231 does:
-            cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
-
-        This should be guarded with a check for conversation existence.
+        This can happen in production when:
+        - Voice agent thread crashes before PhoneCallStarted is emitted
+        - Container restarts mid-call, losing in-memory state
+        - Event delivery race condition where PhoneCallEnded arrives first
+        - External telephony webhook for an unregistered call
         """
         assert initialized_cm.cm.mode == "text"
 
@@ -1200,7 +1196,7 @@ class TestCallErrorHandling:
             "cleanup_call_proc",
             new_callable=AsyncMock,
         ):
-            # Should not raise - but currently does due to missing active conversation
+            # Should handle gracefully without raising KeyError
             await initialized_cm.step(ended_event)
 
         # Mode should still be text
