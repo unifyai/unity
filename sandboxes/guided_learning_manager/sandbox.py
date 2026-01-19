@@ -962,8 +962,8 @@ Examples:
     llm.add_argument(
         "--llm-max-frames",
         type=int,
-        default=20,
-        help="Max frames per segment (default: 20)",
+        default=40,
+        help="Max frames per segment (default: 40)",
     )
     llm.add_argument(
         "--no-prefilter",

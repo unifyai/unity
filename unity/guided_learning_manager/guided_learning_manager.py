@@ -364,7 +364,7 @@ class GuidedLearningSettings(BaseModel):
         description="Resolution for frames sent to LLM (width, height). Lower = fewer tokens.",
     )
     llm_selection_max_frames: int = Field(
-        default=20,
+        default=40,
         description="Maximum frames to send to LLM per segment. If exceeded, frames are intelligently sampled.",
     )
     save_llm_input_frames: bool = Field(
@@ -987,10 +987,12 @@ class GuidedLearningManager:
                 # Store for later processing (LLM selection or DIRECT with prefilter)
                 # Mark the frame with interaction metadata for context
                 frame_data.interaction_reason = f"[{reason}] {annotation}"
-                if (
-                    len(self._activity_state.all_frames)
-                    < self.settings.llm_selection_max_frames
-                ):
+                # Collect frames without limit here - max_frames limit will be applied
+                # AFTER pre-filtering in _select_keyframes_with_llm to ensure we have
+                # enough diverse frames after duplicate removal
+                # Use 3x multiplier as a safety cap to prevent unbounded growth
+                collection_limit = self.settings.llm_selection_max_frames * 3
+                if len(self._activity_state.all_frames) < collection_limit:
                     self._activity_state.all_frames.append(frame_data)
                     mode_label = (
                         "LLM"
@@ -1003,7 +1005,7 @@ class GuidedLearningManager:
                         print(f"   {log_msg}")
                 else:
                     logger.debug(
-                        f"⚠️ Interaction frame dropped (max {self.settings.llm_selection_max_frames} reached): [{reason}] {annotation}",
+                        f"⚠️ Interaction frame dropped (collection limit {collection_limit} reached): [{reason}] {annotation}",
                     )
             else:
                 # DIRECT without prefilter or ALGORITHMIC: Add directly as keyframe
@@ -1128,11 +1130,12 @@ class GuidedLearningManager:
             if time_since_last >= llm_frame_interval:
                 async with self._activity_lock:
                     if self._activity_state.is_active():
-                        # Respect max frames limit
-                        if (
-                            len(self._activity_state.all_frames)
-                            < self.settings.llm_selection_max_frames
-                        ):
+                        # Collect frames without limit here - max_frames limit will be applied
+                        # AFTER pre-filtering in _select_keyframes_with_llm to ensure we have
+                        # enough diverse frames after duplicate removal
+                        # Use 3x multiplier as a safety cap to prevent unbounded growth
+                        collection_limit = self.settings.llm_selection_max_frames * 3
+                        if len(self._activity_state.all_frames) < collection_limit:
                             self._activity_state.all_frames.append(frame_data)
                             self._last_llm_frame_time = now
             # Still check visual change for activity window management
