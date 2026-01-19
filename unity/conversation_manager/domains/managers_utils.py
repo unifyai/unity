@@ -386,6 +386,8 @@ def _init_managers(
     cm.contact_manager = ManagerRegistry.get_contact_manager(
         description="production deployment",
     )
+    # Wire up ContactManager to ContactIndex for always-fresh contact data
+    cm.contact_index.set_contact_manager(cm.contact_manager)
     print(
         f"[ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
         f"{perf_counter() - local_start_time:.2f} seconds",
