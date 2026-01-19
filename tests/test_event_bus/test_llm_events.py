@@ -548,3 +548,81 @@ async def test_hook_handles_empty_request():
 
     assert len(captured) == 1
     assert captured[0].payload["request"] == {}
+
+
+# ---------------------------------------------------------------------------
+#  8. Time column tests for usage analytics
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_llm_event_includes_time_columns():
+    """LLM events should include derived time columns for aggregation."""
+    async with capture_events("LLM") as captured:
+        llm_event = LLMEvent(
+            request={"model": "gpt-4o", "messages": []},
+            billed_cost=0.001,
+        )
+        _llm_event_to_eventbus(llm_event)
+
+        await asyncio.sleep(0.05)
+
+    assert len(captured) == 1
+    payload = captured[0].payload
+
+    # Verify all time columns are present
+    assert "time_minute" in payload, "time_minute column missing"
+    assert "time_hour" in payload, "time_hour column missing"
+    assert "time_day" in payload, "time_day column missing"
+    assert "time_month" in payload, "time_month column missing"
+    assert "time_year" in payload, "time_year column missing"
+
+    # Verify format of time columns
+    # time_minute: ISO format with seconds=0 (e.g., "2026-01-15T10:30:00+00:00")
+    assert "T" in payload["time_minute"]
+    assert payload["time_minute"].endswith(":00+00:00") or payload["time_minute"].endswith(":00Z")
+
+    # time_hour: ISO format with minutes=seconds=0
+    assert "T" in payload["time_hour"]
+
+    # time_day: YYYY-MM-DD format
+    assert len(payload["time_day"]) == 10
+    assert payload["time_day"].count("-") == 2
+
+    # time_month: YYYY-MM-DD format (first day of month for date type inference)
+    assert len(payload["time_month"]) == 10
+    assert payload["time_month"].count("-") == 2
+    assert payload["time_month"].endswith("-01")  # First day of month
+
+    # time_year: YYYY-MM-DD format (first day of year for date type inference)
+    assert len(payload["time_year"]) == 10
+    assert payload["time_year"].count("-") == 2
+    assert payload["time_year"].endswith("-01-01")  # First day of year
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_time_columns_consistent_with_event_timestamp():
+    """Time columns should be derived from the same timestamp as the event."""
+    async with capture_events("LLM") as captured:
+        llm_event = LLMEvent(request={"model": "gpt-4o", "messages": []})
+        _llm_event_to_eventbus(llm_event)
+
+        await asyncio.sleep(0.05)
+
+    assert len(captured) == 1
+    evt = captured[0]
+    payload = evt.payload
+
+    # The event timestamp and time columns should be consistent
+    event_ts = evt.timestamp
+
+    # time_day should match the event timestamp's date
+    assert payload["time_day"] == event_ts.strftime("%Y-%m-%d")
+
+    # time_month should be first day of event timestamp's month
+    assert payload["time_month"] == event_ts.replace(day=1).strftime("%Y-%m-%d")
+
+    # time_year should be first day of event timestamp's year
+    assert payload["time_year"] == event_ts.replace(month=1, day=1).strftime("%Y-%m-%d")
