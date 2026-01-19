@@ -113,14 +113,9 @@ class ConfirmationResponseWrapper(BaseModel):
 # =============================================================================
 
 
-def _only(events, typ):
-    """Filter events by type."""
-    return [e for e in events if isinstance(e, typ)]
-
-
 def _direct_messages(events) -> list[DirectMessageEvent]:
     """Extract DirectMessageEvent from output events."""
-    return _only(events, DirectMessageEvent)
+    return [e for e in events if isinstance(e, DirectMessageEvent)]
 
 
 # =============================================================================

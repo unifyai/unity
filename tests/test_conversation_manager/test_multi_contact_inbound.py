@@ -16,6 +16,7 @@ contacts requires maintaining context about who said what.
 import pytest
 
 from tests.helpers import _handle_project
+from tests.test_conversation_manager.cm_helpers import filter_events_by_type
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
@@ -30,10 +31,6 @@ pytestmark = pytest.mark.eval
 BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
 ALICE = TEST_CONTACTS[2]  # contact_id 2
 BOB = TEST_CONTACTS[3]  # contact_id 3
-
-
-def _only(events, typ):
-    return [e for e in events if isinstance(e, typ)]
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +64,7 @@ async def test_reply_to_alice_after_her_message(initialized_cm):
         ),
     )
 
-    sms_events = _only(result.output_events, SMSSent)
+    sms_events = filter_events_by_type(result.output_events, SMSSent)
     alice_sms = [
         s for s in sms_events if s.contact["contact_id"] == ALICE["contact_id"]
     ]
@@ -102,7 +99,7 @@ async def test_reply_to_bob_after_his_message(initialized_cm):
         ),
     )
 
-    sms_events = _only(result.output_events, SMSSent)
+    sms_events = filter_events_by_type(result.output_events, SMSSent)
     bob_sms = [s for s in sms_events if s.contact["contact_id"] == BOB["contact_id"]]
 
     assert len(bob_sms) >= 1, (
@@ -145,7 +142,7 @@ async def test_two_contacts_reply_to_correct_one(initialized_cm):
         ),
     )
 
-    sms_events = _only(result.output_events, SMSSent)
+    sms_events = filter_events_by_type(result.output_events, SMSSent)
     bob_sms = [s for s in sms_events if s.contact["contact_id"] == BOB["contact_id"]]
 
     assert len(bob_sms) >= 1, (
@@ -185,7 +182,7 @@ async def test_email_reply_to_alice(initialized_cm):
         ),
     )
 
-    email_events = _only(result.output_events, EmailSent)
+    email_events = filter_events_by_type(result.output_events, EmailSent)
     alice_emails = [
         e for e in email_events if e.contact["contact_id"] == ALICE["contact_id"]
     ]
