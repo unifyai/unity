@@ -183,9 +183,7 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     # push message to contact index
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
-    role = (
-        "user" if "assistant" not in event.__class__.__name__.lower() else "assistant"
-    )
+    role = "user" if event.__class__.__name__.startswith("Inbound") else "assistant"
     cm.contact_index.push_message(contact, "voice", event.content, role=role)
 
     # cancel proactive speech on user input
