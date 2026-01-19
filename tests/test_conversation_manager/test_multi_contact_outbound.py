@@ -19,6 +19,7 @@ Uses SimulatedActor which returns plausible made-up contact details.
 import pytest
 
 from tests.helpers import _handle_project
+from tests.test_conversation_manager.cm_helpers import filter_events_by_type
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
@@ -32,10 +33,6 @@ pytestmark = pytest.mark.eval
 
 # Convenience references to test contacts
 BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
-
-
-def _only(events, typ):
-    return [e for e in events if isinstance(e, typ)]
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +60,7 @@ async def test_email_unknown_contact_triggers_act(initialized_cm):
     )
 
     # Check that act was called (ActorHandleStarted event)
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
 
     assert len(actor_events) >= 1, (
         f"Expected act to be called (ActorHandleStarted event), "
@@ -102,10 +99,10 @@ async def test_call_with_inline_phone_number(initialized_cm):
     )
 
     # Check that make_call was triggered (PhoneCallSent event)
-    call_events = _only(result.output_events, PhoneCallSent)
+    call_events = filter_events_by_type(result.output_events, PhoneCallSent)
 
     # Should NOT have called act since we provided the number
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) == 0, (
         f"Should not call act when phone number is provided inline, "
         f"got ActorHandleStarted events: {actor_events}"
@@ -137,10 +134,10 @@ async def test_sms_with_inline_phone_number(initialized_cm):
     )
 
     # Check that send_sms was triggered (SMSSent event)
-    sms_events = _only(result.output_events, SMSSent)
+    sms_events = filter_events_by_type(result.output_events, SMSSent)
 
     # Should NOT have called act since we provided the number
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) == 0, (
         f"Should not call act when phone number is provided inline, "
         f"got ActorHandleStarted events: {actor_events}"
@@ -172,10 +169,10 @@ async def test_email_with_inline_email_address(initialized_cm):
     )
 
     # Check that send_email was triggered (EmailSent event)
-    email_events = _only(result.output_events, EmailSent)
+    email_events = filter_events_by_type(result.output_events, EmailSent)
 
     # Should NOT have called act since we provided the email
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) == 0, (
         f"Should not call act when email address is provided inline, "
         f"got ActorHandleStarted events: {actor_events}"

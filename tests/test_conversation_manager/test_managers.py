@@ -17,6 +17,7 @@ machinery (which varies between real and simulated implementations).
 import pytest
 
 from tests.helpers import _handle_project
+from tests.test_conversation_manager.cm_helpers import filter_events_by_type
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
@@ -26,14 +27,9 @@ from unity.conversation_manager.events import (
 pytestmark = pytest.mark.eval
 
 
-def _only(events, typ):
-    """Filter events by type."""
-    return [e for e in events if isinstance(e, typ)]
-
-
 def _get_sms_response(events):
     """Get the first SMS response, if any."""
-    sms_list = _only(events, SMSSent)
+    sms_list = filter_events_by_type(events, SMSSent)
     return sms_list[0] if sms_list else None
 
 

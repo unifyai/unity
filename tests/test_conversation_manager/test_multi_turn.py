@@ -16,6 +16,7 @@ over the full conversation history.
 import pytest
 
 from tests.helpers import _handle_project
+from tests.test_conversation_manager.cm_helpers import get_exactly_one
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
@@ -25,17 +26,6 @@ from unity.conversation_manager.events import (
 )
 
 pytestmark = pytest.mark.eval
-
-
-def _only(events, typ):
-    return [e for e in events if isinstance(e, typ)]
-
-
-def _get_one(events, typ):
-    """Get exactly one event of the given type."""
-    matches = _only(events, typ)
-    assert len(matches) == 1, f"Expected 1 {typ.__name__}, got {len(matches)}"
-    return matches[0]
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +49,7 @@ async def test_unify_message_two_turn_recall(initialized_cm):
             content="My order number is ABC-9876. Please confirm you have it.",
         ),
     )
-    msg1 = _get_one(result1.output_events, UnifyMessageSent)
+    msg1 = get_exactly_one(result1.output_events, UnifyMessageSent)
     assert msg1.content
 
     # Turn 2: User asks assistant to recall it
@@ -69,7 +59,7 @@ async def test_unify_message_two_turn_recall(initialized_cm):
             content="What was my order number?",
         ),
     )
-    msg2 = _get_one(result2.output_events, UnifyMessageSent)
+    msg2 = get_exactly_one(result2.output_events, UnifyMessageSent)
 
     # Assistant should recall the order number
     assert (
@@ -93,7 +83,7 @@ async def test_unify_message_three_turn_recall(initialized_cm):
             content="My name is Jordan. Please acknowledge.",
         ),
     )
-    _get_one(result1.output_events, UnifyMessageSent)
+    get_exactly_one(result1.output_events, UnifyMessageSent)
 
     # Turn 2: Second piece of info
     result2 = await cm.step_until_wait(
@@ -102,7 +92,7 @@ async def test_unify_message_three_turn_recall(initialized_cm):
             content="I live in Seattle. Please acknowledge.",
         ),
     )
-    _get_one(result2.output_events, UnifyMessageSent)
+    get_exactly_one(result2.output_events, UnifyMessageSent)
 
     # Turn 3: Ask about both
     result3 = await cm.step_until_wait(
@@ -111,7 +101,7 @@ async def test_unify_message_three_turn_recall(initialized_cm):
             content="What is my name and where do I live?",
         ),
     )
-    msg3 = _get_one(result3.output_events, UnifyMessageSent)
+    msg3 = get_exactly_one(result3.output_events, UnifyMessageSent)
     content_lower = msg3.content.lower()
 
     assert "jordan" in content_lower, f"Should recall 'Jordan': {msg3.content}"
@@ -139,7 +129,7 @@ async def test_sms_two_turn_recall(initialized_cm):
             content="Remember this code: DELTA-42. Acknowledge please.",
         ),
     )
-    msg1 = _get_one(result1.output_events, SMSSent)
+    msg1 = get_exactly_one(result1.output_events, SMSSent)
     assert msg1.content
 
     # Turn 2: User asks for recall
@@ -149,7 +139,7 @@ async def test_sms_two_turn_recall(initialized_cm):
             content="What was the code I gave you?",
         ),
     )
-    msg2 = _get_one(result2.output_events, SMSSent)
+    msg2 = get_exactly_one(result2.output_events, SMSSent)
 
     assert (
         "DELTA-42" in msg2.content or "delta-42" in msg2.content.lower()

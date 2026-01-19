@@ -17,6 +17,10 @@ trigger the assistant to call `act`.
 import pytest
 
 from tests.helpers import _handle_project
+from tests.test_conversation_manager.cm_helpers import (
+    filter_events_by_type,
+    assert_efficient,
+)
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
@@ -27,24 +31,6 @@ pytestmark = pytest.mark.eval
 
 # Convenience references to test contacts
 BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
-
-# Maximum LLM steps for efficient tool calling
-# - Ideal: 2 steps (action + acknowledge concurrent, then wait)
-# - Acceptable: 3 steps (action, acknowledge, wait - or action + query + wait)
-MAX_EFFICIENT_STEPS = 3
-
-
-def _only(events, typ):
-    return [e for e in events if isinstance(e, typ)]
-
-
-def _assert_efficient(result, context: str = ""):
-    """Assert that the LLM completed efficiently (concurrent tool calls + wait)."""
-    assert result.llm_step_count <= MAX_EFFICIENT_STEPS, (
-        f"Expected efficient concurrent tool calling (<= {MAX_EFFICIENT_STEPS} steps), "
-        f"but took {result.llm_step_count} steps. "
-        f"LLM should call tools concurrently in one step, then wait. {context}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -69,12 +55,12 @@ async def test_contact_lookup_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for contact preference lookup, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -94,12 +80,12 @@ async def test_contact_search_by_location_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for location-based contact search, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -119,12 +105,12 @@ async def test_create_contact_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for contact creation, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 # ---------------------------------------------------------------------------
@@ -149,12 +135,12 @@ async def test_knowledge_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for knowledge query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -174,12 +160,12 @@ async def test_knowledge_about_product_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for product knowledge query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -199,12 +185,12 @@ async def test_store_knowledge_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for storing knowledge, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 # ---------------------------------------------------------------------------
@@ -229,12 +215,12 @@ async def test_task_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for task query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -254,12 +240,12 @@ async def test_create_task_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for task creation, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -279,12 +265,12 @@ async def test_priority_task_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for priority task query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 # ---------------------------------------------------------------------------
@@ -309,12 +295,12 @@ async def test_transcript_search_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for transcript search, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -334,12 +320,12 @@ async def test_recent_messages_search_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for recent messages search, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -359,12 +345,12 @@ async def test_specific_topic_search_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for topic-based message search, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 # ---------------------------------------------------------------------------
@@ -389,12 +375,12 @@ async def test_weather_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for weather query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -414,12 +400,12 @@ async def test_news_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for news query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -439,12 +425,12 @@ async def test_current_events_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for current events query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 # ---------------------------------------------------------------------------
@@ -469,12 +455,12 @@ async def test_guidance_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for guidance query, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 # ---------------------------------------------------------------------------
@@ -499,12 +485,12 @@ async def test_find_and_action_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for find-and-action request, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
 
 
 @pytest.mark.asyncio
@@ -524,9 +510,9 @@ async def test_research_request_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = _only(result.output_events, ActorHandleStarted)
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert len(actor_events) >= 1, (
         f"Expected act to be called for research request, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
-    _assert_efficient(result)
+    assert_efficient(result)
