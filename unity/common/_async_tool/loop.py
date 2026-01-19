@@ -248,8 +248,8 @@ async def async_tool_loop_inner(
     tools : ``dict[str, Callable]``
         A mapping ``name → function`` describing every callable the LLM may
         invoke.  Each function must be fully type-hinted and have a concise
-        docstring – these are automatically converted to an OpenAI *tool
-        schema* via :pyfunc:`method_to_schema`.
+        docstring – these are automatically converted to a *tool schema*
+        via :pyfunc:`method_to_schema`.
 
     interject_queue : ``asyncio.Queue[str | dict]``
         Thread-safe channel through which the *outer* application can push
@@ -347,16 +347,12 @@ async def async_tool_loop_inner(
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # ── Reasoning model compatibility ────────────────────────────────────────────
-    # Provider-specific thinking mode compliance (e.g., Claude's requirement that
-    # assistant messages with tool_calls have thinking_blocks) is now handled
-    # automatically by unillm's provider preprocessing. The async tool loop no
-    # longer needs any provider-specific branching.
+    # Provider-specific thinking mode compliance is handled automatically by
+    # unillm's provider preprocessing. The async tool loop is provider-agnostic.
 
     def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
         """Handle reasoning model compatibility. Returns effective preprocess."""
-        # All provider-specific thinking compliance is now handled by unillm's
-        # apply_provider_preprocessing. This function just returns the base
-        # preprocess function unchanged.
+        # All provider-specific compliance is handled by unillm's preprocessing.
         return preprocess_msgs
 
     _img_token = None
@@ -440,8 +436,7 @@ async def async_tool_loop_inner(
     # 2. The user only sees the initial request and any interjection messages
     # 3. The user sees the final plain-text response from the assistant
     #
-    # For Claude/Gemini: appended to the global system message via LiteLLM.
-    # For OpenAI: inserted positionally right before the first interjection.
+    # Appended to the global system message via LiteLLM preprocessing.
     # -------------------------------------------------------------------------
     _user_visibility_guidance = (
         "## User Visibility Context\n"
@@ -1662,10 +1657,10 @@ async def async_tool_loop_inner(
                     except Exception:
                         history_lines = []
 
-                # Support dict-style interjections carrying continued parent context
-                # Interjections are now sent as simple user messages (not system messages)
-                # because Claude and Gemini models do not support in-chat system messages.
-                # The user-visibility context has been moved to the topmost system message.
+                # Support dict-style interjections carrying continued parent context.
+                # Interjections are sent as user messages (not system messages) for
+                # broad provider compatibility. User-visibility context is in the
+                # topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
@@ -2384,7 +2379,7 @@ async def async_tool_loop_inner(
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
 
-                    # Parse arguments - handle both string (OpenAI) and dict formats
+                    # Parse arguments - handle both string and dict formats
                     _raw_args = call["function"]["arguments"]
                     if isinstance(_raw_args, str):
                         args = json.loads(_raw_args)
