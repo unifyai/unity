@@ -123,30 +123,13 @@ async def test_live_images_helpers_exposed_and_overview_injected(
     # Only actionable helpers are exposed to the LLM
     assert {"ask_image", "attach_image_raw"}.issubset(set(names))
 
-    # Synthetic overview must be injected as an assistant tool-call + tool result
-
-    # Find the synthetic assistant tool-call
-    calls = []
-    for m in client.messages:
-        if m.get("role") == "assistant":
-            for tc in m.get("tool_calls") or []:
-                fn = tc.get("function", {})
-                if fn.get("name") == "live_images_overview":
-                    calls.append(tc)
-    assert calls, "Expected a synthetic assistant tool call for live_images_overview"
-    call_id = calls[0].get("id")
-
-    # Corresponding tool result should contain image_id and caption
-    tmsgs = [
+    system_msgs = [
         m
         for m in client.messages
-        if m.get("role") == "tool"
-        and m.get("name") == "live_images_overview"
-        and (call_id is None or m.get("tool_call_id") == call_id)
+        if m.get("role") == "system" and m.get("_live_images_overview")
     ]
-    assert tmsgs, "Expected a tool-result message for live_images_overview"
-    content = tmsgs[-1].get("content") or "{}"
-    # Payload is JSON; assert id and caption appear
+    assert system_msgs, "Expected a system context message for live_images_overview"
+    content = system_msgs[-1].get("content") or "{}"
     assert '"image_id": 42' in content
     assert '"caption": "cat on mat"' in content
 
@@ -393,7 +376,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(
     ov_msgs_a = [
         m
         for m in client.messages
-        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        if m.get("role") == "system" and m.get("_live_images_overview")
     ]
     assert ov_msgs_a, "Expected overview for AnnotatedImageRefs"
     assert f'"image_id": {int(img_id)}' in (ov_msgs_a[-1].get("content") or "")
@@ -416,7 +399,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(
     ov_msgs_b = [
         m
         for m in client_b.messages
-        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        if m.get("role") == "system" and m.get("_live_images_overview")
     ]
     assert ov_msgs_b, "Expected overview for RawImageRefs"
     assert f'"image_id": {int(img_id)}' in (ov_msgs_b[-1].get("content") or "")
@@ -498,13 +481,13 @@ async def test_images_and_ask_image(model, monkeypatch) -> None:
 
     final = await handle.result()
 
-    # Verify the synthetic overview tool result contains both ids and captions
+    # Verify the synthetic overview contains both ids and captions
     ov_msgs = [
         m
         for m in client.messages
-        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        if m.get("role") == "system" and m.get("_live_images_overview")
     ]
-    assert ov_msgs, "Expected a tool-result message for live_images_overview"
+    assert ov_msgs, "Expected a system context message for live_images_overview"
     ov_content = ov_msgs[-1].get("content") or "{}"
     assert '"image_id": 201' in ov_content
     assert '"image_id": 202' in ov_content
@@ -527,8 +510,8 @@ async def test_images_and_ask_image(model, monkeypatch) -> None:
 @_handle_project
 async def test_overview_injected_before_first_llm_step(model, monkeypatch) -> None:
     """
-    Verify the synthetic `live_images_overview` assistant tool-call/result are injected
-    before the first LLM thinking step (no model choice is used to call it).
+    Verify the synthetic `live_images_overview` system context and tool result are injected
+    before the first LLM thinking step.
     """
 
     import asyncio
@@ -586,56 +569,25 @@ async def test_overview_injected_before_first_llm_step(model, monkeypatch) -> No
         timeout=120,
     )
 
-    # Poll for the synthetic assistant tool-call/result BEFORE LLM is invoked
     async def _find_overview_msgs(timeout_s: float = 2.0):
         start = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start < timeout_s:
-            # Find assistant tool-call and result for overview
-            asst_idx = None
-            call_id = None
             for idx, m in enumerate(client.messages):
-                if m.get("role") != "assistant":
-                    continue
-                for tc in m.get("tool_calls") or []:
-                    fn = tc.get("function", {})
-                    if fn.get("name") == "live_images_overview":
-                        asst_idx = idx
-                        call_id = tc.get("id")
-                        break
-                if asst_idx is not None:
-                    break
-
-            if asst_idx is not None:
-                # Find the corresponding tool result and its index
-                result_msg = None
-                result_idx = None
-                for idx, m in enumerate(client.messages):
-                    if (
-                        m.get("role") == "tool"
-                        and m.get("name") == "live_images_overview"
-                        and (call_id is None or m.get("tool_call_id") == call_id)
-                    ):
-                        result_msg = m
-                        result_idx = idx
-                if result_msg is not None:
-                    return asst_idx, result_idx, result_msg
+                if m.get("role") == "system" and m.get("_live_images_overview"):
+                    return idx, m
             await asyncio.sleep(0.01)
         return None
 
     found = await _find_overview_msgs()
-    assert (
-        found is not None
-    ), "Expected synthetic overview tool result before first LLM step"
-    asst_idx, result_idx, tool_msg = found
-    content = tool_msg.get("content") or "{}"
+    assert found is not None, "Expected synthetic overview before first LLM step"
+    system_idx, system_msg = found
+    content = system_msg.get("content") or "{}"
     assert '"image_id": 7' in content
     assert '"caption": "seven cats"' in content
 
-    # Ensure overview assistant tool-call and tool result are recorded before the first LLM step
     assert llm_called.is_set(), "LLM did not start; test spy did not fire"
     assert index_before_llm is not None, "Spy did not capture index before LLM call"
-    assert asst_idx < index_before_llm
-    assert result_idx < index_before_llm
+    assert system_idx < index_before_llm
 
     # Allow the LLM to proceed and complete
     proceed.set()
@@ -717,11 +669,11 @@ async def test_ask_loop_injects_overview_and_exposes_helpers(
     helper = await outer.ask("What images are visible?", images=images)
     await helper.result()
 
-    # The helper loop transcript should include a live_images_overview tool result
+    # The helper loop transcript should include a live_images_overview system message
     msgs = helper.get_history()
     assert any(
-        m.get("role") == "tool"
-        and m.get("name") == "live_images_overview"
+        m.get("role") == "system"
+        and m.get("_live_images_overview")
         and '"image_id": 42' in (m.get("content") or "")
         and '"caption": "cat on mat"' in (m.get("content") or "")
         for m in msgs

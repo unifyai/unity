@@ -69,8 +69,7 @@ async def _await_tool(
 @_handle_project
 async def test_live_images_overview_is_injected_synthetically(model) -> None:
     """
-    Verify that a synthetic call to `live_images_overview` is injected in the
-    first assistant turn and that its tool result exists.
+    Verify that a synthetic live_images_overview system message is injected.
     """
 
     client = new_llm_client(model=model)
@@ -90,13 +89,13 @@ async def test_live_images_overview_is_injected_synthetically(model) -> None:
 
     await h.result()
 
-    # The tool result for live_images_overview should exist
-    tool_msgs = [
+    # The system context for live_images_overview should exist
+    system_msgs = [
         m
         for m in client.messages
-        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        if m.get("role") == "system" and m.get("_live_images_overview")
     ]
-    assert tool_msgs, "Expected a tool-result message for live_images_overview"
+    assert system_msgs, "Expected a system context message for live_images_overview"
 
 
 @pytest.mark.asyncio
@@ -155,7 +154,7 @@ async def test_overview_after_clarification_images(model, static_now) -> None:
         ov_msgs = [
             m
             for m in client.messages
-            if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+            if m.get("role") == "system" and m.get("_live_images_overview")
         ]
         if ov_msgs and (f'"image_id": {rid}' in (ov_msgs[-1].get("content") or "")):
             break
@@ -430,7 +429,7 @@ async def test_nested_loop_does_not_inherit_parent_images(model) -> None:
     inner_overview_msgs = [
         m
         for m in inner_msgs
-        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        if m.get("role") == "system" and m.get("_live_images_overview")
     ]
     assert (
         not inner_overview_msgs

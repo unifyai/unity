@@ -63,7 +63,7 @@ async def test_interject_dynamic_helper_appends_images(model, static_now) -> Non
     await _wait_for_tool_message_prefix(client, "do_work")
     await h.interject("please proceed", images=[RawImageRef(image_id=img_id)])
     await _wait_for_assistant_call_prefix(client, "interject_")
-    await _wait_for_tool_message_prefix(client, "interject ")
+    await _wait_for_tool_message_prefix(client, "interject_")
     final = await h.result()
     assert final is not None, "Loop should complete with a response"
 
@@ -104,12 +104,12 @@ async def test_stop_dynamic_helper_appends_images(model, static_now) -> None:
     await _wait_for_tool_message_prefix(client, "wait_forever")
     await h.interject("stop", images=[RawImageRef(image_id=img_id)])
     await _wait_for_assistant_call_prefix(client, "stop_")
-    await _wait_for_tool_message_prefix(client, "stop ")
+    await _wait_for_tool_message_prefix(client, "stop_")
     assert any(
         m.get("role") == "tool"
         and isinstance(m.get("name"), str)
-        and "stop" in m.get("name")
-        and "stopped successfully" in (m.get("content") or "").lower()
+        and m.get("name", "").startswith("stop_")
+        and "stopped" in (m.get("content") or "").lower()
         for m in client.messages
     )
     final = await h.result()
@@ -255,7 +255,7 @@ async def test_overview_reinjected_on_interjection_images(model, static_now) -> 
         msgs = [
             m
             for m in client.messages
-            if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+            if m.get("role") == "system" and m.get("_live_images_overview")
         ]
         return (msgs[-1].get("content") or "{}") if msgs else ""
 
