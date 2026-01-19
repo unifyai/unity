@@ -804,12 +804,6 @@ class TestVoiceUtteranceHandlers:
         mock_cm.interject_or_run.assert_called_once_with("What's the weather?")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="GENUINE BUG: Voice utterance role detection is incorrect. "
-        "At line 187 of event_handlers.py, the logic checks for 'assistant' in "
-        "the class name, but OutboundPhoneUtterance doesn't contain 'assistant', "
-        "so it incorrectly gets role='user' and cancel_proactive_speech() is called.",
-    )
     async def test_outbound_utterance_does_not_cancel_proactive(self, mock_cm):
         """Outbound utterances don't cancel proactive speech."""
         event = OutboundPhoneUtterance(
