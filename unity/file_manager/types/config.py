@@ -56,18 +56,21 @@ class ParseConfig(BaseModel):
 class IngestConfig(BaseModel):
     """Controls how parsed rows are stored in Unify contexts.
 
-    Layout modes:
-    - "per_file": current default. Each file has `Files/<alias>/<safe_file>/Content`
-      and tables under `.../Tables/<table>`.
-    - "unified": all rows for this job go to a single logical bucket by reusing
-      per-file ops with a fixed `unified_label` as the context name. This avoids
-      new ops while enabling a global context.
+    Storage Layout
+    --------------
+    Each file's content is stored under a context path determined by `storage_id`:
+    - `Files/<alias>/<storage_id>/Content` for document content
+    - `Files/<alias>/<storage_id>/Tables/<table>` for extracted tables
+
+    When `storage_id` is None (default), each file gets its own context using
+    `str(file_id)` as the storage_id (auto-assigned after record creation).
+
+    When `storage_id` is set to a custom label, all files in the ingestion run
+    share that context, enabling unified storage for related files.
     """
 
-    mode: Literal["per_file", "unified"] = "per_file"
-
-    # Unified layout target. When None, a sensible default is chosen by the caller.
-    unified_label: Optional[str] = None
+    # Storage identifier. When None, auto-assigned as str(file_id) per file.
+    storage_id: Optional[str] = None
 
     # Chunking controls for ingestion
     # - content_rows_batch_size controls batching for per-file Content rows

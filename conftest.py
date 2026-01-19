@@ -114,7 +114,8 @@ def _sanitize_filename(name: str, max_length: int = 200) -> str:
     import hashlib
 
     # Replace invalid characters with underscore or dash
-    name = re.sub(r'["\:<>|*?\r\n\\]', "_", name)
+    # Also replace / which appears in test params like text/plain
+    name = re.sub(r'["\:<>|*?\r\n\\/]', "_", name)
     # Collapse multiple underscores/dashes
     name = re.sub(r"[_-]{2,}", "-", name)
     # Remove leading/trailing underscores/dashes
@@ -474,20 +475,11 @@ def pytest_sessionstart(session):
     except ImportError:
         pass  # OpenTelemetry not installed
 
-    # Configure all file-based logging directories for trace correlation
-    # This enables correlation between pytest logs, Unity logs, Unify logs, and Orchestra traces
+    # Configure file-based logging directories for trace correlation.
+    # Unity LOGGER output goes to pytest stdout (captured in logs/pytest/),
+    # so we don't configure a separate logs/unity/ directory during tests.
     root_path = _get_log_root(Path(session.config.rootpath))
     subdir = _get_log_subdir()
-
-    # Unity LOGGER file output (async tool loop, managers, etc.)
-    unity_log_dir = root_path / "logs" / "unity" / subdir
-    unity_log_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        from unity.constants import configure_log_dir as configure_unity_log_dir
-
-        configure_unity_log_dir(str(unity_log_dir))
-    except ImportError:
-        os.environ["UNITY_LOG_DIR"] = str(unity_log_dir)
 
     # Unify SDK file logging
     unify_log_dir = root_path / "logs" / "unify" / subdir
@@ -597,7 +589,6 @@ def pytest_unconfigure(config):
         tr.write_line(
             f"📁 This run's logs: {root_path / 'logs' / 'pytest' / subdir}/",
         )
-        tr.write_line(f"📂 Unity logs:       {root_path / 'logs' / 'unity' / subdir}/")
         tr.write_line(f"📂 Unify HTTP logs:  {root_path / 'logs' / 'unify' / subdir}/")
         tr.write_line(f"📂 LLM I/O logs:     {root_path / 'logs' / 'llm' / subdir}/")
         tr.write_line(f"📂 All log directories:  {root_path / 'logs'}/*/")

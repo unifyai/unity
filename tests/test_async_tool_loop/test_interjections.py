@@ -19,7 +19,7 @@ import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
-from tests.test_async_tool_loop.async_helpers import (
+from tests.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
     _wait_for_condition,
@@ -91,7 +91,6 @@ def _is_internal_bookkeeping(msg: dict) -> bool:
         for marker in (
             "_visibility_guidance",
             "_runtime_context",
-            "_semantic_cache_hint",
             "_ctx_header",
         )
     )
@@ -485,7 +484,7 @@ async def test_interjections_processed_successfully(model):
         (
             "Follow STRICTLY these steps:\n"
             '1) Call the tool `echo` with {"txt":"A"}.\n'
-            "2) When you see a user interjection of the form 'X please' (arriving as a system message), "
+            "2) When you see a user interjection of the form 'X please', "
             "immediately call `echo` with {\"txt\": \"X\"}. I will interject 'B please' then 'C please'.\n"
             "3) Only after ALL echo calls (A, B, and C) have completed, reply with exactly the single word: done.\n"
             "Never include 'B' or 'C' in your assistant messages; produce them only via tool calls. "
@@ -498,9 +497,9 @@ async def test_interjections_processed_successfully(model):
     await _wait_for_tool_request(client, "echo")
     await handle.interject("B please")
 
-    # Wait for the NEXT echo request (echo("B")) using event-based helper.
+    # Wait for the NEXT echo request (echo("B")) using polling-based helper.
     # Can't use _wait_for_tool_request again since it only checks count >= 1.
-    await _wait_for_any_assistant_tool_call("echo")
+    await _wait_for_any_assistant_tool_call(client, "echo")
     await handle.interject("C please")
 
     final = await handle.result()

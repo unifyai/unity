@@ -249,19 +249,11 @@ class TranscriptManager(BaseTranscriptManager):
         # with special handling when images are present to encourage image-aware tools.
         if images:
             effective_tool_policy = self._ask_tool_policy_with_images
-            use_semantic_cache = None
         else:
             if tool_policy == "default":
                 effective_tool_policy = require_first("search_messages")
             else:
                 effective_tool_policy = tool_policy
-            use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
-            # When semantic cache read is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-            effective_tool_policy = (
-                None
-                if use_semantic_cache in ("read", "both")
-                else effective_tool_policy
-            )
 
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_loop(
@@ -272,8 +264,6 @@ class TranscriptManager(BaseTranscriptManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=effective_tool_policy,
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),

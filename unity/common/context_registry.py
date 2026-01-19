@@ -97,6 +97,7 @@ class ContextRegistry:
         from unity.image_manager.image_manager import ImageManager
         from unity.function_manager.function_manager import FunctionManager
         from unity.blacklist_manager.blacklist_manager import BlackListManager
+        from unity.data_manager.data_manager import DataManager
 
         return [
             ContactManager,
@@ -109,6 +110,7 @@ class ContextRegistry:
             WebSearcher,
             FunctionManager,
             BlackListManager,
+            DataManager,
         ]
 
     @classmethod
@@ -314,3 +316,33 @@ class ContextRegistry:
                 future.result()
 
         cls._setup_complete = True
+
+    @classmethod
+    def get_known_base_contexts(cls) -> List[str]:
+        """
+        Return all registered base context names across all managers.
+
+        This returns the unresolved context names (e.g., "Contacts", "Knowledge",
+        "Tasks") from each manager's Config.required_contexts, not the fully
+        qualified paths.
+
+        Returns
+        -------
+        list[str]
+            Sorted list of unique base context names.
+
+        Usage Examples
+        --------------
+        >>> base_contexts = ContextRegistry.get_known_base_contexts()
+        >>> print(base_contexts)
+        ['Blacklist', 'Contacts', 'Data', 'Functions', 'Guidance', ...]
+        """
+        base_contexts = set()
+        for manager in cls._get_managers():
+            if hasattr(manager, "Config") and hasattr(
+                manager.Config,
+                "required_contexts",
+            ):
+                for table_ctx in manager.Config.required_contexts:
+                    base_contexts.add(table_ctx.name)
+        return sorted(base_contexts)

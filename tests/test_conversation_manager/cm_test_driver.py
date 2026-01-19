@@ -24,6 +24,7 @@ from unity.conversation_manager.events import (
     EmailSent,
     UnifyMessageSent,
     PhoneCallSent,
+    ActorHandleStarted,
 )
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class StepResult:
     llm_requested: bool
     llm_ran: bool
     output_events: list[Event]
+    llm_step_count: int = 0  # Number of LLM thinking steps taken
 
 
 # Context variable to track LLM run requests during stepping
@@ -61,6 +63,8 @@ class CMStepDriver:
 
     def __init__(self, cm: "ConversationManager"):
         self._cm = cm
+        # Track all tool calls made across all steps for test assertions
+        self.all_tool_calls: list[str] = []
 
     @property
     def cm(self) -> "ConversationManager":
@@ -133,14 +137,23 @@ class CMStepDriver:
 
             if llm_requested:
                 llm_ran = True
-                await self._cm._run_llm()
+                tool_name = await self._cm._run_llm()
+                # Track tool call for test assertions
+                if tool_name:
+                    self.all_tool_calls.append(tool_name)
 
             # Apply any published events to local state so callers can inspect state
             # without depending on background broker subscribers.
             for evt in published_events:
                 if isinstance(
                     evt,
-                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
+                    (
+                        SMSSent,
+                        EmailSent,
+                        UnifyMessageSent,
+                        PhoneCallSent,
+                        ActorHandleStarted,
+                    ),
                 ):
                     output_events.append(evt)
                 await EventHandler.handle_event(
@@ -193,7 +206,13 @@ class CMStepDriver:
             if evt is not None:
                 if isinstance(
                     evt,
-                    (SMSSent, EmailSent, UnifyMessageSent, PhoneCallSent),
+                    (
+                        SMSSent,
+                        EmailSent,
+                        UnifyMessageSent,
+                        PhoneCallSent,
+                        ActorHandleStarted,
+                    ),
                 ):
                     all_output_events.append(evt)
                 # Handle the event locally
@@ -240,6 +259,10 @@ class CMStepDriver:
                 tool_name = await self._cm._run_llm()
                 step_count += 1
 
+                # Track tool call for test assertions
+                if tool_name:
+                    self.all_tool_calls.append(tool_name)
+
                 # Stop if 'wait' was called
                 if tool_name == "wait":
                     break
@@ -262,4 +285,5 @@ class CMStepDriver:
             llm_requested=True,
             llm_ran=llm_ran,
             output_events=all_output_events,
+            llm_step_count=step_count,
         )

@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from unity.actor.settings import ActorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.conversation_manager.settings import ConversationSettings
+from unity.data_manager.settings import DataSettings
 from unity.file_manager.settings import FileSettings
 from unity.function_manager.settings import FunctionSettings
 from unity.guidance_manager.settings import GuidanceSettings
@@ -132,7 +133,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
     # ─────────────────────────────────────────────────────────────────────────
-    UNITY_SEMANTIC_CACHE: bool = False
     UNITY_READONLY_ASK_GUARD: bool = True
     FIRST_ASK_TOOL_IS_SEARCH: bool = True
     FIRST_MUTATION_TOOL_IS_ASK: bool = True
@@ -155,6 +155,7 @@ class ProductionSettings(BaseSettings):
     actor: ActorSettings = Field(default_factory=ActorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
+    data: DataSettings = Field(default_factory=DataSettings)
     file: FileSettings = Field(default_factory=FileSettings)
     function: FunctionSettings = Field(default_factory=FunctionSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
@@ -178,7 +179,6 @@ class ProductionSettings(BaseSettings):
         "ASYNCIO_DEBUG",
         "ASYNCIO_DEBUG_VERBOSE",
         "PYTEST_LOG_TO_FILE",
-        "UNITY_SEMANTIC_CACHE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
         "FIRST_MUTATION_TOOL_IS_ASK",

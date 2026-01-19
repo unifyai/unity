@@ -412,7 +412,7 @@ class DynamicToolFactory:
         Behaviour
         ---------
         - For nested async handles, returns the downstream handle so the loop can adopt
-          and await its result (consistent with base-tool passthrough behaviour).
+          and await its result (consistent with base-tool behaviour).
         - Otherwise returns the direct answer value from the handle.
         """
 

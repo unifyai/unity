@@ -55,20 +55,49 @@ def build_compact_ingest_model(
     def _ctype(r: FileContentRow) -> ContentType:
         return getattr(r, "content_type", None)
 
-    # Identity via file_info (returns FileInfo Pydantic model)
-    info = file_manager.file_info(identifier=file_path)
-    source_uri = info.source_uri
+    # Get identity and metadata from adapter
+    source_uri = file_manager._resolve_to_uri(file_path)
     display_path = file_path  # Use file_path as display_path
 
-    # Destination naming depends on ingest mode
-    dest_path = (
-        file_path
-        if config.ingest.mode == "per_file"
-        else (config.ingest.unified_label or "Unified")
-    )
+    # Get file metadata (created_at, modified_at, file_size) from adapter
+    created_at = None
+    modified_at = None
+    file_size = None
+    try:
+        adapter = getattr(file_manager, "_adapter", None)
+        if adapter:
+            # Try to get file stats from adapter
+            ref = file_manager._adapter_get(file_id_or_path=file_path)
+            if ref:
+                created_at = ref.get("created_at")
+                modified_at = ref.get("modified_at")
+                file_size = ref.get("file_size") or ref.get("size")
+    except Exception:
+        pass
 
-    # Content reference
-    content_ctx = file_manager._ctx_for_file(dest_path)
+    # Resolve storage_id from file record
+    from .ingest_ops import get_file_id_from_path, get_storage_id_from_path
+
+    dm = file_manager._data_manager
+    file_id = get_file_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    storage_id = get_storage_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    # Fallback: use str(file_id) if no storage_id found
+    if not storage_id and file_id is not None:
+        storage_id = str(file_id)
+    # Ultimate fallback: use config storage_id or file_path
+    if not storage_id:
+        storage_id = config.ingest.storage_id or file_path
+
+    # Content reference using storage_id
+    content_ctx = file_manager._ctx_for_file_content(storage_id)
     from unity.file_manager.parse_adapter import adapt_parse_result_for_file_manager
 
     adapted = adapt_parse_result_for_file_manager(parse_result, config=config)
@@ -92,10 +121,12 @@ def build_compact_ingest_model(
             label_safe = file_manager.safe(label)
             columns = list(getattr(tbl, "columns", []) or [])[:16]
             row_count = len(getattr(tbl, "rows", []) or [])
+            # Use storage_id-based context
+            table_ctx = file_manager._ctx_for_file_table(storage_id, label_safe)
             tables_meta.append(
                 _TableRef(
                     name=label_safe,
-                    context=file_manager._ctx_for_file_table(dest_path, label_safe),
+                    context=table_ctx,
                     row_count=row_count,
                     columns=columns,
                 ),
@@ -105,9 +136,7 @@ def build_compact_ingest_model(
 
     # Metrics (prefer adapter/FS info when available)
     metrics = _FileMetrics(
-        file_size=(
-            getattr(info, "file_size", None) if hasattr(info, "file_size") else None
-        ),
+        file_size=file_size,
         processing_time=(
             (getattr(getattr(parse_result, "trace", None), "duration_ms", None) or 0.0)
             / 1000.0
@@ -155,8 +184,8 @@ def build_compact_ingest_model(
         mime_type=mime,
         status=parse_result.status,
         error=parse_result.error,
-        created_at=getattr(info, "created_at", None),
-        modified_at=getattr(info, "modified_at", None),
+        created_at=created_at,
+        modified_at=modified_at,
         summary_excerpt=summary_excerpt,
         content_ref=content_ref,
         tables_ref=tables_meta,

@@ -73,6 +73,9 @@ class AssistantDetails:
     number: str = ""
     email: str = ""
     contact_id: int = 0  # Contact ID in Contacts table
+    is_user_desktop: bool = False  # True if user-owned desktop (don't auto-stop)
+    desktop_mode: str = "ubuntu"  # "ubuntu" or "windows"
+    desktop_url: str | None = None  # URL for desktop access
 
 
 @dataclass
@@ -218,6 +221,9 @@ class SessionDetails:
         voice_provider: str = "",
         voice_id: str = "",
         voice_mode: str = "",
+        is_user_desktop: bool = False,
+        desktop_mode: str = "ubuntu",
+        desktop_url: str | None = None,
     ) -> None:
         """Populate the session with runtime values.
 
@@ -232,6 +238,9 @@ class SessionDetails:
         self.assistant.number = assistant_number
         self.assistant.email = assistant_email
         self.assistant.contact_id = assistant_contact_id
+        self.assistant.is_user_desktop = is_user_desktop
+        self.assistant.desktop_mode = desktop_mode
+        self.assistant.desktop_url = desktop_url
         self.user.id = user_id
         self.user.name = user_name
         self.user.number = user_number
@@ -265,6 +274,9 @@ class SessionDetails:
         os.environ["ASSISTANT_ABOUT"] = self.assistant.about
         os.environ["ASSISTANT_NUMBER"] = self.assistant.number
         os.environ["ASSISTANT_EMAIL"] = self.assistant.email
+        os.environ["ASSISTANT_IS_USER_DESKTOP"] = str(self.assistant.is_user_desktop)
+        os.environ["ASSISTANT_DESKTOP_MODE"] = self.assistant.desktop_mode
+        os.environ["ASSISTANT_DESKTOP_URL"] = self.assistant.desktop_url or ""
         os.environ["USER_ID"] = self.user.id
         os.environ["USER_NAME"] = self.user.name
         os.environ["USER_NUMBER"] = self.user.number
@@ -306,6 +318,12 @@ class SessionDetails:
                 self.assistant.contact_id = int(val)
             except ValueError:
                 pass
+        if val := os.environ.get("ASSISTANT_IS_USER_DESKTOP"):
+            self.assistant.is_user_desktop = val == "True"
+        if val := os.environ.get("ASSISTANT_DESKTOP_MODE"):
+            self.assistant.desktop_mode = val
+        if val := os.environ.get("ASSISTANT_DESKTOP_URL"):
+            self.assistant.desktop_url = val if val else None
         if val := os.environ.get("USER_ID"):
             self.user.id = val
         if val := os.environ.get("USER_NAME"):

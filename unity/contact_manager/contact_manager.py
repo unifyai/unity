@@ -227,13 +227,7 @@ class ContactManager(BaseContactManager):
         )
         client.set_system_message(_ask_prompt)
 
-        use_semantic_cache = (
-            ("both" if SETTINGS.UNITY_SEMANTIC_CACHE else None) if not images else None
-        )
-        if use_semantic_cache in ("read", "both"):
-            # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-            tool_policy_fn = None
-        elif images:
+        if images:
             tool_policy_fn = self._ask_tool_policy_with_images
         else:
             tool_policy_fn = self._default_ask_tool_policy
@@ -246,8 +240,6 @@ class ContactManager(BaseContactManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),

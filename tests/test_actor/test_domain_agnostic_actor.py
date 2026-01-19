@@ -141,7 +141,7 @@ class MockResearchHandle(SteerableToolHandle):
 
     async def ask(self, question: str, **kwargs):
         self._status_requests += 1
-        return "Research in progress, 50% complete"
+        return MockStateManagerHandle("Research in progress, 50% complete")
 
     def interject(self, message: str, **kwargs):
         pass
@@ -771,7 +771,8 @@ CANNED_PLAN_LIVE_HANDLE = textwrap.dedent(
         print(f"--- Handle is done: {research_handle.done()} ---")
 
         # Optionally interact with handle
-        status = await research_handle.ask("What's the current status?")
+        status_handle = await research_handle.ask("What's the current status?")
+        status = await status_handle.result()
         print(f"--- Research status: {status} ---")
 
         return "Research task started and tracked"

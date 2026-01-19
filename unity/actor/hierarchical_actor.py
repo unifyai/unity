@@ -71,6 +71,11 @@ current_interaction_sink_var = contextvars.ContextVar(
 )
 current_invocation_id_var = contextvars.ContextVar("hp_invocation_id", default="none")
 
+current_actor_handle_var: contextvars.ContextVar = contextvars.ContextVar(
+    "current_actor_handle",
+    default=None,
+)
+
 logger = logging.getLogger(__name__)
 
 DIAGNOSTIC_MODE = True
@@ -611,7 +616,7 @@ async def llm_call(
     client: unillm.AsyncUnify,
     prompt: str,
     screenshot: bytes | str | None = None,
-    images: Optional[dict[str, Any]] = None,
+    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     static_prompt: Optional[str] = None,
 ) -> str:
     """
@@ -624,7 +629,7 @@ async def llm_call(
         client: The AsyncUnify client to use for the LLM call
         prompt: The dynamic prompt content (user message)
         screenshot: Optional screenshot to include in the prompt
-        images: Optional dictionary of image handles to include
+        images: Optional ImageRefs or list of image references to include
         static_prompt: Optional static content to cache (sent as system message with cache_control)
 
     Returns:
@@ -670,9 +675,38 @@ async def llm_call(
         )
 
     if images:
-        for key, handle in images.items():
+        # Support ImageRefs (RootModel with .root) or list[AnnotatedImageRef/RawImageRef]
+        items_to_process = (
+            getattr(images, "root", images) if hasattr(images, "root") else images
+        )
+
+        for item in items_to_process:
             try:
-                image_bytes = handle.raw()
+                # Handle different item types
+                if hasattr(item, "raw_image_ref"):
+                    # AnnotatedImageRef - resolve via ImageManager
+                    from unity.manager_registry import ManagerRegistry
+
+                    img_manager = ManagerRegistry.get_image_manager()
+                    handles = img_manager.get_images([item.raw_image_ref.image_id])
+                    if handles:
+                        image_bytes = handles[0].raw()
+                    else:
+                        continue
+                elif hasattr(item, "image_id"):
+                    # RawImageRef - resolve via ImageManager
+                    from unity.manager_registry import ManagerRegistry
+
+                    img_manager = ManagerRegistry.get_image_manager()
+                    handles = img_manager.get_images([item.image_id])
+                    if handles:
+                        image_bytes = handles[0].raw()
+                    else:
+                        continue
+                else:
+                    logger.warning(f"Unknown image item type: {type(item)}")
+                    continue
+
                 b64_image = base64.b64encode(image_bytes).decode("utf-8")
                 user_content.append(
                     {
@@ -1896,7 +1930,7 @@ class _ToolProviderProxy:
 
             if self._is_browser_env:
                 try:
-                    backend = self._real_instance.browser.backend
+                    backend = self._real_instance.computer.backend
                     is_magnitude = isinstance(backend, MagnitudeBackend)
                 except Exception:
                     backend = None
@@ -2004,7 +2038,7 @@ class _ToolProviderProxy:
             url = None
             if self._is_browser_env:
                 try:
-                    url = await self._real_instance.browser.get_current_url()
+                    url = await self._real_instance.computer.get_current_url()
                 except Exception:
                     url = None
 
@@ -2028,7 +2062,9 @@ class _ToolProviderProxy:
 
             if meta["impure"] and self._is_browser_env:
                 try:
-                    post_screenshot = await self._real_instance.browser.get_screenshot()
+                    post_screenshot = (
+                        await self._real_instance.computer.get_screenshot()
+                    )
                     meta["post_state_screenshot"] = post_screenshot
                 except Exception as e:
                     logger.warning(f"Failed to capture post-action screenshot: {e}")
@@ -2231,6 +2267,7 @@ class _PrimitivesProxy:
             "guidance",
             "web",
             "files",
+            "data",
         }:
             env = None
             if hasattr(self._plan, "environments") and isinstance(
@@ -2346,7 +2383,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
         persist: bool = True,
-        images: Optional[dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
@@ -2366,7 +2403,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             max_escalations: Max number of strategic replans before pausing.
             max_local_retries: Max number of tactical retries for a function.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
-            images: Optional mapping of source-scoped keys to ImageHandle objects.
+            images: Optional ImageRefs or list[RawImageRef | AnnotatedImageRef] for visual context.
             entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the function from the FunctionManager as the main plan.
             dedicated_computer_primitives: Optional. If provided, use this action provider for the plan.
@@ -2378,7 +2415,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         """
         self.actor = actor
         self.goal = goal
-        self.images = images or {}
+        self.images = images or []
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
@@ -2490,54 +2527,78 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self._img_token = None
         self._imglog_token = None
         if self.images:
+            # Support ImageRefs (RootModel with .root) or list[AnnotatedImageRef/RawImageRef]
+            items = (
+                getattr(self.images, "root", self.images)
+                if hasattr(self.images, "root")
+                else self.images
+            )
+
             id_map: dict[int, Any] = {}
-            for _k, _ih in self.images.items():
+            for i, ref in enumerate(items or []):
                 try:
-                    _iid = int(getattr(_ih, "image_id", -1))
+                    # Get image_id from AnnotatedImageRef or RawImageRef
+                    if hasattr(ref, "raw_image_ref"):
+                        _iid = int(ref.raw_image_ref.image_id)
+                    elif hasattr(ref, "image_id"):
+                        _iid = int(ref.image_id)
+                    else:
+                        continue
                     if _iid >= 0:
-                        id_map[_iid] = _ih
+                        id_map[_iid] = ref
                 except Exception:
                     continue
             self._img_token = LIVE_IMAGES_REGISTRY.set(id_map)
 
             seed_log: list[str] = []
             try:
-                for _k, _ih in self.images.items():
+                for i, ref in enumerate(items or []):
                     try:
-                        _iid = int(getattr(_ih, "image_id", -1))
+                        if hasattr(ref, "raw_image_ref"):
+                            _iid = int(ref.raw_image_ref.image_id)
+                        elif hasattr(ref, "image_id"):
+                            _iid = int(ref.image_id)
+                        else:
+                            _iid = -1
                     except Exception:
                         _iid = -1
-                    seed_log.append(f"user_message:{_iid}:{_k}")
+                    seed_log.append(f"user_message:{_iid}:img_{i}")
             except Exception:
                 pass
             self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
 
         self.plan_generation_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.verification_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.implementation_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.summarization_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.modification_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.ask_client: unillm.AsyncUnify = new_llm_client(
+            model="gemini-2.5-flash@vertex-ai",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
@@ -2585,6 +2646,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         Manages the entire lifecycle of the plan from initialization to completion.
         """
         token = current_run_id_var.set(self.run_id)
+        handle_token = current_actor_handle_var.set(self)
         delegate_token = None
         try:
             delegate: TaskExecutionDelegate = _HierarchicalActorDelegate(
@@ -2726,6 +2788,11 @@ async def main_plan():
         finally:
             try:
                 current_run_id_var.reset(token)
+            except Exception:
+                pass
+
+            try:
+                current_actor_handle_var.reset(handle_token)
             except Exception:
                 pass
 
@@ -3396,11 +3463,11 @@ async def main_plan():
                     and item.exit_seq > item.start_seq
                     and computer_primitives is not None
                     and isinstance(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         MagnitudeBackend,
                     )
                 ):
-                    backend = computer_primitives.browser.backend
+                    backend = computer_primitives.computer.backend
                     current_seq_cursor = item.start_seq + 1
 
                     for idx, interaction in enumerate(item.interactions):
@@ -3466,10 +3533,10 @@ async def main_plan():
                             computer_primitives = None
 
                     if computer_primitives is not None and isinstance(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         MagnitudeBackend,
                     ):
-                        await computer_primitives.browser.backend.barrier(
+                        await computer_primitives.computer.backend.barrier(
                             up_to_seq=item.exit_seq,
                         )
 
@@ -3800,10 +3867,10 @@ async def main_plan():
                 await self._clear_browser_queue_for_run(run_id_being_cancelled)
                 computer_primitives = self._get_computer_primitives()
                 if hasattr(
-                    computer_primitives.browser.backend,
+                    computer_primitives.computer.backend,
                     "interrupt_current_action",
                 ):
-                    await computer_primitives.browser.backend.interrupt_current_action()
+                    await computer_primitives.computer.backend.interrupt_current_action()
 
             await self._handle_dynamic_implementation(
                 function_name=target_function_name_override,
@@ -3839,17 +3906,25 @@ async def main_plan():
                     and "computer_primitives" in (self.actor.environments or {})
                     and getattr(self.actor, "computer_primitives", None) is not None
                 ):
-                    await self.actor._run_course_correction_agent(
-                        plan=self,
-                        target_screenshot=target_screenshot,
-                        trajectory=trajectory,
-                    )
-                    self.action_log.append(
-                        "COURSE CORRECTION: Recovery agent completed successfully.",
-                    )
-                    logger.info(
-                        "Course correction for verification recovery completed successfully.",
-                    )
+                    if getattr(self.actor, "enable_course_correction", True):
+                        await self.actor._run_course_correction_agent(
+                            plan=self,
+                            target_screenshot=target_screenshot,
+                            trajectory=trajectory,
+                        )
+                        self.action_log.append(
+                            "COURSE CORRECTION: Recovery agent completed successfully.",
+                        )
+                        logger.info(
+                            "Course correction for verification recovery completed successfully.",
+                        )
+                    else:
+                        logger.info(
+                            "Course correction disabled (enable_course_correction=False); skipping verification recovery course correction and proceeding with replay.",
+                        )
+                        self.action_log.append(
+                            "COURSE CORRECTION: Disabled. Skipping verification recovery course correction; proceeding with replay.",
+                        )
                 else:
                     logger.warning(
                         f"Missing target screenshot or trajectory for course correction. "
@@ -4159,7 +4234,7 @@ async def main_plan():
             return
 
         try:
-            backend = self._get_computer_primitives().browser.backend
+            backend = self._get_computer_primitives().computer.backend
         except Exception as e:
             logger.debug(f"Could not access browser backend to clear queue: {e}")
             return
@@ -4359,10 +4434,10 @@ async def main_plan():
                 try:
                     computer_primitives = self._get_computer_primitives()
                     if hasattr(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         "interrupt_current_action",
                     ):
-                        await computer_primitives.browser.backend.interrupt_current_action()
+                        await computer_primitives.computer.backend.interrupt_current_action()
                 except Exception as e:
                     logger.debug(f"Could not interrupt browser action: {e}")
             await self.pause()
@@ -4746,29 +4821,37 @@ async def main_plan():
                 and target_screenshot
                 and "computer_primitives" in (self.actor.environments or {})
             ):
-                self.action_log.append(
-                    f"COURSE CORRECTION: Launching recovery agent to reverse {len(trajectory)} invalidated actions.",
-                )
-                logger.info(
-                    f"Launching course correction agent to reverse {len(trajectory)} actions.",
-                )
-                try:
-                    await self.actor._run_course_correction_agent(
-                        plan=self,
-                        target_screenshot=target_screenshot,
-                        trajectory=trajectory,
+                if getattr(self.actor, "enable_course_correction", True):
+                    self.action_log.append(
+                        f"COURSE CORRECTION: Launching recovery agent to reverse {len(trajectory)} invalidated actions.",
+                    )
+                    logger.info(
+                        f"Launching course correction agent to reverse {len(trajectory)} actions.",
+                    )
+                    try:
+                        await self.actor._run_course_correction_agent(
+                            plan=self,
+                            target_screenshot=target_screenshot,
+                            trajectory=trajectory,
+                        )
+                        self.action_log.append(
+                            "COURSE CORRECTION: Recovery agent completed successfully.",
+                        )
+                        logger.info("Course correction completed successfully.")
+                    except Exception as e:
+                        logger.error(
+                            f"Course correction failed: {e}",
+                            exc_info=True,
+                        )
+                        self.action_log.append(
+                            f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
+                        )
+                else:
+                    logger.info(
+                        "Course correction disabled (enable_course_correction=False); proceeding with replay from current state.",
                     )
                     self.action_log.append(
-                        "COURSE CORRECTION: Recovery agent completed successfully.",
-                    )
-                    logger.info("Course correction completed successfully.")
-                except Exception as e:
-                    logger.error(
-                        f"Course correction failed: {e}",
-                        exc_info=True,
-                    )
-                    self.action_log.append(
-                        f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
+                        "COURSE CORRECTION: Disabled. Proceeding with replay from current state.",
                     )
             elif trajectory and not target_screenshot:
                 logger.debug(
@@ -4868,7 +4951,7 @@ async def main_plan():
             if "computer_primitives" in (self.actor.environments or {}):
                 try:
                     computer_primitives = self._get_computer_primitives()
-                    current_url = await computer_primitives.browser.get_current_url()
+                    current_url = await computer_primitives.computer.get_current_url()
                 except Exception as e:
                     logger.debug(f"Could not get current URL: {e}")
             refactor_prompt = prompt_builders.build_refactor_prompt(
@@ -4945,7 +5028,7 @@ async def main_plan():
                                 response_format=TabState,
                             )
                             original_url = (
-                                await computer_primitives.browser.get_current_url()
+                                await computer_primitives.computer.get_current_url()
                             )
                         except Exception as e:
                             self.action_log.append(
@@ -4953,7 +5036,7 @@ async def main_plan():
                             )
                             original_tab_index = TabState(current_tab_index=0)
                             original_url = (
-                                await computer_primitives.browser.get_current_url()
+                                await computer_primitives.computer.get_current_url()
                             )
 
                         self.action_log.append(
@@ -5133,7 +5216,7 @@ async def main_plan():
                     "Stopping dedicated action provider session for plan %s.",
                     self._module_name,
                 )
-                self.dedicated_computer_primitives.browser.stop()
+                self.dedicated_computer_primitives.computer.stop()
             except Exception as exc:
                 logger.warning(
                     "Failed to stop dedicated action provider session for plan %s: %s",
@@ -5234,10 +5317,10 @@ async def main_plan():
             if immediate:
                 computer_primitives = self._get_computer_primitives()
                 if computer_primitives and hasattr(
-                    computer_primitives.browser,
+                    computer_primitives.computer,
                     "backend",
                 ):
-                    backend = computer_primitives.browser.backend
+                    backend = computer_primitives.computer.backend
                     if hasattr(backend, "interrupt_current_action"):
                         logger.info("⚡ Sending interrupt to browser action...")
                         await backend.interrupt_current_action()
@@ -5467,6 +5550,7 @@ class HierarchicalActor(BaseActor):
         computer_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
+        enable_course_correction: bool = True,
         *,
         connect_now: bool = False,
         can_compose: bool = True,
@@ -5487,6 +5571,9 @@ class HierarchicalActor(BaseActor):
             computer_mode: The computer backend mode. Can be "magnitude" or "mock".
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
             agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
+            enable_course_correction: When True (default), the actor may spawn a recovery sub-agent
+                to restore computer/browser state after invalidation or verification recovery.
+                When False, the actor will skip course correction and rely on replay/re-execution.
             connect_now: When False (default), defer any agent connections until first use.
             can_compose: When True (default), allows the actor to generate new code on the fly.
                 When False, the actor can only execute pre-existing functions via entrypoint.
@@ -5506,6 +5593,7 @@ class HierarchicalActor(BaseActor):
         self._connect_now = connect_now
         self.can_compose = can_compose
         self.can_store = can_store
+        self.enable_course_correction = enable_course_correction
 
         # Preserve backward-compatible test hooks: many tests monkeypatch
         # `unity.actor.hierarchical_actor.ComputerPrimitives`. When environments are not
@@ -5845,6 +5933,7 @@ class HierarchicalActor(BaseActor):
         )
         return cache_key
 
+    @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
         description: str,
@@ -5864,28 +5953,6 @@ class HierarchicalActor(BaseActor):
         can_store: Optional[bool] = None,
         **kwargs,
     ) -> HierarchicalActorHandle:
-        """
-        Creates and starts a new HierarchicalActorHandle active task.
-
-        Args:
-            description: The high-level goal for the task.
-            parent_chat_context: Chat context from a parent process.
-            clarification_up_q: Queue for sending clarification questions.
-            clarification_down_q: Queue for receiving clarification answers.
-            persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
-            images: Optional mapping of source-scoped keys to ImageHandle objects.
-            entrypoint: Optional. If provided, bypasses LLM plan generation
-                and directly executes the specified function from the FunctionManager.
-            new_session: If True, creates a new browser/desktop session for this plan. If False (default), reuses the actor's shared session.
-            can_compose: If provided, overrides the actor's default can_compose setting
-                for this call. When False, the actor can only execute pre-existing
-                functions via entrypoint.
-            can_store: If provided, overrides the actor's default can_store setting
-                for this call. When False, verified functions are not persisted.
-
-        Returns:
-            An active handle to the running HierarchicalActorHandle.
-        """
         # Clarification queues are optional. For HierarchicalActor, queue-based clarification
         # routing implies an outer supervisor is actively consuming those queues.
         #
@@ -5927,7 +5994,6 @@ class HierarchicalActor(BaseActor):
             can_compose=effective_can_compose,
             can_store=effective_can_store,
         )
-        setattr(plan_handle, "__passthrough__", True)
         self._plan_handles.add(plan_handle)
         return plan_handle
 
@@ -6042,6 +6108,29 @@ class HierarchicalActor(BaseActor):
         Prepares the sandboxed execution environment for a plan.
         """
         sandbox_globals = self._create_sandbox_globals()
+
+        async def notify_primitive(message: str) -> None:
+            """
+            Send a progress notification to the user.
+
+            Use this to communicate progress during long-running operations.
+            The notification will be delivered to the supervising handle.
+
+            Args:
+                message: Progress message to display to the user
+
+            Example:
+                await notify("Navigating to homepage...")
+                await computer_primitives.navigate("https://example.com")
+                await notify("Navigation complete")
+            """
+            plan.action_log.append(f"Notification: {message}")
+            await plan._notification_q.put(
+                {
+                    "type": "notification",
+                    "message": message,
+                },
+            )
 
         async def request_clarification_primitive(question: str) -> str:
             """Allows the plan to ask for clarification during execution."""
@@ -6209,9 +6298,10 @@ class HierarchicalActor(BaseActor):
                         f"Failed to inject environment '{env_namespace}' into execution namespace: {e}",
                     )
 
-        # Keep existing helper injections (request_clarification, verify, etc.)
+        # Keep existing helper injections (request_clarification, notify, verify, etc.)
         plan.execution_namespace.update(
             {
+                "notify": notify_primitive,
                 "request_clarification": request_clarification_primitive,
                 "runtime": plan.runtime,
                 "verify": self._create_verify_decorator(plan),
@@ -6309,7 +6399,7 @@ class HierarchicalActor(BaseActor):
         computer_primitives = plan._get_computer_primitives()
 
         logger.info("[COURSE_CORRECTION] Getting current screenshot...")
-        current_screenshot = await computer_primitives.browser.get_screenshot()
+        current_screenshot = await computer_primitives.computer.get_screenshot()
         logger.info("[COURSE_CORRECTION] Got current screenshot.")
 
         if isinstance(current_screenshot, str):
@@ -6502,10 +6592,10 @@ class HierarchicalActor(BaseActor):
 
                     start_seq = -1
                     if computer_primitives is not None and isinstance(
-                        computer_primitives.browser.backend,
+                        computer_primitives.computer.backend,
                         MagnitudeBackend,
                     ):
-                        start_seq = computer_primitives.browser.backend.current_seq
+                        start_seq = computer_primitives.computer.backend.current_seq
 
                     last_error_reason = ""
                     result = None
@@ -6704,10 +6794,10 @@ class HierarchicalActor(BaseActor):
 
                         exit_seq = -1
                         if computer_primitives is not None and isinstance(
-                            computer_primitives.browser.backend,
+                            computer_primitives.computer.backend,
                             MagnitudeBackend,
                         ):
-                            exit_seq = computer_primitives.browser.backend.current_seq
+                            exit_seq = computer_primitives.computer.backend.current_seq
 
                         # Gather post-execution evidence from all active environments.
                         post_state: dict[str, Any] = {}
@@ -7163,7 +7253,7 @@ class HierarchicalActor(BaseActor):
             ):
                 try:
                     browser_screenshot = (
-                        await self.computer_primitives.browser.get_screenshot()
+                        await self.computer_primitives.computer.get_screenshot()
                     )
                 except Exception as e:
                     logger.warning(f"Could not get browser screenshot: {e}")
@@ -7386,5 +7476,5 @@ class HierarchicalActor(BaseActor):
         for plan in self._plan_handles:
             await plan.stop()
         if self.computer_primitives is not None:
-            self.computer_primitives.browser.stop()
+            self.computer_primitives.computer.stop()
         self._plan_handles.clear()

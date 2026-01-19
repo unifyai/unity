@@ -1,4 +1,16 @@
-from .file import FileContentRow, FileRecord, FileRecordRow, FileTableRefRow
+from .file import (
+    # New type names
+    DocumentFields,
+    DocumentRow,
+    Document,
+    FileRecord,
+    FileRecordRow,
+    FileTableRefRow,
+    # Backward compatibility aliases
+    FileContentFields,
+    FileContentRow,
+    FileContent,
+)
 from .filesystem import (
     FileSystemCapabilities,
     FileReference,
@@ -34,12 +46,27 @@ from .ingest import (
     PipelineStatistics,
     IngestPipelineResult,
 )
+from .describe import (
+    ColumnInfo,
+    ContextSchema,
+    DocumentInfo,
+    TableInfo,
+    FileStorageMap,
+)
 
 __all__ = [
+    # New type names (preferred)
+    "DocumentFields",
+    "DocumentRow",
+    "Document",
+    # Legacy types
     "FileRecord",
     "FileRecordRow",
-    "FileContentRow",
     "FileTableRefRow",
+    # Backward compatibility aliases (deprecated)
+    "FileContentFields",
+    "FileContentRow",
+    "FileContent",
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",
@@ -71,4 +98,10 @@ __all__ = [
     "FileMetrics",
     "PipelineStatistics",
     "IngestPipelineResult",
+    # Describe API types
+    "ColumnInfo",
+    "ContextSchema",
+    "DocumentInfo",
+    "TableInfo",
+    "FileStorageMap",
 ]

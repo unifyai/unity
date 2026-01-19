@@ -6,10 +6,11 @@ from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 from unity.guidance_manager.guidance_manager import GuidanceManager
 from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.utils import make_solid_png_base64
 
 
-# Tiny valid 1x1 PNG (opaque)
-PNG_1x1_GREEN = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAusB9r4/ARcAAAAASUVORK5CYII="
+# Solid green PNG (32x32)
+PNG_GREEN = make_solid_png_base64(32, 32, (0, 255, 0))
 
 
 @_handle_project
@@ -55,7 +56,7 @@ def test_image_handles_and_attachment():
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "green pixel",
-                "data": PNG_1x1_GREEN,
+                "data": PNG_GREEN,
             },
         ],
     )

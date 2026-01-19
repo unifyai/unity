@@ -32,6 +32,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Source shared argument parsing (used by both parallel_run.sh and parallel_cloud_run.sh)
+source "$SCRIPT_DIR/_parse_args.sh"
+
 # ============================================================================
 # Helper: Poll for the workflow run URL after triggering
 # ============================================================================
@@ -134,72 +137,52 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 # ============================================================================
-# Parse arguments: separate flags from test paths
+# Parse arguments using shared helper
 # ============================================================================
+# First extract --push-local (cloud-specific), then parse the rest with shared helper.
 
-declare -a EXTRA_ENV_ARGS=()
-declare -a PASSTHROUGH_ARGS=()
-declare -a TEST_PATHS=()
 PUSH_LOCAL=0
+declare -a REMAINING_ARGS=()
 
-while (( $# > 0 )); do
-  case "$1" in
-    --push-local)
-      # Opt-in to push local state (uncommitted + unpushed) to a staging branch
-      PUSH_LOCAL=1
-      shift
-      ;;
-    --env)
-      if [[ -n "${2:-}" ]]; then
-        EXTRA_ENV_ARGS+=("--env" "$2")
-        shift 2
-      else
-        echo "Error: --env requires a KEY=VALUE argument" >&2
-        exit 1
-      fi
-      ;;
-    --env=*)
-      EXTRA_ENV_ARGS+=("--env" "${1#--env=}")
-      shift
-      ;;
-    -*)
-      # Any other flag (e.g., -s, --timeout, --no-cache) passes through to parallel_run.sh
-      PASSTHROUGH_ARGS+=("$1")
-      shift
-      ;;
-    *)
-      TEST_PATHS+=("$1")
-      shift
-      ;;
-  esac
-done
-
-# ============================================================================
-# Normalize test paths (resolve shorthand like "test_foo" -> "tests/test_foo")
-# ============================================================================
-# This runs after cd "$REPO_ROOT", so all paths are relative to repo root.
-
-declare -a RESOLVED_PATHS=()
-for path in "${TEST_PATHS[@]}"; do
-  if [[ -e "$path" ]]; then
-    # Path exists as-is (e.g., "tests/test_contact_manager" or ".")
-    RESOLVED_PATHS+=("$path")
-  elif [[ -e "tests/$path" ]]; then
-    # Path exists with tests/ prefix (e.g., "test_contact_manager" -> "tests/test_contact_manager")
-    RESOLVED_PATHS+=("tests/$path")
+for arg in "$@"; do
+  if [[ "$arg" == "--push-local" ]]; then
+    PUSH_LOCAL=1
   else
-    echo "Error: Path not found: $path" >&2
-    echo "  Also tried: tests/$path" >&2
-    echo "  (paths are relative to repo root: $REPO_ROOT)" >&2
-    exit 1
+    REMAINING_ARGS+=("$arg")
   fi
 done
 
+# Parse remaining arguments using shared helper
+# Returns: 0=success, 1=help requested, 2=error
+parse_test_args "${REMAINING_ARGS[@]}"
+_parse_result=$?
+if (( _parse_result == 1 )); then
+  # Help requested - show cloud-specific help
+  HELP_SCRIPT_NAME="parallel_cloud_run.sh"
+  HELP_EXTRA_OPTIONS="  --push-local         Push local uncommitted/unpushed changes to CI
+"
+  print_help
+  exit 0
+elif (( _parse_result == 2 )); then
+  # Error (already printed)
+  exit 1
+fi
+unset _parse_result REMAINING_ARGS
+
+# ============================================================================
+# Resolve and validate test paths
+# ============================================================================
+# This runs after cd "$REPO_ROOT", so all paths are relative to repo root.
+
+if ! resolve_test_paths "$REPO_ROOT"; then
+  exit 1
+fi
+
 # Build test_path from resolved arguments (default to "." for full suite)
-if (( ${#RESOLVED_PATHS[@]} == 0 )); then
+if (( ${#RESOLVED_TEST_PATHS[@]} == 0 )); then
   TEST_PATH="."
 else
-  TEST_PATH="${RESOLVED_PATHS[*]}"
+  TEST_PATH="${RESOLVED_TEST_PATHS[*]}"
 fi
 
 # ============================================================================
@@ -214,15 +197,9 @@ if [[ -f "$ENV_FILE" ]]; then
   ENV_FILE_CONTENT_B64=$(base64 < "$ENV_FILE" | tr -d '\n')
 fi
 
-# Build parallel_run_args from passthrough flags and explicit --env CLI args
-# These are intentionally visible in logs since user explicitly passed them
-PARALLEL_RUN_ARGS=""
-if (( ${#PASSTHROUGH_ARGS[@]} > 0 )); then
-  PARALLEL_RUN_ARGS="${PASSTHROUGH_ARGS[*]}"
-fi
-if (( ${#EXTRA_ENV_ARGS[@]} > 0 )); then
-  PARALLEL_RUN_ARGS="${PARALLEL_RUN_ARGS:+$PARALLEL_RUN_ARGS }${EXTRA_ENV_ARGS[*]}"
-fi
+# Build parallel_run_args from parsed flags using shared helper
+# include-env ensures --env flags are included (visible in CI logs since user passed them)
+PARALLEL_RUN_ARGS="$(reconstruct_parallel_run_args include-env)"
 
 # ============================================================================
 # Check if we need the staging branch approach

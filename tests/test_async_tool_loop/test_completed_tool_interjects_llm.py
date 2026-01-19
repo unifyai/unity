@@ -7,11 +7,42 @@ import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
-from tests.test_async_tool_loop.async_helpers import (
+from tests.async_helpers import (
     make_gated_async_tool,
     _wait_for_tool_result,
-    _wait_for_next_assistant_response_event,
 )
+
+# ────────────────────────────────────────────────────────────────────────────
+# Wait log helper – `wait` calls are pruned from transcript, so we watch logs
+# ────────────────────────────────────────────────────────────────────────────
+
+_WAIT_LOG_MESSAGE = "Assistant chose `wait` – no-op; not persisting to transcript."
+
+
+async def _wait_for_wait_tool_log(
+    caplog,
+    *,
+    timeout: float = 300.0,
+    poll: float = 0.05,
+):
+    """Poll for the `wait` tool log message in caplog.records."""
+    import time as _time
+
+    def _count_wait_logs():
+        return sum(1 for r in caplog.records if _WAIT_LOG_MESSAGE in r.getMessage())
+
+    start_ts = _time.perf_counter()
+    baseline = _count_wait_logs()
+
+    while _time.perf_counter() - start_ts < timeout:
+        if _count_wait_logs() > baseline:
+            return
+        await asyncio.sleep(poll)
+
+    raise TimeoutError(
+        f"Timed out after {timeout}s waiting for `wait` tool log message",
+    )
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Dummy tools – one finishes almost instantly, the other a little later
@@ -99,12 +130,12 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
     # Wait for fast_task result to be processed
     await _wait_for_tool_result(client, "fast_task", min_results=1)
 
-    # Wait for the LLM to actually respond after seeing the partial result.
-    # This uses EventBus events to detect when the next assistant message
-    # is published (which should be the `wait` call after fast_task completed).
+    # Wait for the LLM to call `wait` after seeing the partial result.
+    # We watch the log rather than client.messages because `wait` calls are
+    # intentionally pruned from the transcript to avoid clutter.
     # This avoids race conditions with fixed delays that might not be long
     # enough for uncached LLM responses.
-    await _wait_for_next_assistant_response_event(timeout=120.0)
+    await _wait_for_wait_tool_log(caplog, timeout=120.0)
 
     # Now release the gate so very_slow_task can complete
     very_slow_gate.set()

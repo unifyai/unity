@@ -9,8 +9,8 @@ from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 
 
-# Slightly larger solid-blue PNG to satisfy provider parsing (e.g., 8x8)
-PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
+# Solid-blue PNG to satisfy provider parsing (32x32)
+PNG_BLUE_B64 = make_solid_png_base64(32, 32, (0, 0, 255))
 
 
 @pytest.mark.asyncio

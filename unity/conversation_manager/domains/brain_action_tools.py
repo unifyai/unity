@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from unity.contact_manager.types import ContactDetailsEmail, ContactDetailsPhone
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.contact_index import Contact
@@ -35,14 +36,14 @@ _next_handle_id = 0
 async def _get_or_create_contact(
     cm: "ConversationManager",
     contact_id: int | None = None,
-    details: dict | None = None,
+    details: ContactDetailsPhone | ContactDetailsEmail | None = None,
 ) -> dict:
     """Get an existing contact or create a new one.
 
     Args:
         cm: The ConversationManager instance.
         contact_id: Contact ID if known.
-        details: Contact details for lookup/creation.
+        details: Contact details for lookup/creation (Pydantic model).
 
     Returns:
         The contact dict.
@@ -50,8 +51,17 @@ async def _get_or_create_contact(
     if not contact_id and not details:
         raise ValueError("Either contact_id or details must be provided")
 
+    # Convert Pydantic model to dict for internal use (exclude unset fields)
+    # Handle both dict (from JSON tool args) and Pydantic model inputs
+    details_dict: dict | None = None
+    if details is not None:
+        if isinstance(details, dict):
+            details_dict = {k: v for k, v in details.items() if v is not None}
+        else:
+            details_dict = details.model_dump(exclude_none=True)
+
     # Update existing contact
-    if contact_id and details:
+    if contact_id and details_dict:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         updated_contacts_raw = cm.contact_manager.get_contact_info(
             contact_id=list(cm.contact_index.contacts.keys()),
@@ -72,8 +82,8 @@ async def _get_or_create_contact(
                 cm.contact_index.active_conversations[cid] = Contact(
                     **{**c.model_dump(), **uc, "threads": c.threads},
                 )
-        phone_number = details.get("phone_number")
-        email_address = details.get("email_address")
+        phone_number = details_dict.get("phone_number")
+        email_address = details_dict.get("email_address")
         contact = (
             cm.contact_index.get_contact(phone_number=phone_number)
             if phone_number
@@ -82,9 +92,9 @@ async def _get_or_create_contact(
         return contact
 
     # Retrieve if exists, create if not
-    if details:
-        phone_number = details.get("phone_number")
-        email_address = details.get("email_address")
+    if details_dict:
+        phone_number = details_dict.get("phone_number")
+        email_address = details_dict.get("email_address")
         maybe_contact = cm.contact_index.get_contact(
             phone_number=phone_number,
         ) or cm.contact_index.get_contact(email=email_address)
@@ -92,7 +102,7 @@ async def _get_or_create_contact(
             return maybe_contact
         tool_outcome = await asyncio.to_thread(
             cm.contact_manager._create_contact,
-            **details,
+            **details_dict,
         )
         new_contact_id = tool_outcome["details"]["contact_id"]
         new_contact = await asyncio.to_thread(
@@ -127,7 +137,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         contact_id: int | None = None,
-        contact_details: dict[str, Any] | None = None,
+        contact_details: ContactDetailsPhone | None = None,
         content: str,
     ) -> dict[str, Any]:
         """
@@ -196,7 +206,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         contact_id: int | None = None,
-        contact_details: dict[str, Any] | None = None,
+        contact_details: ContactDetailsEmail | None = None,
         subject: str,
         body: str,
         email_id_to_reply_to: str | None = None,
@@ -278,7 +288,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         contact_id: int | None = None,
-        contact_details: dict[str, Any] | None = None,
+        contact_details: ContactDetailsPhone | None = None,
     ) -> dict[str, Any]:
         """
         Start an outbound phone call to a contact.
@@ -305,16 +315,28 @@ class ConversationManagerBrainActionTools:
         await self._event_broker.publish("app:comms:make_call", event.to_json())
         return {"status": "ok"}
 
-    async def start_task(self, *, query: str) -> dict[str, Any]:
+    async def act(self, *, query: str) -> dict[str, Any]:
         """
-        Start a new background task for work not related to direct communication.
+        Engage with knowledge, resources, and the world beyond immediate conversations.
 
-        Use this for tasks like searching the web, doing research, answering
-        questions, managing contacts, scheduling, or any work that requires
-        the Conductor to orchestrate.
+        This is the all-purpose method for any work that requires searching, retrieving,
+        manipulating, or acting on information. Use ``act`` liberally — if it cannot
+        help, it will simply report back. There is no penalty for speculative delegation.
+
+        **Capabilities include:**
+
+        - **Retrieval**: Search contact records, query knowledge bases, look up past
+          conversations, find calendar events, search the web, retrieve files
+        - **Action**: Update records, modify spreadsheets, control the desktop/browser,
+          schedule tasks, create reminders
+        - **Combined**: Find information and act on it (e.g., "find David's email")
+
+        **When uncertain, call ``act``**: If you need information you don't have (like
+        a contact's email address), call ``act`` to search for it. If ``act`` can't find
+        it, it will tell you, and you can then ask the user.
 
         Args:
-            query: The task description or question to work on.
+            query: Natural language description of what to do or find.
         """
         global _next_handle_id
 
@@ -339,7 +361,7 @@ class ConversationManagerBrainActionTools:
             f"app:actor:actor_started_handle_{handle_id}",
             ActorHandleStarted(
                 handle_id=handle_id,
-                action_name="start_task",
+                action_name="act",
                 query=query,
             ).to_json(),
         )
@@ -351,7 +373,7 @@ class ConversationManagerBrainActionTools:
             managers_utils.actor_watch_clarifications(handle_id, handle),
         )
 
-        return {"status": "task_started", "query": query}
+        return {"status": "acting", "query": query}
 
     async def wait(self) -> dict[str, Any]:
         """
@@ -376,7 +398,7 @@ class ConversationManagerBrainActionTools:
             "send_unify_message": self.send_unify_message,
             "send_email": self.send_email,
             "make_call": self.make_call,
-            "start_task": self.start_task,
+            "act": self.act,
             "wait": self.wait,
         }
 
