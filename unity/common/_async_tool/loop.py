@@ -2140,9 +2140,15 @@ async def async_tool_loop_inner(
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # helper cleanup
+                # Helper cleanup: cancel auxiliary waiters only.
+                # NOTE: llm_task is deliberately NOT cancelled here. Each branch
+                # below decides whether to cancel the LLM based on context:
+                # - Tool finished → cancel LLM (needs new context)
+                # - Immediate interjection → cancel LLM (user wants immediate response)
+                # - Patient interjection → DO NOT cancel (let LLM finish naturally)
+                # - Clarification/notification → cancel LLM (needs to surface event)
+                # - Cancellation requested → cancel LLM (explicit stop)
                 for tsk in (
-                    llm_task,
                     interject_w,
                     cancel_waiter,
                     *clar_waiters2.keys(),
@@ -2217,10 +2223,10 @@ async def async_tool_loop_inner(
                         continue  # top of loop
                     # Patient mode: allow the in-flight LLM call to finish organically
                     # and ensure we schedule exactly one subsequent LLM turn after completion.
-                    try:
-                        deferred_llm_turn = True
-                    except Exception:
-                        pass
+                    deferred_llm_turn = True
+                    # Wait for the LLM to complete naturally (don't cancel it)
+                    if not llm_task.done():
+                        await asyncio.gather(llm_task, return_exceptions=True)
 
                 # 2️⃣ clarification bubbled up while the LLM was thinking →
                 #    cancel current LLM step, surface the clarification request,
