@@ -16,7 +16,10 @@ over the full conversation history.
 import pytest
 
 from tests.helpers import _handle_project
-from tests.test_conversation_manager.cm_helpers import get_exactly_one
+from tests.test_conversation_manager.cm_helpers import (
+    assert_content_contains,
+    get_exactly_one,
+)
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
@@ -62,9 +65,13 @@ async def test_unify_message_two_turn_recall(initialized_cm):
     msg2 = get_exactly_one(result2.output_events, UnifyMessageSent)
 
     # Assistant should recall the order number
-    assert (
-        "ABC-9876" in msg2.content or "abc-9876" in msg2.content.lower()
-    ), f"Assistant should recall order number 'ABC-9876', got: {msg2.content}"
+    assert_content_contains(
+        msg2.content,
+        "ABC-9876",
+        "Assistant should recall order number from previous turn",
+        cm=cm,
+        result=result2,
+    )
 
 
 @pytest.mark.asyncio
@@ -102,10 +109,21 @@ async def test_unify_message_three_turn_recall(initialized_cm):
         ),
     )
     msg3 = get_exactly_one(result3.output_events, UnifyMessageSent)
-    content_lower = msg3.content.lower()
 
-    assert "jordan" in content_lower, f"Should recall 'Jordan': {msg3.content}"
-    assert "seattle" in content_lower, f"Should recall 'Seattle': {msg3.content}"
+    assert_content_contains(
+        msg3.content,
+        "Jordan",
+        "Assistant should recall name from earlier turns",
+        cm=cm,
+        result=result3,
+    )
+    assert_content_contains(
+        msg3.content,
+        "Seattle",
+        "Assistant should recall location from earlier turns",
+        cm=cm,
+        result=result3,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +159,10 @@ async def test_sms_two_turn_recall(initialized_cm):
     )
     msg2 = get_exactly_one(result2.output_events, SMSSent)
 
-    assert (
-        "DELTA-42" in msg2.content or "delta-42" in msg2.content.lower()
-    ), f"Assistant should recall code 'DELTA-42', got: {msg2.content}"
+    assert_content_contains(
+        msg2.content,
+        "DELTA-42",
+        "Assistant should recall code from previous turn",
+        cm=cm,
+        result=result2,
+    )

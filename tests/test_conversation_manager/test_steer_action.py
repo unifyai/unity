@@ -19,11 +19,14 @@ import pytest
 
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.cm_helpers import (
-    filter_events_by_type,
+    assert_act_triggered,
     assert_efficient,
+    assert_steering_called,
+    build_cm_context,
     get_active_task_count,
     has_steering_tool_call,
 )
+from tests.assertion_helpers import assertion_failed
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
@@ -62,9 +65,19 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
             content="Find all my contacts in New York and list their details.",
         ),
     )
-    actor_events = filter_events_by_type(result1.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, "Expected act to be called"
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert_act_triggered(
+        result1,
+        ActorHandleStarted,
+        "Initial task should trigger act",
+        cm=cm,
+    )
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Small talk distractor (should not affect the task)
@@ -86,9 +99,11 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     assert_efficient(result3, "Step 3: status query")
 
     # Verify: LLM should have called ask_* tool
-    assert has_steering_tool_call(cm, "ask_"), (
-        f"Expected ask_* steering tool to be called for status query. "
-        f"Active tasks: {list(cm.cm.active_tasks.keys())}"
+    assert_steering_called(
+        cm,
+        "ask_",
+        "Status query should call ask_* steering tool",
+        result=result3,
     )
 
 
@@ -112,7 +127,13 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
             content="What's our company's refund policy? I need the details.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Unrelated question
@@ -133,10 +154,12 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
     )
     assert_efficient(result3, "Step 3: progress query")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "ask_",
-    ), "Expected ask_* steering tool for progress query"
+        "Progress query should call ask_* steering tool",
+        result=result3,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +188,13 @@ async def test_stop_task_after_small_talk(initialized_cm):
             content="Search the web for the latest news about AI regulations.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Genuine small talk (not task-related)
@@ -186,10 +215,12 @@ async def test_stop_task_after_small_talk(initialized_cm):
     )
     assert_efficient(result3, "Step 3: cancel request")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "stop_",
-    ), "Expected stop_* steering tool for cancel request"
+        "Cancel request should call stop_* steering tool",
+        result=result3,
+    )
 
 
 @pytest.mark.asyncio
@@ -212,7 +243,13 @@ async def test_stop_task_change_of_mind(initialized_cm):
             content="Create a reminder to call Bob tomorrow at 3pm.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Genuine small talk (not task-related)
@@ -233,10 +270,12 @@ async def test_stop_task_change_of_mind(initialized_cm):
     )
     assert_efficient(result3, "Step 3: cancel request")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "stop_",
-    ), "Expected stop_* steering tool for cancellation"
+        "Cancellation should call stop_* steering tool",
+        result=result3,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +303,13 @@ async def test_pause_task_for_meeting(initialized_cm):
             content="Research our competitors' pricing strategies and summarize.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Mention meeting
@@ -285,10 +330,12 @@ async def test_pause_task_for_meeting(initialized_cm):
     )
     assert_efficient(result3, "Step 3: pause request")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "pause_",
-    ), "Expected pause_* steering tool for 'put on hold' request"
+        "'Put on hold' should call pause_* steering tool",
+        result=result3,
+    )
 
 
 @pytest.mark.asyncio
@@ -310,7 +357,13 @@ async def test_pause_task_hold_on(initialized_cm):
             content="Search my past conversations with Alice about the project deadline.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Hold on (natural language)
@@ -322,10 +375,12 @@ async def test_pause_task_hold_on(initialized_cm):
     )
     assert_efficient(result2, "Step 2: hold on request")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "pause_",
-    ), "Expected pause_* steering tool for 'hold on' request"
+        "'Hold on' should call pause_* steering tool",
+        result=result2,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +408,13 @@ async def test_resume_after_pause(initialized_cm):
             content="List all high-priority tasks that are due this week.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Hold (natural language)
@@ -374,10 +435,12 @@ async def test_resume_after_pause(initialized_cm):
     )
     assert_efficient(result3, "Step 3: resume request")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "resume_",
-    ), "Expected resume_* steering tool for 'go ahead' request"
+        "'Go ahead' should call resume_* steering tool",
+        result=result3,
+    )
 
 
 @pytest.mark.asyncio
@@ -401,7 +464,13 @@ async def test_resume_continue_where_left_off(initialized_cm):
             content="Search for Bob's contact information and recent messages.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Hold (natural language)
@@ -431,10 +500,12 @@ async def test_resume_continue_where_left_off(initialized_cm):
     )
     assert_efficient(result4, "Step 4: resume request")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "resume_",
-    ), "Expected resume_* steering tool for 'go ahead' request"
+        "'Go ahead' should call resume_* steering tool",
+        result=result4,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +533,13 @@ async def test_interject_additional_constraint(initialized_cm):
             content="Find all contacts who work in engineering.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Side comment
@@ -483,10 +560,12 @@ async def test_interject_additional_constraint(initialized_cm):
     )
     assert_efficient(result3, "Step 3: interject constraint")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "interject_",
-    ), "Expected interject_* steering tool for additional constraint"
+        "Additional constraint should call interject_* steering tool",
+        result=result3,
+    )
 
 
 @pytest.mark.asyncio
@@ -509,7 +588,13 @@ async def test_interject_extension(initialized_cm):
             content="What's the Q3 revenue report say?",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Anticipation (neutral, should not trigger pause/stop)
@@ -530,10 +615,12 @@ async def test_interject_extension(initialized_cm):
     )
     assert_efficient(result3, "Step 3: extension")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "interject_",
-    ), "Expected interject_* steering tool for extension"
+        "Extension should call interject_* steering tool",
+        result=result3,
+    )
 
 
 @pytest.mark.asyncio
@@ -556,7 +643,13 @@ async def test_interject_new_priority(initialized_cm):
             content="Research what competitors are doing in the market.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Conversation
@@ -577,10 +670,12 @@ async def test_interject_new_priority(initialized_cm):
     )
     assert_efficient(result3, "Step 3: narrow focus")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "interject_",
-    ), "Expected interject_* steering tool for focus change"
+        "Focus change should call interject_* steering tool",
+        result=result3,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -605,7 +700,13 @@ async def test_pause_interject_resume_sequence(initialized_cm):
             content="Search the web for information about project management best practices.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2: Pause
@@ -640,9 +741,13 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     has_interject = has_steering_tool_call(cm, "interject_")
     has_resume = has_steering_tool_call(cm, "resume_")
 
-    assert (
-        has_pause or has_interject or has_resume
-    ), "Expected at least one steering action in pause->interject->resume sequence"
+    assert has_pause or has_interject or has_resume, assertion_failed(
+        expected="At least one steering tool (pause_, interject_, or resume_)",
+        actual=f"pause_: {has_pause}, interject_: {has_interject}, resume_: {has_resume}",
+        reasoning=[],
+        description="Pause->interject->resume sequence should trigger steering tools",
+        context_data=build_cm_context(cm=cm, result=result4),
+    )
 
 
 @pytest.mark.asyncio
@@ -662,7 +767,13 @@ async def test_multiple_distractors_then_stop(initialized_cm):
             content="Generate a report on all customer interactions this month.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_active_task_count(cm) >= 1, assertion_failed(
+        expected="At least 1 active task",
+        actual=f"{get_active_task_count(cm)} active tasks",
+        reasoning=[],
+        description="Initial task should create an active task",
+        context_data=build_cm_context(cm=cm, result=result1),
+    )
     assert_efficient(result1, "Step 1: initial task")
 
     # Step 2-4: Multiple distractors
@@ -699,7 +810,9 @@ async def test_multiple_distractors_then_stop(initialized_cm):
     )
     assert_efficient(result5, "Step 5: stop request")
 
-    assert has_steering_tool_call(
+    assert_steering_called(
         cm,
         "stop_",
-    ), "Expected stop_* steering tool after multiple distractors"
+        "Stop after distractors should call stop_* steering tool",
+        result=result5,
+    )
