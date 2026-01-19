@@ -18,7 +18,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.cm_helpers import (
-    filter_events_by_type,
+    assert_act_triggered,
     assert_efficient,
 )
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
@@ -55,10 +55,11 @@ async def test_contact_lookup_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for contact preference lookup, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Contact preference lookup should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -80,10 +81,11 @@ async def test_contact_search_by_location_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for location-based contact search, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Location-based contact search should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -105,10 +107,11 @@ async def test_create_contact_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for contact creation, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Contact creation should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -135,10 +138,11 @@ async def test_knowledge_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for knowledge query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Knowledge query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -160,10 +164,11 @@ async def test_knowledge_about_product_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for product knowledge query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Product knowledge query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -185,10 +190,11 @@ async def test_store_knowledge_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for storing knowledge, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Storing knowledge should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -215,10 +221,11 @@ async def test_task_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for task query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Task query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -240,10 +247,11 @@ async def test_create_task_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for task creation, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Task creation should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -265,10 +273,11 @@ async def test_priority_task_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for priority task query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Priority task query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -295,10 +304,11 @@ async def test_transcript_search_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for transcript search, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Transcript search should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -320,10 +330,11 @@ async def test_recent_messages_search_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for recent messages search, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Recent messages search should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -345,10 +356,11 @@ async def test_specific_topic_search_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for topic-based message search, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Topic-based message search should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -375,10 +387,11 @@ async def test_weather_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for weather query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Weather query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -400,10 +413,11 @@ async def test_news_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for news query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "News query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -425,10 +439,11 @@ async def test_current_events_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for current events query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Current events query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -455,10 +470,11 @@ async def test_guidance_query_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for guidance query, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Guidance query should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -485,10 +501,11 @@ async def test_find_and_action_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for find-and-action request, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Find-and-action request should trigger act",
+        cm=cm,
     )
     assert_efficient(result)
 
@@ -510,9 +527,10 @@ async def test_research_request_triggers_act(initialized_cm):
         ),
     )
 
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) >= 1, (
-        f"Expected act to be called for research request, "
-        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Research request should trigger act",
+        cm=cm,
     )
     assert_efficient(result)

@@ -13,7 +13,9 @@ and don't need these helpers.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from tests.assertion_helpers import assertion_failed
 
 if TYPE_CHECKING:
     from tests.test_conversation_manager.cm_test_driver import CMStepDriver, StepResult
@@ -159,3 +161,154 @@ def get_steering_action(result: "StepResult", operation_prefix: str) -> str | No
         if action.startswith(operation_prefix):
             return action
     return None
+
+
+# =============================================================================
+# Assertion Helpers with Detailed Error Messages
+# =============================================================================
+
+
+def build_cm_context(
+    cm: "CMStepDriver | None" = None,
+    result: "StepResult | None" = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build context dictionary for assertion_failed from CM test state.
+
+    Args:
+        cm: CMStepDriver instance (optional).
+        result: StepResult from step()/step_until_wait() (optional).
+        **extra: Additional context key-value pairs.
+
+    Returns:
+        Context dictionary suitable for assertion_failed().
+    """
+    context: dict[str, Any] = {}
+
+    if cm is not None:
+        context["all_tool_calls"] = cm.all_tool_calls
+        if hasattr(cm, "cm") and hasattr(cm.cm, "active_tasks"):
+            context["active_tasks"] = list(cm.cm.active_tasks.keys())
+
+    if result is not None:
+        context["output_event_types"] = [type(e).__name__ for e in result.output_events]
+        context["llm_step_count"] = result.llm_step_count
+        context["llm_requested"] = result.llm_requested
+        context["llm_ran"] = result.llm_ran
+
+    context.update(extra)
+    return context
+
+
+def assert_act_triggered(
+    result: "StepResult",
+    event_type: type,
+    description: str,
+    cm: "CMStepDriver | None" = None,
+) -> None:
+    """Assert that the 'act' method was triggered (ActorHandleStarted event).
+
+    Args:
+        result: StepResult from step_until_wait().
+        event_type: The event type to check for (e.g., ActorHandleStarted).
+        description: Human-readable description of the expected action.
+        cm: Optional CMStepDriver for additional context.
+
+    Raises:
+        AssertionError: With detailed context if the assertion fails.
+    """
+    actor_events = filter_events_by_type(result.output_events, event_type)
+    assert len(actor_events) >= 1, assertion_failed(
+        expected=f"At least 1 {event_type.__name__} event",
+        actual=f"{len(actor_events)} events of type {event_type.__name__}",
+        reasoning=[],  # CM tests don't have LLM reasoning steps in the same format
+        description=description,
+        context_data=build_cm_context(cm=cm, result=result),
+    )
+
+
+def assert_steering_called(
+    cm: "CMStepDriver",
+    operation_prefix: str,
+    description: str,
+    result: "StepResult | None" = None,
+) -> None:
+    """Assert that a steering tool with the given prefix was called.
+
+    Args:
+        cm: CMStepDriver instance.
+        operation_prefix: Prefix to match (e.g., "ask_", "stop_", "pause_").
+        description: Human-readable description of the expected action.
+        result: Optional StepResult for additional context.
+
+    Raises:
+        AssertionError: With detailed context if the assertion fails.
+    """
+    assert has_steering_tool_call(cm, operation_prefix), assertion_failed(
+        expected=f"Steering tool with prefix '{operation_prefix}'",
+        actual=f"No tool call starting with '{operation_prefix}'",
+        reasoning=[],
+        description=description,
+        context_data=build_cm_context(cm=cm, result=result),
+    )
+
+
+def assert_content_contains(
+    content: str,
+    expected_substring: str,
+    description: str,
+    cm: "CMStepDriver | None" = None,
+    result: "StepResult | None" = None,
+    case_sensitive: bool = False,
+) -> None:
+    """Assert that content contains the expected substring.
+
+    Args:
+        content: The content string to check.
+        expected_substring: The substring that should be present.
+        description: Human-readable description of what we're checking.
+        cm: Optional CMStepDriver for additional context.
+        result: Optional StepResult for additional context.
+        case_sensitive: Whether the check is case-sensitive (default False).
+
+    Raises:
+        AssertionError: With detailed context if the assertion fails.
+    """
+    check_content = content if case_sensitive else content.lower()
+    check_substring = (
+        expected_substring if case_sensitive else expected_substring.lower()
+    )
+
+    assert check_substring in check_content, assertion_failed(
+        expected=f"Content containing '{expected_substring}'",
+        actual=content,
+        reasoning=[],
+        description=description,
+        context_data=build_cm_context(cm=cm, result=result),
+    )
+
+
+def assert_response_type(
+    result: Any,
+    expected_type: type,
+    description: str,
+    cm: "CMStepDriver | None" = None,
+) -> None:
+    """Assert that a result is of the expected type.
+
+    Args:
+        result: The result to check.
+        expected_type: The expected type.
+        description: Human-readable description of what we're checking.
+        cm: Optional CMStepDriver for additional context.
+
+    Raises:
+        AssertionError: With detailed context if the assertion fails.
+    """
+    assert isinstance(result, expected_type), assertion_failed(
+        expected=f"Instance of {expected_type.__name__}",
+        actual=f"Instance of {type(result).__name__}: {result!r}",
+        reasoning=[],
+        description=description,
+        context_data=build_cm_context(cm=cm),
+    )
