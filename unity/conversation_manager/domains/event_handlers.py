@@ -520,23 +520,19 @@ async def _(
         f"SyncContacts: {event.reason or 'no reason'}",
     )
 
-    async def _sync_contacts_task():
-        def _sync():
-            try:
-                cm.contact_manager._sync_required_contacts()
-                cm._session_logger.info("state_update", "Contacts synced successfully")
-            except Exception as e:
-                cm._session_logger.error("state_update", f"Error syncing contacts: {e}")
-
-        await asyncio.to_thread(_sync)
-
+    async def _sync_contacts():
+        try:
+            await asyncio.to_thread(cm.contact_manager._sync_required_contacts)
+            cm._session_logger.info("state_update", "Contacts synced successfully")
+        except Exception as e:
+            cm._session_logger.error("state_update", f"Error syncing contacts: {e}")
         cm.notifications_bar.push_notif(
             "System",
             f"Contacts synced: {event.reason or 'manual sync'}",
             event.timestamp,
         )
 
-    asyncio.create_task(_sync_contacts_task())
+    await managers_utils.queue_operation(_sync_contacts)
 
 
 @EventHandler.register(LogMessageResponse)
