@@ -7,7 +7,45 @@ import functools
 import re
 from pydantic import BaseModel, Field
 from unity.conversation_manager.simulated import SimulatedConversationManagerHandle
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 0.  Docstring inheritance
+# ────────────────────────────────────────────────────────────────────────────
+def test_docstrings_match_base():
+    """
+    Public methods in SimulatedConversationManagerHandle should carry the
+    SteerableToolHandle doc-strings (via ABC inheritance or functools.wraps).
+    """
+    # Check that ask() has a docstring that contains key phrases from the base
+    assert (
+        SimulatedConversationManagerHandle.ask.__doc__ is not None
+    ), "ask() should have a docstring"
+
+    # Check that pause() has a docstring
+    assert (
+        SimulatedConversationManagerHandle.pause.__doc__ is not None
+    ), "pause() should have a docstring"
+
+    # Check that resume() has a docstring
+    assert (
+        SimulatedConversationManagerHandle.resume.__doc__ is not None
+    ), "resume() should have a docstring"
+
+    # Check that stop() has a docstring
+    assert (
+        SimulatedConversationManagerHandle.stop.__doc__ is not None
+    ), "stop() should have a docstring"
+
+    # Check that interject() has a docstring
+    assert (
+        SimulatedConversationManagerHandle.interject.__doc__ is not None
+    ), "interject() should have a docstring"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -290,3 +328,67 @@ async def test_handle_ask():
     assert (
         "london" in nested_answer.lower()
     ), "LLM should recall context from the first ask call"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10.  Stop while paused should finish immediately
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_paused():
+    """
+    Calling stop() while paused should unblock result() and complete promptly.
+
+    This follows the gold standard pattern from ContactManager/TranscriptManager
+    simulated tests.
+    """
+    cm_handle = SimulatedConversationManagerHandle(
+        assistant_id="test_assistant",
+        contact_id="test_contact",
+    )
+
+    # Enter paused state
+    await cm_handle.pause()
+    assert cm_handle._paused is True, "Handle should be paused"
+
+    # result() should block until stop() is called
+    res_task = asyncio.create_task(cm_handle.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done(), "result() should block while waiting for stop()"
+
+    # Stop should unblock and complete promptly
+    cm_handle.stop("cancelled by user")
+
+    out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str), "result() should return a string"
+    assert cm_handle.done(), "Handle should report done after stop()"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 11.  result() blocks until stopped
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_result_blocks_until_stopped():
+    """
+    Verify that result() blocks until stop() is explicitly called.
+
+    This is the expected behavior for a conversation handle - it remains
+    active until explicitly stopped.
+    """
+    cm_handle = SimulatedConversationManagerHandle(
+        assistant_id="test_assistant",
+        contact_id="test_contact",
+    )
+
+    # Start result() - it should block
+    res_task = await _assert_blocks_while_paused(cm_handle.result())
+
+    # Stop the handle
+    cm_handle.stop("test complete")
+
+    # Now result() should complete
+    out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str), "result() should return a string"
+    assert "stopped" in out.lower(), "Result should indicate stopped state"
+    assert cm_handle.done(), "Handle should report done after stop()"
