@@ -226,7 +226,13 @@ async def _(
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
         )
-    cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
+
+    # Guard against missing active conversation (can happen if call ended
+    # before PhoneCallStarted, or after container restart)
+    contact_id = contact["contact_id"]
+    if contact_id in cm.contact_index.active_conversations:
+        cm.contact_index.active_conversations[contact_id].on_call = False
+
     await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
     await cm.request_llm_run(delay=0, cancel_running=True)
