@@ -1051,12 +1051,6 @@ class TestNotificationEventHandlers:
         mock_cm.request_llm_run.assert_called_once_with(delay=0, cancel_running=True)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="GENUINE BUG: NotificationBar.remove_notif() method is missing. "
-        "The NotificationUnpinnedEvent handler calls this method at line 437 of "
-        "event_handlers.py, but NotificationBar class doesn't implement it.",
-        raises=AttributeError,
-    )
     async def test_notification_unpinned_removes_from_bar(self, mock_cm):
         """NotificationUnpinnedEvent removes pinned notification."""
         # First add a pinned notification
