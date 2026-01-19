@@ -9,6 +9,18 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 
+# Preload LiveKit OpenAI plugin on the main thread.
+# LiveKit requires plugins to be registered on the main thread, but the voice
+# agent script runs in a background thread. Importing here ensures the plugin
+# registration happens before the thread is spawned.
+try:
+    from livekit.plugins.openai import (
+        realtime as _openai_realtime_preload,
+    )  # noqa: F401
+except ImportError:
+    # livekit-plugins-openai is optional; STS mode will fail at runtime if missing
+    pass
+
 
 @dataclass
 class CallConfig:
