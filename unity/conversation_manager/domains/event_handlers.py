@@ -292,7 +292,13 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     email_id = None
     notif_content = None
 
+    # Get contact info, with fallback chain:
+    # 1. ContactManager (via contact_index) - source of truth with auto-syncing cache
+    # 2. event.contact - ultimate fallback (CommsManager already resolved it)
     contact = cm.contact_index.get_contact(event.contact["contact_id"])
+    if contact is None:
+        # Use event.contact as fallback - it already has the contact info from CommsManager
+        contact = event.contact
 
     match event:
         case SMSSent():

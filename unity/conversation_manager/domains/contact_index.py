@@ -1,12 +1,15 @@
 from collections import deque
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 from pydantic import Field
 
 from unity.contact_manager.types.contact import Contact as ContactType
 from unity.common.prompt_helpers import now as prompt_now
+
+if TYPE_CHECKING:
+    from unity.contact_manager.base import BaseContactManager
 
 
 class Contact(ContactType):
@@ -48,6 +51,16 @@ class ContactIndex:
     def __init__(self):
         self.active_conversations: dict[str, Contact] = {}
         self.contacts: dict[int, Contact] = {}
+        self._contact_manager: "BaseContactManager | None" = None
+
+    def set_contact_manager(self, contact_manager: "BaseContactManager") -> None:
+        """Set the ContactManager to use as the source of truth for contact data.
+
+        When set, get_contact() will always query ContactManager first to ensure
+        up-to-date data, falling back to the local cache only if ContactManager
+        is unavailable.
+        """
+        self._contact_manager = contact_manager
 
     @property
     def boss_contact(self):
@@ -112,22 +125,73 @@ class ContactIndex:
         contact.threads[thread_name].append(message)
         contact.global_thread.append(message)
 
-    # should check if the contact exists
     def get_contact(
         self,
-        contact_id: str = None,
-        phone_number=None,
-        email=None,
+        contact_id: int = None,
+        phone_number: str = None,
+        email: str = None,
     ) -> dict | None:
+        """Get contact information, always querying ContactManager for fresh data.
+
+        When a ContactManager is configured (via set_contact_manager), this method
+        queries it first to ensure up-to-date data. The ContactManager maintains
+        an auto-syncing cache backed by the database, so any updates made by other
+        components (e.g., Actor creating contacts) are immediately reflected.
+
+        Falls back to the local cache only if ContactManager is unavailable or
+        the query fails.
+
+        Args:
+            contact_id: The contact's unique ID.
+            phone_number: The contact's phone number (used if contact_id not provided).
+            email: The contact's email address (used if contact_id and phone_number not provided).
+
+        Returns:
+            Contact data as a dict, or None if not found.
+        """
+        # Always prefer ContactManager (source of truth with auto-syncing cache)
+        if self._contact_manager is not None:
+            try:
+                if contact_id is not None:
+                    result = self._contact_manager.get_contact_info(contact_id)
+                    if contact_id in result:
+                        return result[contact_id]
+                elif phone_number is not None:
+                    # Use filter_contacts to search by phone number
+                    result = self._contact_manager.filter_contacts(
+                        filter=f"phone_number == '{phone_number}'",
+                        limit=1,
+                    )
+                    # filter_contacts returns {"contacts": [Contact(...)]}
+                    contacts = result.get("contacts", [])
+                    if contacts:
+                        c = contacts[0]
+                        return c.model_dump() if hasattr(c, "model_dump") else c
+                elif email is not None:
+                    # Use filter_contacts to search by email
+                    result = self._contact_manager.filter_contacts(
+                        filter=f"email_address == '{email}'",
+                        limit=1,
+                    )
+                    # filter_contacts returns {"contacts": [Contact(...)]}
+                    contacts = result.get("contacts", [])
+                    if contacts:
+                        c = contacts[0]
+                        return c.model_dump() if hasattr(c, "model_dump") else c
+            except Exception:
+                # Fall through to local cache on any error
+                pass
+
+        # Fallback to local cache (may be stale, but better than nothing)
         c = None
-        if contact_id:
+        if contact_id is not None:
             c = self.contacts.get(contact_id)
-        elif phone_number:
+        elif phone_number is not None:
             c = next(
                 (c for c in self.contacts.values() if c.phone_number == phone_number),
                 None,
             )
-        elif email:
+        elif email is not None:
             c = next(
                 (c for c in self.contacts.values() if c.email_address == email),
                 None,
