@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Literal, Optional
 from unittest.mock import AsyncMock
 
-from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+from tests.async_helpers import _wait_for_condition
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.hierarchical_actor import HierarchicalActor
 from unity.actor.environments import StateManagerEnvironment

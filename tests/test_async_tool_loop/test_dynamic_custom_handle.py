@@ -14,7 +14,7 @@ from unity.common.async_tool_loop import (
 )
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
-from tests.test_async_tool_loop.async_helpers import (
+from tests.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
 )

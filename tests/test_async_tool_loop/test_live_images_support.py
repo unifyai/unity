@@ -701,7 +701,7 @@ async def test_ask_loop_injects_overview_and_exposes_helpers(
     )
 
     # Deterministically wait until wait_forever is requested
-    from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
+    from tests.async_helpers import _wait_for_tool_request
 
     await _wait_for_tool_request(client, "wait_forever")
 
