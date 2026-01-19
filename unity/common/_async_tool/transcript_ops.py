@@ -203,8 +203,8 @@ def extract_interjections(msgs: List[dict]) -> Tuple[List[dict], List[int]]:
     messages (user messages that appear after the first user message).
 
     Invariant: The first user message is the original request; all subsequent
-    user messages are treated as interjections. This design supports both
-    Claude and Gemini models which do not allow in-chat system messages.
+    user messages are treated as interjections. This design uses user messages
+    for interjections (not system messages) for broad provider compatibility.
 
     For backwards compatibility, also captures any non-leading system messages
     that may exist from older transcripts (system messages at positions > 0

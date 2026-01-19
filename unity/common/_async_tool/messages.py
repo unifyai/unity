@@ -95,12 +95,10 @@ def transform_tool_calls_to_context(
 ) -> list[dict]:
     """Transform assistant tool_calls into a system context message.
 
-    This unified function handles two scenarios:
-    1. Seeded transcripts for Claude reasoning models that require
-       provider-specific metadata (thinking blocks) which we lack when
-       replaying manually constructed tool calls.
-    2. Claude extended thinking re-enablement after forced-tool turns where
-       thinking was disabled (incompatible with tool_choice="required").
+    This function handles scenarios where assistant messages with tool_calls
+    need to be transformed into context messages for provider compatibility
+    (e.g., when replaying manually constructed tool calls that lack required
+    provider-specific metadata).
 
     Parameters
     ----------
@@ -194,9 +192,9 @@ def transform_tool_calls_to_context(
 
         elif role == "assistant":
             if predicate(m):
-                # Insert context AT THIS POSITION (where the transformed turn was)
-                # This maintains chronological order so Claude sees preserved turns
-                # before the synthetic summary of non-thinking turns.
+                # Insert context AT THIS POSITION (where the transformed turn was).
+                # This maintains chronological order so the model sees preserved
+                # turns before the synthetic summary of transformed turns.
                 if not context_inserted and tool_call_descriptions:
                     context_msg = {
                         "role": "system",
@@ -296,8 +294,8 @@ async def generate_with_preprocess(
     # Fix: Ensure the original system message is always at the front of
     # patched messages. The Unify client's generate() checks if ANY system
     # message exists in messages[], and if so, doesn't prepend system_message.
-    # This means if preprocessing adds a system message (like Claude's
-    # thinking-block context), the original system prompt gets dropped.
+    # This means if preprocessing adds a system message (e.g., for provider
+    # compatibility), the original system prompt gets dropped.
     #
     # We explicitly prepend the original system_message to patched messages
     # if it's not already there, ensuring it's always sent to the LLM.
