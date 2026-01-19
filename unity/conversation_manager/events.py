@@ -285,6 +285,9 @@ class _SessionConfigBase(Event):
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
+    is_user_desktop: bool = False
+    desktop_mode: str = "ubuntu"
+    desktop_url: str | None = None
 
 
 @dataclass
