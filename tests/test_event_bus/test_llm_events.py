@@ -581,7 +581,9 @@ async def test_llm_event_includes_time_columns():
     # Verify format of time columns
     # time_minute: ISO format with seconds=0 (e.g., "2026-01-15T10:30:00+00:00")
     assert "T" in payload["time_minute"]
-    assert payload["time_minute"].endswith(":00+00:00") or payload["time_minute"].endswith(":00Z")
+    assert payload["time_minute"].endswith(":00+00:00") or payload[
+        "time_minute"
+    ].endswith(":00Z")
 
     # time_hour: ISO format with minutes=seconds=0
     assert "T" in payload["time_hour"]
