@@ -26,7 +26,6 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
-    transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -347,79 +346,18 @@ async def async_tool_loop_inner(
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
-    # ── Model family detection (centralized) ──────────────────────────────────────
-    _model_name = str(getattr(client, "_model", "") or "")
-    _model_base = _model_name.split("@")[0]
-    _is_claude = _model_base.startswith("claude")
-
     # ── Reasoning model compatibility ────────────────────────────────────────────
-    # Handle reasoning model constraints:
-    # - Claude: extended thinking incompatible with tool_choice="required"; we
-    #   disable thinking on forced-tool turns and transform those messages later.
-    _claude_thinking_disabled = False
+    # Provider-specific thinking mode compliance (e.g., Claude's requirement that
+    # assistant messages with tool_calls have thinking_blocks) is now handled
+    # automatically by unillm's provider preprocessing. The async tool loop no
+    # longer needs any provider-specific branching.
 
     def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
         """Handle reasoning model compatibility. Returns effective preprocess."""
-        nonlocal _claude_thinking_disabled
-
-        effective_preprocess = preprocess_msgs
-
-        # Claude: Handle thinking/tool_choice incompatibility
-        # Anthropic's API prohibits extended thinking with tool_choice="required".
-        # LiteLLM converts reasoning_effort to thinking for Claude models, so we
-        # must prevent reasoning_effort from being sent. We temporarily clear the
-        # client's _reasoning_effort so the generate call won't enable thinking.
-        if _is_claude:
-            if tool_choice != "required":
-                # Apply transformation wrapper for Claude to handle synthetic
-                # check_status_ messages (chronological ordering pairs). These are
-                # loop-internal bookkeeping that lack thinking blocks.
-                outer_preprocess = effective_preprocess
-
-                def claude_wrapper(msgs):
-                    # Skip transformation when no tools available. The check_status_
-                    # synthetic messages are internal bookkeeping for chronological
-                    # ordering. When tools are exhausted, Claude just needs to produce
-                    # a final text response. Transforming to "[Continue from here]"
-                    # confuses Claude into producing empty responses when there's
-                    # nothing left to do.
-                    if not gen_kwargs.get("tools"):
-                        return outer_preprocess(msgs) if outer_preprocess else msgs
-
-                    def needs_transformation(m: dict) -> bool:
-                        if not isinstance(m, dict):
-                            return False
-                        if m.get("role") != "assistant":
-                            return False
-                        if not m.get("tool_calls"):
-                            return False
-
-                        # Synthetic check_status_ messages need transformation.
-                        # These are loop-internal bookkeeping for chronological
-                        # tool result ordering and don't have thinking blocks
-                        # (they're synthesized, not from Claude).
-                        for tc in m.get("tool_calls") or []:
-                            func = tc.get("function", {})
-                            name = func.get("name", "")
-                            if isinstance(name, str) and name.startswith(
-                                "check_status_",
-                            ):
-                                return True
-
-                        return False
-
-                    msgs = transform_tool_calls_to_context(
-                        msgs,
-                        marker_key="_claude_thinking_compat",
-                        context_header="[Prior tool execution context]",
-                        context_footer="[Continue from here]",
-                        predicate=needs_transformation,
-                    )
-                    return outer_preprocess(msgs) if outer_preprocess else msgs
-
-                effective_preprocess = claude_wrapper
-
-        return effective_preprocess
+        # All provider-specific thinking compliance is now handled by unillm's
+        # apply_provider_preprocessing. This function just returns the base
+        # preprocess function unchanged.
+        return preprocess_msgs
 
     _img_token = None
     _imglog_token = None
