@@ -2256,6 +2256,8 @@ async def async_tool_loop_inner(
                         raise asyncio.CancelledError
 
                 # 3️⃣ LLM finished normally
+                if llm_task.cancelled():
+                    raise asyncio.CancelledError
                 if llm_task.exception():
                     try:
                         llm_task.result()

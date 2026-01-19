@@ -271,7 +271,11 @@ async def test_patient_interjection_defers_turn(
     """
     A patient interjection (trigger_immediate_llm_turn=False) that arrives while the LLM
     is already thinking must trigger exactly one extra LLM turn after the current one
-    completes, so the interjection is processed (without cancelling the in-flight LLM).
+    completes, so the interjection is processed.
+
+    NOTE: The non-cancellation guarantee is tested separately in
+    test_patient_interjection_does_not_cancel_inflight_llm. This test focuses on
+    the deferred turn semantics and message ordering.
     """
     client = new_llm_client(model=model)
 
@@ -280,24 +284,19 @@ async def test_patient_interjection_defers_turn(
     llm_started = asyncio.Event()
     release_first = asyncio.Event()
     call_count = {"n": 0}
-    was_cancelled = {"value": False}
     orig_gwp = _loop.generate_with_preprocess
 
     async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
             llm_started.set()
-            try:
-                # Wait until the test interjects in patient mode
-                await release_first.wait()
-                # First assistant turn (no tools)
-                _client.messages.append(
-                    {"role": "assistant", "content": "first", "tool_calls": None},
-                )
-                return {"ok": True}
-            except asyncio.CancelledError:
-                was_cancelled["value"] = True
-                raise
+            # Wait until the test interjects in patient mode
+            await release_first.wait()
+            # First assistant turn (no tools)
+            _client.messages.append(
+                {"role": "assistant", "content": "first", "tool_calls": None},
+            )
+            return {"ok": True}
         # Second LLM turn – should occur due to deferred turn after patient interjection
         _client.messages.append(
             {"role": "assistant", "content": "second", "tool_calls": None},
@@ -322,9 +321,6 @@ async def test_patient_interjection_defers_turn(
     release_first.set()
 
     final = await h.result()
-
-    # The first LLM call must not have been cancelled in patient mode
-    assert was_cancelled["value"] is False
 
     # There should be two assistant messages: the original and the deferred one
     assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
@@ -354,34 +350,49 @@ async def test_patient_interjection_defers_turn(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_patient_interjection_preserves_llm(model, monkeypatch) -> None:
+async def test_patient_interjection_does_not_cancel_inflight_llm(
+    model,
+    monkeypatch,
+) -> None:
     """
-    When the LLM is currently thinking, a patient interjection
-    (trigger_immediate_llm_turn=False) must NOT cancel the in-flight LLM call.
+    Patient interjection (trigger_immediate_llm_turn=False) must NOT cancel an
+    in-flight LLM call that is actively doing work.
+
+    This test simulates an LLM that continues doing async work after the
+    interjection arrives. In patient mode, the LLM should complete naturally
+    without being cancelled.
+
+    The bug this catches: The cleanup code after asyncio.wait() unconditionally
+    cancelled the LLM task before checking if the interjection was in patient mode.
     """
     client = new_llm_client(model=model)
 
-    # Spy/patch the inner generation wrapper to gate completion and record cancellation
     from unity.common._async_tool import loop as _loop
 
     llm_started = asyncio.Event()
-    release_llm = asyncio.Event()
+    interjection_sent = asyncio.Event()
     was_cancelled = {"value": False}
+    llm_completed_naturally = {"value": False}
     orig_gwp = _loop.generate_with_preprocess
 
     async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
         try:
             llm_started.set()
-            await release_llm.wait()
+            # Wait for the interjection to be sent, THEN continue working
+            # This simulates an LLM that is actively processing when interjection arrives
+            await interjection_sent.wait()
+            # Simulate additional LLM work AFTER interjection arrives
+            # In patient mode, this work should NOT be cancelled
+            await asyncio.sleep(0.1)
             # Append a minimal assistant message the loop expects to see
             _client.messages.append(
                 {
                     "role": "assistant",
-                    "content": "ok",
+                    "content": "completed naturally",
                     "tool_calls": None,
                 },
             )
-            # Minimal result payload (shape not asserted by loop beyond success path)
+            llm_completed_naturally["value"] = True
             return {"ok": True}
         except asyncio.CancelledError:
             was_cancelled["value"] = True
@@ -398,15 +409,25 @@ async def test_patient_interjection_preserves_llm(model, monkeypatch) -> None:
         max_steps=10,
     )
 
-    # Ensure LLM thinking has begun, then interject in patient mode
+    # Ensure LLM thinking has begun
     await asyncio.wait_for(llm_started.wait(), timeout=30.0)
+
+    # Send patient interjection - this should NOT cancel the LLM
     await h.interject("please consider this later", trigger_immediate_llm_turn=False)  # type: ignore[arg-type]
-    # Allow the in-flight LLM to complete
-    release_llm.set()
+
+    # Signal that interjection was sent - LLM can now continue its work
+    interjection_sent.set()
 
     final = await h.result()
+
+    # The LLM should have completed naturally without cancellation
+    assert (
+        llm_completed_naturally["value"] is True
+    ), "LLM should complete naturally in patient mode"
+    assert (
+        was_cancelled["value"] is False
+    ), "patient interjection must NOT cancel in-flight LLM"
     assert isinstance(final, str) and final, "loop should complete with a final answer"
-    assert was_cancelled["value"] is False, "patient interjection should not cancel LLM"
 
     # Cleanup: restore original generator
     monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
