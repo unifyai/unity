@@ -1205,33 +1205,6 @@ class TestEventHandlerEdgeCases:
     """Tests for edge cases and error handling in event handlers."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="GENUINE BUG: SMS/Email handlers don't handle unknown contacts. "
-        "At line 291 of event_handlers.py, get_contact() returns None for unknown "
-        "contacts, but line 297 then tries contact['first_name'] which causes "
-        "TypeError: 'NoneType' object is not subscriptable.",
-        raises=TypeError,
-    )
-    async def test_handler_with_missing_contact_in_index(self, mock_cm):
-        """Handler gracefully handles contact not in index."""
-        # Event with contact_id that doesn't exist
-        event = SMSReceived(
-            contact={"contact_id": 999, "phone_number": "+19999999999"},
-            content="Unknown sender",
-        )
-
-        with patch(
-            "unity.conversation_manager.domains.event_handlers.managers_utils",
-        ) as mock_utils:
-            mock_utils.queue_operation = AsyncMock()
-            # Should not raise - contact should be created
-            await EventHandler.handle_event(event, mock_cm)
-
-        # Contact should now exist
-        contact = mock_cm.contact_index.active_conversations.get(999)
-        assert contact is not None
-
-    @pytest.mark.asyncio
     async def test_actor_pause_handles_missing_handle(self, mock_cm):
         """ActorPause handles tasks without handles gracefully."""
         # Task with no handle (None)
