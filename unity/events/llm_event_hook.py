@@ -31,17 +31,30 @@ def _llm_event_to_eventbus(event: "LLMEvent") -> None:
     to ensure LLM calls are never disrupted by logging failures.
     """
     try:
+        from datetime import datetime, timezone
+
         from .event_bus import EVENT_BUS, Event
         from .types.llm import LLMPayload
 
-        # Pass through the simplified event data directly
+        # Generate timestamp once for consistency between Event and derived columns
+        ts = datetime.now(timezone.utc)
+
+        # Pass through the simplified event data with derived time columns
+        # for aggregation/grouping in usage analytics
         payload = LLMPayload(
             request=event.request,
             response=event.response,
             provider_cost=event.provider_cost,
             billed_cost=event.billed_cost,
+            # Derived time columns for time-based aggregation
+            # All columns use formats that Orchestra infers as date/datetime types
+            time_minute=ts.replace(second=0, microsecond=0).isoformat(),
+            time_hour=ts.replace(minute=0, second=0, microsecond=0).isoformat(),
+            time_day=ts.strftime("%Y-%m-%d"),
+            time_month=ts.replace(day=1).strftime("%Y-%m-%d"),  # First day of month
+            time_year=ts.replace(month=1, day=1).strftime("%Y-%m-%d"),  # First day of year
         )
-        llm_event = Event(type="LLM", payload=payload)
+        llm_event = Event(type="LLM", payload=payload, timestamp=ts)
 
         # Publish asynchronously to avoid blocking the LLM call
         try:
