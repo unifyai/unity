@@ -234,7 +234,7 @@ class CommsManager:
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
-                    contact = next(c for c in contacts if c["email"] == topic)
+                    contact = next(c for c in contacts if c["email_address"] == topic)
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](
