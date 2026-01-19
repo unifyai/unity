@@ -497,9 +497,9 @@ async def test_interjections_processed_successfully(model):
     await _wait_for_tool_request(client, "echo")
     await handle.interject("B please")
 
-    # Wait for the NEXT echo request (echo("B")) using event-based helper.
+    # Wait for the NEXT echo request (echo("B")) using polling-based helper.
     # Can't use _wait_for_tool_request again since it only checks count >= 1.
-    await _wait_for_any_assistant_tool_call("echo")
+    await _wait_for_any_assistant_tool_call(client, "echo")
     await handle.interject("C please")
 
     final = await handle.result()

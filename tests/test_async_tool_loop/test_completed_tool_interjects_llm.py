@@ -45,7 +45,6 @@ async def very_slow_task() -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.enable_eventbus
 @_handle_project
 async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
     model,
@@ -101,11 +100,11 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
     await _wait_for_tool_result(client, "fast_task", min_results=1)
 
     # Wait for the LLM to actually respond after seeing the partial result.
-    # This uses EventBus events to detect when the next assistant message
-    # is published (which should be the `wait` call after fast_task completed).
+    # This uses polling to detect when the next assistant message appears
+    # (which should be the `wait` call after fast_task completed).
     # This avoids race conditions with fixed delays that might not be long
     # enough for uncached LLM responses.
-    await _wait_for_next_assistant_response_event(timeout=120.0)
+    await _wait_for_next_assistant_response_event(client, timeout=120.0)
 
     # Now release the gate so very_slow_task can complete
     very_slow_gate.set()
