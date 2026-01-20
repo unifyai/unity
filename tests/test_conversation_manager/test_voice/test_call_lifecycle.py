@@ -50,7 +50,7 @@ from unity.conversation_manager.events import (
     CallGuidance,
 )
 
-from .conftest import TEST_CONTACTS
+from tests.test_conversation_manager.conftest import TEST_CONTACTS
 
 
 # =============================================================================
