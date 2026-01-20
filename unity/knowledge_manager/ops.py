@@ -335,7 +335,7 @@ def delete_column(
             required_cols = set(_C.model_fields.keys()) - {
                 "rolling_summary",
                 "response_policy",
-                "respond_to",
+                "should_respond",
             }
         except Exception:
             required_cols = {"contact_id"}

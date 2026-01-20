@@ -117,8 +117,8 @@ def test_system_present_after_init():
     # Assistant and default user should be cached
     a = ds.get(0)
     u = ds.get(1)
-    assert a is not None and a.get("respond_to") is True
-    assert u is not None and u.get("respond_to") is True
+    assert a is not None and a.get("should_respond") is True
+    assert u is not None and u.get("should_respond") is True
 
 
 @_handle_project
