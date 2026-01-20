@@ -115,7 +115,7 @@ class Contact(BaseModel):
         description="Short rolling conversation summary and current objectives with this contact.",
     )
     should_respond: bool = Field(
-        default=False,
+        default=True,
         description="Whether the assistant should respond to inbound messages or calls from this contact.",
     )
     response_policy: Optional[str] = Field(

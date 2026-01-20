@@ -654,7 +654,7 @@ class ContactManager(BaseContactManager):
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        should_respond: bool = False,
+        should_respond: bool = True,
         response_policy: Optional[str] = None,
         **kwargs: Any,
     ) -> ToolOutcome:
@@ -681,7 +681,7 @@ class ContactManager(BaseContactManager):
             IANA Timezone identifier (e.g. "America/New_York"). Optional.
         rolling_summary : str | None
             Internal running summary of recent activity for this contact. Optional.
-        should_respond : bool, default False
+        should_respond : bool, default True
             Whether the assistant should reply to this contact by default when
             communicating in user‑facing experiences.
         response_policy : str | None

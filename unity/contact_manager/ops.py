@@ -158,7 +158,7 @@ def create_contact(
     bio: Optional[str] = None,
     timezone: Optional[str] = None,
     rolling_summary: Optional[str] = None,
-    should_respond: bool = False,
+    should_respond: bool = True,
     response_policy: Optional[str] = None,
     **kwargs: Any,
 ) -> ToolOutcome:
