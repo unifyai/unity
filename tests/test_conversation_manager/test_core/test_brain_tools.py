@@ -314,6 +314,33 @@ class TestSendSmsTool:
         assert brain_action_tools.send_sms.__doc__ is not None
         assert "SMS" in brain_action_tools.send_sms.__doc__
 
+    @pytest.mark.asyncio
+    async def test_returns_error_for_contact_without_phone(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Returns error when contact has no phone number."""
+        # Set up contact without phone number
+        contact_without_phone = {
+            "contact_id": 5,
+            "first_name": "NoPhone",
+            "surname": "Person",
+            "email_address": "nophone@example.com",
+            "should_respond": True,
+            # No phone_number field
+        }
+        mock_cm.contact_index.set_contacts([contact_without_phone])
+
+        result = await brain_action_tools.send_sms(
+            contact_id=5,
+            content="Hello",
+        )
+
+        assert result["status"] == "error"
+        assert "does not have" in result["error"]
+        assert "phone" in result["error"].lower()
+
 
 class TestSendUnifyMessageTool:
     """Tests for send_unify_message tool."""
@@ -338,6 +365,34 @@ class TestSendEmailTool:
         assert brain_action_tools.send_email.__doc__ is not None
         assert "email" in brain_action_tools.send_email.__doc__.lower()
 
+    @pytest.mark.asyncio
+    async def test_returns_error_for_contact_without_email(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Returns error when contact has no email address."""
+        # Set up contact without email address
+        contact_without_email = {
+            "contact_id": 4,
+            "first_name": "NoEmail",
+            "surname": "Person",
+            "phone_number": "+15555554444",
+            "should_respond": True,
+            # No email_address field
+        }
+        mock_cm.contact_index.set_contacts([contact_without_email])
+
+        result = await brain_action_tools.send_email(
+            contact_id=4,
+            subject="Test",
+            body="Hello",
+        )
+
+        assert result["status"] == "error"
+        assert "does not have" in result["error"]
+        assert "email" in result["error"].lower()
+
 
 class TestMakeCallTool:
     """Tests for make_call tool."""
@@ -352,6 +407,30 @@ class TestMakeCallTool:
         """Make call tool has descriptive docstring."""
         assert brain_action_tools.make_call.__doc__ is not None
         assert "call" in brain_action_tools.make_call.__doc__.lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_contact_without_phone(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Returns error when contact has no phone number."""
+        # Set up contact without phone number
+        contact_without_phone = {
+            "contact_id": 5,
+            "first_name": "NoPhone",
+            "surname": "Person",
+            "email_address": "nophone@example.com",
+            "should_respond": True,
+            # No phone_number field
+        }
+        mock_cm.contact_index.set_contacts([contact_without_phone])
+
+        result = await brain_action_tools.make_call(contact_id=5)
+
+        assert result["status"] == "error"
+        assert "does not have" in result["error"]
+        assert "phone" in result["error"].lower()
 
 
 class TestActTool:
