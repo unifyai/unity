@@ -271,12 +271,20 @@ class UnifyMessageSent(Event):
 
 @dataclass
 class EmailSent(Event):
+    """An email was sent to a contact.
+
+    Attachments are specified by filepath and uploaded with the email. The
+    ``attachments`` field contains only filenames (not paths) for display.
+    """
+
     contact: dict
     subject: str
     body: str
     # Email provider identifier used for threading (e.g., RFC Message-ID header value).
     # This is *not* the TranscriptManager's auto-incremented message_id.
     email_id_replied_to: str | None = None
+    # List of attachment filenames that were sent with the email.
+    attachments: list[str] = field(default_factory=list)
 
 
 @dataclass

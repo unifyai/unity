@@ -107,42 +107,54 @@ async def send_email_via_address(
     subject: str,
     body: str,
     email_id: str = None,
-) -> str:
+    attachment: dict | None = None,
+) -> dict:
     """
-    Send an SMS message using the SMS provider API.
+    Send an email using the email provider API.
 
     Args:
         to_email: The email address to send the email to
         subject: The subject of the email
         body: The message body to send
         email_id: The email identifier of the message to reply to (threading id)
+        attachment: Optional attachment dict with keys:
+            - filename: The name of the file
+            - content_base64: Base64-encoded file contents
 
     Returns:
-        str: The response from the email API
+        dict: Response with 'success' bool and optionally 'error' message
     """
     from_email = SESSION_DETAILS.assistant.email
     if not from_email:
-        return {"success": False}
+        return {"success": False, "error": "No sender email configured"}
 
-    print(
-        f"Sending email from {from_email} to {to_email}: {body}, {subject} {email_id}",
+    attachment_info = (
+        f" with attachment '{attachment['filename']}'" if attachment else ""
     )
+    print(
+        f"Sending email from {from_email} to {to_email}: {subject}{attachment_info}",
+    )
+
+    payload = {
+        "from": from_email,
+        "to": to_email,
+        "subject": subject,
+        "body": body,
+        "in_reply_to": email_id,
+    }
+    if attachment:
+        payload["attachment"] = attachment
+
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/gmail/send",
             headers=headers,
-            json={
-                "from": from_email,
-                "to": to_email,
-                "subject": subject,
-                "body": body,
-                "in_reply_to": email_id,
-            },
+            json=payload,
         ) as response:
             try:
                 response.raise_for_status()
-            except Exception:
-                return {"success": False}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
             return await response.json()
 
 

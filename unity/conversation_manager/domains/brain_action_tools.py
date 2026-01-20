@@ -305,9 +305,10 @@ class ConversationManagerBrainActionTools:
         subject: str,
         body: str,
         email_id_to_reply_to: str | None = None,
+        attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
         """
-        Send an email to a contact.
+        Send an email to a contact, optionally with a file attachment.
 
         Use this when the boss or context indicates email is the appropriate channel.
 
@@ -317,7 +318,11 @@ class ConversationManagerBrainActionTools:
             subject: Email subject.
             body: Email body.
             email_id_to_reply_to: Optional email id to reply to for threading.
+            attachment_filepath: Optional filepath to attach (e.g., "Downloads/report.pdf").
         """
+        import base64
+        import os
+
         contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
 
         # Check if outbound communication is allowed for this contact
@@ -335,6 +340,57 @@ class ConversationManagerBrainActionTools:
             return {"status": "error", "error": address_error}
 
         to_email = contact.get("email_address")
+
+        # Handle attachment if provided
+        attachment = None
+        attachment_filename = None
+        if attachment_filepath:
+            try:
+                from unity.file_manager.filesystem_adapters.local_adapter import (
+                    LocalFileSystemAdapter,
+                )
+
+                adapter = LocalFileSystemAdapter()
+                # Get the file reference to verify it exists and get absolute path
+                file_ref = adapter.get_file(attachment_filepath)
+                # Read the file contents using the resolved path
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as f:
+                    file_contents = f.read()
+
+                # Check file size (Gmail limit is 25MB)
+                max_size_mb = 25
+                file_size_mb = len(file_contents) / (1024 * 1024)
+                if file_size_mb > max_size_mb:
+                    error_msg = f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit"
+                    event = Error(error_msg)
+                    await self._event_broker.publish(
+                        "app:comms:email_sent",
+                        event.to_json(),
+                    )
+                    return {"status": "error", "error": error_msg}
+
+                attachment_filename = os.path.basename(attachment_filepath)
+                attachment = {
+                    "filename": attachment_filename,
+                    "content_base64": base64.b64encode(file_contents).decode("utf-8"),
+                }
+            except FileNotFoundError:
+                error_msg = f"File not found: {attachment_filepath}"
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
+            except Exception as e:
+                error_msg = f"Failed to read file: {e}"
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
 
         # Prefer the most recent inbound email's Message-ID for this contact+subject,
         # rather than trusting the LLM to copy it correctly.
@@ -376,6 +432,7 @@ class ConversationManagerBrainActionTools:
             subject=subject,
             body=body,
             email_id=email_id_to_reply_to,
+            attachment=attachment,
         )
         if response["success"]:
             contact = self._cm.contact_index.get_contact(email=to_email)
@@ -384,12 +441,13 @@ class ConversationManagerBrainActionTools:
                 body=body,
                 subject=subject,
                 email_id_replied_to=email_id_to_reply_to,
+                attachments=[attachment_filename] if attachment_filename else [],
             )
         else:
             if not self._cm.assistant_email:
                 error_msg = "You don't have an email address, please provision one."
             else:
-                error_msg = f"Failed to send email to {to_email}"
+                error_msg = response.get("error", f"Failed to send email to {to_email}")
             event = Error(error_msg)
         await self._event_broker.publish("app:comms:email_sent", event.to_json())
         return {"status": "ok"}
