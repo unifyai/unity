@@ -31,11 +31,17 @@ class SimulatedConversationManagerHandle(
 
     def __init__(
         self,
-        assistant_id: str,
-        contact_id: int,
+        assistant_id: str = "",
+        contact_id: int = 0,
         *,
         description: str = "A simulated conversation between an AI assistant and a user.",
         simulation_guidance: Optional[str] = None,
+        # Accept but ignore parameters that real ConversationManagerHandle uses
+        event_broker: Any = None,
+        conversation_id: Any = None,
+        transcript_manager: Any = None,
+        conversation_manager: Any = None,
+        **kwargs: Any,
     ):
         self.assistant_id = assistant_id
         self.contact_id = contact_id
