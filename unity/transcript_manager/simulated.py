@@ -323,6 +323,9 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        # Accept but ignore parameters that real TranscriptManager uses
+        contact_manager: Any = None,
+        **kwargs: Any,
     ) -> None:
         self._description = description
         self._log_events = log_events

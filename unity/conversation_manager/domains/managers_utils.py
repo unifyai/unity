@@ -423,7 +423,8 @@ def _init_managers(
     )
 
     # 4. Configure TranscriptManager logger (only for real implementation)
-    if api_key and SETTINGS.transcript.IMPL != "simulated":
+    # Check hasattr instead of SETTINGS to be defensive against implementation mismatches
+    if api_key and hasattr(cm.transcript_manager, "_get_logger"):
         cm.transcript_manager._get_logger().session.headers[
             "Authorization"
         ] = f"Bearer {api_key}"
