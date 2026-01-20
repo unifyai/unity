@@ -176,6 +176,8 @@ def build_system_prompt(
             Messages from the current turn have **NEW** tag prepended:
             - **NEW** on incoming messages = a new message you should consider responding to
             - **NEW** on your own messages (from "You") = you just sent this; do NOT send the same content again
+
+            **Attachments:** Multiple mediums support file attachments. Attachments appear inline with the message (e.g., "Hello [Attachments: report.pdf ...]"). Query specific details about the attached files via `act`, and consider asking the sender if anything is unclear about the attachment, or if it's missing or incomplete in any way.
         </input_format>
 
         <output_format>

@@ -261,6 +261,101 @@ async def test_email_missing_attachment_detected(initialized_cm):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_unify_message_with_attachment_visible(initialized_cm):
+    """Unify message with attachment -> assistant confirms receipt and can share download path."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
+
+    # Step 1: Send unify message with attachment
+    result = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=contact,
+            content="I've attached the quarterly report. Can you confirm you received it?",
+            attachments=["quarterly_report.pdf"],
+        ),
+    )
+
+    # Should have exactly one unify message sent (the reply)
+    assert_has_one(result.output_events, UnifyMessageSent)
+    msg = filter_events_by_type(result.output_events, UnifyMessageSent)[0]
+    # The reply should confirm receipt of the attachment
+    content_lower = msg.content.lower()
+    assert any(
+        term in content_lower
+        for term in [
+            "received",
+            "see",
+            "got",
+            "attachment",
+            "quarterly",
+            "report",
+            "pdf",
+        ]
+    ), f"Expected reply to confirm attachment receipt, got: {msg.content}"
+
+    # Step 2: Ask about the download path
+    result2 = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=contact,
+            content="Great! Did you download it? What's the file path?",
+            attachments=[],
+        ),
+    )
+
+    # Should reply with the file path
+    assert_has_one(result2.output_events, UnifyMessageSent)
+    msg2 = filter_events_by_type(result2.output_events, UnifyMessageSent)[0]
+    content2_lower = msg2.content.lower()
+    # The reply should mention the Downloads path
+    assert "downloads" in content2_lower and "quarterly_report.pdf" in content2_lower, (
+        f"Expected reply to include download path (Downloads/quarterly_report.pdf), "
+        f"got: {msg2.content}"
+    )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_unify_message_missing_attachment_detected(initialized_cm):
+    """Unify message asks about attachment but none attached -> assistant notes missing attachment."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
+
+    result = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=contact,
+            content="I've attached the quarterly report. Can you confirm you received it?",
+            attachments=[],  # No attachments despite the content mentioning one
+        ),
+    )
+
+    # Should have exactly one unify message sent (the reply)
+    assert_has_one(result.output_events, UnifyMessageSent)
+    msg = filter_events_by_type(result.output_events, UnifyMessageSent)[0]
+    # The reply should mention that the attachment is missing
+    # Normalize curly apostrophes to straight apostrophes for matching
+    content_lower = msg.content.lower().replace("'", "'").replace("'", "'")
+    assert any(
+        term in content_lower
+        for term in [
+            "missing",
+            "forgot",
+            "don't see",
+            "didn't see",
+            "not seeing",
+            "no attachment",
+            "didn't",
+            "not attached",
+            "can't find",
+            "unable",
+            "couldn't",
+            "resend",
+            "re-send",
+        ]
+    ), f"Expected reply to note missing attachment, got: {msg.content}"
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_email_to_sms(initialized_cm):
     """Email request for joke via SMS -> should send SMS."""
     cm = initialized_cm
