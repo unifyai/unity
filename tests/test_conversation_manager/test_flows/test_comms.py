@@ -162,6 +162,83 @@ async def test_email_to_email(initialized_cm):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_email_with_attachment_visible(initialized_cm):
+    """Email with attachment -> assistant confirms it can see the attachment."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
+
+    result = await cm.step_until_wait(
+        EmailReceived(
+            contact=contact,
+            subject="Document for review",
+            body="I've attached the quarterly report. Can you confirm you received it?",
+            email_id="test_email_with_attachment",
+            attachments=["quarterly_report.pdf"],
+        ),
+    )
+
+    # Should have exactly one email sent (the reply)
+    assert_has_one(result.output_events, EmailSent)
+    email = filter_events_by_type(result.output_events, EmailSent)[0]
+    # The reply should confirm receipt of the attachment
+    body_lower = email.body.lower()
+    assert any(
+        term in body_lower
+        for term in [
+            "received",
+            "see",
+            "got",
+            "attachment",
+            "quarterly",
+            "report",
+            "pdf",
+        ]
+    ), f"Expected reply to confirm attachment receipt, got: {email.body}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_email_missing_attachment_detected(initialized_cm):
+    """Email asks about attachment but none attached -> assistant notes missing attachment."""
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
+
+    result = await cm.step_until_wait(
+        EmailReceived(
+            contact=contact,
+            subject="Document for review",
+            body="I've attached the quarterly report. Can you confirm you received it?",
+            email_id="test_email_missing_attachment",
+            attachments=[],  # No attachments despite the body mentioning one
+        ),
+    )
+
+    # Should have exactly one email sent (the reply)
+    assert_has_one(result.output_events, EmailSent)
+    email = filter_events_by_type(result.output_events, EmailSent)[0]
+    # The reply should mention that the attachment is missing
+    # Normalize curly apostrophes to straight apostrophes for matching
+    body_lower = email.body.lower().replace("'", "'").replace("'", "'")
+    assert any(
+        term in body_lower
+        for term in [
+            "missing",
+            "forgot",
+            "don't see",
+            "didn't see",
+            "no attachment",
+            "didn't",
+            "not attached",
+            "can't find",
+            "unable",
+            "couldn't",
+            "resend",
+        ]
+    ), f"Expected reply to note missing attachment, got: {email.body}"
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_email_to_sms(initialized_cm):
     """Email request for joke via SMS -> should send SMS."""
     cm = initialized_cm

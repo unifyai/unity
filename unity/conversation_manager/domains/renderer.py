@@ -109,10 +109,14 @@ class Renderer:
         # Mark all recent messages as NEW (both incoming and outbound)
         is_new = last_snapshot < message.timestamp
         if isinstance(message, EmailMessage):
+            attachments_line = ""
+            if message.attachments:
+                attachments_line = f"Attachments: {', '.join(message.attachments)}\n"
             return (
                 f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:\n"""
                 f"Subject: {message.subject}\n"
                 f"Email ID: {message.email_id}\n"
+                f"{attachments_line}"
                 f"Body:\n"
                 f"{message.body}"
             )

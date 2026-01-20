@@ -1,6 +1,6 @@
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime
-from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
 from pydantic import Field
@@ -44,6 +44,8 @@ class EmailMessage:
     body: str
     email_id: str | None
     timestamp: datetime
+    # List of attachment filenames (actual files are saved to Downloads/).
+    attachments: list[str] = field(default_factory=list)
 
 
 class ContactIndex:
@@ -90,6 +92,7 @@ class ContactIndex:
         subject=None,
         body=None,
         email_id=None,
+        attachments=None,
         timestamp=None,
         role: Literal["user", "assistant"] = "user",
     ):
@@ -110,6 +113,7 @@ class ContactIndex:
                 body,
                 email_id,
                 timestamp,
+                attachments or [],
             )
         else:
             message = Message(

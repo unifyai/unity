@@ -304,6 +304,14 @@ class CommsManager:
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
                     contact = next(c for c in contacts if c["email_address"] == topic)
+
+                    # Extract attachment filenames for the event
+                    attachments = event.get("attachments") or []
+                    attachment_filenames = [
+                        att.get("filename") or f"attachment_{att.get('id', 'unknown')}"
+                        for att in attachments
+                    ]
+
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](
@@ -311,12 +319,12 @@ class CommsManager:
                             body=event["body"],
                             contact=contact,
                             email_id=event["email_id"],
+                            attachments=attachment_filenames,
                         ).to_json(),
                     )
 
                     # add attachments (if any) to Downloads using async helper
                     try:
-                        attachments = event.get("attachments") or []
                         if attachments:
                             asyncio.run_coroutine_threadsafe(
                                 add_email_attachments(
