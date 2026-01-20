@@ -290,6 +290,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     subject = None
     body = None
     email_id = None
+    attachments = None
     notif_content = None
 
     # Get contact info, with fallback chain:
@@ -323,6 +324,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             subject = event.subject
             body = event.body
             email_id = event.email_id
+            attachments = event.attachments
             notif_content = f"Email Received from {contact['first_name']}"
             role = "user"
         case UnifyMessageSent():
@@ -343,6 +345,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         subject=subject,
         body=body,
         email_id=email_id,
+        attachments=attachments,
         timestamp=event.timestamp,
         role=role,
     )
