@@ -364,12 +364,15 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
     cm.call_manager.set_config(cm.get_call_config())
-    kwargs = {
-        "timestamp": payload["timestamp"],
-        "medium": payload["medium"],
-        **cm.get_details(),
-    }
-    asyncio.create_task(asyncio.to_thread(debug_logger.log_job_startup, **kwargs))
+    # Update the running record (created by adapter) with job_name and liveview_url
+    asyncio.create_task(
+        asyncio.to_thread(
+            debug_logger.log_job_startup,
+            job_name=cm.job_name,
+            user_id=cm.user_id,
+            assistant_id=cm.assistant_id,
+        )
+    )
 
     # Start initialization and operations listener
     asyncio.create_task(managers_utils.init_conv_manager(cm))

@@ -168,19 +168,12 @@ def _resolve_k8s_liveview(job_name: str) -> str | None:
     return None
 
 
-def log_job_startup(
-    job_name: str,
-    timestamp: str,
-    medium: str,
-    user_id: str,
-    assistant_id: str,
-    user_name: str,
-    assistant_name: str,
-    user_number: str,
-    assistant_number: str,
-    user_email: str,
-    assistant_email: str,
-):
+def log_job_startup(job_name: str, user_id: str, assistant_id: str):
+    """Update the running job record with job_name and liveview_url.
+
+    The adapter already created the running=True record with all assistant info.
+    This function just adds the container-specific details: job_name and liveview_url.
+    """
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
         print("[debug_logger] Skipping log_job_startup: no shared API key available")
@@ -188,44 +181,8 @@ def log_job_startup(
 
     _ensure_project_exists(api_key)
 
+    # Resolve liveview URL first (this can take a while)
     try:
-        # Create startup event log and get log instance
-        unify.create_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            entries=[
-                {
-                    "job_name": job_name,
-                    "timestamp": timestamp,
-                    "medium": medium,
-                    "user_id": user_id,
-                    "assistant_id": assistant_id,
-                    "user_name": user_name,
-                    "assistant_name": assistant_name,
-                    "user_number": user_number,
-                    "assistant_number": assistant_number,
-                    "user_email": user_email,
-                    "assistant_email": assistant_email,
-                    "running": True,
-                },
-            ],
-            api_key=api_key,
-        )
-        log = unify.get_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            filter=f"job_name == '{job_name}'",
-            api_key=api_key,
-        )
-        print("Debug Logger - Logs:", log)
-        log = log[0]
-        print("Logged Startup Event", job_name)
-    except Exception as e:
-        print(f"Error logging startup event: {e}")
-        traceback.print_exc()
-
-    try:
-        # Resolve liveview URL based on desktop mode
         is_windows_vm = (
             not SESSION_DETAILS.assistant.is_user_desktop
             and SESSION_DETAILS.assistant.desktop_mode == "windows"
@@ -235,11 +192,42 @@ def log_job_startup(
             liveview_url = _resolve_windows_vm_liveview(assistant_id)
         else:
             liveview_url = _resolve_k8s_liveview(job_name)
-
-        log.update_entries(liveview_url=liveview_url)
-        print("[Liveview] Updated log with liveview URL:", job_name)
     except Exception as e:
         print(f"[Liveview] Error resolving liveview URL: {e}")
+        traceback.print_exc()
+        liveview_url = None
+
+    # Update the existing record (created by adapter) with job_name and liveview_url
+    try:
+        existing_logs = unify.get_logs(
+            project="AssistantJobs",
+            context="startup_events",
+            filter=(
+                f"user_id == '{user_id}' and "
+                f"assistant_id == '{assistant_id}' and "
+                f"running == 'true'"
+            ),
+            api_key=api_key,
+        )
+        print(f"[debug_logger] Found {len(existing_logs)} running records")
+
+        if existing_logs:
+            log = existing_logs[0]
+            log.update_entries(job_name=job_name, liveview_url=liveview_url)
+            print(
+                f"[debug_logger] Updated record with job_name={job_name}, "
+                f"liveview_url={liveview_url}"
+            )
+        else:
+            # No record found - adapter's mark_job_running() must have failed
+            # Log warning but don't fail; liveview just won't be tracked
+            print(
+                f"[debug_logger] WARNING: No running record found for "
+                f"user_id={user_id}, assistant_id={assistant_id}. "
+                f"Adapter may have failed to create the record."
+            )
+    except Exception as e:
+        print(f"[debug_logger] Error updating job record: {e}")
         traceback.print_exc()
 
 
