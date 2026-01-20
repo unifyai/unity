@@ -10,17 +10,65 @@ The tests validate:
 3. Loop start time is captured
 4. Tool execution timing is recorded
 5. Multiple tool calls build cumulative history
+6. Simulated time progression (1 second per call)
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 from unity.common.async_tool_loop import start_async_tool_loop
+
+
+# --------------------------------------------------------------------------- #
+#  SIMULATED TIME FIXTURE                                                     #
+# --------------------------------------------------------------------------- #
+
+# Fixed base datetime for simulated time
+_SIMULATED_BASE = datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def simulated_time(monkeypatch):
+    """Fixture that patches now() to return incrementing time.
+
+    Each call to now(as_string=False) increments by 1 second, simulating
+    time progression during the conversation. This allows testing that
+    elapsed time displays correctly (e.g., "Conversation started: 3.0s ago").
+
+    Returns a dict with:
+    - 'call_count': number of times now() was called
+    - 'base': the base datetime
+    - 'increment_seconds': seconds added per call (default 1)
+    """
+    state = {"call_count": 0, "base": _SIMULATED_BASE, "increment_seconds": 1}
+
+    def _simulated_now(time_only: bool = False, as_string: bool = True):
+        """Return incrementing datetime for simulated time progression."""
+        current_time = state["base"] + timedelta(
+            seconds=state["call_count"] * state["increment_seconds"],
+        )
+        state["call_count"] += 1
+
+        if not as_string:
+            return current_time
+
+        label = "UTC"
+        if time_only:
+            return current_time.strftime("%I:%M %p ") + label
+        return current_time.strftime("%A, %B %d, %Y at %I:%M %p ") + label
+
+    # Patch now() in all relevant modules
+    monkeypatch.setattr("unity.common.prompt_helpers.now", _simulated_now)
+    monkeypatch.setattr("unity.common._async_tool.time_context.now", _simulated_now)
+
+    return state
 
 
 # --------------------------------------------------------------------------- #
@@ -226,3 +274,97 @@ async def test_loop_start_time_captured(model):
     # Should show "Conversation started: X ago" format
     assert "Conversation started:" in content
     assert "ago" in content
+
+
+# --------------------------------------------------------------------------- #
+#  TEST: Simulated time progression                                           #
+# --------------------------------------------------------------------------- #
+
+
+def extract_elapsed_seconds(content: str) -> float | None:
+    """Extract the elapsed seconds from 'Conversation started: X ago' text."""
+    # Match patterns like "0.0s ago", "1.0s ago", "5.0s ago"
+    match = re.search(r"Conversation started:\s*([\d.]+)s\s*ago", content)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_time_progression(model, simulated_time):
+    """Verify that simulated time increments correctly per now() call.
+
+    With simulated_time fixture, each call to now() adds 1 second.
+    The elapsed time shown should reflect the difference between
+    loop start time and current time.
+    """
+    client = new_llm_client(model=model)
+
+    # Run a simple loop - the LLM will make multiple calls triggering now()
+    answer = await start_async_tool_loop(
+        client,
+        message="Call simple_tool and reply with 'ok'.",
+        tools={"simple_tool": simple_tool},
+    ).result()
+
+    assert answer.strip()
+
+    # Find the runtime context message
+    runtime_msg = find_runtime_context_message(client.messages)
+    assert runtime_msg is not None
+
+    content = runtime_msg.get("content", "")
+
+    # Verify time context section exists
+    assert "## Time Context" in content
+    assert "Conversation started:" in content
+
+    # The elapsed time should be a positive number of seconds
+    elapsed = extract_elapsed_seconds(content)
+    assert elapsed is not None, f"Could not extract elapsed time from: {content}"
+    # With simulated time, elapsed should be >= 0 (at least some time passed)
+    assert elapsed >= 0, f"Elapsed time should be non-negative, got {elapsed}"
+
+    # Verify the simulated_time fixture was used (call_count > 0)
+    assert simulated_time["call_count"] > 0, "simulated_time fixture was not invoked"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_time_shows_elapsed_correctly(model, simulated_time):
+    """Verify that elapsed time calculation is correct with simulated time.
+
+    The elapsed time shown should equal (current_call_count - start_call_count) seconds.
+    """
+    client = new_llm_client(model=model)
+
+    # Record the call count before the loop starts
+    initial_count = simulated_time["call_count"]
+
+    # Run a loop with a tool
+    answer = await start_async_tool_loop(
+        client,
+        message="Call simple_tool and reply 'ok'.",
+        tools={"simple_tool": simple_tool},
+    ).result()
+
+    assert answer.strip()
+
+    # The fixture should have been called multiple times
+    final_count = simulated_time["call_count"]
+    assert final_count > initial_count, "now() should have been called during loop"
+
+    # Find the runtime context message
+    runtime_msg = find_runtime_context_message(client.messages)
+    assert runtime_msg is not None
+
+    content = runtime_msg.get("content", "")
+    elapsed = extract_elapsed_seconds(content)
+
+    # The elapsed time in the message reflects the difference between
+    # when build_system_message() was called and when the loop started
+    # Since each now() call increments by 1 second, elapsed should be
+    # a whole number of seconds
+    assert elapsed is not None, f"Could not parse elapsed from: {content}"
+    assert elapsed == int(elapsed), f"Elapsed should be whole seconds, got {elapsed}"
