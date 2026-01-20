@@ -48,6 +48,17 @@ class EmailMessage:
     attachments: list[str] = field(default_factory=list)
 
 
+@dataclass
+class UnifyMessage:
+    """A message from the Unify console chat interface, optionally with attachments."""
+
+    name: str
+    content: str
+    timestamp: datetime
+    # List of attachment filenames (actual files are saved to Downloads/).
+    attachments: list[str] = field(default_factory=list)
+
+
 class ContactIndex:
     def __init__(self):
         self.active_conversations: dict[str, Contact] = {}
@@ -102,26 +113,30 @@ class ContactIndex:
         if contact_id not in self.active_conversations:
             self.active_conversations[contact_id] = Contact(**contact)
         contact = self.active_conversations[contact_id]
+        name = (
+            contact.full_name
+            if role == "user"
+            else "You" if role == "assistant" else role
+        )
         if thread_name == "email":
             message = EmailMessage(
-                (
-                    contact.full_name
-                    if role == "user"
-                    else "You" if role == "assistant" else role
-                ),
+                name,
                 subject,
                 body,
                 email_id,
                 timestamp,
                 attachments or [],
             )
+        elif thread_name == "unify_message":
+            message = UnifyMessage(
+                name,
+                message_content,
+                timestamp,
+                attachments or [],
+            )
         else:
             message = Message(
-                (
-                    contact.full_name
-                    if role == "user"
-                    else "You" if role == "assistant" else role
-                ),
+                name,
                 message_content,
                 timestamp,
             )

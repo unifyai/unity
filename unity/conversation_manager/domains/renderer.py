@@ -3,6 +3,7 @@ from datetime import datetime
 from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
+    UnifyMessage,
     Contact,
     ContactIndex,
 )
@@ -108,6 +109,9 @@ class Renderer:
     def render_message(self, message: Message, last_snapshot: datetime = None):
         # Mark all recent messages as NEW (both incoming and outbound)
         is_new = last_snapshot < message.timestamp
+        new_marker = "**NEW** " if is_new else ""
+        timestamp_str = message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")
+
         if isinstance(message, EmailMessage):
             attachments_line = ""
             if message.attachments:
@@ -118,14 +122,26 @@ class Renderer:
                 ]
                 attachments_line = f"Attachments: {', '.join(attachment_details)}\n"
             return (
-                f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:\n"""
+                f"{new_marker}[{message.name} @ {timestamp_str}]:\n"
                 f"Subject: {message.subject}\n"
                 f"Email ID: {message.email_id}\n"
                 f"{attachments_line}"
                 f"Body:\n"
                 f"{message.body}"
             )
-        return f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]: {message.content}"""
+
+        if isinstance(message, UnifyMessage):
+            attachments_line = ""
+            if message.attachments:
+                # Show each attachment with its auto-download path
+                attachment_details = [
+                    f"{fname} (auto-downloaded to Downloads/{fname})"
+                    for fname in message.attachments
+                ]
+                attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
+            return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}"
+
+        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"
 
     # notification stuff
     def render_notification_bar(

@@ -189,8 +189,17 @@ class SMSReceived(Event):
 
 @dataclass
 class UnifyMessageReceived(Event):
+    """A message was received via the Unify console chat interface.
+
+    Attachments are downloaded asynchronously to the Downloads folder. The
+    ``attachments`` field contains only filenames (not paths or binary data) so
+    the LLM can acknowledge them and, if needed, access them via FileManager.
+    """
+
     contact: dict
     content: str
+    # List of attachment filenames (actual files are saved to Downloads/).
+    attachments: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -32,7 +32,10 @@ from dotenv import load_dotenv
 from google.cloud import pubsub_v1
 
 from unity.settings import SETTINGS
-from unity.conversation_manager.domains.comms_utils import add_email_attachments
+from unity.conversation_manager.domains.comms_utils import (
+    add_email_attachments,
+    add_unify_message_attachments,
+)
 from unity.conversation_manager.events import *
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
@@ -350,13 +353,32 @@ class CommsManager:
                             f"falling back to boss contact (1)",
                         )
                         contact = next(c for c in contacts if c["contact_id"] == 1)
+
+                    # Extract attachment filenames for the event
+                    attachments = event.get("attachments") or []
+                    attachment_filenames = [
+                        att.get("filename") or f"attachment_{att.get('id', 'unknown')}"
+                        for att in attachments
+                    ]
+
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](
                             content=content,
                             contact=contact,
+                            attachments=attachment_filenames,
                         ).to_json(),
                     )
+
+                    # Download attachments (if any) to Downloads using async helper
+                    try:
+                        if attachments:
+                            asyncio.run_coroutine_threadsafe(
+                                add_unify_message_attachments(attachments),
+                                self.loop,
+                            )
+                    except Exception as e:
+                        print(f"Failed scheduling attachment download: {e}")
 
                 else:
                     topic = event["from_number"].strip()
