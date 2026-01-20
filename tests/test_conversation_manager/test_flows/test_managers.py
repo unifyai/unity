@@ -45,7 +45,7 @@ async def test_task_request_processed(initialized_cm):
     Test that task creation requests are processed by the LLM.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step(
         SMSReceived(
@@ -65,7 +65,7 @@ async def test_stop_request_processed(initialized_cm):
     Test that stop requests are processed by the LLM.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Start a task first
     await cm.step(
@@ -93,7 +93,7 @@ async def test_status_query_processed(initialized_cm):
     Test that status queries are processed by the LLM.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Start a task
     await cm.step(
@@ -121,7 +121,7 @@ async def test_modification_request_processed(initialized_cm):
     Test that task modification requests are processed.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Start a task
     await cm.step(
@@ -149,7 +149,7 @@ async def test_pause_request_processed(initialized_cm):
     Test that pause requests are processed by the LLM.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Start a task
     await cm.step(
@@ -177,7 +177,7 @@ async def test_resume_request_processed(initialized_cm):
     Test that resume requests are processed by the LLM.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Start a task
     await cm.step(
@@ -213,7 +213,7 @@ async def test_llm_asks_clarification_for_ambiguous_request(initialized_cm):
     rather than making assumptions. This produces an immediate SMS response.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Send an ambiguous request
     result = await cm.step(
@@ -249,7 +249,7 @@ async def test_llm_processes_clarification_response(initialized_cm):
     the LLM should process those details.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Send an ambiguous request
     await cm.step(
@@ -285,7 +285,7 @@ async def test_multi_turn_task_conversation(initialized_cm):
     Verifies that the LLM processes each turn appropriately.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Turn 1: Request a task
     result1 = await cm.step(

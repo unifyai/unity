@@ -13,6 +13,10 @@ Uses **direct handler testing** pattern (same as ContactManager tests):
 These tests use **real** state managers (ContactManager, TranscriptManager, etc.)
 with only the **Actor** being simulated (SimulatedActor) to avoid browser/computer
 environment dependencies while still testing real database-backed behavior.
+
+Parallel execution is coordinated using scenario_file_lock (same pattern as
+ContactManager tests) to prevent race conditions when multiple test processes
+try to create system contacts simultaneously.
 """
 
 from __future__ import annotations
@@ -22,29 +26,16 @@ import pytest
 
 import pytest_asyncio
 
+from tests.helpers import scenario_file_lock, get_or_create_contact
 from .cm_test_driver import CMStepDriver
 
 
 # Test contacts used across all tests
-# contact_id 0 = assistant, contact_id 1 = boss (main user)
+# NOTE: contact_id 0 (assistant) and contact_id 1 (boss/user) are system contacts
+# created automatically by ContactManager from the database. We do NOT define them
+# here to avoid conflicts. Test contacts start at contact_id 2.
 # should_respond=True allows outbound communication in tests
 TEST_CONTACTS = [
-    {
-        "contact_id": 0,
-        "first_name": "Test",
-        "surname": "Assistant",
-        "email_address": "assistant@test.com",
-        "phone_number": "+15555551234",
-        "should_respond": True,
-    },
-    {
-        "contact_id": 1,
-        "first_name": "Test",
-        "surname": "Contact",
-        "email_address": "test@contact.com",
-        "phone_number": "+15555551111",
-        "should_respond": True,
-    },
     {
         "contact_id": 2,
         "first_name": "Alice",
@@ -59,6 +50,22 @@ TEST_CONTACTS = [
         "surname": "Johnson",
         "email_address": "bob@example.com",
         "phone_number": "+15555553333",
+        "should_respond": True,
+    },
+    {
+        "contact_id": 4,
+        "first_name": "Charlie",
+        "surname": "Davis",
+        "email_address": "charlie@example.com",
+        "phone_number": "+15555554444",
+        "should_respond": True,
+    },
+    {
+        "contact_id": 5,
+        "first_name": "Diana",
+        "surname": "Evans",
+        "email_address": "diana@example.com",
+        "phone_number": "+15555555555",
         "should_respond": True,
     },
 ]
@@ -110,6 +117,10 @@ async def conversation_manager() -> CMStepDriver:
     Uses SimulatedActor explicitly for fast, deterministic testing without
     browser/computer environment dependencies.
 
+    Uses scenario_file_lock to coordinate initialization across parallel test
+    processes, preventing race conditions when ContactManager creates system
+    contacts (id=0, id=1).
+
     Returns a CMStepDriver that wraps the CM and provides step() and
     step_until_wait() methods for deterministic testing.
     """
@@ -134,13 +145,46 @@ async def conversation_manager() -> CMStepDriver:
     # (avoids HierarchicalActor's browser/computer environment setup)
     actor = SimulatedActor(steps=3, log_mode="log")
 
-    # Initialize managers DIRECTLY (not via event handler)
-    # This avoids the background task / event loop interleaving issues
-    print("⏳ Initializing managers directly...")
-    await managers_utils.init_conv_manager(cm, actor=actor)
-    print("✅ Managers initialized")
+    # Use file lock to coordinate manager initialization across parallel test processes.
+    # ContactManager.__init__ creates system contacts (assistant id=0, user id=1)
+    # via _sync_required_contacts(). This must be serialized to prevent duplicate
+    # contact creation when multiple pytest sessions start in parallel.
+    with scenario_file_lock("cm_conversation_manager"):
+        # Initialize managers DIRECTLY (not via event handler)
+        # This avoids the background task / event loop interleaving issues
+        print("⏳ Initializing managers directly...")
+        await managers_utils.init_conv_manager(cm, actor=actor)
+        print("✅ Managers initialized")
 
-    # Set test contacts on contact_index (includes should_respond=True)
+        # Fetch system contacts (contact_id 0 and 1) from ContactManager and add to local cache.
+        # ContactManager creates these during initialization, but they're only in the database.
+        # The brain.py code expects boss_contact (contact_id 1) to be in the local cache.
+        if cm.contact_manager is not None:
+            system_contact_ids = [0, 1]
+            system_contacts_data = cm.contact_manager.get_contact_info(
+                system_contact_ids,
+            )
+            for cid, contact_data in system_contacts_data.items():
+                # Mark system contacts as should_respond=True for tests
+                contact_data["should_respond"] = True
+                cm.contact_index.set_contacts([contact_data])
+            print(
+                f"✅ System contacts synced to local cache: {list(system_contacts_data.keys())}",
+            )
+
+        # Create test contacts in the database using idempotent helper.
+        # This ensures they exist with the expected contact_ids even when
+        # multiple test processes run in parallel.
+        for contact_data in TEST_CONTACTS:
+            get_or_create_contact(
+                cm.contact_manager,
+                first_name=contact_data["first_name"],
+                surname=contact_data.get("surname"),
+                email_address=contact_data.get("email_address"),
+                phone_number=contact_data.get("phone_number"),
+            )
+
+    # Set test contacts on contact_index local cache (includes should_respond=True)
     cm.contact_index.set_contacts(TEST_CONTACTS)
     print(f"✅ Test contacts set: {len(TEST_CONTACTS)}")
 
