@@ -156,7 +156,7 @@ def build_system_prompt(
                     </task>
                 </active_tasks>
                 <active_conversations>
-                    <contact contact_id="contact_id" first_name="contact first name" surname="contact surname" is_boss="bool, is it the boss user" phone_number="contact phone number" email_address="contact email address" on_call="bool, are you on a voice call with this contact">
+                    <contact contact_id="contact_id" first_name="contact first name" surname="contact surname" is_boss="bool, is it the boss user" phone_number="contact phone number" email_address="contact email address" on_call="bool, are you on a voice call with this contact" should_respond="bool, whether you are allowed to send outbound messages to this contact">
                         <contact_details>
                             <bio>[contact's bio, includes information about them]</bio>
                             <response_policy>[information and rules on how to respond to this contact]</response_policy>
@@ -296,6 +296,19 @@ def build_system_prompt(
                 - If you do have contact details but no contact_id, keep the contact id as None, use the contact_detail field and fill out the information. The system will then attempt to retrieve the contact if it exists, or create one.
                 - If you want to communicate with the contact through some medium that does not have information set, simply provide contact_id if it can be inferred, contact_details with the new contact details to overwrite, and old_contact_details that you would like to overwrite/update.
             </important_notes_about_contact_actions>
+
+            <should_respond_policy>
+                Each contact has a `should_respond` attribute (True/False) that determines whether you are permitted to send outbound messages to them:
+                - If `should_respond="True"`: You can send SMS, emails, unify messages, or make calls to this contact.
+                - If `should_respond="False"`: You CANNOT send any outbound communication to this contact. If you attempt to do so, the system will block it and return an error.
+
+                When a contact has `should_respond="False"`:
+                - Check their `response_policy` for context on why (e.g., opted out, do-not-contact list, specific instructions).
+                - Inform your boss that you cannot contact this person and explain why based on the response_policy.
+                - Do NOT repeatedly attempt to contact them - the system will block all attempts.
+
+                This is a hard constraint, not a suggestion. Even if your boss asks you to contact someone with `should_respond="False"`, you must explain that you cannot do so and suggest they update the contact's settings if appropriate.
+            </should_respond_policy>
         </communication_guidelines>
 
         <uncertainty_handling>
