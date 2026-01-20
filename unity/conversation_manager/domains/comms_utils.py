@@ -58,13 +58,21 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
             return await response.json()
 
 
-async def send_unify_message(content: str, contact_id: int = 1) -> dict:
+async def send_unify_message(
+    content: str,
+    contact_id: int = 1,
+    attachment: dict | None = None,
+) -> dict:
     """
-    Send a unify message to a contact.
+    Send a unify message to a contact, optionally with an attachment.
 
     Args:
         content: The message content to send.
         contact_id: The target contact's ID. Defaults to 1 (boss).
+        attachment: Optional attachment dict with keys:
+            - id: Unique identifier for the attachment
+            - filename: The name of the file
+            - url: Signed URL to download the file
 
     Returns:
         dict with "success" key indicating delivery status.
@@ -79,10 +87,20 @@ async def send_unify_message(content: str, contact_id: int = 1) -> dict:
     publisher = _get_publisher()
     topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
 
-    print(f"Sending unify message to contact_id={contact_id}: {content}")
+    attachment_info = (
+        f" with attachment '{attachment['filename']}'" if attachment else ""
+    )
+    print(
+        f"Sending unify message to contact_id={contact_id}{attachment_info}: {content}",
+    )
+
+    event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
+    if attachment:
+        event_data["attachments"] = [attachment]
+
     message_data = {
         "thread": "unify_message_outbound",
-        "event": {"content": content, "role": "assistant", "contact_id": contact_id},
+        "event": event_data,
     }
     try:
         # Publish with attributes
@@ -100,6 +118,59 @@ async def send_unify_message(content: str, contact_id: int = 1) -> dict:
     except Exception as e:
         print(f"Error sending unify message: {e}")
         return {"success": False, "error": str(e)}
+
+
+async def upload_unify_attachment(
+    file_content: bytes,
+    filename: str,
+    assistant_id: str | None = None,
+) -> dict:
+    """
+    Upload a file attachment for use in outbound Unify messages.
+
+    Args:
+        file_content: The raw bytes of the file to upload.
+        filename: The name of the file.
+        assistant_id: Optional assistant ID for organizing storage.
+
+    Returns:
+        dict with attachment details: {"id": str, "filename": str, "url": str}
+        or {"success": False, "error": str} on failure.
+    """
+    if assistant_id is None:
+        assistant_id = SESSION_DETAILS.assistant.id
+
+    import aiohttp
+    from io import BytesIO
+
+    comms_url = SETTINGS.conversation.COMMS_URL
+
+    print(f"Uploading unify attachment: {filename} ({len(file_content)} bytes)")
+
+    # Create form data for multipart upload
+    form_data = aiohttp.FormData()
+    form_data.add_field(
+        "file",
+        BytesIO(file_content),
+        filename=filename,
+        content_type="application/octet-stream",
+    )
+    form_data.add_field("assistant_id", assistant_id)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{comms_url}/unify/attachment",
+            headers=headers,
+            data=form_data,
+        ) as response:
+            try:
+                response.raise_for_status()
+                result = await response.json()
+                print(f"Uploaded attachment: {result}")
+                return result
+            except Exception as e:
+                print(f"Failed to upload unify attachment: {e}")
+                return {"success": False, "error": str(e)}
 
 
 async def send_email_via_address(

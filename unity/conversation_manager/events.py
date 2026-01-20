@@ -265,8 +265,16 @@ class SMSSent(Event):
 
 @dataclass
 class UnifyMessageSent(Event):
+    """A message was sent via the Unify console chat interface.
+
+    Attachments are specified by filepath and uploaded to GCS. The
+    ``attachments`` field contains only filenames (not paths) for display.
+    """
+
     contact: dict
     content: str
+    # List of attachment filenames that were sent with the message.
+    attachments: list[str] = field(default_factory=list)
 
 
 @dataclass
