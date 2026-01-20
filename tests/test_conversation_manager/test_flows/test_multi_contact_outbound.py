@@ -32,7 +32,9 @@ from unity.conversation_manager.events import (
 pytestmark = pytest.mark.eval
 
 # Convenience references to test contacts
-BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
+# Note: contact_id 0 (assistant) and 1 (user) are system contacts.
+# Test contacts start from contact_id 2.
+BOSS = TEST_CONTACTS[0]  # contact_id 2 - used as command sender
 
 
 # ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@ async def test_unify_message_two_turn_recall(initialized_cm):
     Two-turn conversation: user mentions a word, then asks assistant to recall it.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Turn 1: User mentions a unique identifier
     result1 = await cm.step_until_wait(
@@ -81,7 +81,7 @@ async def test_unify_message_three_turn_recall(initialized_cm):
     Three-turn conversation: verify context persists across multiple exchanges.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Turn 1: First piece of info
     result1 = await cm.step_until_wait(
@@ -138,7 +138,7 @@ async def test_sms_two_turn_recall(initialized_cm):
     Two-turn SMS conversation: user gives info, then asks for recall.
     """
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Turn 1: User provides info
     result1 = await cm.step_until_wait(

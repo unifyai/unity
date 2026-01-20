@@ -58,7 +58,7 @@ pytestmark = pytest.mark.eval
 async def test_sms_to_sms(initialized_cm):
     """SMS request for joke -> reply via SMS."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -79,7 +79,7 @@ async def test_sms_to_sms(initialized_cm):
 async def test_sms_to_email(initialized_cm):
     """SMS request for joke via email -> should send email (may also ack via SMS)."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -100,7 +100,7 @@ async def test_sms_to_email(initialized_cm):
 async def test_sms_to_unify_message(initialized_cm):
     """SMS request for joke via unify message -> should send unify message."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -121,7 +121,7 @@ async def test_sms_to_unify_message(initialized_cm):
 async def test_sms_to_phone_call(initialized_cm):
     """SMS request for joke via phone call -> should initiate call."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -141,7 +141,7 @@ async def test_sms_to_phone_call(initialized_cm):
 async def test_email_to_email(initialized_cm):
     """Email request for joke -> reply via email."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -165,7 +165,7 @@ async def test_email_to_email(initialized_cm):
 async def test_email_with_attachment_visible(initialized_cm):
     """Email with attachment -> assistant confirms receipt and can share download path."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Step 1: Send email with attachment
     result = await cm.step_until_wait(
@@ -223,7 +223,7 @@ async def test_email_with_attachment_visible(initialized_cm):
 async def test_email_missing_attachment_detected(initialized_cm):
     """Email asks about attachment but none attached -> assistant notes missing attachment."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -264,7 +264,7 @@ async def test_email_missing_attachment_detected(initialized_cm):
 async def test_unify_message_with_attachment_visible(initialized_cm):
     """Unify message with attachment -> assistant confirms receipt and can share download path."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     # Step 1: Send unify message with attachment
     result = await cm.step_until_wait(
@@ -318,7 +318,7 @@ async def test_unify_message_with_attachment_visible(initialized_cm):
 async def test_unify_message_missing_attachment_detected(initialized_cm):
     """Unify message asks about attachment but none attached -> assistant notes missing attachment."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(
@@ -359,7 +359,7 @@ async def test_unify_message_missing_attachment_detected(initialized_cm):
 async def test_email_to_sms(initialized_cm):
     """Email request for joke via SMS -> should send SMS."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -382,7 +382,7 @@ async def test_email_to_sms(initialized_cm):
 async def test_email_to_unify_message(initialized_cm):
     """Email request for joke via unify message -> should send unify message."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -405,7 +405,7 @@ async def test_email_to_unify_message(initialized_cm):
 async def test_email_to_phone_call(initialized_cm):
     """Email request for joke via phone call -> should initiate call."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -427,7 +427,7 @@ async def test_email_to_phone_call(initialized_cm):
 async def test_unify_message_to_unify_message(initialized_cm):
     """Unify message request for joke -> reply via unify message."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(
@@ -448,7 +448,7 @@ async def test_unify_message_to_unify_message(initialized_cm):
 async def test_unify_message_to_sms(initialized_cm):
     """Unify message request for joke via SMS -> should send SMS."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(
@@ -469,7 +469,7 @@ async def test_unify_message_to_sms(initialized_cm):
 async def test_unify_message_to_email(initialized_cm):
     """Unify message request for joke via email -> should send email."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(
@@ -490,7 +490,7 @@ async def test_unify_message_to_email(initialized_cm):
 async def test_unify_message_to_phone_call(initialized_cm):
     """Unify message request for joke via phone call -> should initiate call."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(
@@ -515,7 +515,7 @@ async def test_unify_message_to_phone_call(initialized_cm):
 async def test_phone_call(initialized_cm):
     """Basic phone call flow - just verify utterance is recorded."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(
         PhoneCallReceived(
@@ -539,7 +539,7 @@ async def test_phone_call(initialized_cm):
 async def test_phone_call_to_sms(initialized_cm):
     """During phone call, request joke via SMS -> should send SMS."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(
         PhoneCallReceived(
@@ -567,7 +567,7 @@ async def test_phone_call_to_sms(initialized_cm):
 async def test_phone_call_to_email(initialized_cm):
     """During phone call, request joke via email -> should send email."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(
         PhoneCallReceived(
@@ -595,7 +595,7 @@ async def test_phone_call_to_email(initialized_cm):
 async def test_phone_call_to_unify_message(initialized_cm):
     """During phone call, request joke via unify message -> should send unify message."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(
         PhoneCallReceived(
@@ -628,7 +628,7 @@ async def test_phone_call_to_unify_message(initialized_cm):
 async def test_unify_meet(initialized_cm):
     """Basic unify meet flow - just verify utterance is recorded."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(UnifyMeetReceived(contact=contact))
     await cm.step(UnifyMeetStarted(contact=contact))
@@ -652,7 +652,7 @@ async def test_unify_meet(initialized_cm):
 async def test_unify_meet_to_sms(initialized_cm):
     """During unify meet, request joke via SMS -> should send SMS."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(UnifyMeetReceived(contact=contact))
     await cm.step(UnifyMeetStarted(contact=contact))
@@ -675,7 +675,7 @@ async def test_unify_meet_to_sms(initialized_cm):
 async def test_unify_meet_to_email(initialized_cm):
     """During unify meet, request joke via email -> should send email."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(UnifyMeetReceived(contact=contact))
     await cm.step(UnifyMeetStarted(contact=contact))
@@ -698,7 +698,7 @@ async def test_unify_meet_to_email(initialized_cm):
 async def test_unify_meet_to_unify_message(initialized_cm):
     """During unify meet, request joke via unify message -> should send unify message."""
     cm = initialized_cm
-    contact = TEST_CONTACTS[1]
+    contact = TEST_CONTACTS[0]
 
     await cm.step(UnifyMeetReceived(contact=contact))
     await cm.step(UnifyMeetStarted(contact=contact))
