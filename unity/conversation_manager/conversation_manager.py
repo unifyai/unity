@@ -412,7 +412,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         }
 
         # Single-shot LLM call: one decision, one action
-        client = new_llm_client(SETTINGS.UNIFY_MODEL, reasoning_effort="low")
+        client = new_llm_client(SETTINGS.UNIFY_MODEL)
         client.set_system_message(system_prompt)
         messages = self._preprocess_messages(self.chat_history + [input_message])
         result = await single_shot_tool_decision(
