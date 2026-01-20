@@ -10,26 +10,28 @@ Uses **direct handler testing** pattern (same as ContactManager tests):
 - Direct state inspection
 - Works reliably with pytest-asyncio
 
-The tests use simulated implementations for all managers (ContactManager,
-TranscriptManager, TaskScheduler, etc.) to avoid connecting to real backends.
+These tests use simulated implementations for managers to ensure:
+- Fast, deterministic execution
+- No database state conflicts between parallel test sessions
+- Isolation from production data
+
+Note: Tests requiring REAL ContactManager integration (e.g., contact data
+freshness) are in tests/test_contact_manager/test_contact_index_freshness.py
 """
 
 from __future__ import annotations
 
 import os
 import pytest
-from typing import TYPE_CHECKING
 
 import pytest_asyncio
 
 from .cm_test_driver import CMStepDriver
 
-if TYPE_CHECKING:
-    pass
-
 
 # Test contacts used across all tests
-# contact_id 1 is the "boss" (main user), others are additional contacts
+# contact_id 0 = assistant, contact_id 1 = boss (main user)
+# should_respond=True allows outbound communication in tests
 TEST_CONTACTS = [
     {
         "contact_id": 0,
@@ -37,6 +39,7 @@ TEST_CONTACTS = [
         "surname": "Assistant",
         "email_address": "assistant@test.com",
         "phone_number": "+15555551234",
+        "should_respond": True,
     },
     {
         "contact_id": 1,
@@ -44,6 +47,7 @@ TEST_CONTACTS = [
         "surname": "Contact",
         "email_address": "test@contact.com",
         "phone_number": "+15555551111",
+        "should_respond": True,
     },
     {
         "contact_id": 2,
@@ -51,6 +55,7 @@ TEST_CONTACTS = [
         "surname": "Smith",
         "email_address": "alice@example.com",
         "phone_number": "+15555552222",
+        "should_respond": True,
     },
     {
         "contact_id": 3,
@@ -58,6 +63,7 @@ TEST_CONTACTS = [
         "surname": "Johnson",
         "email_address": "bob@example.com",
         "phone_number": "+15555553333",
+        "should_respond": True,
     },
 ]
 
@@ -69,7 +75,7 @@ TEST_CONTACTS = [
 
 def pytest_configure(config):
     """Configure environment variables before any tests run."""
-    # Use simulated implementations for all managers
+    # Use simulated implementations for fast, isolated testing
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_CONTACT_IMPL"] = "simulated"
     os.environ["UNITY_TRANSCRIPT_IMPL"] = "simulated"
@@ -79,7 +85,7 @@ def pytest_configure(config):
     # Steps for SimulatedActor - 3 allows for pause+resume interactions
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
 
-    # Disable optional managers that might connect to real backends
+    # Disable optional managers not needed for conversation manager tests
     os.environ["UNITY_MEMORY_ENABLED"] = "false"
     os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
     os.environ["UNITY_GUIDANCE_ENABLED"] = "false"
@@ -89,7 +95,6 @@ def pytest_configure(config):
     os.environ["UNITY_FILE_ENABLED"] = "false"
 
     # Enable incrementing timestamps for **NEW** marker comparisons
-    # This allows last_snapshot < message.timestamp to work correctly
     os.environ["UNITY_INCREMENTING_TIMESTAMPS"] = "true"
 
     # Mark as test mode
@@ -144,7 +149,7 @@ async def conversation_manager() -> CMStepDriver:
     await managers_utils.init_conv_manager(cm, actor=actor)
     print("✅ Managers initialized")
 
-    # Set test contacts directly on contact_index
+    # Set test contacts on contact_index (includes should_respond=True)
     cm.contact_index.set_contacts(TEST_CONTACTS)
     print(f"✅ Test contacts set: {len(TEST_CONTACTS)}")
 

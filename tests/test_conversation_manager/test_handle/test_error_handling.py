@@ -610,14 +610,14 @@ class TestLLMRequestEdgeCases:
 
 
 # =============================================================================
-# Contact Fallback Tests (These work with simulated ContactManager)
+# Contact Fallback Tests
 # =============================================================================
-# Note: Tests for ContactIndex data freshness with REAL ContactManager have been
-# moved to tests/test_contact_manager/test_contact_index_freshness.py
+# Note: Tests for ContactIndex data freshness are in
+# tests/test_contact_manager/test_contact_index_freshness.py
 
 
 class TestContactFallback:
-    """Tests for contact fallback behavior that work with simulated managers."""
+    """Tests for contact fallback behavior when ContactManager is unavailable."""
 
     @pytest.mark.asyncio
     async def test_contact_manager_not_set_falls_back_to_local_cache(
