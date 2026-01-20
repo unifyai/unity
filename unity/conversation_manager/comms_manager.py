@@ -35,6 +35,7 @@ from unity.settings import SETTINGS
 from unity.conversation_manager.domains.comms_utils import add_email_attachments
 from unity.conversation_manager.events import *
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.contact_manager.types.contact import UNASSIGNED
 
 load_dotenv()
 
@@ -317,7 +318,7 @@ class CommsManager:
                             payload = PreHireMessage(
                                 content=msg_content,
                                 role=role,
-                                exchange_id=0,
+                                exchange_id=UNASSIGNED,
                                 metadata={
                                     "source": "pre_hire",
                                     "assistant_id": assistant_id,

@@ -44,6 +44,7 @@ from unity.conversation_manager.events import (
     PreHireMessage,
     Ping,
 )
+from unity.contact_manager.types.contact import UNASSIGNED
 
 
 # =============================================================================
@@ -1134,6 +1135,71 @@ class TestPreHireChatLogging:
             assert isinstance(event, PreHireMessage)
             assert event.role == "user"
             assert event.content == "Hello, I need help"
+            # exchange_id should be UNASSIGNED so log_message creates a new exchange
+            assert event.exchange_id == UNASSIGNED
+
+    @pytest.mark.asyncio
+    async def test_handle_pre_hire_chats_all_messages_have_unassigned_exchange_id(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """Test that all pre-hire messages have exchange_id=UNASSIGNED.
+        
+        This is critical for the log_message caching logic:
+        - First message with UNASSIGNED creates a new exchange
+        - Subsequent messages with UNASSIGNED will use the cached exchange_id
+        """
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:managers:*")
+
+            contacts = [
+                {
+                    "contact_id": 1,
+                    "first_name": "Boss",
+                    "surname": "User",
+                    "phone_number": "+15555551111",
+                    "email_address": "boss@test.com",
+                },
+            ]
+            # Multiple messages simulating a pre-hire conversation
+            message = create_pubsub_message(
+                "log_pre_hire_chats",
+                {
+                    "assistant_id": "pre_hire_assistant",
+                    "contacts": contacts,
+                    "body": [
+                        {"role": "assistant", "msg": "Hello! I'm Ada."},
+                        {"role": "user", "msg": "Can you help me?"},
+                        {"role": "assistant", "msg": "Of course!"},
+                    ],
+                },
+            )
+
+            cm.handle_message(message)
+            await asyncio.sleep(0.2)
+
+            # Collect all pre-hire messages
+            messages_received = []
+            for _ in range(3):
+                msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+                if msg and msg["channel"] == "app:managers:input":
+                    event = Event.from_json(msg["data"])
+                    if isinstance(event, PreHireMessage):
+                        messages_received.append(event)
+
+            assert len(messages_received) == 3
+            # All messages should have exchange_id=UNASSIGNED
+            for event in messages_received:
+                assert event.exchange_id == UNASSIGNED, (
+                    f"Pre-hire message should have exchange_id=UNASSIGNED, got {event.exchange_id}"
+                )
 
     @pytest.mark.asyncio
     async def test_handle_pre_hire_chats_empty_body(

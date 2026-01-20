@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 event_broker = get_event_broker()
 
+# Cache for pre-hire exchange ID - used to group all pre-hire messages into one exchange
+_pre_hire_exchange_id: int | None = None
+
 # Thought: This entire file could actually be turned into a mixin class
 
 
@@ -169,9 +172,16 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         sender_id, receiver_ids = contact_id, [0]
 
     exchange_id = getattr(event, "exchange_id", UNASSIGNED)
-    if medium == "phone_call":
+    
+    # For pre-hire messages, reuse the cached exchange_id if available
+    # This ensures all messages from a pre-hire chat batch go into the same exchange
+    if isinstance(event, PreHireMessage):
+        if _pre_hire_exchange_id is not None:
+            exchange_id = _pre_hire_exchange_id
+        # else: stays UNASSIGNED, will create new exchange
+    elif medium == "phone_call":
         exchange_id = cm.call_manager.call_exchange_id
-    if medium == "unify_meet":
+    elif medium == "unify_meet":
         exchange_id = cm.call_manager.unify_meet_exchange_id
 
     call_utterance_timestamp = ""
@@ -201,6 +211,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
 
     # publish transcript on a separate thread
     def _publish_transcript() -> int:
+        global _pre_hire_exchange_id
         try:
             nonlocal exchange_id
             print(f"[ManagersWorker] Logging message: {event.to_dict()}")
@@ -217,6 +228,10 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
                         "content": content,
                     },
                 )
+                # Cache the exchange_id for subsequent pre-hire messages in the batch
+                if isinstance(event, PreHireMessage):
+                    _pre_hire_exchange_id = exchange_id
+                    print(f"[ManagersWorker] Cached pre-hire exchange_id: {exchange_id}")
             else:
                 metadata = getattr(event, "metadata", None)
                 cm.transcript_manager.log_messages(
