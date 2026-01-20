@@ -58,6 +58,7 @@ from .messages import (
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
+from .time_context import create_time_context, TimeContext
 
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
@@ -344,6 +345,14 @@ async def async_tool_loop_inner(
         if outer_handle_container and outer_handle_container[0] is not None:
             setattr(outer_handle_container[0], "_log_label", cfg.label)
     logger = LoopLogger(cfg, log_steps)
+
+    # ── Time context for time-awareness ──────────────────────────────────────
+    # Capture the conversation start time and track tool execution timings.
+    # Uses now() from prompt_helpers which respects SESSION_DETAILS.assistant.timezone
+    # and is monkey-patched in tests for deterministic behavior.
+    time_ctx: TimeContext = create_time_context()
+    # Will hold a reference to the time context system message dict for updates
+    _time_ctx_msg: dict | None = None
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # ── Reasoning model compatibility ────────────────────────────────────────────
@@ -550,15 +559,20 @@ async def async_tool_loop_inner(
             f"Resolve the *next* user request in light of this.",
         )
 
+    # Add time context (conversation start time, will be updated with tool timings)
+    runtime_context_parts.append(time_ctx.build_system_message())
+
     # Always append runtime context as a new system message (never mutate the original)
-    if runtime_context_parts:
-        sys_msg = {
-            "role": "system",
-            "_runtime_context": True,
-            "_ctx_header": True,  # backwards compatibility
-            "content": "\n\n".join(runtime_context_parts),
-        }
-        await _msg_dispatcher.append_msgs([sys_msg])
+    # We always have runtime_context_parts now because of time context
+    sys_msg = {
+        "role": "system",
+        "_runtime_context": True,
+        "_ctx_header": True,  # backwards compatibility
+        "_time_context": True,  # marker for time context updates
+        "content": "\n\n".join(runtime_context_parts),
+    }
+    await _msg_dispatcher.append_msgs([sys_msg])
+    _time_ctx_msg = sys_msg  # Store reference for updates after tool completions
 
     # ── 0-a+. Optional: append an initial batch of messages (list support) ──
     seeded_batch = None
@@ -622,7 +636,15 @@ async def async_tool_loop_inner(
     tools = {**tools, **(live_image_tools or {})}
 
     # Initialise loop state early so preflight backfill can schedule tasks
-    tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
+    tools_data: ToolsData = ToolsData(
+        tools,
+        client=client,
+        logger=logger,
+        time_ctx=time_ctx,
+        time_ctx_msg=_time_ctx_msg,
+    )
+    # Provide runtime_context_parts reference for time context updates
+    tools_data._runtime_context_parts = runtime_context_parts
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}

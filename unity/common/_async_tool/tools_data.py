@@ -29,10 +29,19 @@ from contextlib import suppress
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
     from .message_dispatcher import LoopMessageDispatcher
+    from .time_context import TimeContext
 
 
 class ToolsData:
-    def __init__(self, tools, *, client, logger: "LoopLogger"):
+    def __init__(
+        self,
+        tools,
+        *,
+        client,
+        logger: "LoopLogger",
+        time_ctx: "Optional[TimeContext]" = None,
+        time_ctx_msg: "Optional[dict]" = None,
+    ):
         self._client = client
         self._logger = logger
         self.normalized = normalise_tools(tools)
@@ -47,6 +56,11 @@ class ToolsData:
         self.completed_results: Dict[str, str] = {}
         # Callback for refreshing dynamic helpers when a handle is adopted
         self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
+        # Time context for tracking tool execution timings
+        self._time_ctx: Optional["TimeContext"] = time_ctx
+        self._time_ctx_msg: Optional[dict] = time_ctx_msg
+        # Runtime context parts list for updating time context (set by loop)
+        self._runtime_context_parts: Optional[list] = None
 
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
@@ -533,16 +547,40 @@ class ToolsData:
 
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
+        duration_secs = time.perf_counter() - info.scheduled_time
         if self._logger.log_steps:
             # Log EXACLY what was inserted, but redact base64 data URLs for readability
             try:
                 safe_for_logs = sanitize_tool_msg_for_logging(tool_msg)
                 self._logger.info(
                     f"{json.dumps(safe_for_logs, indent=4)}",
-                    prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
+                    prefix=f"✅  ToolCall Completed [{duration_secs:.2f}s]",
                 )
             except Exception:
                 pass
+
+        # 5️⃣  record tool timing to time context ─────────────────────────────
+        #     Update the time context system message with this tool's execution info
+        if self._time_ctx is not None:
+            try:
+                start_offset = self._time_ctx.compute_start_offset(info.scheduled_time)
+                self._time_ctx.add_tool_timing(
+                    call_id=call_id,
+                    name=name,
+                    start_offset=start_offset,
+                    duration=duration_secs,
+                )
+                # Update the time context system message content
+                if (
+                    self._time_ctx_msg is not None
+                    and self._runtime_context_parts is not None
+                ):
+                    self._time_ctx.update_system_message(
+                        self._time_ctx_msg,
+                        self._runtime_context_parts,
+                    )
+            except Exception:
+                pass  # Time context is best-effort; don't break the loop
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures.has_exceeded_failures():
