@@ -212,7 +212,8 @@ class TestHelperFunctions:
 class TestCommsManagerInit:
     """Test CommsManager initialization."""
 
-    def test_init_creates_empty_subscribers_dict(
+    @pytest.mark.asyncio
+    async def test_init_creates_empty_subscribers_dict(
         self,
         broker,
         mock_session_details,
@@ -227,7 +228,8 @@ class TestCommsManagerInit:
         assert cm.credentials is None
         assert cm.event_broker is broker
 
-    def test_init_stores_event_loop_reference(
+    @pytest.mark.asyncio
+    async def test_init_stores_event_loop_reference(
         self,
         broker,
         mock_session_details,
@@ -837,11 +839,11 @@ class TestStartupEvents:
         async with broker.pubsub() as pubsub:
             await pubsub.psubscribe("app:comms:*")
 
+            # Patch subprocess.run which is imported locally in the handler
             with patch(
-                "unity.conversation_manager.comms_manager.subprocess",
-            ) as mock_subprocess:
-                mock_subprocess.run.return_value = None
-
+                "subprocess.run",
+                return_value=None,
+            ):
                 message = create_pubsub_message(
                     "startup",
                     {
@@ -1146,7 +1148,7 @@ class TestPreHireChatLogging:
         mock_settings,
     ):
         """Test that all pre-hire messages have exchange_id=UNASSIGNED.
-        
+
         This is critical for the log_message caching logic:
         - First message with UNASSIGNED creates a new exchange
         - Subsequent messages with UNASSIGNED will use the cached exchange_id
@@ -1188,7 +1190,10 @@ class TestPreHireChatLogging:
             # Collect all pre-hire messages
             messages_received = []
             for _ in range(3):
-                msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+                msg = await pubsub.get_message(
+                    timeout=1.0,
+                    ignore_subscribe_messages=True,
+                )
                 if msg and msg["channel"] == "app:managers:input":
                     event = Event.from_json(msg["data"])
                     if isinstance(event, PreHireMessage):
@@ -1197,9 +1202,9 @@ class TestPreHireChatLogging:
             assert len(messages_received) == 3
             # All messages should have exchange_id=UNASSIGNED
             for event in messages_received:
-                assert event.exchange_id == UNASSIGNED, (
-                    f"Pre-hire message should have exchange_id=UNASSIGNED, got {event.exchange_id}"
-                )
+                assert (
+                    event.exchange_id == UNASSIGNED
+                ), f"Pre-hire message should have exchange_id=UNASSIGNED, got {event.exchange_id}"
 
     @pytest.mark.asyncio
     async def test_handle_pre_hire_chats_empty_body(
@@ -1358,6 +1363,7 @@ class TestPingMechanism:
             async def run_send_pings_briefly():
                 # Patch sleep to return immediately and change assistant ID to break loop
                 call_count = 0
+                original_sleep = asyncio.sleep
 
                 async def mock_sleep(duration):
                     nonlocal call_count
@@ -1365,7 +1371,7 @@ class TestPingMechanism:
                     if call_count >= 1:
                         # Change assistant ID to break the loop
                         mock_session_details.assistant.id = "new_assistant"
-                    await asyncio.sleep(0.01)  # Minimal sleep
+                    await original_sleep(0.01)  # Minimal sleep using original
 
                 with patch("asyncio.sleep", mock_sleep):
                     await cm.send_pings()
@@ -1390,7 +1396,8 @@ class TestPingMechanism:
 class TestSubscriptionManagement:
     """Test subscription lifecycle management."""
 
-    def test_subscribe_to_topic_stores_future(
+    @pytest.mark.asyncio
+    async def test_subscribe_to_topic_stores_future(
         self,
         broker,
         mock_session_details,
@@ -1417,7 +1424,8 @@ class TestSubscriptionManagement:
         assert "test-sub" in cm.subscribers
         assert cm.subscribers["test-sub"] is mock_future
 
-    def test_subscribe_with_credentials(
+    @pytest.mark.asyncio
+    async def test_subscribe_with_credentials(
         self,
         broker,
         mock_session_details,
