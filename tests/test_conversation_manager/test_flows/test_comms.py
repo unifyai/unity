@@ -350,6 +350,7 @@ async def test_unify_message_missing_attachment_detected(initialized_cm):
             "couldn't",
             "resend",
             "re-send",
+            "check",
         ]
     ), f"Expected reply to note missing attachment, got: {msg.content}"
 
