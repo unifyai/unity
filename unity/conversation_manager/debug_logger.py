@@ -81,8 +81,8 @@ def _resolve_windows_vm_liveview(assistant_id: str) -> str | None:
 
                 if vm_ready and desktop_url:
                     print("[Liveview] ✅ Windows VM is ready!")
-                    print(f"[Liveview] URL: {desktop_url}")
-                    return desktop_url
+                    print(f"[Liveview] URL: {desktop_url}/desktop/custom.html")
+                    return f"{desktop_url}/desktop/custom.html"
 
                 # Calculate wait time from vm_ready_at timestamp (no max clamp)
                 wait_time = _calc_wait_from_ready_at(vm_ready_at)
