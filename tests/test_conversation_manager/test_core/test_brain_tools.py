@@ -399,6 +399,92 @@ class TestSendUnifyMessageTool:
         assert "too large" in result["error"].lower()
         assert "25MB" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_send_with_attachment_success(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Successfully sends message with attachment when file exists and upload succeeds."""
+        mock_cm.contact_index.set_contacts(sample_contacts)
+
+        # Create a small test file
+        test_file = tmp_path / "test_document.pdf"
+        test_file.write_bytes(b"PDF content here")
+
+        # Mock the upload and send functions
+        with (
+            patch(
+                "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+            ) as mock_upload,
+            patch(
+                "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_unify_message",
+            ) as mock_send,
+        ):
+            # Configure mocks
+            mock_upload.return_value = {
+                "id": "test-uuid",
+                "filename": "test_document.pdf",
+                "url": "https://storage.googleapis.com/signed-url",
+            }
+            mock_send.return_value = {"success": True}
+
+            result = await brain_action_tools.send_unify_message(
+                content="Here's the document",
+                contact_id=1,
+                attachment_filepath=str(test_file),
+            )
+
+            assert result["status"] == "ok"
+
+            # Verify upload was called with correct args
+            mock_upload.assert_called_once()
+            call_args = mock_upload.call_args
+            assert call_args.kwargs["filename"] == "test_document.pdf"
+            assert b"PDF content here" in call_args.kwargs["file_content"]
+
+            # Verify send was called with the attachment
+            mock_send.assert_called_once()
+            send_args = mock_send.call_args
+            assert send_args.kwargs["content"] == "Here's the document"
+            assert send_args.kwargs["attachment"]["id"] == "test-uuid"
+            assert send_args.kwargs["attachment"]["filename"] == "test_document.pdf"
+
+    @pytest.mark.asyncio
+    async def test_returns_error_when_upload_fails(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Returns error when attachment upload fails."""
+        mock_cm.contact_index.set_contacts(sample_contacts)
+
+        # Create a small test file
+        test_file = tmp_path / "test_document.pdf"
+        test_file.write_bytes(b"PDF content")
+
+        # Mock upload to fail
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+        ) as mock_upload:
+            mock_upload.return_value = {
+                "success": False,
+                "error": "Storage service unavailable",
+            }
+
+            result = await brain_action_tools.send_unify_message(
+                content="Here's the document",
+                contact_id=1,
+                attachment_filepath=str(test_file),
+            )
+
+            assert result["status"] == "error"
+            assert "upload" in result["error"].lower()
+
 
 class TestSendEmailTool:
     """Tests for send_email tool."""
@@ -493,6 +579,48 @@ class TestSendEmailTool:
         assert result["status"] == "error"
         assert "too large" in result["error"].lower()
         assert "25MB" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_send_with_attachment_success(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Successfully sends email with attachment when file exists."""
+        mock_cm.contact_index.set_contacts(sample_contacts)
+
+        # Create a small test file
+        test_file = tmp_path / "report.pdf"
+        test_file.write_bytes(b"PDF report content")
+
+        # Mock the send function
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                contact_id=1,
+                subject="Quarterly Report",
+                body="Please find the report attached.",
+                attachment_filepath=str(test_file),
+            )
+
+            assert result["status"] == "ok"
+
+            # Verify send was called with attachment
+            mock_send.assert_called_once()
+            call_args = mock_send.call_args
+            assert call_args.kwargs["subject"] == "Quarterly Report"
+            assert call_args.kwargs["attachment"] is not None
+            assert call_args.kwargs["attachment"]["filename"] == "report.pdf"
+            # Verify base64 content
+            import base64
+
+            decoded = base64.b64decode(call_args.kwargs["attachment"]["content_base64"])
+            assert decoded == b"PDF report content"
 
 
 class TestMakeCallTool:
