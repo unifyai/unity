@@ -197,6 +197,14 @@ async def run_conversation_manager(
     asyncio.create_task(cm.wait_for_events()).add_done_callback(log_task_exc)
     asyncio.create_task(cm.check_inactivity())
 
+    # For local development (non-idle containers), trigger initialization directly.
+    # In cloud deployment, initialization is triggered by StartupEvent from CommsManager.
+    # But for local dev, the assistant ID is already set from .env, so no StartupEvent arrives.
+    # Skip this in test mode - tests initialize managers explicitly with custom actors.
+    if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID and not should_apply_mocks:
+        asyncio.create_task(managers_utils.init_conv_manager(cm))
+        asyncio.create_task(managers_utils.listen_to_operations(cm))
+
     # Start CommsManager if enabled
     should_enable_comms = (
         enable_comms_manager if enable_comms_manager is not None else not SETTINGS.TEST
