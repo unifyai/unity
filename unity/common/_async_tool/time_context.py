@@ -6,9 +6,9 @@ Time-awareness context for async tool loops.
 
 Tracks conversation start time and tool execution history, making this
 information available to the LLM via system messages. All time operations
-use the `now()` helper from `prompt_helpers` which:
-- Handles timezone conversion via SESSION_DETAILS.assistant.timezone
-- Is monkey-patched in tests for deterministic behavior
+use helpers that can be monkey-patched in tests:
+- `now()` from `prompt_helpers` for datetime (respects assistant timezone)
+- `perf_counter()` for monotonic timing (tool start offsets, durations)
 """
 
 import time as _time
@@ -17,6 +17,25 @@ from datetime import datetime
 from typing import List
 
 from ..prompt_helpers import now
+
+
+# --------------------------------------------------------------------------- #
+#  MONOTONIC TIME HELPER (monkey-patchable for tests)                         #
+# --------------------------------------------------------------------------- #
+
+
+def perf_counter() -> float:
+    """Return a monotonic time value for measuring elapsed durations.
+
+    This wraps time.perf_counter() to enable monkey-patching in tests,
+    making tool timing ("Started (relative)", "Duration") deterministic.
+
+    Returns
+    -------
+    float
+        A monotonic time value in seconds (relative to an arbitrary origin).
+    """
+    return _time.perf_counter()
 
 
 @dataclass
@@ -190,8 +209,9 @@ def create_time_context() -> TimeContext:
     Uses now(as_string=False) to get a datetime object that respects
     the assistant's timezone and is monkey-patchable in tests.
 
-    Also captures time.perf_counter() at the same moment to enable
+    Also captures perf_counter() at the same moment to enable
     computing tool start offsets from ToolCallMetadata.scheduled_time.
+    Both helpers are monkey-patchable for deterministic tests.
 
     Returns
     -------
@@ -200,5 +220,5 @@ def create_time_context() -> TimeContext:
     """
     return TimeContext(
         loop_start_time=now(as_string=False),
-        perf_counter_start=_time.perf_counter(),
+        perf_counter_start=perf_counter(),
     )

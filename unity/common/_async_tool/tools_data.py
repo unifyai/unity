@@ -2,7 +2,6 @@ import asyncio
 import inspect
 import json
 import traceback
-import time
 import dataclasses
 
 
@@ -16,6 +15,7 @@ from typing import (
     TYPE_CHECKING,
 )
 from .tools_utils import ToolCallMetadata, create_tool_call_message
+from .time_context import perf_counter
 from .messages import (
     insert_tool_message_after_assistant,
     chat_context_repr,
@@ -547,7 +547,7 @@ class ToolsData:
 
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
-        duration_secs = time.perf_counter() - info.scheduled_time
+        duration_secs = perf_counter() - info.scheduled_time
         if self._logger.log_steps:
             # Log EXACLY what was inserted, but redact base64 data URLs for readability
             try:

@@ -36,25 +36,34 @@ _SIMULATED_BASE = datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
 @pytest.fixture
 def simulated_time(monkeypatch):
-    """Fixture that patches now() to return incrementing time.
+    """Fixture that patches now() and perf_counter() for deterministic time.
 
     Each call to now(as_string=False) increments by 1 second, simulating
     time progression during the conversation. This allows testing that
     elapsed time displays correctly (e.g., "Conversation started: 3.0s ago").
 
+    Each call to perf_counter() also increments by 1 second, making tool
+    timing ("Started (relative)", "Duration") deterministic across test runs.
+
     Returns a dict with:
-    - 'call_count': number of times now() was called
+    - 'now_call_count': number of times now() was called
+    - 'perf_call_count': number of times perf_counter() was called
     - 'base': the base datetime
     - 'increment_seconds': seconds added per call (default 1)
     """
-    state = {"call_count": 0, "base": _SIMULATED_BASE, "increment_seconds": 1}
+    state = {
+        "now_call_count": 0,
+        "perf_call_count": 0,
+        "base": _SIMULATED_BASE,
+        "increment_seconds": 1,
+    }
 
     def _simulated_now(time_only: bool = False, as_string: bool = True):
         """Return incrementing datetime for simulated time progression."""
         current_time = state["base"] + timedelta(
-            seconds=state["call_count"] * state["increment_seconds"],
+            seconds=state["now_call_count"] * state["increment_seconds"],
         )
-        state["call_count"] += 1
+        state["now_call_count"] += 1
 
         if not as_string:
             return current_time
@@ -64,9 +73,29 @@ def simulated_time(monkeypatch):
             return current_time.strftime("%I:%M %p ") + label
         return current_time.strftime("%A, %B %d, %Y at %I:%M %p ") + label
 
+    def _simulated_perf_counter() -> float:
+        """Return incrementing perf_counter value for deterministic tool timing."""
+        value = state["perf_call_count"] * state["increment_seconds"]
+        state["perf_call_count"] += 1
+        return float(value)
+
     # Patch now() in all relevant modules
     monkeypatch.setattr("unity.common.prompt_helpers.now", _simulated_now)
     monkeypatch.setattr("unity.common._async_tool.time_context.now", _simulated_now)
+
+    # Patch perf_counter() for deterministic tool timing
+    monkeypatch.setattr(
+        "unity.common._async_tool.time_context.perf_counter",
+        _simulated_perf_counter,
+    )
+    monkeypatch.setattr(
+        "unity.common._async_tool.tools_utils.perf_counter",
+        _simulated_perf_counter,
+    )
+    monkeypatch.setattr(
+        "unity.common._async_tool.tools_data.perf_counter",
+        _simulated_perf_counter,
+    )
 
     return state
 
@@ -326,8 +355,9 @@ async def test_simulated_time_progression(model, simulated_time):
     # With simulated time, elapsed should be >= 0 (at least some time passed)
     assert elapsed >= 0, f"Elapsed time should be non-negative, got {elapsed}"
 
-    # Verify the simulated_time fixture was used (call_count > 0)
-    assert simulated_time["call_count"] > 0, "simulated_time fixture was not invoked"
+    # Verify the simulated_time fixture was used
+    assert simulated_time["now_call_count"] > 0, "now() was not invoked"
+    assert simulated_time["perf_call_count"] > 0, "perf_counter() was not invoked"
 
 
 @pytest.mark.asyncio
@@ -339,8 +369,9 @@ async def test_simulated_time_shows_elapsed_correctly(model, simulated_time):
     """
     client = new_llm_client(model=model)
 
-    # Record the call count before the loop starts
-    initial_count = simulated_time["call_count"]
+    # Record the call counts before the loop starts
+    initial_now_count = simulated_time["now_call_count"]
+    initial_perf_count = simulated_time["perf_call_count"]
 
     # Run a loop with a tool
     answer = await start_async_tool_loop(
@@ -351,9 +382,13 @@ async def test_simulated_time_shows_elapsed_correctly(model, simulated_time):
 
     assert answer.strip()
 
-    # The fixture should have been called multiple times
-    final_count = simulated_time["call_count"]
-    assert final_count > initial_count, "now() should have been called during loop"
+    # The fixtures should have been called multiple times
+    assert (
+        simulated_time["now_call_count"] > initial_now_count
+    ), "now() should have been called during loop"
+    assert (
+        simulated_time["perf_call_count"] > initial_perf_count
+    ), "perf_counter() should have been called during loop"
 
     # Find the runtime context message
     runtime_msg = find_runtime_context_message(client.messages)

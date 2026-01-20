@@ -1,8 +1,9 @@
 from typing import TypedDict, Literal
 from dataclasses import dataclass, field
 import asyncio
-import time
 from typing import Any
+
+from .time_context import perf_counter
 
 
 @dataclass
@@ -27,7 +28,8 @@ class ToolCallMetadata:
     # Optional notification stream emitted by tools; payload is a dict with arbitrary fields
     notification_queue: asyncio.Queue[dict] | None = None
     pause_event: asyncio.Event | None = None
-    scheduled_time: float = field(default_factory=time.perf_counter)
+    # Monotonic time when tool was scheduled (uses perf_counter for monkey-patchability)
+    scheduled_time: float = field(default_factory=perf_counter)
 
 
 class ToolCallMessage(TypedDict):
