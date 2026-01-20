@@ -728,7 +728,7 @@ class TestRegressionBaseline:
         assert "send_email" in tools
         assert "make_call" in tools
         assert "send_unify_message" in tools
-        assert "start_task" in tools
+        assert "act" in tools
         assert "wait" in tools
 
     def test_call_manager_cleanup_method_exists(self):
