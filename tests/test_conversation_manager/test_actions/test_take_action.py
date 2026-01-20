@@ -26,6 +26,7 @@ from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.events import (
     SMSReceived,
     EmailReceived,
+    UnifyMessageReceived,
     ActorHandleStarted,
 )
 
@@ -545,7 +546,7 @@ async def test_research_request_triggers_act(initialized_cm):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_summarize_attachment_triggers_act_with_filepath(initialized_cm):
+async def test_email_summarize_attachment_triggers_act_with_filepath(initialized_cm):
     """
     Email with attachment + request to summarize -> act should include filepath.
 
@@ -564,6 +565,53 @@ async def test_summarize_attachment_triggers_act_with_filepath(initialized_cm):
             subject="Q3 Report",
             body="Please summarize this PDF for me.",
             email_id="test_summarize_attachment",
+            attachments=["quarterly_report.pdf"],
+        ),
+    )
+
+    # First verify that act was triggered
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Summarize attachment request should trigger act",
+        cm=cm,
+    )
+
+    # Now verify the act query includes the filepath
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
+    assert len(actor_events) >= 1, "Expected at least one ActorHandleStarted event"
+
+    # The query sent to act should include the download path
+    act_query = actor_events[0].query.lower()
+    assert "downloads" in act_query and "quarterly_report.pdf" in act_query, (
+        f"Expected act query to include filepath 'Downloads/quarterly_report.pdf', "
+        f"got query: {actor_events[0].query}"
+    )
+
+    assert_efficient(result)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_unify_message_summarize_attachment_triggers_act_with_filepath(
+    initialized_cm,
+):
+    """
+    Unify message with attachment + request to summarize -> act should include filepath.
+
+    Natural scenario: Boss sends a document via Unify console and asks the assistant
+    to summarize it. The assistant should call `act` with the filepath of the
+    auto-downloaded attachment so the Actor can access and process the file.
+
+    The rendered message shows: "[Attachments: report.pdf (auto-downloaded to Downloads/report.pdf)]"
+    so the LLM should know the file location and include it in the act query.
+    """
+    cm = initialized_cm
+
+    result = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content="Please summarize this PDF for me.",
             attachments=["quarterly_report.pdf"],
         ),
     )
