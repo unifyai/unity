@@ -300,6 +300,8 @@ class SimulatedWebSearcher(BaseWebSearcher):
         description: str = "simulate sensible web research answers",
         *,
         log_events: bool = False,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
         self._description = description
         self._log_events = log_events

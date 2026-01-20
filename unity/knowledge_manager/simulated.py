@@ -329,6 +329,8 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
         self._description = description
         self._log_events = log_events

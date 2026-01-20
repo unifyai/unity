@@ -370,6 +370,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         actor_factory: Optional[Callable[..., Any]] = None,
         actor_steps: Optional[int] = None,
         actor_duration: Optional[float] = None,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
         self._description = description
         self._log_events = log_events
