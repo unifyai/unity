@@ -131,14 +131,14 @@ class Renderer:
             )
 
         if isinstance(message, UnifyMessage):
-            attachments_line = ""
             if message.attachments:
-                # Show each attachment with its auto-download path
                 attachment_details = [
                     f"{fname} (auto-downloaded to Downloads/{fname})"
                     for fname in message.attachments
                 ]
                 attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
+            else:
+                attachments_line = ""
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}"
 
         return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"
