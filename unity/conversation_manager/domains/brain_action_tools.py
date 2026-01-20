@@ -257,9 +257,11 @@ class ConversationManagerBrainActionTools:
         *,
         content: str,
         contact_id: int,
+        attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
         """
-        Send a Unify message to a contact via the Unify platform (in-app messaging).
+        Send a Unify message to a contact via the Unify platform (in-app messaging),
+        optionally with a file attachment.
 
         Use this for contacts who communicate through the Unify app rather than
         SMS/email/phone. Check the contact's available communication channels
@@ -268,7 +270,10 @@ class ConversationManagerBrainActionTools:
         Args:
             content: Message content to send.
             contact_id: Target contact_id from active conversations.
+            attachment_filepath: Optional filepath to attach (e.g., "Downloads/report.pdf").
         """
+        import os
+
         contact = self._cm.contact_index.get_contact(contact_id=contact_id)
 
         # Check if outbound communication is allowed for this contact
@@ -282,13 +287,83 @@ class ConversationManagerBrainActionTools:
                 )
                 return {"status": "error", "error": outbound_error}
 
+        # Handle attachment if provided
+        attachment = None
+        attachment_filename = None
+        if attachment_filepath:
+            try:
+                from unity.file_manager.filesystem_adapters.local_adapter import (
+                    LocalFileSystemAdapter,
+                )
+
+                adapter = LocalFileSystemAdapter()
+                # Get the file reference to verify it exists
+                file_ref = adapter.get_file(attachment_filepath)
+                # Read the file contents using the resolved path
+                abs_path = adapter._abspath(attachment_filepath)
+                with open(abs_path, "rb") as f:
+                    file_contents = f.read()
+
+                # Check file size (max 25MB)
+                max_size_mb = 25
+                file_size_mb = len(file_contents) / (1024 * 1024)
+                if file_size_mb > max_size_mb:
+                    error_msg = f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit"
+                    event = Error(error_msg)
+                    await self._event_broker.publish(
+                        "app:comms:unify_message_sent",
+                        event.to_json(),
+                    )
+                    return {"status": "error", "error": error_msg}
+
+                attachment_filename = os.path.basename(attachment_filepath)
+
+                # Upload the attachment to get a signed URL
+                upload_result = await comms_utils.upload_unify_attachment(
+                    file_content=file_contents,
+                    filename=attachment_filename,
+                )
+
+                if "error" in upload_result:
+                    error_msg = f"Failed to upload attachment: {upload_result['error']}"
+                    event = Error(error_msg)
+                    await self._event_broker.publish(
+                        "app:comms:unify_message_sent",
+                        event.to_json(),
+                    )
+                    return {"status": "error", "error": error_msg}
+
+                attachment = upload_result
+
+            except FileNotFoundError:
+                error_msg = f"File not found: {attachment_filepath}"
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:unify_message_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
+            except Exception as e:
+                error_msg = f"Failed to read file: {e}"
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:unify_message_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
+
         response = await comms_utils.send_unify_message(
             content=content,
             contact_id=contact_id,
+            attachment=attachment,
         )
         if response["success"]:
             contact = self._cm.contact_index.get_contact(contact_id=contact_id)
-            event = UnifyMessageSent(contact=contact, content=content)
+            event = UnifyMessageSent(
+                contact=contact,
+                content=content,
+                attachments=[attachment_filename] if attachment_filename else [],
+            )
         else:
             event = Error("Failed to send unify message")
         await self._event_broker.publish(

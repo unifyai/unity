@@ -138,14 +138,21 @@ class Renderer:
             )
 
         if isinstance(message, UnifyMessage):
+            attachments_line = ""
             if message.attachments:
-                attachment_details = [
-                    f"{fname} (auto-downloaded to Downloads/{fname})"
-                    for fname in message.attachments
-                ]
+                # Differentiate between inbound (auto-downloaded) and outbound (sent) attachments
+                if message.name == "You":
+                    # Outbound - we sent the attachment
+                    attachment_details = [
+                        f"{fname} (attached)" for fname in message.attachments
+                    ]
+                else:
+                    # Inbound - show auto-download path
+                    attachment_details = [
+                        f"{fname} (auto-downloaded to Downloads/{fname})"
+                        for fname in message.attachments
+                    ]
                 attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
-            else:
-                attachments_line = ""
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}"
 
         return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"

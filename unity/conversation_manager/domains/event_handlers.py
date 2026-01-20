@@ -331,6 +331,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         case UnifyMessageSent():
             thread = "unify_message"
             message_content = event.content
+            attachments = event.attachments
             notif_content = f"Unify message sent to {contact['first_name']}"
             role = "assistant"
         case UnifyMessageReceived():

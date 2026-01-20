@@ -350,6 +350,55 @@ class TestSendUnifyMessageTool:
         assert brain_action_tools.send_unify_message.__doc__ is not None
         assert "Unify" in brain_action_tools.send_unify_message.__doc__
 
+    def test_docstring_mentions_attachment(self, brain_action_tools):
+        """Send Unify message docstring mentions attachment parameter."""
+        doc = brain_action_tools.send_unify_message.__doc__
+        assert "attachment" in doc.lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_not_found(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Returns error when attachment file not found."""
+        mock_cm.contact_index.set_contacts(sample_contacts)
+
+        result = await brain_action_tools.send_unify_message(
+            content="Here's the file",
+            contact_id=1,
+            attachment_filepath="/nonexistent/file.pdf",
+        )
+
+        assert result["status"] == "error"
+        assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_too_large(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Returns error when attachment exceeds size limit."""
+        mock_cm.contact_index.set_contacts(sample_contacts)
+
+        # Create a file larger than 25MB
+        large_file = tmp_path / "large_file.bin"
+        large_file.write_bytes(b"x" * (26 * 1024 * 1024))
+
+        result = await brain_action_tools.send_unify_message(
+            content="Here's the file",
+            contact_id=1,
+            attachment_filepath=str(large_file),
+        )
+
+        assert result["status"] == "error"
+        assert "too large" in result["error"].lower()
+        assert "25MB" in result["error"]
+
 
 class TestSendEmailTool:
     """Tests for send_email tool."""
