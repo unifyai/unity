@@ -26,7 +26,7 @@ def test_json_shorthand_aliases():
         "contact_id",
         "first_name",
         "surname",
-        "respond_to",
+        "should_respond",
     ):
         assert k not in dumped, f"did not expect original key {k} in dump"
 
@@ -43,7 +43,7 @@ def test_json_shorthand_prune():
         context={"shorthand": True, "prune_empty": True},
     )
 
-    # Aliased keys present (id, first_name, respond_to)
+    # Aliased keys present (id, first_name, should_respond)
     for k in ("cid", "fn", "resp"):
         assert k in dumped, f"expected shorthand key {k} in dump"
 

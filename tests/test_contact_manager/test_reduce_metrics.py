@@ -12,9 +12,9 @@ def test_contact_reduce_param_shapes():
     cm = ContactManager()
 
     # Seed a few contacts so metrics have real data to aggregate
-    cm._create_contact(first_name="Alice", respond_to=True)
-    cm._create_contact(first_name="Bob", respond_to=False)
-    cm._create_contact(first_name="Carol", respond_to=True)
+    cm._create_contact(first_name="Alice", should_respond=True)
+    cm._create_contact(first_name="Bob", should_respond=False)
+    cm._create_contact(first_name="Carol", should_respond=True)
 
     # Single key, no grouping
     scalar = cm._reduce(metric="sum", keys="contact_id")
@@ -29,7 +29,7 @@ def test_contact_reduce_param_shapes():
     grouped_str = cm._reduce(
         metric="sum",
         keys="contact_id",
-        group_by="respond_to",
+        group_by="should_respond",
     )
     assert isinstance(grouped_str, dict)
 
@@ -37,7 +37,7 @@ def test_contact_reduce_param_shapes():
     grouped_str_multi = cm._reduce(
         metric="min",
         keys=["contact_id"],
-        group_by="respond_to",
+        group_by="should_respond",
     )
     assert isinstance(grouped_str_multi, dict)
 
@@ -45,7 +45,7 @@ def test_contact_reduce_param_shapes():
     grouped_list = cm._reduce(
         metric="sum",
         keys="contact_id",
-        group_by=["respond_to", "contact_id"],
+        group_by=["should_respond", "contact_id"],
     )
     assert isinstance(grouped_list, dict)
 
@@ -53,7 +53,7 @@ def test_contact_reduce_param_shapes():
     grouped_list_multi = cm._reduce(
         metric="mean",
         keys=["contact_id"],
-        group_by=["respond_to", "contact_id"],
+        group_by=["should_respond", "contact_id"],
     )
     assert isinstance(grouped_list_multi, dict)
 

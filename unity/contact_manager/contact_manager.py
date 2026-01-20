@@ -509,9 +509,9 @@ class ContactManager(BaseContactManager):
             :py:meth:`filter_contacts`. When a string, the expression is applied
             uniformly; when a dict, each key maps to its own filter expression.
         group_by : str | list[str] | None, default None
-            Optional contact field(s) to group by, for example ``\"respond_to\"``
+            Optional contact field(s) to group by, for example ``\"should_respond\"``
             or a segmenting custom column. Use a single column name for one
-            grouping level, or a list such as ``[\"respond_to\", \"contact_id\"]``
+            grouping level, or a list such as ``[\"should_respond\", \"contact_id\"]``
             to group hierarchically in that order. When provided, the result
             becomes a nested mapping keyed by group values, mirroring
             :func:`unify.get_logs_metric` behaviour.
@@ -654,7 +654,7 @@ class ContactManager(BaseContactManager):
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        respond_to: bool = False,
+        should_respond: bool = False,
         response_policy: Optional[str] = None,
         **kwargs: Any,
     ) -> ToolOutcome:
@@ -681,7 +681,7 @@ class ContactManager(BaseContactManager):
             IANA Timezone identifier (e.g. "America/New_York"). Optional.
         rolling_summary : str | None
             Internal running summary of recent activity for this contact. Optional.
-        respond_to : bool, default False
+        should_respond : bool, default False
             Whether the assistant should reply to this contact by default when
             communicating in user‑facing experiences.
         response_policy : str | None
@@ -731,7 +731,7 @@ class ContactManager(BaseContactManager):
             bio=bio,
             timezone=timezone,
             rolling_summary=rolling_summary,
-            respond_to=respond_to,
+            should_respond=should_respond,
             response_policy=response_policy,
             **kwargs,
         )
@@ -747,7 +747,7 @@ class ContactManager(BaseContactManager):
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        respond_to: Optional[bool] = None,
+        should_respond: Optional[bool] = None,
         response_policy: Optional[str] = None,
         _log_id: Optional[int] = None,
         **kwargs: Any,
@@ -777,7 +777,7 @@ class ContactManager(BaseContactManager):
             IANA Timezone identifier.
         rolling_summary : str | None
             Updated rolling activity summary (internal).
-        respond_to : bool | None
+        should_respond : bool | None
             Whether the assistant should reply to this contact by default. Omit to leave
             unchanged.
         response_policy : str | None
@@ -819,7 +819,7 @@ class ContactManager(BaseContactManager):
             bio=bio,
             timezone=timezone,
             rolling_summary=rolling_summary,
-            respond_to=respond_to,
+            should_respond=should_respond,
             response_policy=response_policy,
             _log_id=_log_id,
             **kwargs,

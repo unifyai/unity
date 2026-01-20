@@ -135,7 +135,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
     if selected is not None:
         a = selected
         base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
-        base_fields["respond_to"] = True
+        base_fields["should_respond"] = True
         base_fields["response_policy"] = ""
         base_fields["is_system"] = True
         base_fields.update(
@@ -151,7 +151,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
         )
     else:
         base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
-        base_fields["respond_to"] = True
+        base_fields["should_respond"] = True
         base_fields["response_policy"] = ""
         base_fields["is_system"] = True
         base_fields.update(
@@ -230,7 +230,7 @@ def provision_user_contact(self, user_log) -> None:
         for fld in self._BUILTIN_FIELDS
         if fld not in {"contact_id", "rolling_summary"}
     }
-    base_fields["respond_to"] = True
+    base_fields["should_respond"] = True
     base_fields["is_system"] = True
     base_fields.update(
         {
@@ -433,7 +433,7 @@ def provision_org_member_contacts(self) -> None:
                     bio=member.get("bio"),
                     timezone=member.get("timezone") or "UTC",
                     is_system=True,
-                    respond_to=True,
+                    should_respond=True,
                     response_policy="",
                 )
         except Exception:

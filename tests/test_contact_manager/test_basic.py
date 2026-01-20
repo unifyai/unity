@@ -29,7 +29,7 @@ def test_create():
     assert contact.email_address is None
     assert contact.phone_number is None
     assert contact.rolling_summary is None
-    assert contact.respond_to is False
+    assert contact.should_respond is False
     assert contact.timezone is None
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
@@ -70,7 +70,7 @@ def test_update():
     contact = user_contacts[0]
     assert contact.first_name == "Daniel"
     assert contact.bio == "He's alright"
-    assert contact.respond_to is False
+    assert contact.should_respond is False
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
@@ -115,7 +115,7 @@ def test_create_multiple():
     assert tom_contact.phone_number is None
     assert tom_contact.bio is None
     assert tom_contact.rolling_summary is None
-    assert tom_contact.respond_to is False
+    assert tom_contact.should_respond is False
     assert tom_contact.timezone is None
 
     assert tom_contact.response_policy == custom_policy
@@ -167,25 +167,25 @@ def test_timezone():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-#  System contacts respond_to defaults                              #
+#  System contacts should_respond defaults                              #
 # ────────────────────────────────────────────────────────────────────────────
 
 
 @_handle_project
-def test_system_respond_to():
-    """Assistant (id 0) and default user (id 1) should have respond_to == True."""
+def test_system_should_respond():
+    """Assistant (id 0) and default user (id 1) should have should_respond == True."""
     cm = ContactManager()
 
     assistant = cm.filter_contacts(filter="contact_id == 0")["contacts"]
     assert assistant, "Assistant contact (id 0) must exist"
     assert (
-        assistant[0].respond_to is True
-    ), "Assistant should default to respond_to=True"
+        assistant[0].should_respond is True
+    ), "Assistant should default to should_respond=True"
     assert assistant[0].response_policy == ""
 
     user = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert user, "Default user contact (id 1) must exist"
-    assert user[0].respond_to is True, "User should default to respond_to=True"
+    assert user[0].should_respond is True, "User should default to should_respond=True"
 
     assert user[0].response_policy == ContactManager.USER_MANAGER_RESPONSE_POLICY
 
@@ -213,8 +213,8 @@ def test_clear():
     assistants = cm.filter_contacts(filter="contact_id == 0")["contacts"]
     users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
     assert assistants and users
-    assert assistants[0].respond_to is True
-    assert users[0].respond_to is True
+    assert assistants[0].should_respond is True
+    assert users[0].should_respond is True
 
     # All prior user contacts should be gone
     remaining_1 = cm.filter_contacts(filter=f"contact_id == {id1}")["contacts"]

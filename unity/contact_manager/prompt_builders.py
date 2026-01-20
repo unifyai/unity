@@ -279,11 +279,11 @@ Realistic find-then-update flows
   2 Update the returned id:
     `{update_fname}(contact_id=<id>, response_policy="Share design updates weekly")`
 
-• Mark respond_to=True for the contact who is a footballer and recently wrapped up a kickoff call
+• Mark should_respond=True for the contact who is a footballer and recently wrapped up a kickoff call
   1 Ask a freeform question (no instructions about how to answer):
     `{ask_fname}(text="Which footballer wrapped up a kickoff call last week?")`
   2 Update the returned id:
-    `{update_fname}(contact_id=<id>, respond_to=True)`
+    `{update_fname}(contact_id=<id>, should_respond=True)`
 
 • Query may span multiple freeform fields (derived expression)
   1 Build a composite expression across `bio`, `rolling_summary`, and a custom field like `occupation`:

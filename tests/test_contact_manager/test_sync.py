@@ -170,7 +170,7 @@ def test_org_members_provisioned_as_system_contacts(monkeypatch):
     assert alice.first_name == "Alice"
     assert alice.surname == "Johnson"
     assert alice.is_system is True, "Org member should have is_system=True"
-    assert alice.respond_to is True, "Org member should have respond_to=True"
+    assert alice.should_respond is True, "Org member should have should_respond=True"
     assert alice.response_policy == "", "Org member should have blank response_policy"
 
     # Find Bob (single name case)

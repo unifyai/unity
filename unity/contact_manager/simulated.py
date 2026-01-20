@@ -765,7 +765,7 @@ class SimulatedContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        respond_to: bool = False,
+        should_respond: bool = False,
         response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> "ToolOutcome":
@@ -785,16 +785,16 @@ class SimulatedContactManager(BaseContactManager):
                 "phone_number": phone_number,
                 "bio": bio,
                 "rolling_summary": rolling_summary,
-                "respond_to": respond_to,
+                "should_respond": should_respond,
                 "response_policy": response_policy,
                 **(custom_fields or {}),
             }.items()
             if v is not None and v != {}
         }
 
-        # Always include respond_to explicitly (boolean) for clarity
-        if "respond_to" not in payload_fields:
-            payload_fields["respond_to"] = respond_to
+        # Always include should_respond explicitly (boolean) for clarity
+        if "should_respond" not in payload_fields:
+            payload_fields["should_respond"] = should_respond
 
         instruction = (
             "You are simulating the private helper `_create_contact` of a CRM. "
