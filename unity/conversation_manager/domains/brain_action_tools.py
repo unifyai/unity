@@ -33,6 +33,23 @@ if TYPE_CHECKING:
 _next_handle_id = 0
 
 
+def _get_contact_display_name(contact: dict) -> str:
+    """Get a display name for a contact for error messages.
+
+    Args:
+        contact: The contact dict.
+
+    Returns:
+        A human-readable name or identifier for the contact.
+    """
+    contact_name = contact.get("first_name", "")
+    if contact.get("surname"):
+        contact_name = f"{contact_name} {contact.get('surname')}".strip()
+    if not contact_name:
+        contact_name = f"contact_id={contact.get('contact_id', 'unknown')}"
+    return contact_name
+
+
 def _check_outbound_allowed(contact: dict) -> str | None:
     """Check if outbound communication is allowed for a contact.
 
@@ -44,17 +61,41 @@ def _check_outbound_allowed(contact: dict) -> str | None:
     """
     should_respond = contact.get("should_respond", False)
     if not should_respond:
-        contact_name = contact.get("first_name", "")
-        if contact.get("surname"):
-            contact_name = f"{contact_name} {contact.get('surname')}".strip()
-        if not contact_name:
-            contact_name = f"contact_id={contact.get('contact_id', 'unknown')}"
+        contact_name = _get_contact_display_name(contact)
         return (
             f"Cannot send outbound communication to {contact_name}: "
             f"should_respond is False for this contact. "
             f"This contact's response policy may not permit outbound messages, "
             f"or they have been marked as do-not-contact. "
             f"Check the contact's response_policy for details or ask your boss for guidance."
+        )
+    return None
+
+
+def _check_contact_has_address(
+    contact: dict,
+    address_field: str,
+    communication_type: str,
+) -> str | None:
+    """Check if a contact has the required address for a communication type.
+
+    Args:
+        contact: The contact dict to check.
+        address_field: The field name to check (e.g., "email_address", "phone_number").
+        communication_type: Human-readable type (e.g., "email", "SMS", "phone call").
+
+    Returns:
+        None if the contact has the address, or an error message explaining they don't.
+    """
+    address = contact.get(address_field)
+    if not address:
+        contact_name = _get_contact_display_name(contact)
+        field_display = address_field.replace("_", " ")
+        return (
+            f"Cannot send {communication_type} to {contact_name}: "
+            f"this contact does not have an {field_display} on file. "
+            f"Try using a different communication channel, or ask your boss "
+            f"for the contact's {field_display}."
         )
     return None
 
@@ -186,6 +227,13 @@ class ConversationManagerBrainActionTools:
             await self._event_broker.publish("app:comms:sms_sent", event.to_json())
             return {"status": "error", "error": outbound_error}
 
+        # Check if contact has a phone number
+        address_error = _check_contact_has_address(contact, "phone_number", "SMS")
+        if address_error:
+            event = Error(address_error)
+            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
+            return {"status": "error", "error": address_error}
+
         to_number = contact.get("phone_number")
         response = await comms_utils.send_sms_message_via_number(
             to_number=to_number,
@@ -279,6 +327,13 @@ class ConversationManagerBrainActionTools:
             await self._event_broker.publish("app:comms:email_sent", event.to_json())
             return {"status": "error", "error": outbound_error}
 
+        # Check if contact has an email address
+        address_error = _check_contact_has_address(contact, "email_address", "email")
+        if address_error:
+            event = Error(address_error)
+            await self._event_broker.publish("app:comms:email_sent", event.to_json())
+            return {"status": "error", "error": address_error}
+
         to_email = contact.get("email_address")
 
         # Prefer the most recent inbound email's Message-ID for this contact+subject,
@@ -363,6 +418,17 @@ class ConversationManagerBrainActionTools:
             event = Error(outbound_error)
             await self._event_broker.publish("app:comms:make_call", event.to_json())
             return {"status": "error", "error": outbound_error}
+
+        # Check if contact has a phone number
+        address_error = _check_contact_has_address(
+            contact,
+            "phone_number",
+            "phone call",
+        )
+        if address_error:
+            event = Error(address_error)
+            await self._event_broker.publish("app:comms:make_call", event.to_json())
+            return {"status": "error", "error": address_error}
 
         to_number = contact.get("phone_number")
         response = await comms_utils.start_call(to_number=to_number)
