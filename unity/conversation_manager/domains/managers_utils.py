@@ -383,19 +383,9 @@ def _init_managers(
     # 2. Initialize ContactManager (respects SETTINGS.contact.IMPL)
     print("[ManagersWorker] Initializing ContactManager...")
     local_start_time = perf_counter()
-    try:
-        cm.contact_manager = ManagerRegistry.get_contact_manager(
-            description="production deployment",
-        )
-    except Exception as e:
-        print(
-            f"[ManagersWorker] ERROR during ContactManager initialization: "
-            f"{type(e).__name__}: {e}"
-        )
-        import traceback
-
-        traceback.print_exc()
-        raise
+    cm.contact_manager = ManagerRegistry.get_contact_manager(
+        description="production deployment",
+    )
     # Wire up ContactManager to ContactIndex for always-fresh contact data
     cm.contact_index.set_contact_manager(cm.contact_manager)
     print(

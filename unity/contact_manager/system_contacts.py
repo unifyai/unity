@@ -201,29 +201,19 @@ def provision_assistant_contact(self, assistant_log) -> None:
 
     # Insert the assistant row. Use try-except to handle race conditions where
     # another process creates the contact concurrently.
-    print("[provision_assistant_contact] Creating assistant contact (id=0)...")
     try:
         self._create_contact(**base_fields)
-        print("[provision_assistant_contact] Successfully created assistant contact")
     except ValueError as e:
-        print(f"[provision_assistant_contact] ValueError: {e}")
         if "unique fields" in str(e):
             # Another process created the contact concurrently – that's fine
-            print("[provision_assistant_contact] Ignoring - contact already exists")
             pass
         else:
             raise
     except RequestError as e:
-        status = e.response.status_code if e.response is not None else None
-        print(
-            f"[provision_assistant_contact] RequestError: status={status}, message={e}"
-        )
         # Backend returned 500 due to DB-level race condition – contact exists
         if e.response is not None and e.response.status_code == 500:
-            print("[provision_assistant_contact] Ignoring 500 - contact already exists")
             pass
         else:
-            print("[provision_assistant_contact] Re-raising error")
             raise
 
 
@@ -305,27 +295,19 @@ def provision_user_contact(self, user_log) -> None:
 
     # Insert the user row. Use try-except to handle race conditions where
     # another process creates the contact concurrently.
-    print("[provision_user_contact] Creating user contact (id=1)...")
     try:
         self._create_contact(**{k: v for k, v in base_fields.items() if v is not None})
-        print("[provision_user_contact] Successfully created user contact")
     except ValueError as e:
-        print(f"[provision_user_contact] ValueError: {e}")
         if "unique fields" in str(e):
             # Another process created the contact concurrently – that's fine
-            print("[provision_user_contact] Ignoring - contact already exists")
             pass
         else:
             raise
     except RequestError as e:
-        status = e.response.status_code if e.response is not None else None
-        print(f"[provision_user_contact] RequestError: status={status}, message={e}")
         # Backend returned 500 due to DB-level race condition – contact exists
         if e.response is not None and e.response.status_code == 500:
-            print("[provision_user_contact] Ignoring 500 - contact already exists")
             pass
         else:
-            print("[provision_user_contact] Re-raising error")
             raise
 
 
