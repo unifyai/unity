@@ -767,7 +767,7 @@ class SimulatedContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        should_respond: bool = False,
+        should_respond: bool = True,
         response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> "ToolOutcome":
