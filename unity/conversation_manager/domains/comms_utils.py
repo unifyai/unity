@@ -227,3 +227,51 @@ async def add_email_attachments(
                 )
             except Exception as e:
                 print(f"Failed to fetch/write attachment '{att}': {e}")
+
+
+async def add_unify_message_attachments(
+    attachments: list[dict[str, str]],
+) -> None:
+    """
+    Download attachments from Unify console messages and save to Downloads folder.
+
+    Each attachment item should be of the form: {"id": str, "filename": str, "url": str}
+    where url points to the downloadable file content.
+    """
+    if not attachments:
+        return
+
+    print("Saving unify message attachments...")
+    async with aiohttp.ClientSession() as session:
+        for att in attachments:
+            try:
+                att_id = att.get("id", "")
+                raw_filename = att.get("filename") or f"attachment_{att_id}"
+                # very basic filename sanitization
+                safe_filename = os.path.basename(raw_filename)
+
+                # Download from the provided URL
+                url = att.get("url")
+                if url:
+                    async with session.get(url, headers=headers) as resp:
+                        data = await resp.read()
+                else:
+                    # No URL provided - use empty placeholder
+                    data = b""
+
+                from unity.file_manager.managers.local import (
+                    LocalFileManager as FileManager,
+                )
+
+                file_manager = FileManager()
+                await asyncio.to_thread(
+                    file_manager.save_file_to_downloads,
+                    safe_filename,
+                    data,
+                )
+
+                print(
+                    f"Downloaded unify attachment {safe_filename} (size={len(data)} bytes)",
+                )
+            except Exception as e:
+                print(f"Failed to fetch/write unify attachment '{att}': {e}")
