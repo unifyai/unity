@@ -511,7 +511,6 @@ class TestVoiceCallFlowIntegration:
             "contact_id": 1,
             "first_name": "Test",
             "surname": "Boss",
-            "is_boss": True,
             "phone_number": "+15555555678",
             "email_address": "boss@test.com",
         }

@@ -68,7 +68,6 @@ def boss_contact():
         "contact_id": 1,
         "first_name": "Test",
         "surname": "Boss",
-        "is_boss": True,
         "phone_number": "+15555555555",
         "email_address": "boss@test.com",
     }
@@ -81,7 +80,6 @@ def external_contact():
         "contact_id": 2,
         "first_name": "External",
         "surname": "Contact",
-        "is_boss": False,
         "phone_number": "+15555555556",
         "email_address": "contact@test.com",
     }
