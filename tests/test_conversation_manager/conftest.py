@@ -10,13 +10,9 @@ Uses **direct handler testing** pattern (same as ContactManager tests):
 - Direct state inspection
 - Works reliably with pytest-asyncio
 
-These tests use simulated implementations for managers to ensure:
-- Fast, deterministic execution
-- No database state conflicts between parallel test sessions
-- Isolation from production data
-
-Note: Tests requiring REAL ContactManager integration (e.g., contact data
-freshness) are in tests/test_contact_manager/test_contact_index_freshness.py
+These tests use **real** state managers (ContactManager, TranscriptManager, etc.)
+with only the **Actor** being simulated (SimulatedActor) to avoid browser/computer
+environment dependencies while still testing real database-backed behavior.
 """
 
 from __future__ import annotations
@@ -75,15 +71,10 @@ TEST_CONTACTS = [
 
 def pytest_configure(config):
     """Configure environment variables before any tests run."""
-    # Use simulated implementations for fast, isolated testing
+    # Only Actor is simulated - all other state managers use real implementations
+    # This avoids browser/computer environment dependencies while testing real DB behavior
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
-    os.environ["UNITY_CONTACT_IMPL"] = "simulated"
-    os.environ["UNITY_TRANSCRIPT_IMPL"] = "simulated"
-    os.environ["UNITY_TASK_IMPL"] = "simulated"
-    os.environ["UNITY_CONVERSATION_IMPL"] = "simulated"
-
-    # Steps for SimulatedActor - 3 allows for pause+resume interactions
-    os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
+    os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"  # Allows pause+resume interactions
 
     # Disable optional managers not needed for conversation manager tests
     os.environ["UNITY_MEMORY_ENABLED"] = "false"
