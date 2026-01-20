@@ -416,7 +416,6 @@ class TestRenderer:
             contact_id=1,
             first_name="John",
             surname="Doe",
-            is_boss=True,
             phone_number="+15551234567",
             email_address="john@example.com",
             bio="Test bio",

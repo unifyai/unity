@@ -197,7 +197,7 @@ async def entrypoint(ctx: JobContext) -> None:
         contact_surname=contact["surname"],
         contact_phone_number=contact["phone_number"],
         contact_email=contact["email_address"],
-        is_boss_user=contact["is_boss"],
+        is_boss_user=contact["contact_id"] == 1,
     )
     print("PRINTING SYSTEM PROMPT")
     print(system)

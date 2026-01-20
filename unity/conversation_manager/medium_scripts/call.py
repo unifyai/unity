@@ -172,7 +172,7 @@ async def entrypoint(ctx: agents.JobContext):
         contact_surname=contact.get("surname", ""),
         contact_phone_number=contact.get("phone_number", ""),
         contact_email=contact.get("email_address", ""),
-        is_boss_user=contact.get("is_boss", False),
+        is_boss_user=contact.get("contact_id") == 1,
     )
     print("PRINTING SYSTEM PROMPT")
     print(system_prompt)

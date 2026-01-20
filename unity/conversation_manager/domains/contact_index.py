@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
 
 class Contact(ContactType):
-    is_boss: bool = False
     on_call: bool = False
     global_thread: deque = Field(default_factory=lambda: deque(maxlen=50))
     threads: dict[str, deque] = Field(
@@ -70,7 +69,7 @@ class ContactIndex:
     def set_contacts(self, contacts: list[dict]):
         print(f"Setting contacts: {contacts}")
         for c in contacts:
-            self.contacts[c["contact_id"]] = Contact(**c, is_boss=c["contact_id"] == 1)
+            self.contacts[c["contact_id"]] = Contact(**c)
 
         # only retain the -1 contact if it's different from the boss contact
         c_neg1 = self.contacts.get(-1)
