@@ -111,7 +111,12 @@ class Renderer:
         if isinstance(message, EmailMessage):
             attachments_line = ""
             if message.attachments:
-                attachments_line = f"Attachments: {', '.join(message.attachments)}\n"
+                # Show each attachment with its auto-download path
+                attachment_details = [
+                    f"{fname} (auto-downloaded to Downloads/{fname})"
+                    for fname in message.attachments
+                ]
+                attachments_line = f"Attachments: {', '.join(attachment_details)}\n"
             return (
                 f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:\n"""
                 f"Subject: {message.subject}\n"

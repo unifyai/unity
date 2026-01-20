@@ -163,10 +163,11 @@ async def test_email_to_email(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_email_with_attachment_visible(initialized_cm):
-    """Email with attachment -> assistant confirms it can see the attachment."""
+    """Email with attachment -> assistant confirms receipt and can share download path."""
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
 
+    # Step 1: Send email with attachment
     result = await cm.step_until_wait(
         EmailReceived(
             contact=contact,
@@ -194,6 +195,27 @@ async def test_email_with_attachment_visible(initialized_cm):
             "pdf",
         ]
     ), f"Expected reply to confirm attachment receipt, got: {email.body}"
+
+    # Step 2: Ask about the download path
+    result2 = await cm.step_until_wait(
+        EmailReceived(
+            contact=contact,
+            subject="Re: Document for review",
+            body="Great! Did you download it? What's the file path?",
+            email_id="test_email_followup",
+            attachments=[],
+        ),
+    )
+
+    # Should reply with the file path
+    assert_has_one(result2.output_events, EmailSent)
+    email2 = filter_events_by_type(result2.output_events, EmailSent)[0]
+    body2_lower = email2.body.lower()
+    # The reply should mention the Downloads path
+    assert "downloads" in body2_lower and "quarterly_report.pdf" in body2_lower, (
+        f"Expected reply to include download path (Downloads/quarterly_report.pdf), "
+        f"got: {email2.body}"
+    )
 
 
 @pytest.mark.asyncio
