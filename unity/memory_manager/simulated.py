@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from .memory_manager import MemoryManager
 import functools
@@ -43,6 +43,9 @@ class SimulatedMemoryManager(MemoryManager):
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         config: Optional["MemoryManager.MemoryConfig"] = None,
+        # Accept but ignore parameters that real MemoryManager may use
+        loop: Any = None,
+        **kwargs: Any,
     ) -> None:
         cm = contact_manager or SimulatedContactManager(description=description)
         tm = transcript_manager or SimulatedTranscriptManager(description=description)

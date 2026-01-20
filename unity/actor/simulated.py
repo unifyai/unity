@@ -5,7 +5,7 @@ import time
 import unillm
 from .base import BaseActor, BaseActorHandle
 import functools
-from typing import Optional, Type
+from typing import Any, Optional, Type
 from pydantic import BaseModel
 from unity.manager_registry import ManagerRegistry
 from unity.constants import LOGGER
@@ -775,6 +775,9 @@ class SimulatedActor(BaseActor):
         log_mode: "str | None" = "log",
         # New: simulation-only guidance (does not alter TaskScheduler flow)
         simulation_guidance: Optional[str] = None,
+        # Accept but ignore parameters that real Actor may use
+        description: str = "",
+        **kwargs: Any,
     ) -> None:
         """
         Initialize a simulated actor.
