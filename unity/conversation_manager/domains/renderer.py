@@ -89,7 +89,7 @@ class Renderer:
             else per_medium_threads
         )
         return (
-            f"""<contact contact_id="{contact.contact_id}" first_name="{contact.first_name}" surname="{contact.surname}" is_boss="{contact.contact_id == 1}" phone_number="{contact.phone_number or ""}" email_address="{contact.email_address or ""}" on_call="{contact.on_call}">\n"""
+            f"""<contact contact_id="{contact.contact_id}" first_name="{contact.first_name}" surname="{contact.surname}" is_boss="{contact.contact_id == 1}" phone_number="{contact.phone_number or ""}" email_address="{contact.email_address or ""}" on_call="{contact.on_call}" should_respond="{contact.should_respond}">\n"""
             f"{bio}\n"
             f"{rolling_summary}\n"
             f"{response_policy}\n"

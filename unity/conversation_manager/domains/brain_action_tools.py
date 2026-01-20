@@ -33,6 +33,32 @@ if TYPE_CHECKING:
 _next_handle_id = 0
 
 
+def _check_outbound_allowed(contact: dict) -> str | None:
+    """Check if outbound communication is allowed for a contact.
+
+    Args:
+        contact: The contact dict to check.
+
+    Returns:
+        None if outbound is allowed, or an error message explaining why not.
+    """
+    should_respond = contact.get("should_respond", False)
+    if not should_respond:
+        contact_name = contact.get("first_name", "")
+        if contact.get("surname"):
+            contact_name = f"{contact_name} {contact.get('surname')}".strip()
+        if not contact_name:
+            contact_name = f"contact_id={contact.get('contact_id', 'unknown')}"
+        return (
+            f"Cannot send outbound communication to {contact_name}: "
+            f"should_respond is False for this contact. "
+            f"This contact's response policy may not permit outbound messages, "
+            f"or they have been marked as do-not-contact. "
+            f"Check the contact's response_policy for details or ask your boss for guidance."
+        )
+    return None
+
+
 async def _get_or_create_contact(
     cm: "ConversationManager",
     contact_id: int | None = None,
@@ -152,6 +178,14 @@ class ConversationManagerBrainActionTools:
             content: SMS body to send.
         """
         contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+
+        # Check if outbound communication is allowed for this contact
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            event = Error(outbound_error)
+            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
+            return {"status": "error", "error": outbound_error}
+
         to_number = contact.get("phone_number")
         response = await comms_utils.send_sms_message_via_number(
             to_number=to_number,
@@ -187,6 +221,19 @@ class ConversationManagerBrainActionTools:
             content: Message content to send.
             contact_id: Target contact_id from active conversations.
         """
+        contact = self._cm.contact_index.get_contact(contact_id=contact_id)
+
+        # Check if outbound communication is allowed for this contact
+        if contact:
+            outbound_error = _check_outbound_allowed(contact)
+            if outbound_error:
+                event = Error(outbound_error)
+                await self._event_broker.publish(
+                    "app:comms:unify_message_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": outbound_error}
+
         response = await comms_utils.send_unify_message(
             content=content,
             contact_id=contact_id,
@@ -224,6 +271,14 @@ class ConversationManagerBrainActionTools:
             email_id_to_reply_to: Optional email id to reply to for threading.
         """
         contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+
+        # Check if outbound communication is allowed for this contact
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            event = Error(outbound_error)
+            await self._event_broker.publish("app:comms:email_sent", event.to_json())
+            return {"status": "error", "error": outbound_error}
+
         to_email = contact.get("email_address")
 
         # Prefer the most recent inbound email's Message-ID for this contact+subject,
@@ -301,6 +356,14 @@ class ConversationManagerBrainActionTools:
             contact_details: Target identity details when contact_id is unknown.
         """
         contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+
+        # Check if outbound communication is allowed for this contact
+        outbound_error = _check_outbound_allowed(contact)
+        if outbound_error:
+            event = Error(outbound_error)
+            await self._event_broker.publish("app:comms:make_call", event.to_json())
+            return {"status": "error", "error": outbound_error}
+
         to_number = contact.get("phone_number")
         response = await comms_utils.start_call(to_number=to_number)
         if response["success"]:
