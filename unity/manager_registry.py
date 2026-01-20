@@ -265,9 +265,43 @@ class ManagerRegistry:
             )
         return cls._classes[key]
 
+    # Mapping from manager_key to the environment variable name for IMPL.
+    # Used to support test-time overrides since SETTINGS is frozen at import time.
+    _impl_env_vars: Dict[str, str] = {
+        "actor": "UNITY_ACTOR_IMPL",
+        "contacts": "UNITY_CONTACT_IMPL",
+        "transcripts": "UNITY_TRANSCRIPT_IMPL",
+        "tasks": "UNITY_TASK_IMPL",
+        "conversation": "UNITY_CONVERSATION_IMPL",
+        "knowledge": "UNITY_KNOWLEDGE_IMPL",
+        "guidance": "UNITY_GUIDANCE_IMPL",
+        "secrets": "UNITY_SECRET_IMPL",
+        "web_search": "UNITY_WEB_IMPL",
+        "data": "UNITY_DATA_IMPL",
+        "files": "UNITY_FILE_IMPL",
+        "functions": "UNITY_FUNCTION_IMPL",
+        "images": "UNITY_IMAGE_IMPL",
+        "memory": "UNITY_MEMORY_IMPL",
+    }
+
     @classmethod
     def _resolve_impl(cls, manager_key: str) -> str:
-        """Resolve the IMPL setting for a manager key."""
+        """Resolve the IMPL setting for a manager key.
+
+        Checks environment variables at runtime first (via SESSION_DETAILS) to
+        support test-time overrides. SETTINGS is frozen at import time, so test
+        conftests that set os.environ after import won't affect SETTINGS values.
+        """
+        from unity.session_details import SESSION_DETAILS
+
+        # First, check for runtime environment variable override
+        env_var = cls._impl_env_vars.get(manager_key)
+        if env_var:
+            env_value = SESSION_DETAILS.get_impl_setting(env_var, default="")
+            if env_value:
+                return env_value
+
+        # Fall back to SETTINGS (frozen at import time)
         settings_accessor = cls._settings_map.get(manager_key)
         if settings_accessor is None:
             raise ValueError(
