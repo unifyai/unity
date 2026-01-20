@@ -365,6 +365,11 @@ class TestSendEmailTool:
         assert brain_action_tools.send_email.__doc__ is not None
         assert "email" in brain_action_tools.send_email.__doc__.lower()
 
+    def test_docstring_mentions_attachment(self, brain_action_tools):
+        """Send email docstring mentions attachment parameter."""
+        doc = brain_action_tools.send_email.__doc__
+        assert "attachment" in doc.lower()
+
     @pytest.mark.asyncio
     async def test_returns_error_for_contact_without_email(
         self,
@@ -392,6 +397,53 @@ class TestSendEmailTool:
         assert result["status"] == "error"
         assert "does not have" in result["error"]
         assert "email" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_not_found(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Returns error when attachment file not found."""
+        mock_cm.contact_index.set_contacts(sample_contacts)
+
+        result = await brain_action_tools.send_email(
+            contact_id=1,
+            subject="Test",
+            body="Hello",
+            attachment_filepath="/nonexistent/file.pdf",
+        )
+
+        assert result["status"] == "error"
+        assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_too_large(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Returns error when attachment exceeds size limit."""
+        mock_cm.contact_index.set_contacts(sample_contacts)
+
+        # Create a file larger than 25MB (use a sparse approach for speed)
+        large_file = tmp_path / "large_file.bin"
+        # Write 26MB of data
+        large_file.write_bytes(b"x" * (26 * 1024 * 1024))
+
+        result = await brain_action_tools.send_email(
+            contact_id=1,
+            subject="Test",
+            body="Hello",
+            attachment_filepath=str(large_file),
+        )
+
+        assert result["status"] == "error"
+        assert "too large" in result["error"].lower()
+        assert "25MB" in result["error"]
 
 
 class TestMakeCallTool:
