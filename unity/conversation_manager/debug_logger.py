@@ -216,7 +216,7 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
             log.update_entries(job_name=job_name, liveview_url=liveview_url)
             print(
                 f"[debug_logger] Updated record with job_name={job_name}, "
-                f"liveview_url={liveview_url}"
+                f"liveview_url={liveview_url}",
             )
         else:
             # No record found - adapter's mark_job_running() must have failed
@@ -224,7 +224,7 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
             print(
                 f"[debug_logger] WARNING: No running record found for "
                 f"user_id={user_id}, assistant_id={assistant_id}. "
-                f"Adapter may have failed to create the record."
+                f"Adapter may have failed to create the record.",
             )
     except Exception as e:
         print(f"[debug_logger] Error updating job record: {e}")

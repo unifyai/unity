@@ -371,7 +371,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
             job_name=cm.job_name,
             user_id=cm.user_id,
             assistant_id=cm.assistant_id,
-        )
+        ),
     )
 
     # Start initialization and operations listener

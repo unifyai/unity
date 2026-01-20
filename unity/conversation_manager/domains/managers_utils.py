@@ -172,7 +172,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         sender_id, receiver_ids = contact_id, [0]
 
     exchange_id = getattr(event, "exchange_id", UNASSIGNED)
-    
+
     # For pre-hire messages, reuse the cached exchange_id if available
     # This ensures all messages from a pre-hire chat batch go into the same exchange
     if isinstance(event, PreHireMessage):
@@ -231,7 +231,9 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
                 # Cache the exchange_id for subsequent pre-hire messages in the batch
                 if isinstance(event, PreHireMessage):
                     _pre_hire_exchange_id = exchange_id
-                    print(f"[ManagersWorker] Cached pre-hire exchange_id: {exchange_id}")
+                    print(
+                        f"[ManagersWorker] Cached pre-hire exchange_id: {exchange_id}",
+                    )
             else:
                 metadata = getattr(event, "metadata", None)
                 cm.transcript_manager.log_messages(
