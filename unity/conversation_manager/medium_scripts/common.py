@@ -261,11 +261,10 @@ def configure_from_cli(
     # max index used = 6 + len(extra_env)
     required_len = 6 + len(extra_env)
     if len(sys.argv) > required_len:
-        assistant_number = sys.argv[2]
-        if " " in assistant_number:
-            agent_name, room_name = assistant_number.split(":")
-        else:
-            agent_name = f"unity_{assistant_number}"
+        agent_name = sys.argv[2]
+        if ":" in agent_name:   # unify meet
+            agent_name, room_name = agent_name.split(":")
+        else:   # phone
             room_name = agent_name
 
         # Populate SESSION_DETAILS with voice config
