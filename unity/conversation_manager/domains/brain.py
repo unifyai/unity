@@ -7,12 +7,13 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, create_model
 
 from unity.conversation_manager.prompt_builders import build_system_prompt
+from unity.transcript_manager.types.medium import Mode
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 
-def _build_response_models() -> dict:
+def _build_response_models() -> dict[Mode, type[BaseModel]]:
     """
     Create response models for ConversationManager's main brain.
 
@@ -20,7 +21,7 @@ def _build_response_models() -> dict:
     The response model only captures the LLM's reasoning.
 
     Returns:
-        dict: Response models for different modes (call, unify_meet, text)
+        dict: Response models for different modes (Mode.CALL, Mode.UNIFY_MEET, Mode.TEXT)
     """
     # Text mode: just thoughts
     TextResponse = create_model(
@@ -50,9 +51,9 @@ def _build_response_models() -> dict:
     )
 
     return {
-        "call": VoiceResponse,
-        "unify_meet": VoiceResponse,
-        "text": TextResponse,
+        Mode.CALL: VoiceResponse,
+        Mode.UNIFY_MEET: VoiceResponse,
+        Mode.TEXT: TextResponse,
     }
 
 
@@ -60,11 +61,11 @@ def _build_response_models() -> dict:
 _RESPONSE_MODELS = _build_response_models()
 
 
-def build_response_models() -> dict:
+def build_response_models() -> dict[Mode, type[BaseModel]]:
     """
     Public accessor for response models used by ConversationManager's brain.
 
-    Returns cached models for different modes (call, unify_meet, text).
+    Returns cached models for different modes (Mode.CALL, Mode.UNIFY_MEET, Mode.TEXT).
     """
     return _RESPONSE_MODELS
 

@@ -39,15 +39,16 @@ from unity.conversation_manager.domains.comms_utils import (
 from unity.conversation_manager.events import *
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
+from unity.transcript_manager.types.medium import Medium
 
 load_dotenv()
 
 
-def _is_blacklisted(medium: str, contact_detail: str) -> bool:
+def _is_blacklisted(medium: Medium, contact_detail: str) -> bool:
     """Check if a contact detail is blacklisted for the given medium.
 
     Args:
-        medium: The communication medium (email, sms_message, phone_call).
+        medium: The communication medium (Medium.EMAIL, Medium.SMS_MESSAGE, Medium.PHONE_CALL).
         contact_detail: The phone number or email address to check.
 
     Returns:
@@ -278,10 +279,10 @@ class CommsManager:
                 if thread == "email":
                     # Extract email from "Name <email@example.com>" format
                     contact_detail_to_check = event["from"].split("<")[1][:-1]
-                    blacklist_medium = "email"
+                    blacklist_medium = Medium.EMAIL
                 elif thread == "msg":
                     contact_detail_to_check = event["from_number"].strip()
-                    blacklist_medium = "sms_message"
+                    blacklist_medium = Medium.SMS_MESSAGE
 
                 # If blacklisted, silently ignore the message
                 if blacklist_medium and _is_blacklisted(
@@ -436,7 +437,7 @@ class CommsManager:
                             event.get("user_number"),
                         )
                         if caller_number and _is_blacklisted(
-                            "phone_call",
+                            Medium.PHONE_CALL,
                             caller_number.strip(),
                         ):
                             print(f"Ignoring blacklisted call from {caller_number}")
