@@ -14,7 +14,7 @@ from unity.conversation_manager.events import *
 from unity.common.prompt_helpers import now as prompt_now
 from unity.events.event_bus import EVENT_BUS
 from unity.manager_registry import ManagerRegistry
-from unity.transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium
 
 if TYPE_CHECKING:
     from unity.actor.base import BaseActor

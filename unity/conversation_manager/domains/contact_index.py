@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from unity.common.prompt_helpers import now as prompt_now
-from unity.transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium
 
 if TYPE_CHECKING:
     from unity.contact_manager.base import BaseContactManager

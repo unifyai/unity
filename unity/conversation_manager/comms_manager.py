@@ -39,7 +39,7 @@ from unity.conversation_manager.domains.comms_utils import (
 from unity.conversation_manager.events import *
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium
 
 load_dotenv()
 

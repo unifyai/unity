@@ -5,8 +5,7 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
-from unity.transcript_manager.types.medium import Medium
-from unity.conversation_manager.types import Mode
+from unity.conversation_manager.types import Medium, Mode
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
