@@ -275,7 +275,7 @@ async def simulated_llm_roundtrip(
     label: str,
     prompt: str,
     response_format: Any = None,
-) -> str:
+) -> Any:
     """Unified 'LLM simulating' roundtrip with console logging.
 
     LLM I/O debugging is now handled by hooks installed on the unify client.
@@ -334,7 +334,42 @@ async def simulated_llm_roundtrip(
     except Exception:
         pass
 
-    return answer  # type: ignore[return-value]
+    # If a response_format is requested, mirror real Unify behavior:
+    # return a validated Pydantic model instance (not a JSON string) when possible.
+    if response_format is not None:
+        try:
+            from pydantic import BaseModel as _BaseModel  # noqa: WPS433
+        except Exception:
+            _BaseModel = None  # type: ignore[assignment]
+
+        try:
+            if _BaseModel is not None and isinstance(answer, _BaseModel):
+                return answer
+        except Exception:
+            pass
+
+        # dict-like payloads: validate directly
+        if isinstance(answer, dict):
+            try:
+                return response_format.model_validate(answer)  # type: ignore[attr-defined]
+            except Exception:
+                return answer
+
+        # string payloads: validate JSON; tolerate NDJSON by selecting last valid line
+        if isinstance(answer, str):
+            try:
+                return response_format.model_validate_json(answer)  # type: ignore[attr-defined]
+            except Exception:
+                best = None
+                for ln in [s.strip() for s in answer.splitlines() if s.strip()]:
+                    try:
+                        best = response_format.model_validate_json(ln)  # type: ignore[attr-defined]
+                    except Exception:
+                        continue
+                if best is not None:
+                    return best
+
+    return answer
 
 
 class SimulatedHandleMixin:
