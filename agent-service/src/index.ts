@@ -13,8 +13,104 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// --- File System and Command Execution Utilities ---
+const UNITY_WORKSPACE_DIR = path.join(path.parse(process.cwd()).root, 'Unity');
+const DEFAULT_EXEC_TIMEOUT = 60 * 60 * 1000; // 1 hour
+
+// Ensure the workspace directory exists with global access
+try {
+  fs.mkdirSync(UNITY_WORKSPACE_DIR, { recursive: true });
+  fs.chmodSync(UNITY_WORKSPACE_DIR, 0o777);
+} catch (_e) {
+  // ignore
+}
+
+function sanitizePath(filename: string, baseDir: string): string {
+  const resolved = path.resolve(baseDir, filename);
+  const normalizedBase = path.resolve(baseDir);
+  if (!resolved.startsWith(normalizedBase + path.sep) && resolved !== normalizedBase) {
+    throw new Error(`Path traversal blocked: ${filename}`);
+  }
+  return resolved;
+}
+
+async function ensureDir(dirPath: string): Promise<void> {
+  await fs.promises.mkdir(dirPath, { recursive: true });
+}
+
+async function writeFileWithEncoding(
+  filepath: string,
+  content: string,
+  encoding: 'text' | 'base64' = 'text'
+): Promise<void> {
+  await ensureDir(path.dirname(filepath));
+  if (encoding === 'base64') {
+    const buffer = Buffer.from(content, 'base64');
+    await fs.promises.writeFile(filepath, buffer);
+  } else {
+    await fs.promises.writeFile(filepath, content, 'utf-8');
+  }
+}
+
+async function readFileWithEncoding(
+  filepath: string,
+  encoding: 'text' | 'base64' = 'text'
+): Promise<string> {
+  const buffer = await fs.promises.readFile(filepath);
+  return encoding === 'base64' ? buffer.toString('base64') : buffer.toString('utf-8');
+}
+
+interface ExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  duration: number;
+}
+
+function executeCommand(command: string, cwd: string, timeout: number): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
+
+    const proc = spawn(command, [], {
+      shell: true,
+      cwd,
+      timeout,
+    });
+
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('error', (err) => {
+      stderr += err.message;
+    });
+
+    proc.on('close', (code, signal) => {
+      const duration = Date.now() - startTime;
+      if (signal === 'SIGTERM') {
+        killed = true;
+        stderr += `\nProcess killed after ${timeout}ms timeout`;
+      }
+      resolve({
+        exitCode: code ?? (killed ? 124 : 1),
+        stdout,
+        stderr,
+        duration,
+      });
+    });
+  });
+}
 
 // --- JSON Schema to Zod Conversion Utility ---
 function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new Set<string>()): ZodTypeAny {
@@ -705,7 +801,177 @@ app.post('/interrupt_action', isAgentReady, async (req: Request, res: Response) 
   }
 });
 
+// --- /exec endpoint: Execute shell commands with optional file attachments ---
+app.post('/exec', async (req: Request, res: Response) => {
+  const { command, files, cwd, timeout } = req.body;
+  const execId = randomUUID();
 
+  if (!command || typeof command !== 'string') {
+    return res.status(400).json({ error: 'bad_request', message: 'command is required and must be a string.' });
+  }
+
+  const workDir = cwd || UNITY_WORKSPACE_DIR;
+  const execTimeout = typeof timeout === 'number' && timeout > 0 ? timeout : DEFAULT_EXEC_TIMEOUT;
+
+  try {
+    // Validate working directory
+    const resolvedWorkDir = path.resolve(workDir);
+    await ensureDir(resolvedWorkDir);
+
+    // Write files if provided
+    if (Array.isArray(files) && files.length > 0) {
+      for (const file of files) {
+        if (!file.filename || typeof file.filename !== 'string') {
+          return res.status(400).json({ error: 'bad_request', message: 'Each file must have a filename.' });
+        }
+        if (typeof file.content !== 'string') {
+          return res.status(400).json({ error: 'bad_request', message: 'Each file must have content.' });
+        }
+
+        const sanitizedPath = sanitizePath(file.filename, resolvedWorkDir);
+        const encoding = file.encoding === 'base64' ? 'base64' : 'text';
+        await writeFileWithEncoding(sanitizedPath, file.content, encoding);
+        console.log(`[exec] Wrote file: ${sanitizedPath}`);
+      }
+    }
+
+    // Execute the command
+    console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, execId: ${execId})`);
+    const result = await executeCommand(command, resolvedWorkDir, execTimeout);
+
+    res.json({
+      status: result.exitCode === 0 ? 'success' : 'error',
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      duration: result.duration,
+      cwd: resolvedWorkDir,
+      execId,
+    });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[exec] Error: ${errorMessage}`);
+    res.status(500).json({
+      error: 'exec_failed',
+      message: errorMessage,
+      execId,
+    });
+  }
+});
+
+// --- /files endpoint: File management in ~/Unity ---
+app.post('/files', async (req: Request, res: Response) => {
+  const { action, files, filenames, path: subPath, filename, encoding } = req.body;
+
+  if (!action || typeof action !== 'string') {
+    return res.status(400).json({ error: 'bad_request', message: 'action is required.' });
+  }
+
+  const baseDir = UNITY_WORKSPACE_DIR;
+
+  try {
+    switch (action) {
+      case 'save': {
+        if (!Array.isArray(files) || files.length === 0) {
+          return res.status(400).json({ error: 'bad_request', message: 'files array is required for save action.' });
+        }
+
+        const savedFiles: string[] = [];
+        for (const file of files) {
+          if (!file.filename || typeof file.filename !== 'string') {
+            return res.status(400).json({ error: 'bad_request', message: 'Each file must have a filename.' });
+          }
+          if (typeof file.content !== 'string') {
+            return res.status(400).json({ error: 'bad_request', message: 'Each file must have content.' });
+          }
+
+          const sanitizedPath = sanitizePath(file.filename, baseDir);
+          const fileEncoding = file.encoding === 'base64' ? 'base64' : 'text';
+          await writeFileWithEncoding(sanitizedPath, file.content, fileEncoding);
+          savedFiles.push(file.filename);
+          console.log(`[files] Saved: ${sanitizedPath}`);
+        }
+
+        return res.json({ status: 'saved', files: savedFiles });
+      }
+
+      case 'delete': {
+        if (!Array.isArray(filenames) || filenames.length === 0) {
+          return res.status(400).json({ error: 'bad_request', message: 'filenames array is required for delete action.' });
+        }
+
+        const deletedFiles: string[] = [];
+        for (const fname of filenames) {
+          if (typeof fname !== 'string') continue;
+          const sanitizedPath = sanitizePath(fname, baseDir);
+          try {
+            await fs.promises.unlink(sanitizedPath);
+            deletedFiles.push(fname);
+            console.log(`[files] Deleted: ${sanitizedPath}`);
+          } catch (err: any) {
+            if (err.code !== 'ENOENT') throw err;
+            // File doesn't exist, skip silently
+          }
+        }
+
+        return res.json({ status: 'deleted', files: deletedFiles });
+      }
+
+      case 'list': {
+        const listPath = subPath ? sanitizePath(subPath, baseDir) : baseDir;
+        await ensureDir(listPath);
+
+        const entries = await fs.promises.readdir(listPath, { withFileTypes: true });
+        const fileList = await Promise.all(
+          entries.map(async (entry) => {
+            const fullPath = path.join(listPath, entry.name);
+            const stats = await fs.promises.stat(fullPath);
+            return {
+              name: entry.name,
+              type: entry.isDirectory() ? 'directory' : 'file',
+              size: stats.size,
+              modified: stats.mtime.toISOString(),
+            };
+          })
+        );
+
+        return res.json({
+          path: subPath || '.',
+          files: fileList,
+        });
+      }
+
+      case 'read': {
+        if (!filename || typeof filename !== 'string') {
+          return res.status(400).json({ error: 'bad_request', message: 'filename is required for read action.' });
+        }
+
+        const sanitizedPath = sanitizePath(filename, baseDir);
+        const fileEncoding = encoding === 'base64' ? 'base64' : 'text';
+        const content = await readFileWithEncoding(sanitizedPath, fileEncoding);
+
+        return res.json({
+          filename,
+          content,
+          encoding: fileEncoding,
+        });
+      }
+
+      default:
+        return res.status(400).json({
+          error: 'bad_request',
+          message: `Unknown action: ${action}. Valid actions: save, delete, list, read.`,
+        });
+    }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[files] Error: ${errorMessage}`);
+    res.status(500).json({
+      error: 'files_failed',
+      message: errorMessage,
+    });
+  }
+});
 
 app.get('/sessions', auth, async (_req: Request, res: Response) => {
   const sessions = Array.from(activeSessions.entries()).map(([sessionId, session]) => ({
