@@ -156,11 +156,13 @@ async def _(
         cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
-        if contact is None:
-            contact = event.contact
     else:
         cm.mode = Mode.MEET
-        contact = cm.contact_index.get_contact(contact_id=1)
+        contact_id = event.contact.get("contact_id")
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
+
+    if contact is None:
+        contact = event.contact
 
     contact_id = contact.get("contact_id") if contact else 1
     sender_name = _get_sender_name(contact)
