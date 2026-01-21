@@ -493,7 +493,8 @@ class CodeActActor(BaseCodeActActor):
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
         self._browser_tools = self._get_browser_tools()
-        self._tools = self._build_tools()
+        # Register stable tools once; per-call sandboxes are bound via _CURRENT_SANDBOX.
+        self.add_tools("act", self._build_tools())
 
         self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
         try:
@@ -1131,13 +1132,25 @@ class CodeActActor(BaseCodeActActor):
             )
             return entry_handle
 
-        system_prompt = build_code_act_system_prompt(
-            self.environments,
-            tools=self._tools,
+        system_prompt = build_code_act_prompt(
+            environments=sandbox_envs,
+            tools=dict(self.get_tools("act")),
         )
+
+        # If can_store is disabled, prevent any function-persistence tools from being exposed.
+        tool_policy = None
+        if not effective_can_store:
+            def _policy(step: int, tools: Dict[str, Any]):
+                _ = step
+                filtered = {
+                    k: v for k, v in tools.items() if k != "FunctionManager_add_functions"
+                }
+                return "", filtered
+
+            tool_policy = _policy
         handle = ActorHandle(
             task_description=description or initial_prompt,
-            tools=self._tools,
+            tools=dict(self.get_tools("act")),
             parent_chat_context=_parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
@@ -1148,7 +1161,7 @@ class CodeActActor(BaseCodeActActor):
             timeout=self._timeout,
             persist=is_interactive_session,
             custom_system_prompt=system_prompt,
-            tool_policy=None,
+            tool_policy=tool_policy,
             computer_primitives=self._computer_primitives,
             images=images,
             response_format=response_format,
