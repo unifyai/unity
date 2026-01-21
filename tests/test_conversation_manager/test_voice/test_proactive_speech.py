@@ -41,7 +41,7 @@ from unity.conversation_manager.domains.proactive_speech import (
     ProactiveDecision,
     ProactiveSpeech,
 )
-from unity.conversation_manager.types import Mode
+from unity.conversation_manager.types import Medium, Mode
 
 
 # =============================================================================
@@ -793,10 +793,10 @@ class TestEventHandlerProactiveSpeechIntegration:
         mock_cm.call_manager.conference_name = None
 
         # Set up an active conversation for the contact (required by the handler)
-        contact = mock_cm.contact_index.get_contact(contact_id=1)
         mock_cm.contact_index.push_message(
-            contact,
-            "voice",
+            contact_id=1,
+            sender_name="System",
+            thread_name=Medium.PHONE_CALL,
             message_content="<Call Started>",
             role="system",
         )
@@ -827,10 +827,10 @@ class TestEventHandlerProactiveSpeechIntegration:
         mock_cm.call_manager.call_contact = None
 
         # Set up an active conversation for the contact (required by the handler)
-        contact = mock_cm.contact_index.get_contact(contact_id=1)
         mock_cm.contact_index.push_message(
-            contact,
-            "voice",
+            contact_id=1,
+            sender_name="System",
+            thread_name=Medium.UNIFY_MEET,
             message_content="<Call Started>",
             role="system",
         )
