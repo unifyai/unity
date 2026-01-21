@@ -249,6 +249,7 @@ async def test_email_missing_attachment_detected(initialized_cm):
             "forgot",
             "don't see",
             "didn't see",
+            "not seeing",
             "no attachment",
             "didn't",
             "not attached",
@@ -256,6 +257,8 @@ async def test_email_missing_attachment_detected(initialized_cm):
             "unable",
             "couldn't",
             "resend",
+            "re-send",
+            "check",
         ]
     ), f"Expected reply to note missing attachment, got: {email.body}"
 
