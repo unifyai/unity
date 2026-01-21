@@ -95,10 +95,9 @@ def test_brain_action_tools_docstrings(initialized_cm):
         fn = _unwrap_callable(fn)
         doc = (getattr(fn, "__doc__", None) or "").strip()
         assert doc, f"Action tool '{name}' is missing a docstring"
-        # Action tools should have meaningful docstrings
-        # Some simple tools like 'wait' can have shorter docstrings (>= 30 chars)
+        # Action tools should have detailed docstrings (>= 100 chars)
         assert (
-            len(doc) >= 30
+            len(doc) >= 100
         ), f"Docstring for action tool '{name}' is too short (len={len(doc)})"
 
 
@@ -275,16 +274,16 @@ def test_act_tool_has_comprehensive_docstring(initialized_cm):
     act_fn = _unwrap_callable(tools["act"])
     doc = (getattr(act_fn, "__doc__", None) or "").strip()
 
-    # 'act' should have meaningful documentation with args section
-    assert len(doc) >= 50, f"'act' docstring should be >= 50 chars, got {len(doc)}"
+    # 'act' should have comprehensive documentation
+    assert len(doc) >= 300, f"'act' docstring should be >= 300 chars, got {len(doc)}"
 
-    # Should describe its purpose (engaging with external resources/knowledge)
+    # Should mention key capabilities
     doc_lower = doc.lower()
+    assert "retrieval" in doc_lower, "'act' docstring should mention retrieval"
+    assert "action" in doc_lower, "'act' docstring should mention action"
     assert (
-        "knowledge" in doc_lower or "resources" in doc_lower or "engage" in doc_lower
-    ), "'act' docstring should describe engaging with external capabilities"
-    # Should document the query parameter
-    assert "query" in doc_lower, "'act' docstring should document the query parameter"
+        "contact" in doc_lower or "knowledge" in doc_lower
+    ), "'act' docstring should mention contacts or knowledge"
 
 
 def test_wait_tool_has_usage_guidance(initialized_cm):
@@ -303,12 +302,11 @@ def test_wait_tool_has_usage_guidance(initialized_cm):
     wait_fn = _unwrap_callable(tools["wait"])
     doc = (getattr(wait_fn, "__doc__", None) or "").strip()
 
-    # 'wait' should explain its purpose (waiting without action)
+    # 'wait' should explain when to use it
     doc_lower = doc.lower()
-    assert "wait" in doc_lower, "'wait' docstring should mention waiting"
     assert (
-        "action" in doc_lower or "input" in doc_lower
-    ), "'wait' docstring should reference action or input"
+        "prefer" in doc_lower or "when" in doc_lower
+    ), "'wait' docstring should explain when to use it"
 
 
 # =============================================================================
