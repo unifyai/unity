@@ -582,7 +582,7 @@ class TestProactiveSpeechLoop:
         )
         assert active_contact is not None
 
-        voice_thread = active_contact.threads.get("voice", [])
+        voice_thread = active_contact.threads.get(Medium.PHONE_CALL, [])
         # Find the proactive message
         proactive_msg = None
         for msg in voice_thread:
