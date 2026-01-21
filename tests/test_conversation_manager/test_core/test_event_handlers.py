@@ -749,12 +749,12 @@ class TestUnifyMeetHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert mock_cm.mode == "unify_meet"
+        assert mock_cm.mode == "meet"
 
     @pytest.mark.asyncio
     async def test_unify_meet_ended_resets_mode(self, mock_cm):
         """UnifyMeetEnded resets mode to 'text'."""
-        mock_cm.mode = "unify_meet"
+        mock_cm.mode = "meet"
         mock_cm.contact_index.push_message(
             {"contact_id": 1},
             "voice",

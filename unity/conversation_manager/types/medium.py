@@ -61,7 +61,7 @@ MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.UNIFY_MEET: MediumInfo(
         value=Medium.UNIFY_MEET,
         description="A live voice or video call conducted directly through the Unify platform.",
-        mode=Mode.UNIFY_MEET,
+        mode=Mode.MEET,
     ),
     Medium.EMAIL: MediumInfo(
         value=Medium.EMAIL,

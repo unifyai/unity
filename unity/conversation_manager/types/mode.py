@@ -7,18 +7,18 @@ class Mode(StrEnum):
 
     Modes determine how the ConversationManager handles communication:
     - CALL: Phone call voice mode
-    - UNIFY_MEET: Unify Meet voice/video mode
+    - MEET: Video/voice meeting mode (Unify Meet, Google Meet, Teams, etc.)
     - TEXT: Asynchronous text-based communication (SMS, email, Unify messages)
     """
 
     CALL = "call"
-    UNIFY_MEET = "unify_meet"
+    MEET = "meet"
     TEXT = "text"
 
     @classmethod
     def voice_modes(cls) -> tuple["Mode", ...]:
         """Return all voice-based modes."""
-        return (cls.CALL, cls.UNIFY_MEET)
+        return (cls.CALL, cls.MEET)
 
     @property
     def is_voice(self) -> bool:

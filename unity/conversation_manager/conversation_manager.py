@@ -217,7 +217,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return conversation_turns, last_message_timestamp
 
         voice_medium = (
-            Medium.UNIFY_MEET if self.mode == Mode.UNIFY_MEET else Medium.PHONE_CALL
+            Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
         )
         voice_thread = conv_state.threads.get(voice_medium, [])
 
@@ -738,9 +738,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if contact:
                 contact_id = contact.get("contact_id")
                 voice_medium = (
-                    Medium.UNIFY_MEET
-                    if self.mode == Mode.UNIFY_MEET
-                    else Medium.PHONE_CALL
+                    Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
                 )
                 self.contact_index.push_message(
                     contact_id=contact_id,

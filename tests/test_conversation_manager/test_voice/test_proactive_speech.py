@@ -249,10 +249,10 @@ class TestScheduleProactiveSpeech:
         mock_cm._proactive_speech_task.cancel()
 
     async def test_schedule_only_in_unify_meet_mode(self, mock_cm):
-        """Proactive speech schedules in 'unify_meet' mode."""
+        """Proactive speech schedules in 'meet' mode."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "unify_meet"
+        mock_cm.mode = "meet"
         mock_cm.cancel_proactive_speech = AsyncMock()
 
         async def mock_loop(*args, **kwargs):

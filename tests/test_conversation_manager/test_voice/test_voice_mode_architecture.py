@@ -176,14 +176,14 @@ class TestResponseModelConstruction:
         assert "call_guidance" in props
         assert "voice_utterance" not in props
 
-    def test_unify_meet_model_matches_call_model(self):
-        """unify_meet mode uses the same model as call mode."""
+    def test_meet_model_matches_call_model(self):
+        """meet mode uses the same model as call mode."""
         from unity.conversation_manager.domains.brain import build_response_models
 
         models = build_response_models()
 
         call_schema = models["call"].model_json_schema()
-        meet_schema = models["unify_meet"].model_json_schema()
+        meet_schema = models["meet"].model_json_schema()
 
         # Both should have identical structure
         assert (

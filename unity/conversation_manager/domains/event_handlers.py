@@ -159,7 +159,7 @@ async def _(
         if contact is None:
             contact = event.contact
     else:
-        cm.mode = Mode.UNIFY_MEET
+        cm.mode = Mode.MEET
         contact = cm.contact_index.get_contact(contact_id=1)
 
     contact_id = contact.get("contact_id") if contact else 1
@@ -243,7 +243,7 @@ async def _(
         contact = event.contact
     sender_name = _get_sender_name(contact)
 
-    medium = Medium.UNIFY_MEET if cm.mode == Mode.UNIFY_MEET else Medium.PHONE_CALL
+    medium = Medium.UNIFY_MEET if cm.mode == Mode.MEET else Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
@@ -701,7 +701,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     contact_id = contact.get("contact_id") if contact else 1
     sender_name = _get_sender_name(contact)
 
-    medium = Medium.UNIFY_MEET if cm.mode == Mode.UNIFY_MEET else Medium.PHONE_CALL
+    medium = Medium.UNIFY_MEET if cm.mode == Mode.MEET else Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
