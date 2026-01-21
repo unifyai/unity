@@ -34,8 +34,7 @@ from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.conversation_manager.types import Mode
-from unity.transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium, Mode
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 

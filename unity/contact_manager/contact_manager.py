@@ -30,7 +30,7 @@ from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
 from ..blacklist_manager.blacklist_manager import BlackListManager
-from ..transcript_manager.types.medium import Medium
+from ..conversation_manager.types import Medium
 
 # Module delegations (split helpers)
 from .storage import (

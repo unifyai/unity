@@ -24,7 +24,7 @@ from unity.conversation_manager.events import (
     Error,
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
-from unity.transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
     derive_short_name,
