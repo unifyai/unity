@@ -68,7 +68,12 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
     ):
         self._initial_task_description = task_description
         self._tools = tools
-        self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
+        # Preserve caller-provided context for the *initial* loop start.
+        self._initial_parent_chat_context: Optional[List[dict]] = (
+            list(parent_chat_context) if parent_chat_context else None
+        )
+        # Separate storage for pause/resume context snapshots.
+        self._parent_chat_context_on_pause: Optional[List[dict]] = None
         self._chat_history: List[Dict[str, Any]] = []
         self._custom_system_prompt = custom_system_prompt
         self._images = images
@@ -155,7 +160,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     async def _manage_execution(self):
         current_task_description = self._initial_task_description
-        current_parent_chat_context = None
+        current_parent_chat_context = self._initial_parent_chat_context
+        self._initial_parent_chat_context = None
         self._state = _HandleState.IDLE
 
         try:
@@ -199,6 +205,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     tool_policy=self._tool_policy,
                     images=self._images,
                     response_format=self._response_format,
+                    persist=bool(self._persist),
                 )
 
                 try:
