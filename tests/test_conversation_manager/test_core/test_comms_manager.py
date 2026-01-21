@@ -387,9 +387,6 @@ class TestEmailMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-
             # Should receive email message event
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -493,9 +490,6 @@ class TestUnifyMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-
             # Should receive unify_message event
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -543,9 +537,6 @@ class TestUnifyMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             event = Event.from_json(msg["data"])
             assert event.contact["contact_id"] == 1
@@ -587,9 +578,6 @@ class TestUnifyMessageHandling:
 
             cm.handle_message(message)
             await asyncio.sleep(0.1)
-
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             event = Event.from_json(msg["data"])
@@ -642,9 +630,6 @@ class TestPhoneCallHandling:
             # (handle_message uses blocking future.result() for call events)
             await asyncio.to_thread(cm.handle_message, message)
 
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-
             # Should receive call_received event
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -690,9 +675,6 @@ class TestPhoneCallHandling:
             # Run in thread to simulate GCP PubSub's threading model
             # (handle_message uses blocking future.result() for call events)
             await asyncio.to_thread(cm.handle_message, message)
-
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -747,9 +729,6 @@ class TestUnifyMeetHandling:
             # Run in thread to simulate GCP PubSub's threading model
             # (handle_message uses blocking future.result() for call/meet events)
             await asyncio.to_thread(cm.handle_message, message)
-
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
