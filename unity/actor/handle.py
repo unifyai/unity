@@ -117,10 +117,9 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         logger.info(
             f"Handle {self._task_id}: Scheduling execution on loop {self._main_event_loop}.",
         )
-        asyncio.run_coroutine_threadsafe(
-            self._manage_execution(),
-            self._main_event_loop,
-        )
+        # Preserve caller contextvars (e.g. per-request sandbox binding for CodeActActor).
+        ctx = contextvars.copy_context()
+        asyncio.run_coroutine_threadsafe(ctx.run(self._manage_execution), self._main_event_loop)
 
     @property
     def chat_history(self) -> List[Dict[str, Any]]:
