@@ -778,16 +778,17 @@ class ConversationManagerBrainActionTools:
 
             return {"status": "ok", "operation": operation, "result": result}
 
-        # Copy signature and docstring from the handle's method to get proper tool schema
+        # Copy signature from the handle's method to get proper tool schema
         if handle is not None and hasattr(handle, operation):
             DynamicToolFactory._adopt_signature_and_annotations(
                 getattr(handle, operation),
                 steering_tool,
             )
-        else:
-            # Fallback: set docstring manually (no signature available)
-            steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
-            if param_name:
-                steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
+
+        # Always set a custom docstring that describes this specific action
+        # (overrides any docstring copied from handle, e.g. from MagicMock in tests)
+        steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
+        if param_name:
+            steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
 
         return steering_tool
