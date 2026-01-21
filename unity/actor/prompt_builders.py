@@ -83,7 +83,9 @@ def build_code_act_prompt(
 
     if tools:
         # Filter out execute_python_code since it has its own dedicated section above
-        additional_tools = {k: v for k, v in tools.items() if k != "execute_python_code"}
+        additional_tools = {
+            k: v for k, v in tools.items() if k != "execute_python_code"
+        }
         if additional_tools:
             prompt += (
                 f"\n### Additional Tools (JSON Tool Calls)\n"
@@ -211,7 +213,11 @@ This returns:
     return prompt
 
 
-def _build_simplicity_first_principles(*, has_browser: bool = True, has_primitives: bool = True) -> str:
+def _build_simplicity_first_principles(
+    *,
+    has_browser: bool = True,
+    has_primitives: bool = True,
+) -> str:
     """Shared guidance: prefer elegant, minimal plans that leverage powerful tool loops.
 
     This block is intentionally reused across:
@@ -231,9 +237,7 @@ def _build_simplicity_first_principles(*, has_browser: bool = True, has_primitiv
             "  accept natural language and often run their own internal tool loops."
         )
     elif has_primitives:
-        tool_line = (
-            "- Many `primitives.*` methods accept natural language and often run their own internal tool loops."
-        )
+        tool_line = "- Many `primitives.*` methods accept natural language and often run their own internal tool loops."
     else:
         tool_line = "- Your available tools are powerful and often run their own internal tool loops."
     return textwrap.dedent(
@@ -347,10 +351,12 @@ def _build_dynamic_implement_static_prefix(
         You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for a function.
 
         ---
-        {_build_simplicity_first_principles(
-            has_browser=(environments is None or "computer_primitives" in environments),
-            has_primitives=(environments is None or (environments and "primitives" in environments)),
-        )}
+        {
+            _build_simplicity_first_principles(
+                has_browser=(environments is None or "computer_primitives" in environments),
+                has_primitives=(environments is None or (environments and "primitives" in environments)),
+            )
+        }
 
         ---
         **CRITICAL: You must choose one of four actions:**
@@ -684,10 +690,12 @@ def _build_interjection_static_prefix(
         You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
 
         ---
-        {_build_simplicity_first_principles(
-            has_browser=(environments is None or "computer_primitives" in environments),
-            has_primitives=(environments is None or (environments and "primitives" in environments)),
-        )}
+        {
+            _build_simplicity_first_principles(
+                has_browser=(environments is None or "computer_primitives" in environments),
+                has_primitives=(environments is None or (environments and "primitives" in environments)),
+            )
+        }
 
         ---
         ### Cache Invalidation Rules (CRITICAL)
@@ -2059,7 +2067,7 @@ def build_initial_plan_prompt(
             - In `main_plan()`, build a Python dict matching the schema and `return json.dumps(payload)`.
             - Do NOT return prose.
             - Do NOT print the JSON as the answer; return it.
-            """
+            """,
         )
 
     library_instruction = textwrap.dedent(
@@ -2122,10 +2130,12 @@ def build_initial_plan_prompt(
 
         **Primary Goal:** "{goal}"
         ---
-        {_build_simplicity_first_principles(
-            has_browser=(environments is None or "computer_primitives" in environments),
-            has_primitives=(environments is None or (environments and "primitives" in environments)),
-        )}
+        {
+            _build_simplicity_first_principles(
+                has_browser=(environments is None or "computer_primitives" in environments),
+                has_primitives=(environments is None or (environments and "primitives" in environments)),
+            )
+        }
         {rules_and_examples}
         {env_section}
         {response_format_section}
