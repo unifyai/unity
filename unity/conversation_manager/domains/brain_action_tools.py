@@ -522,6 +522,22 @@ class ConversationManagerBrainActionTools:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
 
+        This is the all-purpose method for any work that requires searching, retrieving,
+        manipulating, or acting on information. Use ``act`` liberally — if it cannot
+        help, it will simply report back. There is no penalty for speculative delegation.
+
+        **Capabilities include:**
+
+        - **Retrieval**: Search contact records, query knowledge bases, look up past
+          conversations, find calendar events, search the web, retrieve files
+        - **Action**: Update records, modify spreadsheets, control the desktop/browser,
+          schedule tasks, create reminders
+        - **Combined**: Find information and act on it (e.g., "find David's email")
+
+        **When uncertain, call ``act``**: If you need information you don't have (like
+        a contact's email address), call ``act`` to search for it. If ``act`` can't find
+        it, it will tell you, and you can then ask the user.
+
         Args:
             query: Natural language description of what to do or find.
         """
@@ -562,6 +578,16 @@ class ConversationManagerBrainActionTools:
     async def wait(self) -> dict[str, Any]:
         """
         Wait for more input without taking any action.
+
+        PREFER THIS TOOL over sending messages in most situations. Call this tool:
+        - After completing a request (let the user respond first)
+        - When there are no NEW messages requiring response
+        - When unsure whether to speak (when in doubt, wait)
+        - To let the conversation end naturally
+
+        The user should usually have the last word. Do not send follow-up
+        messages, additional information, or "anything else?" prompts unless
+        the user explicitly asks for more.
         """
         return {"status": "waiting"}
 

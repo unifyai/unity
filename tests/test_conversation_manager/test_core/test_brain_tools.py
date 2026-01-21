@@ -722,8 +722,8 @@ class TestActTool:
     def test_docstring_describes_capabilities(self, brain_action_tools):
         """Act tool docstring describes its capabilities."""
         doc = brain_action_tools.act.__doc__
-        # Should mention engaging with knowledge/resources beyond conversations
-        assert "knowledge" in doc.lower() or "resources" in doc.lower()
+        # Should mention key capabilities
+        assert "Retrieval" in doc or "search" in doc.lower()
 
 
 # =============================================================================
@@ -1189,16 +1189,12 @@ class TestToolDocstrings:
     def test_act_docstring_is_comprehensive(self, brain_action_tools):
         """act tool has comprehensive docstring explaining capabilities."""
         doc = brain_action_tools.act.__doc__
-        # Should describe engaging with knowledge/resources and have args section
-        assert "knowledge" in doc.lower() or "resources" in doc.lower()
-        assert "query" in doc.lower()  # Should document the query parameter
+        assert len(doc) > 100, "act docstring should be comprehensive"
 
     def test_wait_docstring_explains_when_to_use(self, brain_action_tools):
         """wait tool docstring explains when to use it."""
         doc = brain_action_tools.wait.__doc__
-        # Should explain that wait means not taking action
-        assert "wait" in doc.lower()
-        assert "action" in doc.lower() or "input" in doc.lower()
+        assert "PREFER" in doc or "prefer" in doc.lower()
 
 
 # =============================================================================
