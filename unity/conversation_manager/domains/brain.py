@@ -103,7 +103,7 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
     prompt = cm.prompt_renderer.render_state(
         cm.contact_index,
         cm.notifications_bar,
-        cm.active_tasks,
+        cm.in_flight_actions,
         cm.last_snapshot,
     )
 

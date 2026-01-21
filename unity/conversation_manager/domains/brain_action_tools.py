@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 
-# Global handle ID counter for task tracking
+# Global handle ID counter for action tracking
 _next_handle_id = 0
 
 
@@ -534,7 +534,7 @@ class ConversationManagerBrainActionTools:
 
         handle_id = _next_handle_id
         _next_handle_id += 1
-        self._cm.active_tasks[handle_id] = {
+        self._cm.in_flight_actions[handle_id] = {
             "handle": handle,
             "query": query,
             "handle_actions": [],
@@ -574,11 +574,11 @@ class ConversationManagerBrainActionTools:
             "wait": self.wait,
         }
 
-    def build_task_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
-        """Build dynamic tools for steering active tasks."""
+    def build_action_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
+        """Build dynamic tools for steering in-flight actions."""
         tools: dict[str, Callable[..., Any]] = {}
 
-        for handle_id, handle_data in (self._cm.active_tasks or {}).items():
+        for handle_id, handle_data in (self._cm.in_flight_actions or {}).items():
             query = handle_data.get("query", "")
             short_name = derive_short_name(query)
             handle = handle_data.get("handle")
@@ -636,7 +636,7 @@ class ConversationManagerBrainActionTools:
         query: str,
         call_id: str | None = None,
     ) -> "Callable[..., Any]":
-        """Create a closure for a task steering operation."""
+        """Create a closure for an action steering operation."""
         cm = self._cm
         # Use cm.event_broker to ensure the same broker is used throughout
         # (important for test patching)
@@ -647,7 +647,7 @@ class ConversationManagerBrainActionTools:
         ) -> dict[str, Any]:
             param_value = kwargs.get(param_name, "") if param_name else ""
 
-            handle_data = cm.active_tasks.get(handle_id)
+            handle_data = cm.in_flight_actions.get(handle_id)
 
             result = ""
             try:
@@ -727,8 +727,8 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
                         handle.stop(reason=param_value or None)
-                        result = "Task stopped"
-                        cm.active_tasks.pop(handle_id, None)
+                        result = "Action stopped"
+                        cm.in_flight_actions.pop(handle_id, None)
                     case "pause":
                         if handle_data:
                             handle_data["handle_actions"].append(
@@ -738,7 +738,7 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
                         await handle.pause()
-                        result = "Task paused"
+                        result = "Action paused"
                     case "resume":
                         if handle_data:
                             handle_data["handle_actions"].append(
@@ -748,7 +748,7 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
                         await handle.resume()
-                        result = "Task resumed"
+                        result = "Action resumed"
                     case "answer_clarification":
                         if handle_data:
                             handle_data["handle_actions"].append(
@@ -776,7 +776,7 @@ class ConversationManagerBrainActionTools:
 
             return {"status": "ok", "operation": operation, "result": result}
 
-        steering_tool.__doc__ = f"{docstring}\n\nFor task: {query}"
+        steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
         if param_name:
             steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
 

@@ -717,7 +717,7 @@ class TestRegressionBaseline:
 
         # Create mock ConversationManager
         mock_cm = MagicMock()
-        mock_cm.active_tasks = {}
+        mock_cm.in_flight_actions = {}
         action_tools = ConversationManagerBrainActionTools(mock_cm)
 
         # Get the tools

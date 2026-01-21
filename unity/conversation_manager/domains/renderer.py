@@ -17,7 +17,7 @@ from unity.conversation_manager.domains.contact_index import (
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.task_actions import (
     derive_short_name,
-    iter_available_actions_for_task,
+    iter_steering_tools_for_action,
     build_action_name,
     safe_call_id_suffix,
 )
@@ -29,12 +29,12 @@ class Renderer:
         self,
         contact_index: ContactIndex,
         notification_bar: NotificationBar = None,
-        active_tasks: dict = None,
+        in_flight_actions: dict = None,
         last_snapshot: datetime = None,
     ):
         return (
             f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
-            f"{self.render_in_flight_tasks(active_tasks)}\n\n"
+            f"{self.render_in_flight_actions(in_flight_actions)}\n\n"
             f"{self.render_active_conversations(contact_index, last_snapshot=last_snapshot)}"
         )
 
@@ -200,17 +200,17 @@ class Renderer:
         )
         return f"<notifications>\n{rendered_notifs}\n</notifications>"
 
-    def render_in_flight_tasks(self, active_tasks: dict):
-        """Render currently in-flight tasks with their status and history.
+    def render_in_flight_actions(self, in_flight_actions: dict):
+        """Render currently in-flight actions with their status and history.
 
-        These are tasks that are ALREADY EXECUTING - work is in progress.
+        These are actions that are ALREADY EXECUTING - work is in progress.
         Use steering tools to interact with them, don't duplicate with `act`.
         """
-        out = "<in_flight_tasks>\n"
-        if not active_tasks:
-            out += "No tasks currently executing.\n"
+        out = "<in_flight_actions>\n"
+        if not in_flight_actions:
+            out += "No actions currently executing.\n"
         else:
-            for handle_id, handle_data in active_tasks.items():
+            for handle_id, handle_data in in_flight_actions.items():
                 query = handle_data.get("query", "")
                 short_name = derive_short_name(query)
                 handle_actions = handle_data.get("handle_actions", [])
@@ -222,11 +222,11 @@ class Renderer:
                     and not a.get("response")
                 ]
 
-                out += f"<task id='{handle_id}' short_name='{short_name}' status='executing'>\n"
+                out += f"<action id='{handle_id}' short_name='{short_name}' status='executing'>\n"
                 out += f"<original_request>{query}</original_request>\n"
 
                 out += "<steering_tools>\n"
-                for action_name, description in iter_available_actions_for_task(
+                for action_name, description in iter_steering_tools_for_action(
                     handle_id,
                     query,
                     pending_clarifications,
@@ -276,6 +276,6 @@ class Renderer:
                         out += "</event>\n"
                     out += "</history>\n"
 
-                out += "</task>\n"
-        out += "</in_flight_tasks>"
+                out += "</action>\n"
+        out += "</in_flight_actions>"
         return out

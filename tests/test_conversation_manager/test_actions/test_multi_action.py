@@ -3,17 +3,17 @@ tests/test_conversation_manager/test_multi_action.py
 ====================================================
 
 Tests that verify ConversationManager correctly handles multiple concurrent
-`act` requests and disambiguates when to create new tasks vs steer existing ones.
+`act` requests and disambiguates when to create new actions vs steer existing ones.
 
 These tests build upon test_take_action.py and test_steer_action.py to cover
 more complex realistic scenarios involving:
-- Multiple concurrent in-flight tasks
-- Disambiguating new tasks vs interjections to existing tasks
-- Steering specific tasks when multiple are running
-- Sequential task creation with context
+- Multiple concurrent in-flight actions
+- Disambiguating new actions vs interjections to existing actions
+- Steering specific actions when multiple are running
+- Sequential action creation with context
 
 Uses SimulatedActor under the hood with configurable `steps` to ensure
-tasks remain in-flight long enough for multi-task scenarios.
+actions remain in-flight long enough for multi-action scenarios.
 """
 
 import pytest
@@ -22,7 +22,7 @@ from tests.helpers import _handle_project
 from tests.test_conversation_manager.cm_helpers import (
     filter_events_by_type,
     assert_efficient,
-    get_active_task_count,
+    get_in_flight_action_count,
     has_steering_tool_call,
 )
 from tests.test_conversation_manager.conftest import BOSS
@@ -42,7 +42,7 @@ def _count_act_calls(cm):
 
 
 # ---------------------------------------------------------------------------
-#  Sequential independent tasks - each should trigger new act
+#  Sequential independent actions - each should trigger new act
 # ---------------------------------------------------------------------------
 
 
@@ -67,8 +67,8 @@ async def test_two_unrelated_requests_create_two_tasks(initialized_cm):
         ),
     )
     actor_events1 = filter_events_by_type(result1.output_events, ActorHandleStarted)
-    assert len(actor_events1) >= 1, "Expected act to be called for first task"
-    task_count_after_first = get_active_task_count(cm)
+    assert len(actor_events1) >= 1, "Expected act to be called for first action"
+    action_count_after_first = get_in_flight_action_count(cm)
 
     # Step 2: Second task - completely unrelated contact lookup
     result2 = await cm.step_until_wait(
@@ -79,9 +79,9 @@ async def test_two_unrelated_requests_create_two_tasks(initialized_cm):
     )
     actor_events2 = filter_events_by_type(result2.output_events, ActorHandleStarted)
 
-    # Should have created a second task (either now or total of 2)
+    # Should have created a second action (either now or total of 2)
     assert (
-        len(actor_events2) >= 1 or get_active_task_count(cm) >= 2
+        len(actor_events2) >= 1 or get_in_flight_action_count(cm) >= 2
     ), "Expected second act call for unrelated request"
 
     # Efficiency assertions at end
@@ -109,7 +109,7 @@ async def test_parallel_searches_different_topics(initialized_cm):
             content="Search the web for information about renewable energy.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Step 2: Explicitly request a NEW task (make it very clear)
     result2 = await cm.step_until_wait(
@@ -130,7 +130,7 @@ async def test_parallel_searches_different_topics(initialized_cm):
 
 
 # ---------------------------------------------------------------------------
-#  New task vs interject disambiguation
+#  New action vs interject disambiguation
 # ---------------------------------------------------------------------------
 
 
@@ -154,7 +154,7 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
             content="Search the web for information about electric vehicles.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
     initial_act_count = _count_act_calls(cm)
 
     # Step 2: Different task type - contact lookup (clearly not an interject)
@@ -165,14 +165,14 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
         ),
     )
 
-    # Should have called act again (new task) for different task type
-    # Alternatively, may have multiple active tasks
+    # Should have called act again (new action) for different request type
+    # Alternatively, may have multiple in-flight actions
     new_act_count = _count_act_calls(cm)
-    task_count = get_active_task_count(cm)
+    action_count = get_in_flight_action_count(cm)
 
     assert (
-        new_act_count > initial_act_count or task_count >= 2
-    ), "Expected new act call for different task type"
+        new_act_count > initial_act_count or action_count >= 2
+    ), "Expected new act call for different request type"
 
     # Efficiency assertions at end
     assert_efficient(result1, "Step 1: first task")
@@ -199,7 +199,7 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
             content="Search the web for AI regulation news.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
     act_count_after_first = _count_act_calls(cm)
 
     # Step 2: Add constraint to the SAME search
@@ -210,7 +210,7 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
         ),
     )
 
-    # Should have interjected, not created new task
+    # Should have interjected, not created new action
     has_interject = has_steering_tool_call(cm, "interject_")
     new_act_count = _count_act_calls(cm)
 
@@ -225,7 +225,7 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
 
 
 # ---------------------------------------------------------------------------
-#  Multiple tasks with selective steering
+#  Multiple actions with selective steering
 # ---------------------------------------------------------------------------
 
 
@@ -250,7 +250,7 @@ async def test_two_tasks_stop_one_specifically(initialized_cm):
             content="Search the web for the latest stock market news.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Step 2: Second task - contact lookup
     result2 = await cm.step_until_wait(
@@ -272,7 +272,7 @@ async def test_two_tasks_stop_one_specifically(initialized_cm):
     assert has_steering_tool_call(
         cm,
         "stop_",
-    ), "Expected stop_* steering tool for canceling specific task"
+    ), "Expected stop_* steering tool for canceling specific action"
 
     # Efficiency assertions at end
     assert_efficient(result1, "Step 1: first task")
@@ -300,7 +300,7 @@ async def test_two_tasks_ask_about_one_specifically(initialized_cm):
             content="Search my past conversations for anything about the Henderson deal.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Step 2: Second task - web search
     result2 = await cm.step_until_wait(
@@ -323,7 +323,7 @@ async def test_two_tasks_ask_about_one_specifically(initialized_cm):
     assert has_steering_tool_call(
         cm,
         "ask_",
-    ), "Expected ask_* steering tool for querying specific task"
+    ), "Expected ask_* steering tool for querying specific action"
 
     # Efficiency assertions at end
     assert_efficient(result1, "Step 1: first task")
@@ -331,7 +331,7 @@ async def test_two_tasks_ask_about_one_specifically(initialized_cm):
 
 
 # ---------------------------------------------------------------------------
-#  Task completion then new task
+#  Action completion then new action
 # ---------------------------------------------------------------------------
 
 
@@ -356,7 +356,7 @@ async def test_stop_task_then_start_new_unrelated(initialized_cm):
             content="Search for information about project deadlines.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Step 2: Cancel it
     result2 = await cm.step_until_wait(
@@ -407,7 +407,7 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
             content="Find all my contacts who are based in New York City.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Step 2: Small talk
     result2 = await cm.step_until_wait(
@@ -439,7 +439,7 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
 
 
 # ---------------------------------------------------------------------------
-#  Complex multi-task scenarios
+#  Complex multi-action scenarios
 # ---------------------------------------------------------------------------
 
 
@@ -464,7 +464,7 @@ async def test_interject_first_then_start_second(initialized_cm):
             content="Search the web for restaurant reviews.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Step 2: Interject to narrow
     result2 = await cm.step_until_wait(
@@ -517,7 +517,7 @@ async def test_three_tasks_rapid_succession(initialized_cm):
             content="What's the weather in London?",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Task 2: Contacts
     result2 = await cm.step_until_wait(
@@ -567,7 +567,7 @@ async def test_pause_first_start_second_resume_first(initialized_cm):
             content="Search the web for competitor pricing information.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, "Expected at least one active task"
+    assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
 
     # Step 2: Pause it
     result2 = await cm.step_until_wait(

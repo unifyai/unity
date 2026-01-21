@@ -47,7 +47,7 @@ async def test_new_marker_appears_for_incoming_message(initialized_cm):
     rendered_state = cm.cm.prompt_renderer.render_state(
         cm.contact_index,
         cm.cm.notifications_bar,
-        cm.cm.active_tasks,
+        cm.cm.in_flight_actions,
         cm.cm.last_snapshot,
     )
 
