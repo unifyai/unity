@@ -30,11 +30,15 @@ from unity.conversation_manager.domains.notifications import (
 )
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.domains.contact_index import (
-    Contact,
+    ConversationState,
     ContactIndex,
     Message,
     EmailMessage,
 )
+from unity.conversation_manager.types import Medium
+
+# Alias for backward compatibility with tests
+Contact = ConversationState
 
 
 # =============================================================================
@@ -577,16 +581,16 @@ class TestRenderer:
         ts = datetime.now()
         msg = Message(name="John", content="Hello!", timestamp=ts)
         contact.global_thread.append(msg)
-        contact.threads["sms"].append(msg)
+        contact.threads[Medium.SMS_MESSAGE].append(msg)
 
         last_snapshot = datetime.now() - timedelta(hours=1)
         result = renderer.render_contact(contact, last_snapshot=last_snapshot)
 
         # Global thread should appear before sms thread
         global_pos = result.find("<global>")
-        sms_pos = result.find("<sms>")
+        sms_pos = result.find("<sms_message>")
         assert global_pos != -1, "Global thread should be rendered"
-        assert sms_pos != -1, "SMS thread should be rendered"
+        assert sms_pos != -1, "SMS_MESSAGE thread should be rendered"
         assert (
             global_pos < sms_pos
         ), "Global thread should appear before per-medium threads"
@@ -607,7 +611,7 @@ class TestRenderer:
             ts = base_time + timedelta(minutes=i)
             msg = Message(name="John", content=f"Message {i}", timestamp=ts)
             contact.global_thread.append(msg)
-            contact.threads["sms"].append(msg)
+            contact.threads[Medium.SMS_MESSAGE].append(msg)
 
         last_snapshot = datetime.now() - timedelta(hours=1)
         result = renderer.render_contact(contact, last_snapshot=last_snapshot)
@@ -618,7 +622,9 @@ class TestRenderer:
 
         # Count occurrences in global vs sms sections
         global_section = result[result.find("<global>") : result.find("</global>")]
-        sms_section = result[result.find("<sms>") : result.find("</sms>")]
+        sms_section = result[
+            result.find("<sms_message>") : result.find("</sms_message>")
+        ]
 
         # Global should have all 10
         for i in range(10):
@@ -628,9 +634,11 @@ class TestRenderer:
         for i in range(5):
             assert (
                 f"Message {i}" not in sms_section
-            ), f"Message {i} should NOT be in sms (too old)"
+            ), f"Message {i} should NOT be in sms_message (too old)"
         for i in range(5, 10):
-            assert f"Message {i}" in sms_section, f"Message {i} should be in sms"
+            assert (
+                f"Message {i}" in sms_section
+            ), f"Message {i} should be in sms_message"
 
     def test_empty_global_thread_not_rendered(self, renderer, sample_contact):
         """Empty global thread is not rendered."""
@@ -671,15 +679,16 @@ class TestContactIndex:
     ):
         """push_message adds message to both per-medium and global thread."""
         contact_index.push_message(
-            sample_contact_dict,
-            "sms",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.SMS_MESSAGE,
             message_content="Hello!",
         )
 
         contact = contact_index.active_conversations[1]
-        assert len(contact.threads["sms"]) == 1
+        assert len(contact.threads[Medium.SMS_MESSAGE]) == 1
         assert len(contact.global_thread) == 1
-        assert contact.threads["sms"][0].content == "Hello!"
+        assert contact.threads[Medium.SMS_MESSAGE][0].content == "Hello!"
         assert contact.global_thread[0].content == "Hello!"
 
     def test_global_thread_aggregates_all_mediums(
@@ -689,18 +698,21 @@ class TestContactIndex:
     ):
         """Global thread contains messages from all mediums."""
         contact_index.push_message(
-            sample_contact_dict,
-            "sms",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.SMS_MESSAGE,
             message_content="SMS message",
         )
         contact_index.push_message(
-            sample_contact_dict,
-            "voice",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
             message_content="Voice message",
         )
         contact_index.push_message(
-            sample_contact_dict,
-            "email",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.EMAIL,
             subject="Email subject",
             body="Email body",
         )
@@ -708,9 +720,9 @@ class TestContactIndex:
         contact = contact_index.active_conversations[1]
 
         # Each per-medium thread has 1 message
-        assert len(contact.threads["sms"]) == 1
-        assert len(contact.threads["voice"]) == 1
-        assert len(contact.threads["email"]) == 1
+        assert len(contact.threads[Medium.SMS_MESSAGE]) == 1
+        assert len(contact.threads[Medium.PHONE_CALL]) == 1
+        assert len(contact.threads[Medium.EMAIL]) == 1
 
         # Global thread has all 3
         assert len(contact.global_thread) == 3
@@ -724,17 +736,18 @@ class TestContactIndex:
         # Push 30 messages to SMS - exceeds per-medium maxlen of 25
         for i in range(30):
             contact_index.push_message(
-                sample_contact_dict,
-                "sms",
+                contact_id=sample_contact_dict["contact_id"],
+                sender_name="Test",
+                thread_name=Medium.SMS_MESSAGE,
                 message_content=f"Message {i}",
             )
 
         contact = contact_index.active_conversations[1]
 
         # Per-medium thread capped at 25
-        assert len(contact.threads["sms"]) == 25
+        assert len(contact.threads[Medium.SMS_MESSAGE]) == 25
         # First 5 messages dropped from per-medium
-        assert contact.threads["sms"][0].content == "Message 5"
+        assert contact.threads[Medium.SMS_MESSAGE][0].content == "Message 5"
 
         # Global thread has all 30
         assert len(contact.global_thread) == 30
@@ -746,8 +759,9 @@ class TestContactIndex:
         # Push 60 messages
         for i in range(60):
             contact_index.push_message(
-                sample_contact_dict,
-                "sms",
+                contact_id=sample_contact_dict["contact_id"],
+                sender_name="Test",
+                thread_name=Medium.SMS_MESSAGE,
                 message_content=f"Message {i}",
             )
 
@@ -768,27 +782,31 @@ class TestContactIndex:
 
         # Interleave messages from different mediums
         contact_index.push_message(
-            sample_contact_dict,
-            "sms",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.SMS_MESSAGE,
             message_content="SMS 1",
             timestamp=base_time,
         )
         contact_index.push_message(
-            sample_contact_dict,
-            "email",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.EMAIL,
             subject="Email 1",
             body="Body 1",
             timestamp=base_time + timedelta(minutes=1),
         )
         contact_index.push_message(
-            sample_contact_dict,
-            "voice",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
             message_content="Voice 1",
             timestamp=base_time + timedelta(minutes=2),
         )
         contact_index.push_message(
-            sample_contact_dict,
-            "sms",
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.SMS_MESSAGE,
             message_content="SMS 2",
             timestamp=base_time + timedelta(minutes=3),
         )
