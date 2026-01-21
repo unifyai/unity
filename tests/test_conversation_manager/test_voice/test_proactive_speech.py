@@ -41,6 +41,7 @@ from unity.conversation_manager.domains.proactive_speech import (
     ProactiveDecision,
     ProactiveSpeech,
 )
+from unity.conversation_manager.types import Mode
 
 
 # =============================================================================
@@ -229,7 +230,7 @@ class TestScheduleProactiveSpeech:
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         # Test call mode - should create task
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
         mock_cm.cancel_proactive_speech = AsyncMock()
 
         # The key issue: schedule_proactive_speech calls self._proactive_speech_loop()
@@ -252,7 +253,7 @@ class TestScheduleProactiveSpeech:
         """Proactive speech schedules in 'meet' mode."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "meet"
+        mock_cm.mode = Mode.MEET
         mock_cm.cancel_proactive_speech = AsyncMock()
 
         async def mock_loop(*args, **kwargs):
@@ -272,7 +273,7 @@ class TestScheduleProactiveSpeech:
         """Proactive speech does NOT schedule in 'text' mode."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "text"
+        mock_cm.mode = Mode.TEXT
         mock_cm.cancel_proactive_speech = AsyncMock()
 
         await ConversationManager.schedule_proactive_speech(mock_cm)
@@ -293,7 +294,7 @@ class TestScheduleProactiveSpeech:
         mock_cm._proactive_speech_task = existing_task
         mock_cm.cancel_proactive_speech = AsyncMock()
 
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
 
         async def mock_loop(*args, **kwargs):
             await asyncio.sleep(100)
@@ -372,7 +373,7 @@ class TestProactiveSpeechLoop:
         """The loop waits 10 seconds initially before checking."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
             return ProactiveDecision(should_speak=False)
@@ -408,7 +409,7 @@ class TestProactiveSpeechLoop:
         """The loop skips initial wait when skip_initial_wait=True."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
             return ProactiveDecision(should_speak=False)
@@ -445,7 +446,7 @@ class TestProactiveSpeechLoop:
         """The loop calculates elapsed time from last message timestamp."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
 
         # Set up a fixed "now" time and a transcript timestamp 15 seconds before
         fixed_now = datetime(2025, 1, 1, 12, 0, 15)
@@ -496,7 +497,7 @@ class TestProactiveSpeechLoop:
         """The loop publishes call_guidance when decision says to speak."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
             return ProactiveDecision(
@@ -545,7 +546,7 @@ class TestProactiveSpeechLoop:
         """The loop records the proactive message in contact_index."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
 
         async def mock_decide(*args, **kwargs):
             return ProactiveDecision(
@@ -595,7 +596,7 @@ class TestProactiveSpeechLoop:
         """The loop reschedules with adaptive wait when not speaking."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
 
         # Set up fixed timestamps: elapsed time = 5s (< 10s threshold)
         # This should result in wait_time = min(12 - 5, 7) = 7 seconds
@@ -923,7 +924,7 @@ class TestProactiveSpeechE2E:
         )
 
         # Switch to call mode
-        cm.mode = "call"
+        cm.mode = Mode.CALL
 
         # Schedule proactive speech
         await cm.schedule_proactive_speech()
@@ -952,7 +953,7 @@ class TestProactiveSpeechE2E:
         )
 
         # Switch to call mode and schedule
-        cm.mode = "call"
+        cm.mode = Mode.CALL
         await cm.schedule_proactive_speech()
 
         assert cm._proactive_speech_task is not None
