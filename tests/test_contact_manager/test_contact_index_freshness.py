@@ -10,10 +10,7 @@ the ContactIndex.get_contact() method returns the up-to-date data.
 This is critical because:
 1. The Actor might create new contacts during task execution
 2. Contact details might be updated via ContactManager.update()
-3. The ContactIndex local cache can become stale
-
-The fix ensures ContactIndex always queries ContactManager (which has an
-auto-syncing cache backed by the database) for fresh data.
+3. ContactIndex delegates all reads to ContactManager (source of truth)
 
 Note: These tests require the REAL ContactManager (not simulated) because
 they test database-backed data freshness behavior.
@@ -32,7 +29,7 @@ def test_contact_created_via_contact_manager_is_visible():
     contact_index.set_contact_manager(cm)
 
     # Create a unique email to avoid conflicts
-    unique_email = f"actor.created.freshness@example.com"
+    unique_email = "actor.created.freshness@example.com"
 
     # Create contact directly via ContactManager (simulating Actor behavior)
     result = cm._create_contact(
@@ -91,67 +88,58 @@ def test_contact_updated_via_contact_manager_reflects_changes():
 
 
 @_handle_project
-def test_stale_local_cache_is_bypassed():
-    """Even if local cache has old data, get_contact returns fresh data."""
+def test_updates_immediately_visible_without_cache_refresh():
+    """
+    ContactIndex.get_contact() always fetches fresh data from ContactManager.
+
+    There is no local cache to become stale - every get_contact() call
+    queries ContactManager's DataStore-backed cache directly.
+    """
     cm = ContactManager()
     contact_index = ContactIndex()
     contact_index.set_contact_manager(cm)
 
-    # Use system contact 0 which exists in both local cache and ContactManager
+    # Use system contact 0
     contact_id = 0
 
-    # Get fresh data first to know what's in ContactManager
-    fresh_data = contact_index.get_contact(contact_id=contact_id)
-    assert fresh_data is not None
+    # Get initial data
+    initial = contact_index.get_contact(contact_id=contact_id)
+    assert initial is not None
+    original_bio = initial.get("bio")
 
-    # Manually populate local cache with stale data
-    from unity.conversation_manager.domains.contact_index import Contact
+    # Update via ContactManager
+    test_bio = "Test bio for immediate visibility"
+    cm.update_contact(contact_id=contact_id, bio=test_bio)
 
-    contact_index.contacts[contact_id] = Contact(
-        contact_id=contact_id,
-        first_name="Stale",  # Must match name pattern (no underscores)
-        bio="STALE_BIO_DATA",
-    )
+    # Immediately fetch again - should see the update
+    updated = contact_index.get_contact(contact_id=contact_id)
+    assert updated is not None
+    assert updated["bio"] == test_bio
 
-    # Update via ContactManager to have different "fresh" data
-    fresh_bio = "FreshBio_for_test"
-    cm.update_contact(
-        contact_id=contact_id,
-        bio=fresh_bio,
-    )
+    # Update again
+    test_bio_2 = "Second test bio"
+    cm.update_contact(contact_id=contact_id, bio=test_bio_2)
 
-    # get_contact should return fresh data, not stale cache
-    result = contact_index.get_contact(contact_id=contact_id)
-    assert result is not None
-    # The bio should be from ContactManager, not the stale cache
-    assert result["bio"] == fresh_bio
-    # The first name should also be from ContactManager, not "Stale"
-    assert result["first_name"] != "Stale"
+    # Should see the second update immediately
+    updated_2 = contact_index.get_contact(contact_id=contact_id)
+    assert updated_2 is not None
+    assert updated_2["bio"] == test_bio_2
+
+    # Restore original
+    cm.update_contact(contact_id=contact_id, bio=original_bio or "")
 
 
-@_handle_project
-def test_contact_manager_not_set_falls_back_to_local_cache():
-    """When ContactManager is not set, should fall back to local cache."""
-    from unity.conversation_manager.domains.contact_index import Contact
-
+def test_contact_manager_not_set_returns_none():
+    """When ContactManager is not set, get_contact() returns None."""
     contact_index = ContactIndex()
-    # Do NOT set a ContactManager - test fallback behavior
+    # Do NOT set a ContactManager
 
-    # Populate local cache with test data
-    test_contact_id = 999
-    contact_index.contacts[test_contact_id] = Contact(
-        contact_id=test_contact_id,
-        first_name="LocalCacheTest",
-        surname="Contact",
-        email_address="local.cache@test.com",
-    )
+    # Should return None since there's no ContactManager to query
+    contact = contact_index.get_contact(contact_id=0)
+    assert contact is None
 
-    # Should find it in local cache
-    contact = contact_index.get_contact(contact_id=test_contact_id)
-    assert contact is not None
-    assert contact["first_name"] == "LocalCacheTest"
+    contact_by_email = contact_index.get_contact(email="test@example.com")
+    assert contact_by_email is None
 
-    # Search by email should also work
-    contact_by_email = contact_index.get_contact(email="local.cache@test.com")
-    assert contact_by_email is not None
-    assert contact_by_email["first_name"] == "LocalCacheTest"
+    contact_by_phone = contact_index.get_contact(phone_number="+15555550000")
+    assert contact_by_phone is None

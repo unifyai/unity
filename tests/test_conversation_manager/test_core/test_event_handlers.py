@@ -41,7 +41,6 @@ from unity.conversation_manager.events import (
     InboundPhoneUtterance,
     OutboundPhoneUtterance,
     CallGuidance,
-    GetContactsResponse,
     GetChatHistory,
     ActorHandleStarted,
     ActorResult,
@@ -138,9 +137,40 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.is_summarizing = False
     cm.memory_manager = None
 
-    # Set up contact index with sample contacts
+    # Create a mock ContactManager that returns sample contacts
+    contacts_by_id = {c["contact_id"]: c for c in sample_contacts}
+    contacts_by_phone = {
+        c["phone_number"]: c for c in sample_contacts if c.get("phone_number")
+    }
+    contacts_by_email = {
+        c["email_address"]: c for c in sample_contacts if c.get("email_address")
+    }
+
+    def mock_get_contact_info(cid):
+        if cid in contacts_by_id:
+            return {cid: contacts_by_id[cid]}
+        return {}
+
+    def mock_filter_contacts(filter=None, limit=None):
+        if filter and "phone_number" in filter:
+            for phone, contact in contacts_by_phone.items():
+                if phone in filter:
+                    return {"contacts": [contact]}
+        if filter and "email_address" in filter:
+            for email, contact in contacts_by_email.items():
+                if email in filter:
+                    return {"contacts": [contact]}
+        return {"contacts": []}
+
+    mock_contact_manager = MagicMock()
+    mock_contact_manager.get_contact_info = MagicMock(side_effect=mock_get_contact_info)
+    mock_contact_manager.filter_contacts = MagicMock(side_effect=mock_filter_contacts)
+    mock_contact_manager._sync_required_contacts = MagicMock()
+
+    # Set up contact index with mock ContactManager
     cm.contact_index = ContactIndex()
-    cm.contact_index.set_contacts(sample_contacts)
+    cm.contact_index.set_contact_manager(mock_contact_manager)
+    cm.contact_manager = mock_contact_manager
 
     # Set up notifications bar
     cm.notifications_bar = NotificationBar()
@@ -149,13 +179,7 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.request_llm_run = AsyncMock()
     cm.cancel_proactive_speech = AsyncMock()
     cm.interject_or_run = AsyncMock()
-    cm.get_active_contact = MagicMock(
-        return_value=cm.contact_index.get_contact(contact_id=1),
-    )
-
-    # Mock contact_manager for SyncContacts handler
-    cm.contact_manager = MagicMock()
-    cm.contact_manager._sync_required_contacts = MagicMock()
+    cm.get_active_contact = MagicMock(return_value=sample_contacts[1])
 
     return cm
 
@@ -183,7 +207,6 @@ class TestEventHandlerRegistry:
             PhoneCallReceived,
             PhoneCallStarted,
             PhoneCallEnded,
-            GetContactsResponse,
             GetChatHistory,
             ActorHandleStarted,
             ActorResult,
@@ -842,22 +865,6 @@ class TestVoiceUtteranceHandlers:
 
 class TestStateUpdateHandlers:
     """Tests for state update event handlers."""
-
-    @pytest.mark.asyncio
-    async def test_get_contacts_response_sets_contacts(self, mock_cm):
-        """GetContactsResponse updates the contact index."""
-        new_contacts = [
-            {"contact_id": 5, "first_name": "New", "surname": "Contact"},
-            {"contact_id": 6, "first_name": "Another", "surname": "Person"},
-        ]
-        event = GetContactsResponse(contacts=new_contacts)
-
-        await EventHandler.handle_event(event, mock_cm)
-
-        # Contact index should have the new contacts
-        contact_5 = mock_cm.contact_index.get_contact(contact_id=5)
-        assert contact_5 is not None
-        assert contact_5["first_name"] == "New"
 
     @pytest.mark.asyncio
     async def test_get_chat_history_prepends_to_history(self, mock_cm):

@@ -30,11 +30,36 @@ from tests.helpers import scenario_file_lock, get_or_create_contact
 from .cm_test_driver import CMStepDriver
 
 
-# Test contacts used across all tests
-# NOTE: contact_id 0 (assistant) and contact_id 1 (boss/user) are system contacts
-# created automatically by ContactManager from the database. We do NOT define them
-# here to avoid conflicts. Test contacts start at contact_id 2.
+# Response policies matching ContactManager defaults
+# BOSS_RESPONSE_POLICY is for the user (contact_id 1) who gives commands
+# DEFAULT_RESPONSE_POLICY is for regular contacts who should NOT give commands
+BOSS_RESPONSE_POLICY = (
+    "Your immediate manager, please do whatever they ask you to do within reason, "
+    "and do *not* withhold any information from them."
+)
+DEFAULT_RESPONSE_POLICY = (
+    "Please engage politely, helpfully, and respectfully, but you do not need to "
+    "take orders from them. Please also do not share **any** sensitive or personal "
+    "information with them about any other person, company or policy at all."
+)
+
+# System contacts (contact_id 0 and 1) are created by ContactManager from the database.
+# BOSS represents the boss user (contact_id 1) who gives commands to the assistant.
+# Tests should use BOSS when simulating commands from the user.
+BOSS = {
+    "contact_id": 1,
+    "first_name": "Default",
+    "surname": "User",
+    "email_address": "user@example.com",
+    "phone_number": "+15555551111",
+    "should_respond": True,
+    "is_system": True,
+    "response_policy": BOSS_RESPONSE_POLICY,
+}
+
+# Test contacts used across all tests (starting at contact_id 2)
 # should_respond=True allows outbound communication in tests
+# response_policy matches ContactManager.DEFAULT_RESPONSE_POLICY
 TEST_CONTACTS = [
     {
         "contact_id": 2,
@@ -43,6 +68,7 @@ TEST_CONTACTS = [
         "email_address": "alice@example.com",
         "phone_number": "+15555552222",
         "should_respond": True,
+        "response_policy": DEFAULT_RESPONSE_POLICY,
     },
     {
         "contact_id": 3,
@@ -51,6 +77,7 @@ TEST_CONTACTS = [
         "email_address": "bob@example.com",
         "phone_number": "+15555553333",
         "should_respond": True,
+        "response_policy": DEFAULT_RESPONSE_POLICY,
     },
     {
         "contact_id": 4,
@@ -59,6 +86,7 @@ TEST_CONTACTS = [
         "email_address": "charlie@example.com",
         "phone_number": "+15555554444",
         "should_respond": True,
+        "response_policy": DEFAULT_RESPONSE_POLICY,
     },
     {
         "contact_id": 5,
@@ -67,6 +95,7 @@ TEST_CONTACTS = [
         "email_address": "diana@example.com",
         "phone_number": "+15555555555",
         "should_respond": True,
+        "response_policy": DEFAULT_RESPONSE_POLICY,
     },
 ]
 
@@ -156,37 +185,52 @@ async def conversation_manager() -> CMStepDriver:
         await managers_utils.init_conv_manager(cm, actor=actor)
         print("✅ Managers initialized")
 
-        # Fetch system contacts (contact_id 0 and 1) from ContactManager and add to local cache.
-        # ContactManager creates these during initialization, but they're only in the database.
-        # The brain.py code expects boss_contact (contact_id 1) to be in the local cache.
+        # Update system contacts in ContactManager with proper names and test defaults.
+        # In CI, the test user may have null first/last name from the API.
+        # ContactManager is the source of truth - ContactIndex queries it directly.
         if cm.contact_manager is not None:
-            system_contact_ids = [0, 1]
-            system_contacts_data = cm.contact_manager.get_contact_info(
-                system_contact_ids,
+            # Update assistant (contact_id 0)
+            cm.contact_manager.update_contact(
+                contact_id=0,
+                first_name="Default",
+                surname="Assistant",
+                should_respond=True,
             )
-            for cid, contact_data in system_contacts_data.items():
-                # Mark system contacts as should_respond=True for tests
-                contact_data["should_respond"] = True
-                cm.contact_index.set_contacts([contact_data])
-            print(
-                f"✅ System contacts synced to local cache: {list(system_contacts_data.keys())}",
+            # Update boss/user (contact_id 1) with test defaults
+            cm.contact_manager.update_contact(
+                contact_id=1,
+                first_name=BOSS["first_name"],
+                surname=BOSS["surname"],
+                email_address=BOSS["email_address"],
+                phone_number=BOSS["phone_number"],
+                should_respond=True,
+                response_policy=BOSS["response_policy"],
             )
+            print("✅ System contacts updated in ContactManager")
 
         # Create test contacts in the database using idempotent helper.
         # This ensures they exist with the expected contact_ids even when
         # multiple test processes run in parallel.
         for contact_data in TEST_CONTACTS:
-            get_or_create_contact(
+            contact = get_or_create_contact(
                 cm.contact_manager,
                 first_name=contact_data["first_name"],
                 surname=contact_data.get("surname"),
                 email_address=contact_data.get("email_address"),
                 phone_number=contact_data.get("phone_number"),
             )
+            # Update should_respond and response_policy for tests
+            if contact and cm.contact_manager is not None:
+                cm.contact_manager.update_contact(
+                    contact_id=contact["contact_id"],
+                    should_respond=contact_data.get("should_respond", True),
+                    response_policy=contact_data.get(
+                        "response_policy",
+                        DEFAULT_RESPONSE_POLICY,
+                    ),
+                )
 
-    # Set test contacts on contact_index local cache (includes should_respond=True)
-    cm.contact_index.set_contacts(TEST_CONTACTS)
-    print(f"✅ Test contacts set: {len(TEST_CONTACTS)}")
+    print(f"✅ Test contacts created: {len(TEST_CONTACTS)} + system contacts")
 
     # Wrap in CMStepDriver for deterministic testing
     driver = CMStepDriver(cm)
