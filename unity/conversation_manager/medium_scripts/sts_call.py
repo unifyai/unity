@@ -30,7 +30,7 @@ try:
 except ImportError:
     openai_realtime = None
 
-from unity.conversation_manager.utils import dispatch_agent
+from unity.conversation_manager.utils import dispatch_livekit_agent
 from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.session_details import SESSION_DETAILS
@@ -43,7 +43,7 @@ from unity.conversation_manager.medium_scripts.common import (
     setup_participant_disconnect_handler,
     publish_call_started,
     configure_from_cli,
-    should_dispatch_agent,
+    should_dispatch_livekit_agent,
     log_sts_usage,
 )
 
@@ -264,7 +264,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
 if __name__ == "__main__":
     # Shared CLI handling
-    agent_name, room_name = configure_from_cli(
+    livekit_agent_name, room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),
             ("BOSS", True),
@@ -272,16 +272,16 @@ if __name__ == "__main__":
         ],
     )
 
-    # dispatch agent
-    if should_dispatch_agent():
-        print(f"Dispatching agent {agent_name}")
-        dispatch_agent(agent_name, room_name)
-        print(f"Agent {agent_name} dispatched")
+    # Dispatch LiveKit agent
+    if should_dispatch_livekit_agent():
+        print(f"Dispatching LiveKit agent {livekit_agent_name}")
+        dispatch_livekit_agent(livekit_agent_name, room_name)
+        print(f"LiveKit agent {livekit_agent_name} dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name=agent_name,
+            agent_name=livekit_agent_name,  # LiveKit API expects 'agent_name'
             # Run jobs in-process to allow sharing the in-memory event broker.
             job_executor_type=agents.JobExecutorType.THREAD,
             initialize_process_timeout=60,

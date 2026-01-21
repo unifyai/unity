@@ -290,7 +290,7 @@ class TestCallEventSerialization:
         """UnifyMeet events serialize correctly."""
         received = UnifyMeetReceived(
             contact=sample_contact,
-            agent_name="test_agent",
+            livekit_agent_name="test_agent",
             room_name="test_room",
         )
         started = UnifyMeetStarted(contact=sample_contact)
@@ -421,14 +421,14 @@ class TestCallThreadLifecycle:
             call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
-                agent_name="test_agent",
+                livekit_agent_name="test_agent",
                 room_name="test_room",
             )
 
             mock_start.assert_called_once()
             call_args = mock_start.call_args
             assert "call.py" in str(call_args.kwargs["script_path"])
-            # Agent and room name should be combined in argv
+            # LiveKit agent name and room name should be combined in argv
             assert any(
                 "test_agent:test_room" in arg for arg in call_args.kwargs["argv"]
             )
@@ -439,7 +439,7 @@ class TestCallThreadLifecycle:
         sample_contact,
         boss_contact,
     ):
-        """start_unify_meet() generates default agent/room names from assistant_id."""
+        """start_unify_meet() generates default livekit_agent_name/room names from assistant_id."""
         call_manager.assistant_id = "my_assistant"
 
         with patch.object(
@@ -449,7 +449,7 @@ class TestCallThreadLifecycle:
             call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
-                agent_name=None,
+                livekit_agent_name=None,
                 room_name=None,
             )
 
@@ -749,7 +749,7 @@ class TestUnifyMeetEventHandlers:
         ) as mock_start:
             event = UnifyMeetReceived(
                 contact=boss_contact,
-                agent_name="test_agent",
+                livekit_agent_name="test_agent",
                 room_name="test_room",
             )
             await initialized_cm.step(event)
@@ -1099,7 +1099,7 @@ class TestFullCallLifecycle:
         ) as mock_start:
             received_event = UnifyMeetReceived(
                 contact=boss_contact,
-                agent_name="test_agent",
+                livekit_agent_name="test_agent",
                 room_name="test_room",
             )
             await initialized_cm.step(received_event)

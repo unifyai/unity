@@ -127,7 +127,7 @@ class UnifyMeetReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
     contact: dict
-    agent_name: str | None = None
+    livekit_agent_name: str | None = None
     room_name: str | None = None
 
 

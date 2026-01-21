@@ -251,10 +251,10 @@ def configure_from_cli(
       argv[5] = OUTBOUND
       argv[6...] = extra_env[...]
 
-    Returns the computed agent_name ("unity_<assistant_number>").
+    Returns the computed livekit_agent_name ("unity_<assistant_number>").
     """
     assistant_number = ""
-    agent_name = ""
+    livekit_agent_name = ""
     room_name = ""
     print("sys.argv", sys.argv)
 
@@ -263,12 +263,12 @@ def configure_from_cli(
     if len(sys.argv) > required_len:
         assistant_number = sys.argv[2]
         if ":" in assistant_number:
-            # UnifyMeet: caller passes "agent_name:room_name" with prefix already applied
-            agent_name, room_name = assistant_number.split(":")
+            # UnifyMeet: caller passes "livekit_agent_name:room_name" with prefix already applied
+            livekit_agent_name, room_name = assistant_number.split(":")
         else:
             # Phone: caller passes raw assistant_number, we add the unity_ prefix
-            agent_name = f"unity_{assistant_number}"
-            room_name = agent_name
+            livekit_agent_name = f"unity_{assistant_number}"
+            room_name = livekit_agent_name
 
         # Populate SESSION_DETAILS with voice config
         SESSION_DETAILS.voice.provider = (
@@ -309,11 +309,11 @@ def configure_from_cli(
         print("Not enough arguments provided")
         sys.exit(1)
 
-    return agent_name, room_name
+    return livekit_agent_name, room_name
 
 
-def should_dispatch_agent() -> bool:
+def should_dispatch_livekit_agent() -> bool:
     """
-    True when we should actually call dispatch_agent() for this process.
+    True when we should actually call dispatch_livekit_agent() for this process.
     """
     return len(sys.argv) > 1 and sys.argv[1] != "download-files"
