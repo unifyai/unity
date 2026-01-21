@@ -263,4 +263,15 @@ def initialized_cm(
     # Clear chat history (LLM message history)
     conversation_manager.cm.chat_history.clear()
 
+    # Reset last_snapshot to use the patched prompt_now.
+    # The module-scoped conversation_manager fixture is created BEFORE the
+    # function-scoped stub_external_deps fixture patches prompt_now, so
+    # cm.last_snapshot gets set to real time (e.g., January 2026) while
+    # message timestamps use the patched fixed time (June 2025).
+    # This breaks the **NEW** marker comparison (last_snapshot < message.timestamp).
+    # Re-initializing here ensures last_snapshot uses the patched timestamp.
+    from unity.common.prompt_helpers import now as prompt_now
+
+    conversation_manager.cm.last_snapshot = prompt_now(as_string=False)
+
     return conversation_manager
