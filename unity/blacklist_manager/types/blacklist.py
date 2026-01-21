@@ -10,7 +10,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
 )
 
-from ...transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium
 
 UNASSIGNED = -1
 
