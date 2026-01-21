@@ -57,7 +57,7 @@ from unity.conversation_manager.events import (
 )
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
-from unity.conversation_manager.types import Mode
+from unity.conversation_manager.types import Medium, Mode
 
 
 # =============================================================================
@@ -408,8 +408,8 @@ class TestTextMessageHandlers:
 
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
-        assert len(contact.threads["sms"]) == 1
-        assert contact.threads["sms"][0].content == "Hello there!"
+        assert len(contact.threads[Medium.SMS_MESSAGE]) == 1
+        assert contact.threads[Medium.SMS_MESSAGE][0].content == "Hello there!"
 
     @pytest.mark.asyncio
     async def test_sms_received_pushes_notification(self, mock_cm):
@@ -479,7 +479,7 @@ class TestTextMessageHandlers:
 
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
-        assert len(contact.threads["sms"]) == 1
+        assert len(contact.threads[Medium.SMS_MESSAGE]) == 1
         # Sent messages have assistant role, not user
 
     @pytest.mark.asyncio
@@ -500,8 +500,8 @@ class TestTextMessageHandlers:
 
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
-        assert len(contact.threads["email"]) == 1
-        email_msg = contact.threads["email"][0]
+        assert len(contact.threads[Medium.EMAIL]) == 1
+        email_msg = contact.threads[Medium.EMAIL][0]
         assert email_msg.subject == "Important Update"
         assert email_msg.body == "Please review the attached."
 
@@ -521,7 +521,7 @@ class TestTextMessageHandlers:
 
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
-        assert len(contact.threads["unify_message"]) == 1
+        assert len(contact.threads[Medium.UNIFY_MESSAGE]) == 1
 
     @pytest.mark.asyncio
     async def test_sent_messages_do_not_cancel_proactive_speech(self, mock_cm):
@@ -617,7 +617,7 @@ class TestPhoneCallHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert mock_cm.mode == "call"
+        assert mock_cm.mode == Mode.CALL
 
     @pytest.mark.asyncio
     async def test_phone_call_started_sets_call_contact(self, mock_cm):
@@ -661,8 +661,9 @@ class TestPhoneCallHandlers:
         mock_cm.mode = Mode.CALL
         # Need to have an active conversation first
         mock_cm.contact_index.push_message(
-            {"contact_id": 2, "phone_number": "+15555552222"},
-            "voice",
+            contact_id=2,
+            sender_name="Alice",
+            thread_name=Medium.PHONE_CALL,
             message_content="test",
         )
         mock_cm.contact_index.active_conversations[2].on_call = True
@@ -673,7 +674,7 @@ class TestPhoneCallHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert mock_cm.mode == "text"
+        assert mock_cm.mode == Mode.TEXT
         assert mock_cm.call_manager.call_contact is None
 
     @pytest.mark.asyncio
@@ -682,8 +683,9 @@ class TestPhoneCallHandlers:
         mock_cm.mode = Mode.CALL
         mock_cm.call_manager.conference_name = "conf_123"
         mock_cm.contact_index.push_message(
-            {"contact_id": 2, "phone_number": "+15555552222"},
-            "voice",
+            contact_id=2,
+            sender_name="Alice",
+            thread_name=Medium.PHONE_CALL,
             message_content="test",
         )
         mock_cm.contact_index.active_conversations[2].on_call = True
@@ -701,8 +703,9 @@ class TestPhoneCallHandlers:
         """PhoneCallEnded triggers cleanup and LLM run."""
         mock_cm.mode = Mode.CALL
         mock_cm.contact_index.push_message(
-            {"contact_id": 2, "phone_number": "+15555552222"},
-            "voice",
+            contact_id=2,
+            sender_name="Alice",
+            thread_name=Medium.PHONE_CALL,
             message_content="test",
         )
         mock_cm.contact_index.active_conversations[2].on_call = True
@@ -750,15 +753,16 @@ class TestUnifyMeetHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert mock_cm.mode == "meet"
+        assert mock_cm.mode == Mode.MEET
 
     @pytest.mark.asyncio
     async def test_unify_meet_ended_resets_mode(self, mock_cm):
         """UnifyMeetEnded resets mode to 'text'."""
         mock_cm.mode = Mode.MEET
         mock_cm.contact_index.push_message(
-            {"contact_id": 1},
-            "voice",
+            contact_id=1,
+            sender_name="Boss",
+            thread_name=Medium.UNIFY_MEET,
             message_content="test",
         )
         mock_cm.contact_index.active_conversations[1].on_call = True
@@ -767,7 +771,7 @@ class TestUnifyMeetHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert mock_cm.mode == "text"
+        assert mock_cm.mode == Mode.TEXT
 
 
 # =============================================================================
@@ -794,8 +798,10 @@ class TestVoiceUtteranceHandlers:
 
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
-        assert len(contact.threads["voice"]) == 1
-        assert contact.threads["voice"][0].content == "Hello, can you hear me?"
+        assert len(contact.threads[Medium.PHONE_CALL]) == 1
+        assert (
+            contact.threads[Medium.PHONE_CALL][0].content == "Hello, can you hear me?"
+        )
 
     @pytest.mark.asyncio
     async def test_inbound_utterance_cancels_proactive_speech(self, mock_cm):
@@ -857,7 +863,7 @@ class TestVoiceUtteranceHandlers:
 
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
-        assert len(contact.threads["voice"]) == 1
+        assert len(contact.threads[Medium.PHONE_CALL]) == 1
         # Guidance messages have role="Guidance"
 
 
