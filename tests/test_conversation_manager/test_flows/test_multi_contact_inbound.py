@@ -169,8 +169,8 @@ async def test_email_reply_to_alice(initialized_cm):
     await cm.step_until_wait(
         EmailReceived(
             contact=ALICE,
-            subject="Quarterly Report",
-            body="Please review the attached report",
+            subject="Q3 Action Items",
+            body="Hi, here are the action items from our meeting:\n- Finalize budget\n- Schedule follow-up\n- Send client update",
             email_id="alice_email_1",
         ),
     )
@@ -179,7 +179,7 @@ async def test_email_reply_to_alice(initialized_cm):
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Email Alice back saying report looks good",
+            content="Email Alice back saying the action items look good",
         ),
     )
 
