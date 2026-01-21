@@ -25,7 +25,7 @@ from tests.test_conversation_manager.cm_helpers import (
     get_active_task_count,
     has_steering_tool_call,
 )
-from tests.test_conversation_manager.conftest import TEST_CONTACTS
+from tests.test_conversation_manager.conftest import BOSS
 from unity.conversation_manager.events import (
     SMSReceived,
     ActorHandleStarted,
@@ -33,8 +33,7 @@ from unity.conversation_manager.events import (
 
 pytestmark = pytest.mark.eval
 
-# Convenience references to test contacts
-BOSS = TEST_CONTACTS[1]  # contact_id 1 - the main user
+# Note: BOSS (contact_id=1) is imported from conftest.py
 
 
 def _count_act_calls(cm):
