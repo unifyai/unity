@@ -611,6 +611,8 @@ class CodeActActor(BaseCodeActActor):
         computer_primitives: Optional["ComputerPrimitives"] = None,
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
+        can_compose: bool = True,
+        can_store: bool = True,
     ):
         """
         Initializes the CodeActActor.
@@ -643,6 +645,8 @@ class CodeActActor(BaseCodeActActor):
         self._shell_pool = ShellPool()
 
         self._timeout = timeout
+        self.can_compose: bool = bool(can_compose)
+        self.can_store: bool = bool(can_store)
         self._browser_tools = self._get_browser_tools()
         self._tools = self._build_tools()
 
@@ -1051,6 +1055,8 @@ class CodeActActor(BaseCodeActActor):
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
+        can_compose: Optional[bool] = None,
+        can_store: Optional[bool] = None,
         **kwargs,
     ) -> SteerableToolHandle:
         if not self._main_event_loop:
