@@ -210,11 +210,19 @@ def provision_assistant_contact(self, assistant_log) -> None:
         else:
             raise
     except RequestError as e:
-        # Backend returned 500 due to DB-level race condition – contact exists
-        if e.response is not None and e.response.status_code == 500:
-            pass
-        else:
-            raise
+        # Backend can return either:
+        # - 500 due to DB-level race condition
+        # - 400 due to a uniqueness violation surfaced at the API layer
+        # In both cases, the contact already exists and we can treat this as success.
+        if e.response is not None and e.response.status_code in (400, 500):
+            detail = ""
+            try:
+                detail = str(e.response.json().get("detail", ""))
+            except Exception:
+                detail = str(getattr(e.response, "text", ""))
+            if "Duplicate entry for unique field" in detail or "unique" in detail.lower():
+                return
+        raise
 
 
 def provision_user_contact(self, user_log) -> None:
@@ -304,11 +312,17 @@ def provision_user_contact(self, user_log) -> None:
         else:
             raise
     except RequestError as e:
-        # Backend returned 500 due to DB-level race condition – contact exists
-        if e.response is not None and e.response.status_code == 500:
-            pass
-        else:
-            raise
+        # See assistant provisioning: races can present as 500 or as a 400 with a
+        # duplicate/unique violation message, depending on backend behavior.
+        if e.response is not None and e.response.status_code in (400, 500):
+            detail = ""
+            try:
+                detail = str(e.response.json().get("detail", ""))
+            except Exception:
+                detail = str(getattr(e.response, "text", ""))
+            if "Duplicate entry for unique field" in detail or "unique" in detail.lower():
+                return
+        raise
 
 
 def _fetch_org_members() -> List[Dict[str, Any]]:

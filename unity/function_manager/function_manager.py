@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 import unify
+from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import list_private_fields
@@ -3664,6 +3665,47 @@ class FunctionManager(BaseFunctionManager):
     #  Virtual Environment Management                                    #
     # ------------------------------------------------------------------ #
 
+    def _safe_get_venv_logs(
+        self,
+        *,
+        filter: Optional[str] = None,
+        limit: Optional[int] = None,
+        exclude_fields: Optional[List[str]] = None,
+        from_fields: Optional[List[str]] = None,
+    ) -> List[unify.Log]:
+        """Best-effort venv reads; treat missing contexts as empty."""
+        import time as _time
+
+        last_exc: Exception | None = None
+        for delay in (0.0, 0.05, 0.15):
+            if delay:
+                _time.sleep(delay)
+            try:
+                return unify.get_logs(
+                    context=self._venvs_ctx,
+                    filter=filter,
+                    limit=limit,
+                    exclude_fields=exclude_fields,
+                    from_fields=from_fields,
+                )
+            except _UnifyRequestError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    last_exc = e
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                break
+
+        if isinstance(last_exc, _UnifyRequestError):
+            status = getattr(getattr(last_exc, "response", None), "status_code", None)
+            if status == 404:
+                return []
+        if last_exc is not None:
+            raise last_exc
+        return []
+
     def add_venv(self, *, venv: str) -> int:
         """
         Add a new virtual environment configuration.
@@ -3690,8 +3732,7 @@ class FunctionManager(BaseFunctionManager):
         elif isinstance(result, dict):
             log_ids = result.get("log_event_ids", [])
             if log_ids:
-                logs = unify.get_logs(
-                    context=self._venvs_ctx,
+                logs = self._safe_get_venv_logs(
                     filter=f"id == {log_ids[0]}",
                     limit=1,
                 )
@@ -3711,8 +3752,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             Dict with venv_id and venv content, or None if not found.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             filter=f"venv_id == {venv_id}",
             limit=1,
             exclude_fields=list_private_fields(self._venvs_ctx),
@@ -3728,8 +3768,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             List of dicts, each with venv_id and venv content.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             exclude_fields=list_private_fields(self._venvs_ctx),
         )
         return [lg.entries for lg in logs]
@@ -3747,8 +3786,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if deleted, False if not found.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             filter=f"venv_id == {venv_id}",
             limit=1,
         )
@@ -3771,8 +3809,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if updated, False if not found.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             filter=f"venv_id == {venv_id}",
             limit=1,
         )

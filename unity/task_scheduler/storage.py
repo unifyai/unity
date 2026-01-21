@@ -16,6 +16,7 @@ from functools import cached_property
 import unify
 
 from unity.settings import SETTINGS
+from unify.utils.http import RequestError as _UnifyRequestError
 from unity.common.context_store import _PRIVATE_FIELDS
 from unity.common.log_utils import log as unity_log, create_logs as unity_create_logs
 from unity.task_scheduler.types.queue_summary import QueueSummary
@@ -167,6 +168,16 @@ class TasksStore:
         except Exception:
             return {}
 
+    def _safe_get_logs(self, **kwargs) -> List[unify.Log] | List[int]:
+        """Get logs, treating missing contexts as empty during fresh/test runs."""
+        try:
+            return unify.get_logs(**kwargs)
+        except _UnifyRequestError as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status == 404:
+                return []
+            raise
+
     def get_metric_count(self, *, key: str) -> int:
         ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
         return 0 if ret is None else int(ret)
@@ -190,7 +201,7 @@ class TasksStore:
         exclude_fields: Optional[List[str]] = None,
         include_fields: Optional[List[str]] = None,
     ) -> Union[List[int], List[unify.Log]]:
-        return unify.get_logs(
+        return self._safe_get_logs(
             context=self._ctx,
             filter=filter,
             offset=offset,
@@ -209,7 +220,7 @@ class TasksStore:
         singular = isinstance(task_ids, int)
         original_id = task_ids if singular else None
         ids_list = [task_ids] if singular else list(task_ids)
-        logs = unify.get_logs(
+        logs = self._safe_get_logs(
             context=self._ctx,
             filter=f"task_id in {ids_list}",
             return_ids_only=return_ids_only,
@@ -243,7 +254,7 @@ class TasksStore:
         ids_list = [task_ids] if singular else list(task_ids)
         # Ensure we always include task_id in the projection for correctness
         fields = list(dict.fromkeys((fields or []) + ["task_id"]))
-        logs = unify.get_logs(
+        logs = self._safe_get_logs(
             context=self._ctx,
             filter=f"task_id in {ids_list}",
             return_ids_only=False,
@@ -368,7 +379,7 @@ class TasksStore:
         Fetch full log objects by their log-event ids. This avoids filtering by
         field values and allows precise retrieval of freshly-created rows.
         """
-        res = unify.get_logs(
+        res = self._safe_get_logs(
             context=self._ctx,
             from_ids=log_ids,
             return_ids_only=False,
