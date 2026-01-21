@@ -57,6 +57,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         tool_policy: Optional[Callable] = None,
         computer_primitives: Optional[Any] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+        response_format: Optional[Type[BaseModel]] = None,
     ):
         self._initial_task_description = task_description
         self._tools = tools
@@ -64,6 +65,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._chat_history: List[Dict[str, Any]] = []
         self._custom_system_prompt = custom_system_prompt
         self._images = images
+        self._response_format = response_format
+        self._on_finally = on_finally
 
         # Clarification queues are optional. When missing, the internal tool loop must not
         # attempt to request clarification (the `request_clarification` tool will not be added).
@@ -72,7 +75,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
         self._state: _HandleState = _HandleState.IDLE
         self._loop_handle: Optional[SteerableToolHandle] = None
-        self._result_str: Optional[str] = None
+        self._result_str: Any = None
         self._error_str: Optional[str] = None
 
         self._completion_event = asyncio.Event()
@@ -199,10 +202,28 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     timeout=self._timeout,
                     tool_policy=self._tool_policy,
                     images=self._images,
+                    response_format=self._response_format,
                 )
 
                 try:
                     loop_result_str = await self._loop_handle.result()
+                    # If a response_format was requested, try to coerce the loop output into it.
+                    # The underlying tool loop often returns a JSON string (e.g. '{"answer": 123}').
+                    if self._response_format is not None and loop_result_str is not None:
+                        try:
+                            if isinstance(loop_result_str, self._response_format):
+                                loop_result_str = loop_result_str
+                            elif isinstance(loop_result_str, str):
+                                loop_result_str = self._response_format.model_validate_json(
+                                    loop_result_str,
+                                )
+                            elif isinstance(loop_result_str, dict):
+                                loop_result_str = self._response_format.model_validate(
+                                    loop_result_str,
+                                )
+                        except Exception:
+                            # Best-effort only: if parsing fails, fall back to raw output.
+                            pass
                     if self._state == _HandleState.RUNNING:
                         self._state = _HandleState.COMPLETED
                         self._result_str = loop_result_str
@@ -284,7 +305,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             self._completion_event.set()
 
     @functools.wraps(BaseActiveTask.result, updated=())
-    async def result(self) -> str:
+    async def result(self) -> Any:
         await self._completion_event.wait()
         if self._error_str:
             return f"Error: {self._error_str}"
