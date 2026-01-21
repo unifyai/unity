@@ -1296,7 +1296,7 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
             parent_chat_context_cont=parent_chat_context_cont,
         )
 
-    async def result(self) -> str:
+    async def result(self) -> Any:
         if not isinstance(self._cache_key, tuple):
             raise TypeError(
                 f"Expected cache_key to be a tuple, got {type(self._cache_key)}",
@@ -2570,37 +2570,37 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             self._imglog_token = LIVE_IMAGES_LOG.set(seed_log)
 
         self.plan_generation_client: unillm.AsyncUnify = new_llm_client(
-            model="gemini-2.5-flash@vertex-ai",
+            model="claude-4.5-opus@anthropic",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.verification_client: unillm.AsyncUnify = new_llm_client(
-            model="gemini-2.5-flash@vertex-ai",
+            model="claude-4.5-opus@anthropic",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.implementation_client: unillm.AsyncUnify = new_llm_client(
-            model="gemini-2.5-flash@vertex-ai",
+            model="claude-4.5-opus@anthropic",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.summarization_client: unillm.AsyncUnify = new_llm_client(
-            model="gemini-2.5-flash@vertex-ai",
+            model="claude-4.5-opus@anthropic",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.modification_client: unillm.AsyncUnify = new_llm_client(
-            model="gemini-2.5-flash@vertex-ai",
+            model="claude-4.5-opus@anthropic",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
         )
         self.ask_client: unillm.AsyncUnify = new_llm_client(
-            model="gemini-2.5-flash@vertex-ai",
+            model="claude-4.5-opus@anthropic",
             return_full_completion=True,
             reasoning_effort=None,
             service_tier=None,
@@ -2618,7 +2618,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             )
         return cp
 
-    def _set_final_result(self, result: str):
+    def _set_final_result(self, result: Any):
         """Sets the final result and the completion event."""
         if not self._completion_event.is_set():
             self._final_result_str = result
