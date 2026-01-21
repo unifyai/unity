@@ -4,6 +4,8 @@ import inspect
 import textwrap
 import json
 from typing import Callable, Dict, Any, Optional, Mapping, TYPE_CHECKING
+
+from pydantic import BaseModel
 from unity.actor.prompt_examples import get_verification_examples_for_environments
 from unity.common.llm_helpers import (
     class_api_overview,
@@ -217,13 +219,29 @@ def _build_simplicity_first_principles(*, has_browser: bool = True, has_primitiv
     - dynamic implementation
     - interjection decisions
     """
+    tool_line = ""
+    if has_browser and has_primitives:
+        tool_line = (
+            "- Calls like `computer_primitives.act(...)`, `computer_primitives.observe(...)`, and many `primitives.*` methods\n"
+            "  accept natural language and often run their own internal tool loops."
+        )
+    elif has_browser:
+        tool_line = (
+            "- Calls like `computer_primitives.act(...)` and `computer_primitives.observe(...)`\n"
+            "  accept natural language and often run their own internal tool loops."
+        )
+    elif has_primitives:
+        tool_line = (
+            "- Many `primitives.*` methods accept natural language and often run their own internal tool loops."
+        )
+    else:
+        tool_line = "- Your available tools are powerful and often run their own internal tool loops."
     return textwrap.dedent(
-        """
+        f"""
         ### Simplicity-First Planning (CRITICAL)
 
         **Default to the simplest plan that could plausibly work.** Your tools are powerful:
-        - Calls like `computer_primitives.act(...)`, `computer_primitives.observe(...)`, and many `primitives.*` methods
-          accept natural language and often run their own internal tool loops.
+        {tool_line}
         - High-quality plans are usually **short and elegant**, with **high-quality instructions** to these tools.
 
         **Progressive elaboration rule:**
@@ -329,7 +347,10 @@ def _build_dynamic_implement_static_prefix(
         You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for a function.
 
         ---
-        {_build_simplicity_first_principles()}
+        {_build_simplicity_first_principles(
+            has_browser=(environments is None or "computer_primitives" in environments),
+            has_primitives=(environments is None or (environments and "primitives" in environments)),
+        )}
 
         ---
         **CRITICAL: You must choose one of four actions:**
@@ -663,7 +684,10 @@ def _build_interjection_static_prefix(
         You are an expert Python programmer and a master strategist responsible for steering a live-running automated plan. A user has interjected with a new instruction while the plan was executing.
 
         ---
-        {_build_simplicity_first_principles()}
+        {_build_simplicity_first_principles(
+            has_browser=(environments is None or "computer_primitives" in environments),
+            has_primitives=(environments is None or (environments and "primitives" in environments)),
+        )}
 
         ---
         ### Cache Invalidation Rules (CRITICAL)
@@ -2098,7 +2122,10 @@ def build_initial_plan_prompt(
 
         **Primary Goal:** "{goal}"
         ---
-        {_build_simplicity_first_principles()}
+        {_build_simplicity_first_principles(
+            has_browser=(environments is None or "computer_primitives" in environments),
+            has_primitives=(environments is None or (environments and "primitives" in environments)),
+        )}
         {rules_and_examples}
         {env_section}
         {response_format_section}
