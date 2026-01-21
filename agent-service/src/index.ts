@@ -14,6 +14,7 @@ import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
+import multer from 'multer';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -28,6 +29,22 @@ try {
 } catch (_e) {
   // ignore
 }
+
+// Multer configuration for multipart file uploads
+const uploadTempDir = path.join(os.tmpdir(), 'unity-uploads');
+try {
+  fs.mkdirSync(uploadTempDir, { recursive: true });
+} catch (_e) {
+  // ignore
+}
+
+const uploadMiddleware = multer({
+  dest: uploadTempDir,
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500MB per file
+    files: 100,
+  },
+});
 
 function sanitizePath(filename: string, baseDir: string): string {
   const resolved = path.resolve(baseDir, filename);
@@ -277,7 +294,7 @@ const defaultBrowserPaths = getDefaultBrowserPaths();
 
 const app = express();
 const wsInstance = expressWs(app);
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '100mb' }));
 
 // --- Authorization (Bearer) middleware ---
 function verifyApiKeyWithUnify(apiKey: string): Promise<boolean> {
@@ -818,9 +835,9 @@ app.post('/interrupt_action', isAgentReady, async (req: Request, res: Response) 
   }
 });
 
-// --- /exec endpoint: Execute shell commands with optional file attachments ---
+// --- /exec endpoint: Execute shell commands (use /files first to upload files) ---
 app.post('/exec', async (req: Request, res: Response) => {
-  const { command, files, cwd, timeout, shell_mode } = req.body;
+  const { command, cwd, timeout, shell_mode } = req.body;
   const execId = randomUUID();
 
   if (!command || typeof command !== 'string') {
@@ -832,28 +849,9 @@ app.post('/exec', async (req: Request, res: Response) => {
   const shellMode: ShellMode = shell_mode === 'cmd' ? 'cmd' : 'powershell';
 
   try {
-    // Validate working directory
     const resolvedWorkDir = path.resolve(workDir);
     await ensureDir(resolvedWorkDir);
 
-    // Write files if provided
-    if (Array.isArray(files) && files.length > 0) {
-      for (const file of files) {
-        if (!file.filename || typeof file.filename !== 'string') {
-          return res.status(400).json({ error: 'bad_request', message: 'Each file must have a filename.' });
-        }
-        if (typeof file.content !== 'string') {
-          return res.status(400).json({ error: 'bad_request', message: 'Each file must have content.' });
-        }
-
-        const sanitizedPath = sanitizePath(file.filename, resolvedWorkDir);
-        const encoding = file.encoding === 'base64' ? 'base64' : 'text';
-        await writeFileWithEncoding(sanitizedPath, file.content, encoding);
-        console.log(`[exec] Wrote file: ${sanitizedPath}`);
-      }
-    }
-
-    // Execute the command
     console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, shell: ${shellMode}, execId: ${execId})`);
     const result = await executeCommand(command, resolvedWorkDir, execTimeout, shellMode);
 
@@ -877,8 +875,10 @@ app.post('/exec', async (req: Request, res: Response) => {
   }
 });
 
-// --- /files endpoint: File management in ~/Unity ---
-app.post('/files', async (req: Request, res: Response) => {
+// --- /files endpoint: Unified file management (JSON + Multipart) ---
+
+// Handler for JSON requests
+async function handleFilesJson(req: Request, res: Response) {
   const { action, files, filenames, path: subPath, filename, encoding } = req.body;
 
   if (!action || typeof action !== 'string') {
@@ -988,6 +988,78 @@ app.post('/files', async (req: Request, res: Response) => {
       error: 'files_failed',
       message: errorMessage,
     });
+  }
+}
+
+// Handler for multipart requests (large file uploads)
+async function handleFilesMultipart(req: Request, res: Response) {
+  const targetDir = (req.body.target_dir as string) || '';
+  const uploadedFiles = req.files as Express.Multer.File[];
+
+  if (!uploadedFiles || uploadedFiles.length === 0) {
+    return res.status(400).json({ error: 'bad_request', message: 'No files uploaded.' });
+  }
+
+  const baseDir = UNITY_WORKSPACE_DIR;
+  const savedFiles: string[] = [];
+  const errors: string[] = [];
+
+  for (const file of uploadedFiles) {
+    try {
+      const originalName = file.originalname;
+      const destFilename = targetDir ? `${targetDir}/${originalName}` : originalName;
+
+      const destPath = sanitizePath(destFilename, baseDir);
+      await ensureDir(path.dirname(destPath));
+      await fs.promises.rename(file.path, destPath);
+
+      savedFiles.push(destFilename);
+      console.log(`[files] Saved (multipart): ${destPath}`);
+    } catch (err) {
+      // Clean up temp file on error
+      try {
+        await fs.promises.unlink(file.path);
+      } catch (_e) {
+        // ignore cleanup errors
+      }
+
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      errors.push(`${file.originalname}: ${errorMessage}`);
+      console.error(`[files] Error saving ${file.originalname}: ${errorMessage}`);
+    }
+  }
+
+  if (errors.length > 0 && savedFiles.length === 0) {
+    return res.status(500).json({
+      error: 'upload_failed',
+      message: 'All files failed to upload',
+      errors,
+    });
+  }
+
+  res.json({
+    status: errors.length > 0 ? 'partial' : 'saved',
+    files: savedFiles,
+    errors: errors.length > 0 ? errors : undefined,
+  });
+}
+
+// Route with content-type detection
+app.post('/files', (req: Request, res: Response) => {
+  const contentType = req.headers['content-type'] || '';
+
+  if (contentType.includes('multipart/form-data')) {
+    // Use multer middleware for multipart uploads
+    uploadMiddleware.array('files', 100)(req, res, (err) => {
+      if (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return res.status(400).json({ error: 'upload_error', message });
+      }
+      handleFilesMultipart(req, res);
+    });
+  } else {
+    // JSON request
+    handleFilesJson(req, res);
   }
 });
 
