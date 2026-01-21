@@ -434,6 +434,23 @@ class CodeExecutionSandbox:
                 _mark_browser_used,
             )
 
+    async def close(self) -> None:
+        """
+        Best-effort cleanup for an ephemeral sandbox instance.
+
+        Notes
+        -----
+        - Pools (venv/shell) are owned by the actor and are not closed here.
+        - This method is safe to call multiple times.
+        """
+        try:
+            self.global_state.clear()
+        except Exception as e:
+            try:
+                logger.warning(f"CodeExecutionSandbox.close() failed: {e}", exc_info=True)
+            except Exception:
+                pass
+
     async def execute(self, code: str) -> Dict[str, Any]:
         """
         Executes a string of Python code within the sandbox's stateful environment.
