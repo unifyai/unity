@@ -404,6 +404,26 @@ class CodeExecutionSandbox:
         self.global_state: Dict[str, Any] = create_execution_globals()
         self._browser_used: bool = False
 
+        # Expose sandbox metadata to user code (best-effort; callers may ignore).
+        self.global_state["__sandbox_id__"] = self.id
+        # Notification queue is injected per-call by CodeActActor via:
+        # sandbox.global_state["__notification_up_q__"] = <asyncio.Queue>
+        #
+        # Provide a user-driven progress helper:
+        #   notify({"type": "...", ...})
+        # This helper is intentionally synchronous; it uses put_nowait.
+        def notify(payload: dict) -> None:
+            try:
+                q = self.global_state.get("__notification_up_q__")
+                if q is None:
+                    return
+                # Queue is expected to be an asyncio.Queue[dict]
+                q.put_nowait(payload)
+            except Exception:
+                return
+
+        self.global_state["notify"] = notify
+
         # Inject pools into namespace (for function proxies to use)
         if venv_pool is not None:
             self.global_state["__venv_pool__"] = venv_pool
@@ -693,7 +713,65 @@ class CodeActActor(BaseCodeActActor):
             if code is None or code.strip() == "":
                 return "Acknowledged thought. No code to execute."
 
-            execution_result = await self._sandbox.execute(code)
+            try:
+                sandbox = _CURRENT_SANDBOX.get()
+            except Exception as e:
+                err = f"CodeAct sandbox is not bound for this call: {type(e).__name__}"
+                try:
+                    logger.warning(err, exc_info=True)
+                except Exception:
+                    pass
+                return {
+                    "stdout": "",
+                    "stderr": "",
+                    "result": None,
+                    "error": err,
+                    "browser_used": False,
+                }
+            notification_q = sandbox.global_state.get("__notification_up_q__")
+            if notification_q is not None:
+                try:
+                    await notification_q.put(
+                        {
+                            "type": "execution_started",
+                            "sandbox_id": sandbox.id,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                except Exception:
+                    pass
+
+            try:
+                execution_result = await sandbox.execute(code)
+            except Exception as e:
+                tb = traceback.format_exc()
+                try:
+                    logger.info(
+                        f"Sandbox execution error: {type(e).__name__}",
+                        exc_info=True,
+                    )
+                except Exception:
+                    pass
+                if notification_q is not None:
+                    try:
+                        await notification_q.put(
+                            {
+                                "type": "execution_error",
+                                "sandbox_id": sandbox.id,
+                                "error_kind": "exception",
+                                "traceback_preview": tb[:2000],
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            }
+                        )
+                    except Exception:
+                        pass
+                return {
+                    "stdout": "",
+                    "stderr": "",
+                    "result": None,
+                    "error": tb,
+                    "browser_used": False,
+                }
 
             output_parts = []
             if execution_result["stdout"]:
@@ -734,6 +812,22 @@ class CodeActActor(BaseCodeActActor):
                     return {"summary": text_summary}
                 except Exception as e:
                     text_summary += f"\n\n--- BROWSER STATE ERROR ---\nCould not retrieve browser state: {e}"
+
+            if notification_q is not None:
+                try:
+                    await notification_q.put(
+                        {
+                            "type": "execution_finished",
+                            "sandbox_id": sandbox.id,
+                            "status": "ok" if not execution_result.get("error") else "error",
+                            "stdout_len": len(execution_result.get("stdout") or ""),
+                            "stderr_len": len(execution_result.get("stderr") or ""),
+                            "browser_used": bool(execution_result.get("browser_used")),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                except Exception:
+                    pass
 
             return text_summary
 
@@ -953,6 +1047,7 @@ class CodeActActor(BaseCodeActActor):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _notification_up_q: Optional[asyncio.Queue[dict]] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
@@ -1001,6 +1096,9 @@ class CodeActActor(BaseCodeActActor):
             venv_pool=self._venv_pool,
             shell_pool=self._shell_pool,
         )
+        if _notification_up_q is not None:
+            sandbox.global_state["__notification_up_q__"] = _notification_up_q
+        token = _CURRENT_SANDBOX.set(sandbox)
 
         # If an explicit FunctionManager entrypoint is provided (e.g., TaskScheduler task execution),
         # bypass the CodeAct LLM loop and run the function directly.
