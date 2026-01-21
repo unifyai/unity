@@ -57,6 +57,7 @@ dependencies = ["torch>=2.0", "transformers>=4.30"]
 - `verify: bool = True` - Whether to verify function execution
 - `precondition: Optional[dict]` - Required state before execution
 - `auto_sync: bool = True` - Set to False to exclude from auto-sync
+- `windows_os_required: bool = False` - Route execution to Windows VM when True
 
 ## Best Practice: Import Runtime Domain Types
 
@@ -101,6 +102,7 @@ class CustomFunctionMetadata:
     verify: bool = True
     precondition: Optional[Dict[str, Any]] = None
     auto_sync: bool = True
+    windows_os_required: bool = False
 
 
 def custom_function(
@@ -110,6 +112,7 @@ def custom_function(
     verify: bool = True,
     precondition: Optional[Dict[str, Any]] = None,
     auto_sync: bool = True,
+    windows_os_required: bool = False,
 ) -> Callable:
     """
     Decorator to mark a function for auto-sync to Functions/Compositional.
@@ -123,6 +126,10 @@ def custom_function(
         verify: Whether the Actor should verify function execution (default True).
         precondition: Optional dict specifying required state before execution.
         auto_sync: If False, function is excluded from auto-sync (default True).
+        windows_os_required: If True, function executes on remote Windows VM
+                             when assistant has desktop_mode='windows' and
+                             is_user_desktop=False. Use for Windows-only libraries
+                             like xlwings or COM automation.
 
     Example:
         @custom_function(venv_name="ml_env")
@@ -130,6 +137,12 @@ def custom_function(
             '''Run in the ml_env virtual environment.'''
             import torch
             return x * 2
+
+        @custom_function(venv_name="excel_env", windows_os_required=True)
+        async def process_excel(path: str) -> dict:
+            '''Run on Windows VM with xlwings.'''
+            import xlwings as xw
+            return {"sheets": 1}
     """
 
     def decorator(func: Callable) -> Callable:
@@ -140,6 +153,7 @@ def custom_function(
             verify=verify,
             precondition=precondition,
             auto_sync=auto_sync,
+            windows_os_required=windows_os_required,
         )
         return func
 
