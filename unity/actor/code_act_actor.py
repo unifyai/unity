@@ -18,6 +18,7 @@ from unity.actor.handle import ActorHandle
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
+from unity.events.manager_event_logging import log_manager_call
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
@@ -867,7 +868,8 @@ class CodeActActor(BaseCodeActActor):
 
         return tools
 
-    @functools.wraps(BaseActor.act, updated=())
+    @functools.wraps(BaseCodeActActor.act, updated=())
+    @log_manager_call("CodeActActor", "act", payload_key="description")
     async def act(
         self,
         description: str,
