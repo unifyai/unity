@@ -1069,8 +1069,81 @@ class CodeActActor(BaseCodeActActor):
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
 
-        is_interactive_session = not description
+        effective_can_compose = self.can_compose if can_compose is None else bool(can_compose)
+        effective_can_store = self.can_store if can_store is None else bool(can_store)
 
+        # can_compose=False mode: do not run an LLM tool loop or allow arbitrary code execution.
+        # Instead, semantic-search for a stored function and execute it directly.
+        if entrypoint is None and not effective_can_compose:
+            from unity.actor.single_function_actor import SingleFunctionActorHandle
+
+            fm = self.function_manager
+            if fm is None:
+                raise RuntimeError(
+                    "CodeActActor cannot run with can_compose=False: function_manager is None",
+                )
+
+            matches = fm.search_functions(
+                query=str(description or ""),
+                n=1,
+                include_implementations=True,
+            )
+            if not matches:
+
+                async def _fail() -> Any:
+                    raise RuntimeError(
+                        "can_compose=False: no matching functions found via semantic search.",
+                    )
+
+                return SingleFunctionActorHandle(
+                    function_name="(no_match)",
+                    function_id=None,
+                    execution_task=asyncio.create_task(_fail()),
+                    is_primitive=False,
+                    verify=False,
+                    goal=description,
+                )
+
+            fn_name = matches[0].get("name")
+            if not isinstance(fn_name, str) or not fn_name.strip():
+                raise RuntimeError(
+                    "can_compose=False: semantic search returned a function without a valid name.",
+                )
+
+            primitives = None
+            try:
+                env = self.environments.get("primitives")
+                if env is not None:
+                    primitives = env.get_instance()
+            except Exception:
+                primitives = None
+
+            async def _run_found() -> Any:
+                out = await fm.execute_function(
+                    function_name=fn_name,
+                    primitives=primitives,
+                    computer_primitives=self._computer_primitives,
+                    venv_pool=self._venv_pool,
+                    shell_pool=self._shell_pool,
+                    state_mode="stateless",
+                )
+                if isinstance(out, dict) and out.get("error"):
+                    raise RuntimeError(str(out.get("error")))
+                if isinstance(out, dict):
+                    return out.get("result")
+                return out
+
+            return SingleFunctionActorHandle(
+                function_name=fn_name,
+                function_id=matches[0].get("function_id") if isinstance(matches[0], dict) else None,
+                execution_task=asyncio.create_task(_run_found()),
+                is_primitive=False,
+                verify=False,
+                goal=description,
+                docstring=(matches[0].get("docstring") if isinstance(matches[0], dict) else None),
+            )
+
+        
         initial_prompt = (
             "This is an interactive session. Acknowledge that you are ready and "
             "wait for the user to provide instructions via interjection."
