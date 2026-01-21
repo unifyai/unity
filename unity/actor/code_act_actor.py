@@ -872,6 +872,35 @@ class CodeActActor(BaseCodeActActor):
             tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
 
+            async def FunctionManager_add_functions(
+                implementations: str | list[str],
+                *,
+                language: str = "python",
+                overwrite: bool = False,
+                verify: Optional[dict[str, bool]] = None,
+                preconditions: Optional[dict[str, dict]] = None,
+            ) -> Any:
+                """
+                Add/store new functions into the FunctionManager.
+
+                Notes
+                -----
+                - This tool is gated by CodeActActor's `can_store` flag (and can be disabled per-call).
+                - Prefer using existing functions (search first) before adding new ones.
+                """
+                fm = self.function_manager
+                if fm is None:
+                    raise RuntimeError("FunctionManager is not configured on this actor.")
+                return fm.add_functions(
+                    implementations=implementations,
+                    language=language,  # type: ignore[arg-type]
+                    overwrite=bool(overwrite),
+                    verify=(verify or {}),
+                    preconditions=(preconditions or {}),
+                )
+
+            tools["FunctionManager_add_functions"] = FunctionManager_add_functions
+
             async def inspect_state() -> dict:
                 """
                 Inspect persistent state across all execution contexts.
