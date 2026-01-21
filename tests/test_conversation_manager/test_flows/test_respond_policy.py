@@ -14,12 +14,11 @@ Uses the CMStepDriver "step_until_wait" API pattern from test_comms.py.
 
 import pytest
 
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, get_or_create_contact
 from tests.test_conversation_manager.cm_helpers import (
     filter_events_by_type,
     assert_has_one,
 )
-from unity.conversation_manager.domains.contact_index import Contact
 from unity.conversation_manager.events import (
     SMSReceived,
     SMSSent,
@@ -87,14 +86,30 @@ CONTACT_RESPOND_WITH_POLICY = {
 
 
 def setup_test_contacts(cm):
-    """Add test contacts to the conversation manager's contact_index."""
+    """Add test contacts to the conversation manager via ContactManager."""
+    if cm.contact_manager is None:
+        return
+
     for contact_dict in [
         CONTACT_RESPOND_YES,
         CONTACT_RESPOND_NO,
         CONTACT_RESPOND_NO_POLICY,
         CONTACT_RESPOND_WITH_POLICY,
     ]:
-        cm.contact_index.contacts[contact_dict["contact_id"]] = Contact(**contact_dict)
+        # Create contact if it doesn't exist, then update with test values
+        get_or_create_contact(
+            cm.contact_manager,
+            first_name=contact_dict["first_name"],
+            surname=contact_dict.get("surname"),
+            email_address=contact_dict.get("email_address"),
+            phone_number=contact_dict.get("phone_number"),
+        )
+        # Update should_respond and response_policy
+        cm.contact_manager.update_contact(
+            contact_id=contact_dict["contact_id"],
+            should_respond=contact_dict.get("should_respond", True),
+            response_policy=contact_dict.get("response_policy", ""),
+        )
 
 
 # ---------------------------------------------------------------------------

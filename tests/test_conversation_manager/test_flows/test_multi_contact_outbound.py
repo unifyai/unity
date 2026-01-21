@@ -20,7 +20,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.cm_helpers import filter_events_by_type
-from tests.test_conversation_manager.conftest import TEST_CONTACTS
+from tests.test_conversation_manager.conftest import BOSS
 from unity.conversation_manager.events import (
     SMSReceived,
     SMSSent,
@@ -31,10 +31,8 @@ from unity.conversation_manager.events import (
 
 pytestmark = pytest.mark.eval
 
-# Convenience references to test contacts
-# Note: contact_id 0 (assistant) and 1 (user) are system contacts.
-# Test contacts start from contact_id 2.
-BOSS = TEST_CONTACTS[0]  # contact_id 2 - used as command sender
+# Note: BOSS (contact_id=1) is imported from conftest.py
+# TEST_CONTACTS are regular contacts starting from contact_id 2.
 
 
 # ---------------------------------------------------------------------------

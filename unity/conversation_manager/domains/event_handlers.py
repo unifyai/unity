@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager import debug_logger
-from unity.conversation_manager.domains.contact_index import Contact
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
 
@@ -14,11 +13,20 @@ if TYPE_CHECKING:
 def _event_type_to_log_key(event_cls) -> str:
     """Convert an event class name to a log key for icon lookup."""
     name = event_cls.__name__
-    # Convert CamelCase to snake_case
     import re
 
     s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+
+def _get_sender_name(contact: dict | None, fallback: str = "Unknown") -> str:
+    """Get display name from contact dict."""
+    if not contact:
+        return fallback
+    first = contact.get("first_name") or ""
+    last = contact.get("surname") or ""
+    name = f"{first} {last}".strip()
+    return name or fallback
 
 
 class EventHandler:
@@ -38,7 +46,6 @@ class EventHandler:
 
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
-        # Log the event using the session logger
         event_key = _event_type_to_log_key(event.__class__)
         if hasattr(cm, "_session_logger"):
             cm._session_logger.info(event_key, f"Event: {event.__class__.__name__}")
@@ -53,7 +60,6 @@ class EventHandler:
 
         f = cls._registry.get(event.__class__)
         if not f:
-            # do nothing basically (?)
             return asyncio.sleep(0)
         return f(event, cm, *args, **kwargs)
 
@@ -61,7 +67,7 @@ class EventHandler:
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     log_str = "Ping received - keeping conversation manager alive"
-    print(log_str)  # need console logging of ping to detect idle containers
+    print(log_str)
     cm._session_logger.debug("ping", log_str)
 
 
@@ -78,18 +84,12 @@ CallEvents = Union[
 )
 async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
     if cm.mode in ["call", "unify_meet"]:
-        # can't make call
-        # TODO: we should handle this somehow tbh
-        # for now do nothing, but we can think of adding a notification of an attempted call
-
-        # if an outbound call has been answered, we should send a notification to the call script
         if isinstance(event, PhoneCallAnswered):
             await cm.event_broker.publish(
                 "app:call:status",
                 json.dumps({"type": "call_answered"}),
             )
     else:
-        # update state
         message_content = None
         notif_content = None
         boss = cm.contact_index.get_contact(contact_id=1)
@@ -99,16 +99,24 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
             contact = cm.contact_index.get_contact(
                 phone_number=event.contact["phone_number"],
             )
+            if contact is None:
+                contact = event.contact
+
+        contact_id = (
+            contact.get("contact_id") if contact else event.contact.get("contact_id")
+        )
+        sender_name = _get_sender_name(contact)
+
         match event:
             case PhoneCallReceived() as e:
                 cm.call_manager.conference_name = e.conference_name
                 cm.call_manager.start_call(contact, boss)
                 message_content = "<Recvieving Call...>"
-                notif_content = f"Call received from {contact['first_name']}"
+                notif_content = f"Call received from {sender_name}"
             case PhoneCallSent() as e:
                 cm.call_manager.start_call(contact, boss, outbound=True)
                 message_content = "<Sending Call...>"
-                notif_content = f"Call sent to {contact['first_name']}"
+                notif_content = f"Call sent to {sender_name}"
             case UnifyMeetReceived() as e:
                 cm.call_manager.start_unify_meet(
                     contact,
@@ -117,18 +125,16 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
                     e.room_name,
                 )
                 message_content = "<Recieving Call...>"
-                notif_content = f"Call received from {contact['first_name']}"
+                notif_content = f"Call received from {sender_name}"
 
         cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+        role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
         cm.contact_index.push_message(
-            contact,
-            "voice",
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name="voice",
             message_content=message_content,
-            role=(
-                "user"
-                if "received" in event.__class__.__name__.lower()
-                else "assistant"
-            ),
+            role=role,
             timestamp=event.timestamp,
         )
 
@@ -144,23 +150,30 @@ async def _(
         cm.mode = "call"
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
+        if contact is None:
+            contact = event.contact
     else:
         cm.mode = "unify_meet"
         contact = cm.contact_index.get_contact(contact_id=1)
 
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
     cm.call_manager.call_contact = contact
     cm.notifications_bar.push_notif(
         "Comms",
-        f"Phone Call started with {contact['first_name']}",
+        f"Phone Call started with {sender_name}",
         timestamp=event.timestamp,
     )
     cm.contact_index.push_message(
-        contact,
-        "voice",
-        "<Call Started>",
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name="voice",
+        message_content="<Call Started>",
         timestamp=event.timestamp,
     )
-    cm.contact_index.active_conversations[contact["contact_id"]].on_call = True
+    conv_state = cm.contact_index.get_or_create_conversation(contact_id)
+    conv_state.on_call = True
     await cm.request_llm_run(delay=0)
 
 
@@ -173,23 +186,29 @@ async def _(
     ),
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
-    # publish transcript
     cm._session_logger.debug(
         "event",
         f"Publishing transcript: {event.__class__.__name__}",
     )
     await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
-    # push message to contact index
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
+    if contact is None:
+        contact = event.contact
+    sender_name = _get_sender_name(contact)
     role = "user" if event.__class__.__name__.startswith("Inbound") else "assistant"
-    cm.contact_index.push_message(contact, "voice", event.content, role=role)
 
-    # cancel proactive speech on user input
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name="voice",
+        message_content=event.content,
+        role=role,
+    )
+
     if role == "user":
         await cm.cancel_proactive_speech()
-        # Trigger Main CM Brain to process user input and potentially send guidance
         await cm.interject_or_run(event.content)
 
 
@@ -206,7 +225,17 @@ async def _(
     )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
-    cm.contact_index.push_message(contact, "voice", event.content, role="Guidance")
+    if contact is None:
+        contact = event.contact
+    sender_name = _get_sender_name(contact)
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name="voice",
+        message_content=event.content,
+        role="Guidance",
+    )
 
 
 @EventHandler.register((PhoneCallEnded, UnifyMeetEnded))
@@ -226,12 +255,15 @@ async def _(
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
         )
+        if contact is None:
+            contact = event.contact
 
-    # Guard against missing active conversation (can happen if call ended
-    # before PhoneCallStarted, or after container restart)
-    contact_id = contact["contact_id"]
-    if contact_id in cm.contact_index.active_conversations:
-        cm.contact_index.active_conversations[contact_id].on_call = False
+    contact_id = (
+        contact.get("contact_id") if contact else event.contact.get("contact_id")
+    )
+    conv_state = cm.contact_index.get_conversation_state(contact_id)
+    if conv_state:
+        conv_state.on_call = False
 
     await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
@@ -247,7 +279,6 @@ async def _(
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
-    # Track clarification requests in the task's handle_actions and notify
     if isinstance(event, ActorClarificationRequest):
         if event.handle_id in cm.active_tasks:
             cm.active_tasks[event.handle_id]["handle_actions"].append(
@@ -257,7 +288,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                     "call_id": event.call_id,
                 },
             )
-            # Add notification about the clarification request
             task_query = cm.active_tasks[event.handle_id].get("query", "")
             short_desc = task_query[:30] + "..." if len(task_query) > 30 else task_query
             cm.notifications_bar.push_notif(
@@ -265,7 +295,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 f"Task '{short_desc}' needs clarification: {event.query}",
                 event.timestamp,
             )
-            # Trigger LLM run so assistant can see and respond to the clarification
             await cm.request_llm_run()
     else:
         ...
@@ -284,7 +313,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
-    # update state
     thread = None
     message_content = None
     subject = None
@@ -293,24 +321,28 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     attachments = None
     notif_content = None
 
-    # Get contact info, with fallback chain:
-    # 1. ContactManager (via contact_index) - source of truth with auto-syncing cache
-    # 2. event.contact - ultimate fallback (CommsManager already resolved it)
+    # Get contact info from ContactManager, fallback to event.contact
     contact = cm.contact_index.get_contact(event.contact["contact_id"])
     if contact is None:
-        # Use event.contact as fallback - it already has the contact info from CommsManager
         contact = event.contact
+
+    contact_id = (
+        contact.get("contact_id")
+        if isinstance(contact, dict)
+        else event.contact["contact_id"]
+    )
+    sender_name = _get_sender_name(contact)
 
     match event:
         case SMSSent():
             thread = "sms"
             message_content = event.content
-            notif_content = f"SMS sent to {contact['first_name']}"
+            notif_content = f"SMS sent to {sender_name}"
             role = "assistant"
         case SMSReceived():
             thread = "sms"
             message_content = event.content
-            notif_content = f"SMS Received from {contact['first_name']}"
+            notif_content = f"SMS Received from {sender_name}"
             role = "user"
         case EmailSent():
             thread = "email"
@@ -318,7 +350,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             body = event.body
             email_id = event.email_id_replied_to
             attachments = event.attachments
-            notif_content = f"Email sent to {contact['first_name']}"
+            notif_content = f"Email sent to {sender_name}"
             role = "assistant"
         case EmailReceived():
             thread = "email"
@@ -326,24 +358,25 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             body = event.body
             email_id = event.email_id
             attachments = event.attachments
-            notif_content = f"Email Received from {contact['first_name']}"
+            notif_content = f"Email Received from {sender_name}"
             role = "user"
         case UnifyMessageSent():
             thread = "unify_message"
             message_content = event.content
             attachments = event.attachments
-            notif_content = f"Unify message sent to {contact['first_name']}"
+            notif_content = f"Unify message sent to {sender_name}"
             role = "assistant"
         case UnifyMessageReceived():
             thread = "unify_message"
             message_content = event.content
             attachments = event.attachments
-            notif_content = f"Unify message from {contact['first_name']}"
+            notif_content = f"Unify message from {sender_name}"
             role = "user"
 
     cm.contact_index.push_message(
-        contact,
-        thread,
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=thread,
         message_content=message_content,
         subject=subject,
         body=body,
@@ -354,14 +387,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 
-    # Cancel proactive speech on message received
     if role == "user":
         await cm.cancel_proactive_speech()
 
     await cm.request_llm_run(delay=2)
-
-
-# TODO: put all managers in the cm and move start up logic from managers worker to here
 
 
 @EventHandler.register((StartupEvent))
@@ -370,7 +399,6 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
     cm.call_manager.set_config(cm.get_call_config())
-    # Update the running record (created by adapter) with job_name and liveview_url
     asyncio.create_task(
         asyncio.to_thread(
             debug_logger.log_job_startup,
@@ -380,7 +408,6 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         ),
     )
 
-    # Start initialization and operations listener
     asyncio.create_task(managers_utils.init_conv_manager(cm))
     asyncio.create_task(managers_utils.listen_to_operations(cm))
 
@@ -404,14 +431,6 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
         event.user_email,
     )
 
-
-@EventHandler.register(GetContactsResponse)
-async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwargs):
-    cm._session_logger.info("state_update", f"Setting {len(event.contacts)} contacts")
-    cm.contact_index.set_contacts(event.contacts)
-    # print(cm.contact_index.contacts)
-
-
 @EventHandler.register(GetChatHistory)
 async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.debug(
@@ -423,7 +442,6 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(ActorHandleStarted)
 async def _(event: ActorHandleStarted, cm: "ConversationManager", *args, **kwargs):
-    # Notify that a new task has started
     cm.notifications_bar.push_notif(
         "Task",
         f"Task started: {event.query[:50]}{'...' if len(event.query) > 50 else ''}",
@@ -444,7 +462,6 @@ async def _(
         f"Notification: {event.content[:50]}...",
     )
 
-    # Push to notification bar
     cm.notifications_bar.push_notif(
         event.source,
         event.content,
@@ -453,10 +470,7 @@ async def _(
         id=event.interjection_id,
     )
 
-    # Cancel proactive speech because we are injecting something
     await cm.cancel_proactive_speech()
-
-    # Trigger LLM to react to the notification
     await cm.request_llm_run(delay=0, cancel_running=True)
 
 
@@ -472,13 +486,11 @@ async def _(
         f"Unpinned interjection: {event.interjection_id}",
     )
 
-    # Remove from notification bar
     cm.notifications_bar.remove_notif(event.interjection_id)
 
 
 @EventHandler.register(ActorResult)
 async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
-    # Get task description for notification
     task_data = cm.active_tasks.get(event.handle_id, {})
     task_query = task_data.get("query", f"Task {event.handle_id}")
     short_desc = task_query[:30] + "..." if len(task_query) > 30 else task_query
@@ -504,14 +516,11 @@ async def _(
     reason = getattr(event, "reason", "")
     affected: list[int] = []
     for hid, data in list(cm.active_tasks.items()):
-        # get task handle
         handle = data.get("handle")
         if handle is None:
             continue
 
-        # pause or resume handle
         try:
-            # Standard steerable surface: pause/resume are preferred; no actor-specific convenience methods.
             if action == "pause":
                 pause_r = handle.pause()
                 if asyncio.iscoroutine(pause_r) or isinstance(pause_r, asyncio.Future):
@@ -530,7 +539,6 @@ async def _(
                 f"Failed to {action} task {hid}: {e}",
             )
 
-    # notify per handle without triggering LLM runs
     for hid in affected:
         try:
             await cm.event_broker.publish(
@@ -576,7 +584,6 @@ async def _(
 
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
-    # ToDo: Get this working for email as well (replying to the same thread)
     if event.medium == "phone_call" and cm.call_manager.call_exchange_id == UNASSIGNED:
         cm.call_manager.call_exchange_id = event.exchange_id
     if (
@@ -593,7 +600,6 @@ async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(SummarizeContext)
 async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs):
-    # Skip if MemoryManager is disabled
     if cm.memory_manager is None:
         cm._session_logger.debug(
             "summarize",
@@ -604,40 +610,29 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
         return
 
     async def summarize_task():
-        res = [
-            (
-                cid,
-                cm.prompt_renderer.render_contact(
-                    c,
-                    max_messages=25,
-                    last_snapshot=cm.last_snapshot,
-                ),
+        # Build render data for each active conversation
+        render_data = []
+        for contact_id, conv_state in cm.contact_index.active_conversations.items():
+            contact_info = cm.contact_index.get_contact(contact_id) or {}
+            rendered = cm.prompt_renderer.render_contact(
+                contact_info=contact_info,
+                conv_state=conv_state,
+                max_messages=25,
+                last_snapshot=cm.last_snapshot,
             )
-            for cid, c in cm.contact_index.active_conversations.items()
-        ]
+            render_data.append((contact_id, rendered))
+
         tasks = [
             asyncio.create_task(
-                cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid),
+                cm.memory_manager.update_contact_rolling_summary(
+                    rendered,
+                    contact_id=cid,
+                ),
             )
-            for cid, t in res
+            for cid, rendered in render_data
         ]
         try:
             await asyncio.gather(*tasks)
-            updated_active_contacts = cm.contact_manager.get_contact_info(
-                contact_id=[cid for cid in cm.contact_index.active_conversations],
-            )
-            updated_active_contacts = {
-                cid: Contact(**{**c.model_dump(), **uc, "threads": c.threads})
-                for (cid, c), uc in zip(
-                    cm.contact_index.active_conversations.items(),
-                    updated_active_contacts.values(),
-                )
-            }
-            cm._session_logger.debug(
-                "state_update",
-                f"Updated {len(updated_active_contacts)} contacts",
-            )
-            cm.contact_index.active_conversations = updated_active_contacts
             cm.is_summarizing = False
             cm.chat_history = []
             cm._session_logger.info("summarize", "Contact rolling summary updated")
@@ -657,18 +652,20 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
         f"Direct message: {event.content[:50]}...",
     )
 
-    # Send to Voice Agent via call_guidance channel
     if cm.mode in ["call", "unify_meet"]:
         await cm.event_broker.publish(
             "app:call:call_guidance",
             json.dumps({"content": event.content}),
         )
 
-    # Record in contact_index for transcript access
     contact = cm.get_active_contact()
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+
     cm.contact_index.push_message(
-        contact,
-        "voice",
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name="voice",
         message_content=event.content,
         role="assistant",
         timestamp=event.timestamp,

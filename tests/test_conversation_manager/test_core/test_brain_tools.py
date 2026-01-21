@@ -46,6 +46,47 @@ from unity.conversation_manager.task_actions import (
 # =============================================================================
 
 
+def _setup_mock_contacts(contact_index, contacts: list[dict]) -> MagicMock:
+    """
+    Set up a mock ContactManager with the given contacts on a ContactIndex.
+
+    Returns the mock ContactManager for additional configuration if needed.
+    """
+    contacts_by_id = {c["contact_id"]: c for c in contacts}
+    contacts_by_phone = {
+        c["phone_number"]: c for c in contacts if c.get("phone_number")
+    }
+    contacts_by_email = {
+        c["email_address"]: c for c in contacts if c.get("email_address")
+    }
+
+    def mock_get_contact_info(cid):
+        if cid in contacts_by_id:
+            return {cid: contacts_by_id[cid]}
+        return {}
+
+    def mock_filter_contacts(filter=None, limit=None):
+        if filter and "phone_number" in filter:
+            for phone, contact in contacts_by_phone.items():
+                if phone in filter:
+                    return {"contacts": [contact]}
+        if filter and "email_address" in filter:
+            for email, contact in contacts_by_email.items():
+                if email in filter:
+                    return {"contacts": [contact]}
+        return {"contacts": []}
+
+    mock_contact_manager = MagicMock()
+    mock_contact_manager.get_contact_info = MagicMock(side_effect=mock_get_contact_info)
+    mock_contact_manager.filter_contacts = MagicMock(side_effect=mock_filter_contacts)
+    mock_contact_manager._create_contact = MagicMock(
+        return_value={"details": {"contact_id": 100}},
+    )
+
+    contact_index.set_contact_manager(mock_contact_manager)
+    return mock_contact_manager
+
+
 @pytest.fixture
 def mock_cm():
     """Create a minimal mock ConversationManager for testing."""
@@ -57,6 +98,8 @@ def mock_cm():
     cm.chat_history = []
     cm.assistant_number = "+15555550000"
     cm.assistant_email = "assistant@test.com"
+    # Set up empty mock contact manager
+    cm.contact_manager = _setup_mock_contacts(cm.contact_index, [])
     return cm
 
 
@@ -136,7 +179,7 @@ class TestCmGetContact:
 
     def test_returns_contact_by_id(self, brain_tools, mock_cm, sample_contacts):
         """Returns contact when found by ID."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
         result = brain_tools.cm_get_contact(1)
         assert result is not None
         assert result["contact_id"] == 1
@@ -144,13 +187,13 @@ class TestCmGetContact:
 
     def test_returns_none_for_unknown_id(self, brain_tools, mock_cm, sample_contacts):
         """Returns None when contact not found."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
         result = brain_tools.cm_get_contact(999)
         assert result is None
 
     def test_excludes_threads_from_contact(self, brain_tools, mock_cm, sample_contacts):
         """Contact summary excludes thread data for efficiency."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
         result = brain_tools.cm_get_contact(1)
         # get_contact uses model_dump(exclude={"threads", "global_thread"})
         assert "threads" not in result
@@ -330,7 +373,7 @@ class TestSendSmsTool:
             "should_respond": True,
             # No phone_number field
         }
-        mock_cm.contact_index.set_contacts([contact_without_phone])
+        _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
 
         result = await brain_action_tools.send_sms(
             contact_id=5,
@@ -363,7 +406,7 @@ class TestSendUnifyMessageTool:
         sample_contacts,
     ):
         """Returns error when attachment file not found."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         result = await brain_action_tools.send_unify_message(
             content="Here's the file",
@@ -383,7 +426,7 @@ class TestSendUnifyMessageTool:
         tmp_path,
     ):
         """Returns error when attachment exceeds size limit."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         # Create a file larger than 25MB
         large_file = tmp_path / "large_file.bin"
@@ -408,7 +451,7 @@ class TestSendUnifyMessageTool:
         tmp_path,
     ):
         """Successfully sends message with attachment when file exists and upload succeeds."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         # Create a small test file
         test_file = tmp_path / "test_document.pdf"
@@ -461,7 +504,7 @@ class TestSendUnifyMessageTool:
         tmp_path,
     ):
         """Returns error when attachment upload fails."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         # Create a small test file
         test_file = tmp_path / "test_document.pdf"
@@ -521,7 +564,7 @@ class TestSendEmailTool:
             "should_respond": True,
             # No email_address field
         }
-        mock_cm.contact_index.set_contacts([contact_without_email])
+        _setup_mock_contacts(mock_cm.contact_index, [contact_without_email])
 
         result = await brain_action_tools.send_email(
             contact_id=4,
@@ -541,7 +584,7 @@ class TestSendEmailTool:
         sample_contacts,
     ):
         """Returns error when attachment file not found."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         result = await brain_action_tools.send_email(
             contact_id=1,
@@ -562,7 +605,7 @@ class TestSendEmailTool:
         tmp_path,
     ):
         """Returns error when attachment exceeds size limit."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         # Create a file larger than 25MB (use a sparse approach for speed)
         large_file = tmp_path / "large_file.bin"
@@ -589,7 +632,7 @@ class TestSendEmailTool:
         tmp_path,
     ):
         """Successfully sends email with attachment when file exists."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         # Create a small test file
         test_file = tmp_path / "report.pdf"
@@ -653,7 +696,7 @@ class TestMakeCallTool:
             "should_respond": True,
             # No phone_number field
         }
-        mock_cm.contact_index.set_contacts([contact_without_phone])
+        _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
 
         result = await brain_action_tools.make_call(contact_id=5)
 
@@ -1082,7 +1125,7 @@ class TestGetOrCreateContact:
     @pytest.mark.asyncio
     async def test_retrieves_by_contact_id(self, mock_cm, sample_contacts):
         """Retrieves contact by ID when provided."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
         result = await _get_or_create_contact(mock_cm, contact_id=1)
         assert result is not None
         assert result["contact_id"] == 1
@@ -1090,7 +1133,7 @@ class TestGetOrCreateContact:
     @pytest.mark.asyncio
     async def test_returns_none_for_unknown_contact_id(self, mock_cm, sample_contacts):
         """Returns None when contact_id not found."""
-        mock_cm.contact_index.set_contacts(sample_contacts)
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
         result = await _get_or_create_contact(mock_cm, contact_id=999)
         assert result is None
 

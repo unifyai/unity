@@ -1,10 +1,17 @@
+"""
+Renderer: Renders conversation state for the ConversationManager LLM.
+
+Contact information is fetched from ContactManager (source of truth).
+Conversation state (threads) is fetched from ContactIndex.
+"""
+
 from datetime import datetime
 
 from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
     UnifyMessage,
-    Contact,
+    ConversationState,
     ContactIndex,
 )
 from unity.conversation_manager.domains.notifications import NotificationBar
@@ -20,7 +27,7 @@ class Renderer:
 
     def render_state(
         self,
-        contact_index: ContactIndex = None,
+        contact_index: ContactIndex,
         notification_bar: NotificationBar = None,
         active_tasks: dict = None,
         last_snapshot: datetime = None,
@@ -28,50 +35,68 @@ class Renderer:
         return (
             f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
             f"{self.render_active_tasks(active_tasks)}\n\n"
-            f"{self.render_active_conversations(contact_index.active_conversations, last_snapshot=last_snapshot)}"
+            f"{self.render_active_conversations(contact_index, last_snapshot=last_snapshot)}"
         )
 
-    # contact stuff
     def render_active_conversations(
         self,
-        active_conversations: dict[str, Contact],
-        max_messages=5,
-        max_global_messages=50,
-        last_snapshot=None,
+        contact_index: ContactIndex,
+        max_messages: int = 5,
+        max_global_messages: int = 50,
+        last_snapshot: datetime = None,
     ):
-        contacts = "\n\n".join(
-            self.render_contact(
-                c,
+        """Render all active conversations, fetching contact info from ContactManager."""
+        contacts = []
+        for contact_id, conv_state in contact_index.active_conversations.items():
+            # Fetch contact info from ContactManager (source of truth)
+            contact_info = contact_index.get_contact(contact_id) or {}
+            rendered = self.render_contact(
+                contact_info=contact_info,
+                conv_state=conv_state,
                 max_messages=max_messages,
                 max_global_messages=max_global_messages,
                 last_snapshot=last_snapshot,
             )
-            for c in active_conversations.values()
-        )
-        return "<active_conversations>\n" f"{contacts}\n" "</active_conversations>"
+            contacts.append(rendered)
+
+        contacts_str = "\n\n".join(contacts)
+        return f"<active_conversations>\n{contacts_str}\n</active_conversations>"
 
     def render_contact(
         self,
-        contact: Contact,
-        max_messages=5,
-        max_global_messages=50,
-        last_snapshot=None,
+        contact_info: dict,
+        conv_state: ConversationState,
+        max_messages: int = 5,
+        max_global_messages: int = 50,
+        last_snapshot: datetime = None,
     ):
-        bio = f"<bio>{contact.bio}</bio>"
-        rolling_summary = (
-            f"<rolling_summary>{contact.rolling_summary}</rolling_summary>"
-        )
-        response_policy = (
-            f"<response_policy>{contact.response_policy}</response_policy>"
-        )
+        """
+        Render a single contact's conversation.
+
+        Args:
+            contact_info: Contact data from ContactManager (name, email, response_policy, etc.)
+            conv_state: Conversation state from ContactIndex (threads, on_call)
+        """
+        contact_id = conv_state.contact_id
+        first_name = contact_info.get("first_name") or ""
+        surname = contact_info.get("surname") or ""
+        phone_number = contact_info.get("phone_number") or ""
+        email_address = contact_info.get("email_address") or ""
+        bio = contact_info.get("bio") or ""
+        rolling_summary = contact_info.get("rolling_summary") or ""
+        response_policy = contact_info.get("response_policy") or ""
+        should_respond = contact_info.get("should_respond", True)
+        is_boss = contact_id == 1
+
+        # Render threads
         global_thread = (
             self.render_thread(
                 "global",
-                contact.global_thread,
+                conv_state.global_thread,
                 max_messages=max_global_messages,
                 last_snapshot=last_snapshot,
             )
-            if contact.global_thread
+            if conv_state.global_thread
             else ""
         )
         per_medium_threads = "\n\n".join(
@@ -81,7 +106,7 @@ class Renderer:
                 max_messages=max_messages,
                 last_snapshot=last_snapshot,
             )
-            for t_name, t in contact.threads.items()
+            for t_name, t in conv_state.threads.items()
             if t
         )
         threads_content = (
@@ -89,22 +114,23 @@ class Renderer:
             if global_thread
             else per_medium_threads
         )
+
         return (
-            f"""<contact contact_id="{contact.contact_id}" first_name="{contact.first_name}" surname="{contact.surname}" is_boss="{contact.contact_id == 1}" phone_number="{contact.phone_number or ""}" email_address="{contact.email_address or ""}" on_call="{contact.on_call}" should_respond="{contact.should_respond}">\n"""
-            f"{bio}\n"
-            f"{rolling_summary}\n"
-            f"{response_policy}\n"
-            "<threads>\n"
-            f"{threads_content}\n"
-            "</threads>\n"
-            "</contact>"
+            f'<contact contact_id="{contact_id}" first_name="{first_name}" surname="{surname}" '
+            f'is_boss="{is_boss}" phone_number="{phone_number}" email_address="{email_address}" '
+            f'on_call="{conv_state.on_call}" should_respond="{should_respond}">\n'
+            f"<bio>{bio}</bio>\n"
+            f"<rolling_summary>{rolling_summary}</rolling_summary>\n"
+            f"<response_policy>{response_policy}</response_policy>\n"
+            f"<threads>\n{threads_content}\n</threads>\n"
+            f"</contact>"
         )
 
     def render_thread(self, thread_name, thread, max_messages=5, last_snapshot=None):
         messages = "\n".join(
             self.render_message(m, last_snapshot) for m in list(thread)[-max_messages:]
         )
-        return f"<{thread_name}>\n" f"{messages}\n" f"</{thread_name}>"
+        return f"<{thread_name}>\n{messages}\n</{thread_name}>"
 
     def render_message(self, message: Message, last_snapshot: datetime = None):
         # Mark all recent messages as NEW (both incoming and outbound)
@@ -115,14 +141,11 @@ class Renderer:
         if isinstance(message, EmailMessage):
             attachments_line = ""
             if message.attachments:
-                # Differentiate between inbound (auto-downloaded) and outbound (sent) attachments
                 if message.name == "You":
-                    # Outbound - we sent the attachment
                     attachment_details = [
                         f"{fname} (attached)" for fname in message.attachments
                     ]
                 else:
-                    # Inbound - show auto-download path
                     attachment_details = [
                         f"{fname} (auto-downloaded to Downloads/{fname})"
                         for fname in message.attachments
@@ -140,14 +163,11 @@ class Renderer:
         if isinstance(message, UnifyMessage):
             attachments_line = ""
             if message.attachments:
-                # Differentiate between inbound (auto-downloaded) and outbound (sent) attachments
                 if message.name == "You":
-                    # Outbound - we sent the attachment
                     attachment_details = [
                         f"{fname} (attached)" for fname in message.attachments
                     ]
                 else:
-                    # Inbound - show auto-download path
                     attachment_details = [
                         f"{fname} (auto-downloaded to Downloads/{fname})"
                         for fname in message.attachments
@@ -157,7 +177,6 @@ class Renderer:
 
         return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"
 
-    # notification stuff
     def render_notification_bar(
         self,
         notification_bar: NotificationBar,
@@ -167,7 +186,6 @@ class Renderer:
         new_notifs = [
             n
             for n in notification_bar.notifications
-            # the timestamp check is probably not needed
             if not n.pinned and n.timestamp > last_snapshot
         ]
         all_notifs = pinned_notifs + new_notifs
@@ -176,11 +194,11 @@ class Renderer:
                 "[PINNED]"
                 if n.pinned
                 else ""
-                + f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
+                + f'[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}'
             )
             for n in all_notifs
         )
-        return "<notifications>\n" f"{rendered_notifs}\n" "</notifications>"
+        return f"<notifications>\n{rendered_notifs}\n</notifications>"
 
     def render_active_tasks(self, active_tasks: dict):
         """Render currently active tasks with their status and history."""
@@ -193,7 +211,6 @@ class Renderer:
                 short_name = derive_short_name(query)
                 handle_actions = handle_data.get("handle_actions", [])
 
-                # Get pending clarifications
                 pending_clarifications = [
                     a
                     for a in handle_actions
@@ -204,7 +221,6 @@ class Renderer:
                 out += f"<task id='{handle_id}' short_name='{short_name}'>\n"
                 out += f"<description>{query}</description>\n"
 
-                # Show available actions using centralized helper
                 out += "<available_actions>\n"
                 for action_name, description in iter_available_actions_for_task(
                     handle_id,
@@ -214,7 +230,6 @@ class Renderer:
                     out += f"  - {action_name}: {description}\n"
                 out += "</available_actions>\n"
 
-                # Show task history
                 if handle_actions:
                     out += "<history>\n"
                     for a in handle_actions:

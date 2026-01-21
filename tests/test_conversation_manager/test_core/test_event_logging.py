@@ -169,8 +169,18 @@ async def cm_with_eventbus():
     # Start the operations listener that processes EventBus publishing
     asyncio.create_task(managers_utils.listen_to_operations(cm))
 
-    # Set test contacts
-    cm.contact_index.set_contacts(TEST_CONTACTS)
+    # Update test contacts in ContactManager (source of truth)
+    # ContactIndex.get_contact() queries ContactManager directly
+    if cm.contact_manager is not None:
+        for contact_data in TEST_CONTACTS:
+            cm.contact_manager.update_contact(
+                contact_id=contact_data["contact_id"],
+                first_name=contact_data.get("first_name"),
+                surname=contact_data.get("surname"),
+                email_address=contact_data.get("email_address"),
+                phone_number=contact_data.get("phone_number"),
+                should_respond=True,
+            )
 
     yield cm
 
