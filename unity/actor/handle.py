@@ -12,6 +12,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
+from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import _strip_image_keys
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
@@ -136,26 +137,14 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             self._clar_up_q_internal is not None
             and self._clar_down_q_internal is not None
         ):
-
-            async def request_clarification(question: str) -> str:
-                """
-                This tool is used to request clarification from the caller.
-                """
-                logger.info(
-                    f"Handle {self._task_id}: LLM requesting clarification: '{question}'",
-                )
-                assert self._clar_up_q_internal is not None
-                assert self._clar_down_q_internal is not None
-                await self._clar_up_q_internal.put(question)
-                answer = await self._clar_down_q_internal.get()
-                logger.info(
-                    f"Handle {self._task_id}: Received clarification: '{answer}'",
-                )
-                return answer
-
-            request_clarification.__name__ = "request_clarification"
-            request_clarification.__qualname__ = "request_clarification"
-            current_tools["request_clarification"] = request_clarification
+            add_clarification_tool_with_events(
+                current_tools,
+                self._clar_up_q_internal,
+                self._clar_down_q_internal,
+                manager="CodeActActor",
+                method="act",
+                call_id=self._call_id,
+            )
         return current_tools
 
     async def _manage_execution(self):
