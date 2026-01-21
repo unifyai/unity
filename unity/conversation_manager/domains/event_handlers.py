@@ -5,7 +5,8 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
-from unity.transcript_manager.types.medium import Medium, Mode, Thread
+from unity.transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Mode
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -130,10 +131,15 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
 
         cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
         role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
+        medium = (
+            Medium.UNIFY_MEET
+            if isinstance(event, UnifyMeetReceived)
+            else Medium.PHONE_CALL
+        )
         cm.contact_index.push_message(
             contact_id=contact_id,
             sender_name=sender_name,
-            thread_name=Thread.VOICE,
+            thread_name=medium,
             message_content=message_content,
             role=role,
             timestamp=event.timestamp,
@@ -166,10 +172,13 @@ async def _(
         f"Phone Call started with {sender_name}",
         timestamp=event.timestamp,
     )
+    medium = (
+        Medium.PHONE_CALL if isinstance(event, PhoneCallStarted) else Medium.UNIFY_MEET
+    )
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name=Thread.VOICE,
+        thread_name=medium,
         message_content="<Call Started>",
         timestamp=event.timestamp,
     )
@@ -200,10 +209,15 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     sender_name = _get_sender_name(contact)
     role = "user" if event.__class__.__name__.startswith("Inbound") else "assistant"
 
+    is_unify_meet = isinstance(
+        event,
+        (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
+    )
+    medium = Medium.UNIFY_MEET if is_unify_meet else Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name=Thread.VOICE,
+        thread_name=medium,
         message_content=event.content,
         role=role,
     )
@@ -230,10 +244,11 @@ async def _(
         contact = event.contact
     sender_name = _get_sender_name(contact)
 
+    medium = Medium.UNIFY_MEET if cm.mode == Mode.UNIFY_MEET else Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name=Thread.VOICE,
+        thread_name=medium,
         message_content=event.content,
         role="Guidance",
     )
@@ -356,17 +371,17 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 
     match event:
         case SMSSent():
-            thread = Thread.SMS
+            medium = Medium.SMS_MESSAGE
             message_content = event.content
             notif_content = f"SMS sent to {sender_name}"
             role = "assistant"
         case SMSReceived():
-            thread = Thread.SMS
+            medium = Medium.SMS_MESSAGE
             message_content = event.content
             notif_content = f"SMS Received from {sender_name}"
             role = "user"
         case EmailSent():
-            thread = Thread.EMAIL
+            medium = Medium.EMAIL
             subject = event.subject
             body = event.body
             email_id = event.email_id_replied_to
@@ -374,7 +389,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Email sent to {sender_name}"
             role = "assistant"
         case EmailReceived():
-            thread = Thread.EMAIL
+            medium = Medium.EMAIL
             subject = event.subject
             body = event.body
             email_id = event.email_id
@@ -382,13 +397,13 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Email Received from {sender_name}"
             role = "user"
         case UnifyMessageSent():
-            thread = Thread.UNIFY_MESSAGE
+            medium = Medium.UNIFY_MESSAGE
             message_content = event.content
             attachments = event.attachments
             notif_content = f"Unify message sent to {sender_name}"
             role = "assistant"
         case UnifyMessageReceived():
-            thread = Thread.UNIFY_MESSAGE
+            medium = Medium.UNIFY_MESSAGE
             message_content = event.content
             attachments = event.attachments
             notif_content = f"Unify message from {sender_name}"
@@ -397,7 +412,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name=thread,
+        thread_name=medium,
         message_content=message_content,
         subject=subject,
         body=body,
@@ -687,10 +702,11 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     contact_id = contact.get("contact_id") if contact else 1
     sender_name = _get_sender_name(contact)
 
+    medium = Medium.UNIFY_MEET if cm.mode == Mode.UNIFY_MEET else Medium.PHONE_CALL
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name=Thread.VOICE,
+        thread_name=medium,
         message_content=event.content,
         role="assistant",
         timestamp=event.timestamp,

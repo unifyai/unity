@@ -24,7 +24,7 @@ from unity.conversation_manager.events import (
     Error,
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
-from unity.transcript_manager.types.medium import Thread
+from unity.transcript_manager.types.medium import Medium
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
     derive_short_name,
@@ -426,7 +426,7 @@ class ConversationManagerBrainActionTools:
                 self._cm.contact_index.get_conversation_state(cid) if cid else None
             )
             if conv_state:
-                thread = conv_state.threads.get(Thread.EMAIL)
+                thread = conv_state.threads.get(Medium.EMAIL)
                 if thread:
                     for m in reversed(thread):
                         if (

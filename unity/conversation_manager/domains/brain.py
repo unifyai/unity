@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, create_model
 
 from unity.conversation_manager.prompt_builders import build_system_prompt
-from unity.transcript_manager.types.medium import Mode
+from unity.conversation_manager.types import Mode
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
