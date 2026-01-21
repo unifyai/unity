@@ -1794,6 +1794,7 @@ def build_initial_plan_prompt(
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
     images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+    response_format: Optional[type[BaseModel]] = None,
 ) -> str:
     """
     Dynamically builds the system prompt for the Hierarchical Actor.
@@ -1818,6 +1819,32 @@ def build_initial_plan_prompt(
         tool_usage_instruction,
         environments,
     )
+
+    response_format_section = ""
+    if response_format is not None:
+        try:
+            schema = response_format.model_json_schema()
+        except Exception:
+            schema = {}
+        response_format_section = textwrap.dedent(
+            f"""
+            ---
+            ### REQUIRED FINAL OUTPUT (response_format)
+
+            The user has requested a structured final output. Your plan MUST ensure that `main_plan()` returns
+            a **JSON string** that validates against the following schema (no extra keys).
+
+            Schema (JSON):
+            ```json
+            {json.dumps(schema, indent=2)}
+            ```
+
+            **Implementation rule:**
+            - In `main_plan()`, build a Python dict matching the schema and `return json.dumps(payload)`.
+            - Do NOT return prose.
+            - Do NOT print the JSON as the answer; return it.
+            """
+        )
 
     library_instruction = textwrap.dedent(
         f"""
@@ -1882,6 +1909,7 @@ def build_initial_plan_prompt(
         {_build_simplicity_first_principles()}
         {rules_and_examples}
         {env_section}
+        {response_format_section}
         ---
         {library_instruction}
         ---
