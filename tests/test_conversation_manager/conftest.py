@@ -212,7 +212,7 @@ async def conversation_manager() -> CMStepDriver:
         # This ensures they exist with the expected contact_ids even when
         # multiple test processes run in parallel.
         for contact_data in TEST_CONTACTS:
-            contact = get_or_create_contact(
+            contact_id = get_or_create_contact(
                 cm.contact_manager,
                 first_name=contact_data["first_name"],
                 surname=contact_data.get("surname"),
@@ -220,9 +220,9 @@ async def conversation_manager() -> CMStepDriver:
                 phone_number=contact_data.get("phone_number"),
             )
             # Update should_respond and response_policy for tests
-            if contact and cm.contact_manager is not None:
+            if contact_id and cm.contact_manager is not None:
                 cm.contact_manager.update_contact(
-                    contact_id=contact["contact_id"],
+                    contact_id=contact_id,
                     should_respond=contact_data.get("should_respond", True),
                     response_policy=contact_data.get(
                         "response_policy",
