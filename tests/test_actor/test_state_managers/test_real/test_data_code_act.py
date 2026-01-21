@@ -1,7 +1,7 @@
 """Real DataManager CodeAct tests for Actor.
 
-Tests that Actor correctly generates and executes Python plans that
-compose DataManager primitives for complex data workflows.
+Tests that CodeActActor correctly generates Python code that
+composes DataManager primitives for complex data workflows.
 """
 
 from __future__ import annotations
@@ -13,8 +13,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
-    get_state_manager_tools,
-    make_actor,
+    make_code_act_actor,
 )
 from unity.manager_registry import ManagerRegistry
 
@@ -36,9 +35,9 @@ async def _safe_call(method, *args, **kwargs) -> Any:
 @pytest.mark.timeout(300)
 @pytest.mark.eval
 @_handle_project
-async def test_code_act_composes_data_operations(mock_verification):
-    """Test that Actor generates code composing multiple DataManager operations."""
-    async with make_actor(impl="real") as actor:
+async def test_code_act_composes_data_operations():
+    """Test that CodeActActor generates code composing multiple DataManager operations."""
+    async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
 
         # Access real DataManager and create test tables
         dm = ManagerRegistry.get_data_manager()
@@ -66,7 +65,7 @@ async def test_code_act_composes_data_operations(mock_verification):
             handle = await actor.act(
                 f"Using the data in {sales_context}, calculate the total amount per region "
                 "and tell me which region has the higher total.",
-                persist=False,
+                clarification_enabled=False,
             )
 
             # Wait for result
@@ -75,20 +74,10 @@ async def test_code_act_composes_data_operations(mock_verification):
             # Assert result mentions regions and comparison
             result_lower = result.lower()
             assert "north" in result_lower or "south" in result_lower
-            # South should be higher (2500 vs 2500) - wait, actually equal!
-            # Let me check: North = 1000 + 1500 = 2500, South = 2000 + 500 = 2500
-            # They're equal, so the result should mention that or pick one
-
-            # Verify plan was generated with code
-            assert handle.plan_source_code
-            assert "async def" in handle.plan_source_code
 
             # Assert data primitives were called
-            state_manager_tools = get_state_manager_tools(handle)
-            data_tools = [t for t in state_manager_tools if "data" in t]
-            assert (
-                data_tools
-            ), f"Expected data primitive calls, saw: {state_manager_tools}"
+            data_calls = [c for c in calls if "data" in c]
+            assert data_calls, f"Expected data primitive calls, saw: {calls}"
 
         finally:
             # Cleanup - handles both sync and async cases
@@ -99,9 +88,9 @@ async def test_code_act_composes_data_operations(mock_verification):
 @pytest.mark.timeout(300)
 @pytest.mark.eval
 @_handle_project
-async def test_code_act_data_pipeline(mock_verification):
-    """Test that Actor generates code for a data transformation pipeline."""
-    async with make_actor(impl="real") as actor:
+async def test_code_act_data_pipeline():
+    """Test that CodeActActor generates code for a data transformation pipeline."""
+    async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
 
         # Access real DataManager and create source table
         dm = ManagerRegistry.get_data_manager()
@@ -128,7 +117,7 @@ async def test_code_act_data_pipeline(mock_verification):
             handle = await actor.act(
                 f"From the data in {source_context}, filter to only category 'A' entries, "
                 "then calculate the average score of those entries.",
-                persist=False,
+                clarification_enabled=False,
             )
 
             # Wait for result
@@ -137,10 +126,110 @@ async def test_code_act_data_pipeline(mock_verification):
             # Assert result mentions the average (Alice: 85, Charlie: 91 -> avg = 88)
             assert "88" in result or "average" in result.lower()
 
-            # Verify plan was generated
-            assert handle.plan_source_code
-            assert "primitives." in handle.plan_source_code
+            # Assert data primitives were called
+            data_calls = [c for c in calls if "data" in c]
+            assert data_calls, f"Expected data primitive calls, saw: {calls}"
 
         finally:
             # Cleanup - handles both sync and async cases
             await _safe_call(dm.delete_table, context=source_context, dangerous_ok=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+@pytest.mark.eval
+@_handle_project
+async def test_code_act_filter_calls_data_manager():
+    """Test that CodeActActor calls DataManager.filter for data filtering queries."""
+    async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
+
+        # Access real DataManager and create a test table with data
+        dm = ManagerRegistry.get_data_manager()
+
+        # Create test context and seed data
+        test_context = "Data/Test/code_act_filter_test"
+        await _safe_call(
+            dm.create_table,
+            context=test_context,
+            fields={"name": "str", "amount": "int", "region": "str"},
+        )
+        await _safe_call(
+            dm.insert_rows,
+            context=test_context,
+            rows=[
+                {"name": "Item A", "amount": 100, "region": "North"},
+                {"name": "Item B", "amount": 500, "region": "South"},
+                {"name": "Item C", "amount": 200, "region": "North"},
+            ],
+        )
+
+        try:
+            # Call actor with data query
+            handle = await actor.act(
+                f"Filter the data in {test_context} to show only items where amount > 150.",
+                clarification_enabled=False,
+            )
+
+            # Wait for result
+            result = await handle.result()
+
+            # Assert result mentions the filtered data
+            assert "Item B" in result or "500" in result or "Item C" in result
+
+            # Assert data primitives were called
+            data_calls = [c for c in calls if "data" in c]
+            assert data_calls, f"Expected data primitive calls, saw: {calls}"
+
+        finally:
+            # Cleanup - handles both sync and async cases
+            await _safe_call(dm.delete_table, context=test_context, dangerous_ok=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+@pytest.mark.eval
+@_handle_project
+async def test_code_act_reduce_calls_data_manager():
+    """Test that CodeActActor calls DataManager.reduce for aggregation queries."""
+    async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
+
+        # Access real DataManager
+        dm = ManagerRegistry.get_data_manager()
+
+        # Create test context and seed data
+        test_context = "Data/Test/code_act_reduce_test"
+        await _safe_call(
+            dm.create_table,
+            context=test_context,
+            fields={"product": "str", "revenue": "int"},
+        )
+        await _safe_call(
+            dm.insert_rows,
+            context=test_context,
+            rows=[
+                {"product": "Widget", "revenue": 1000},
+                {"product": "Gadget", "revenue": 2000},
+                {"product": "Doohickey", "revenue": 1500},
+            ],
+        )
+
+        try:
+            # Call actor with aggregation query
+            handle = await actor.act(
+                f"What is the total sum of the revenue column in {test_context}?",
+                clarification_enabled=False,
+            )
+
+            # Wait for result
+            result = await handle.result()
+
+            # Assert result contains the sum (4500)
+            assert "4500" in result or "4,500" in result
+
+            # Assert data primitives were called
+            data_calls = [c for c in calls if "data" in c]
+            assert data_calls, f"Expected data primitive calls, saw: {calls}"
+
+        finally:
+            # Cleanup - handles both sync and async cases
+            await _safe_call(dm.delete_table, context=test_context, dangerous_ok=True)
