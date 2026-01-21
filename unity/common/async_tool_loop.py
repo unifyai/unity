@@ -57,10 +57,15 @@ class SteerableHandle(ABC):
         images: list | dict | None = None,
     ) -> "SteerableHandle":
         """
-        Ask about the current status or progress of this running task.
+        Query the status or progress of this running task (async - result arrives on next turn).
 
         Use this to check on updates, get a summary of what has happened so far,
         or ask clarifying questions about the task's state without modifying it.
+
+        This operation is asynchronous: it returns immediately with "Query submitted",
+        and the actual response appears in the task's history when ready (status
+        changes from 'pending' to 'completed'). You will automatically receive
+        another turn to see and act on the result.
 
         Parameters
         ----------

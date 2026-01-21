@@ -34,7 +34,7 @@ class Renderer:
     ):
         return (
             f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
-            f"{self.render_active_tasks(active_tasks)}\n\n"
+            f"{self.render_in_flight_tasks(active_tasks)}\n\n"
             f"{self.render_active_conversations(contact_index, last_snapshot=last_snapshot)}"
         )
 
@@ -200,11 +200,15 @@ class Renderer:
         )
         return f"<notifications>\n{rendered_notifs}\n</notifications>"
 
-    def render_active_tasks(self, active_tasks: dict):
-        """Render currently active tasks with their status and history."""
-        out = "<active_tasks>\n"
+    def render_in_flight_tasks(self, active_tasks: dict):
+        """Render currently in-flight tasks with their status and history.
+
+        These are tasks that are ALREADY EXECUTING - work is in progress.
+        Use steering tools to interact with them, don't duplicate with `act`.
+        """
+        out = "<in_flight_tasks>\n"
         if not active_tasks:
-            out += "No active tasks\n"
+            out += "No tasks currently executing.\n"
         else:
             for handle_id, handle_data in active_tasks.items():
                 query = handle_data.get("query", "")
@@ -218,28 +222,45 @@ class Renderer:
                     and not a.get("response")
                 ]
 
-                out += f"<task id='{handle_id}' short_name='{short_name}'>\n"
-                out += f"<description>{query}</description>\n"
+                out += f"<task id='{handle_id}' short_name='{short_name}' status='executing'>\n"
+                out += f"<original_request>{query}</original_request>\n"
 
-                out += "<available_actions>\n"
+                out += "<steering_tools>\n"
                 for action_name, description in iter_available_actions_for_task(
                     handle_id,
                     query,
                     pending_clarifications,
                 ):
                     out += f"  - {action_name}: {description}\n"
-                out += "</available_actions>\n"
+                out += "</steering_tools>\n"
 
                 if handle_actions:
                     out += "<history>\n"
                     for a in handle_actions:
                         action_type = a.get("action_name", "")
                         action_query = a.get("query", "")
-                        out += f"<event type='{action_type}'>\n"
+                        action_status = a.get("status", "")
+
+                        # Include status attribute if present (for ask operations)
+                        if action_status:
+                            out += f"<event type='{action_type}' status='{action_status}'>\n"
+                        else:
+                            out += f"<event type='{action_type}'>\n"
+
                         if action_query:
                             out += f"  <content>{action_query}</content>\n"
                         if a_res := a.get("response"):
                             out += f"  <response>{a_res}</response>\n"
+
+                        # Show pending note for in-flight ask operations
+                        if action_status == "pending" and action_type.startswith(
+                            "ask_",
+                        ):
+                            out += (
+                                "  <note>Result pending - you will receive another "
+                                "turn when the answer is ready.</note>\n"
+                            )
+
                         if action_type == "clarification_request" and not a.get(
                             "response",
                         ):
@@ -256,5 +277,5 @@ class Renderer:
                     out += "</history>\n"
 
                 out += "</task>\n"
-        out += "</active_tasks>"
+        out += "</in_flight_tasks>"
         return out

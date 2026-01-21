@@ -296,6 +296,24 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 event.timestamp,
             )
             await cm.request_llm_run()
+    elif isinstance(event, ActorHandleResponse):
+        # Handle response from an ask operation
+        if event.handle_id in cm.active_tasks:
+            handle_data = cm.active_tasks[event.handle_id]
+            handle_actions = handle_data.get("handle_actions", [])
+
+            # Find the pending ask action and update it with the response
+            for action in reversed(handle_actions):
+                if (
+                    action.get("action_name") == f"ask_{event.handle_id}"
+                    and action.get("status") == "pending"
+                ):
+                    action["status"] = "completed"
+                    action["response"] = event.response
+                    break
+
+            # Wake the brain LLM to process the response
+            await cm.request_llm_run()
     else:
         ...
 

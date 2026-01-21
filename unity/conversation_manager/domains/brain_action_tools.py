@@ -20,6 +20,7 @@ from unity.conversation_manager.events import (
     EmailSent,
     PhoneCallSent,
     ActorHandleStarted,
+    ActorHandleResponse,
     Error,
 )
 from unity.conversation_manager.task_actions import (
@@ -637,6 +638,9 @@ class ConversationManagerBrainActionTools:
     ) -> "Callable[..., Any]":
         """Create a closure for a task steering operation."""
         cm = self._cm
+        # Use cm.event_broker to ensure the same broker is used throughout
+        # (important for test patching)
+        event_broker = cm.event_broker
 
         async def steering_tool(
             **kwargs: Any,
@@ -644,43 +648,128 @@ class ConversationManagerBrainActionTools:
             param_value = kwargs.get(param_name, "") if param_name else ""
 
             handle_data = cm.active_tasks.get(handle_id)
-            if handle_data:
-                handle_data["handle_actions"].append(
-                    {"action_name": f"{operation}_{handle_id}", "query": param_value},
-                )
 
             result = ""
             try:
                 match operation:
                     case "ask":
-                        ask_handle = await handle.ask(
-                            param_value,
-                            parent_chat_context_cont=cm.chat_history,
-                        )
-                        result = await ask_handle.result()
+                        # Record action with pending status - result will arrive async
+                        if handle_data:
+                            handle_data["handle_actions"].append(
+                                {
+                                    "action_name": f"ask_{handle_id}",
+                                    "query": param_value,
+                                    "status": "pending",
+                                },
+                            )
+
+                        # Capture values for the closure
+                        _handle = handle
+                        _param_value = param_value
+                        _handle_id = handle_id
+                        _cm_chat_history = cm.chat_history
+
+                        # Spawn background task to perform ask and emit result
+                        async def _perform_ask_and_emit():
+                            try:
+                                # Start the ask operation (does the LLM roundtrip)
+                                ask_handle = await _handle.ask(
+                                    _param_value,
+                                    parent_chat_context_cont=_cm_chat_history,
+                                )
+                                # Await the result
+                                ask_result = await ask_handle.result()
+                            except Exception as e:
+                                ask_result = f"Error: {e}"
+                            # Emit ActorHandleResponse event to wake brain
+                            await event_broker.publish(
+                                f"app:actor:handle_response_{_handle_id}",
+                                ActorHandleResponse(
+                                    handle_id=_handle_id,
+                                    action_name="ask",
+                                    query=_param_value,
+                                    response=ask_result,
+                                    call_id="",
+                                ).to_json(),
+                            )
+
+                        asyncio.create_task(_perform_ask_and_emit())
+
+                        # Return immediately - brain will be woken when result arrives
+                        return {
+                            "status": "ok",
+                            "operation": "ask",
+                            "result": (
+                                "Query submitted. You will receive another turn "
+                                "when the answer is ready."
+                            ),
+                        }
+
                     case "interject":
+                        if handle_data:
+                            handle_data["handle_actions"].append(
+                                {
+                                    "action_name": f"{operation}_{handle_id}",
+                                    "query": param_value,
+                                },
+                            )
                         await handle.interject(
                             param_value,
                             parent_chat_context_cont=cm.chat_history,
                         )
                         result = "Interjected successfully"
                     case "stop":
+                        if handle_data:
+                            handle_data["handle_actions"].append(
+                                {
+                                    "action_name": f"{operation}_{handle_id}",
+                                    "query": param_value,
+                                },
+                            )
                         handle.stop(reason=param_value or None)
                         result = "Task stopped"
                         cm.active_tasks.pop(handle_id, None)
                     case "pause":
+                        if handle_data:
+                            handle_data["handle_actions"].append(
+                                {
+                                    "action_name": f"{operation}_{handle_id}",
+                                    "query": param_value,
+                                },
+                            )
                         await handle.pause()
                         result = "Task paused"
                     case "resume":
+                        if handle_data:
+                            handle_data["handle_actions"].append(
+                                {
+                                    "action_name": f"{operation}_{handle_id}",
+                                    "query": param_value,
+                                },
+                            )
                         await handle.resume()
                         result = "Task resumed"
                     case "answer_clarification":
+                        if handle_data:
+                            handle_data["handle_actions"].append(
+                                {
+                                    "action_name": f"{operation}_{handle_id}",
+                                    "query": param_value,
+                                },
+                            )
                         if call_id:
                             await handle.answer_clarification(call_id, param_value)
                             result = "Clarification answered"
                         else:
                             result = "No clarification call_id available"
                     case _:
+                        if handle_data:
+                            handle_data["handle_actions"].append(
+                                {
+                                    "action_name": f"{operation}_{handle_id}",
+                                    "query": param_value,
+                                },
+                            )
                         result = f"Unknown operation: {operation}"
             except Exception as e:
                 result = f"Error: {e}"
