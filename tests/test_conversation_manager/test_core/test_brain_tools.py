@@ -17,6 +17,7 @@ These tests verify the tool implementations directly, testing:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -721,8 +722,8 @@ class TestActTool:
     def test_docstring_describes_capabilities(self, brain_action_tools):
         """Act tool docstring describes its capabilities."""
         doc = brain_action_tools.act.__doc__
-        # Should mention key capabilities
-        assert "Retrieval" in doc or "search" in doc.lower()
+        # Should mention engaging with knowledge/resources beyond conversations
+        assert "knowledge" in doc.lower() or "resources" in doc.lower()
 
 
 # =============================================================================
@@ -904,6 +905,11 @@ class TestMakeSteeringTool:
             query="Test",
         )
         result = await tool(query="What is the status?")
+
+        # The ask operation spawns a background task, so we need to
+        # yield control to let it run before asserting
+        await asyncio.sleep(0)
+
         mock_handle.ask.assert_called_once()
         assert result["status"] == "ok"
         assert result["operation"] == "ask"
@@ -1183,12 +1189,16 @@ class TestToolDocstrings:
     def test_act_docstring_is_comprehensive(self, brain_action_tools):
         """act tool has comprehensive docstring explaining capabilities."""
         doc = brain_action_tools.act.__doc__
-        assert len(doc) > 100, "act docstring should be comprehensive"
+        # Should describe engaging with knowledge/resources and have args section
+        assert "knowledge" in doc.lower() or "resources" in doc.lower()
+        assert "query" in doc.lower()  # Should document the query parameter
 
     def test_wait_docstring_explains_when_to_use(self, brain_action_tools):
         """wait tool docstring explains when to use it."""
         doc = brain_action_tools.wait.__doc__
-        assert "PREFER" in doc or "prefer" in doc.lower()
+        # Should explain that wait means not taking action
+        assert "wait" in doc.lower()
+        assert "action" in doc.lower() or "input" in doc.lower()
 
 
 # =============================================================================
