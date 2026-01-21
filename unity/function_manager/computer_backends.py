@@ -154,6 +154,9 @@ class MockComputerBackend(ComputerBackend):
         wait: bool = True,
         context: dict = None,
         override_cache: bool = False,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **_kwargs: Any,
     ) -> Any:
         """Mock implementation of `MagnitudeBackend.act` (signature-compatible).
 
@@ -165,6 +168,9 @@ class MockComputerBackend(ComputerBackend):
 
         _ = context
         _ = override_cache
+        _ = _clarification_up_q
+        _ = _clarification_down_q
+        _ = _kwargs
         self._seq += 1
         if not wait:
             return "Command queued."
@@ -177,6 +183,9 @@ class MockComputerBackend(ComputerBackend):
         wait: bool = True,
         context: dict = None,
         bypass_dom_processing: bool = False,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **_kwargs: Any,
     ) -> Any:
         """Mock implementation of `MagnitudeBackend.observe` (signature-compatible)."""
 
@@ -184,6 +193,9 @@ class MockComputerBackend(ComputerBackend):
         _ = wait
         _ = context
         _ = bypass_dom_processing
+        _ = _clarification_up_q
+        _ = _clarification_down_q
+        _ = _kwargs
         self._seq += 1
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             # If a Pydantic model is requested, try to create an instance with defaults
@@ -193,8 +205,14 @@ class MockComputerBackend(ComputerBackend):
                 return self._observe_response
         return self._observe_response
 
-    async def query(self, query: str, response_format: Any = str) -> Any:
+    async def query(
+        self,
+        query: str,
+        response_format: Any = str,
+        **_kwargs: Any,
+    ) -> Any:
         """Returns the configured query response."""
+        _ = _kwargs
         self._seq += 1
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             try:
@@ -211,8 +229,17 @@ class MockComputerBackend(ComputerBackend):
         """Returns the configured URL."""
         return self._url
 
-    async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
+    async def navigate(
+        self,
+        url: str,
+        wait: bool = True,
+        context: dict = None,
+        **_kwargs: Any,
+    ) -> str:
         """Updates the internal URL and returns success."""
+        _ = wait
+        _ = context
+        _ = _kwargs
         self._url = url
         self._seq += 1
         return "success"
@@ -897,7 +924,7 @@ class MagnitudeBackend(ComputerBackend):
         """
         Executes a high-level computer task using the Magnitude agent.
 
-        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page.
+        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the browser page.
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
@@ -993,6 +1020,9 @@ class MagnitudeBackend(ComputerBackend):
 
         This is your primary tool for perception. The agent uses a vision-language model to
         analyze the page, so its success depends entirely on the quality and clarity of your `query`.
+
+        This is a perception tool for what is *currently visible* in the browser tab or
+        on-screen desktop. It is NOT a general-purpose data access tool.
 
         **Key Principles for an Effective Query:**
 
