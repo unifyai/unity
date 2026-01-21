@@ -13,7 +13,7 @@ import pytest
 
 from tests.test_actor.test_state_managers.utils import (
     get_state_manager_tools,
-    make_actor,
+    make_hierarchical_actor,
 )
 
 pytestmark = pytest.mark.eval
@@ -45,7 +45,7 @@ async def test_filter_questions_use_data_primitives(
     mock_verification,
 ):
     """Verify Actor generates plans calling primitives.data.filter for filter queries."""
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
 
         handle = await actor.act(
             f"{question} Do not ask clarifying questions. Generate the full plan.",
@@ -78,7 +78,7 @@ async def test_reduce_questions_use_data_primitives(
     mock_verification,
 ):
     """Verify Actor generates plans calling primitives.data.reduce for aggregation queries."""
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
 
         handle = await actor.act(
             f"{question} Do not ask clarifying questions. Generate the full plan.",
@@ -107,7 +107,7 @@ async def test_join_questions_use_data_primitives(
     mock_verification,
 ):
     """Verify Actor generates plans calling primitives.data.*_join for join queries."""
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
 
         handle = await actor.act(
             f"{question} Do not ask clarifying questions. Generate the full plan.",
