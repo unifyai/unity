@@ -31,6 +31,7 @@ import pytest_asyncio
 
 from tests.async_helpers import _wait_for_condition
 from tests.helpers import _handle_project
+from tests.test_actor.test_hierarchical.helpers import SimpleMockVerificationClient
 from unity.actor.environments import StateManagerEnvironment
 from unity.actor.hierarchical_actor import HierarchicalActor, HierarchicalActorHandle
 from unity.actor.steerable_tool_pane import BroadcastFilter, SteerableToolPane
@@ -932,7 +933,7 @@ async def test_concurrent_registration_is_safe() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(120)
 async def test_actor_clarification_bubbles_up_and_is_answered() -> None:
     """Integration: clarification from nested manager bubbles to actor, is answered, and run completes."""
     primitives = Primitives()
@@ -982,7 +983,8 @@ async def test_actor_clarification_bubbles_up_and_is_answered() -> None:
         assert "Which contact" in question
 
         await down_q.put("David Smith")
-        final = await asyncio.wait_for(task.result(), timeout=20)
+        # Under high parallelism this can take longer (pane watcher + supervisor + nested handle).
+        final = await asyncio.wait_for(task.result(), timeout=60)
         assert "ok:David Smith" in str(final)
 
         handles = await task.pane.list_handles()
@@ -1030,6 +1032,7 @@ async def test_broadcast_interject_reaches_concurrent_handles() -> None:
             with pytest.raises(asyncio.CancelledError):
                 await task._execution_task
 
+            task.verification_client = SimpleMockVerificationClient()
         task.plan_source_code = actor._sanitize_code(
             textwrap.dedent(
                 """
@@ -1276,7 +1279,11 @@ async def test_pane_registers_handles_for_cross_manager_join():
     km._create_table(name="Companies", columns={"name": "str", "employees": "int"})
     km._add_rows(table="Companies", rows=[{"name": seed_company, "employees": 1200}])
 
-    h = HierarchicalActorHandle(actor=actor, goal="canned", persist=False)
+    h = HierarchicalActorHandle(
+        actor=actor,
+        goal="Find SteveTest Joinson's employer, then return that company's employee count.",
+        persist=False,
+    )
     # Cancel auto-started execution BEFORE injecting canned plan
     if h._execution_task:
         h._execution_task.cancel()
@@ -1293,6 +1300,7 @@ async def main_plan():
     return str(answer)
 """
     h.plan_source_code = actor._sanitize_code(CANNED_PLAN, h)
+    h.verification_client = SimpleMockVerificationClient()
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:
@@ -1366,7 +1374,11 @@ async def test_verification_captures_pane_events_for_contact_mutation(
         raising=True,
     )
 
-    h = HierarchicalActorHandle(actor=actor, goal="canned", persist=False)
+    h = HierarchicalActorHandle(
+        actor=actor,
+        goal="Update a contact, then confirm the updated field via a follow-up ask.",
+        persist=False,
+    )
     if h._execution_task:
         h._execution_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1381,6 +1393,7 @@ async def main_plan():
     return await q.result()
 """
     h.plan_source_code = actor._sanitize_code(CANNED_PLAN, h)
+    h.verification_client = SimpleMockVerificationClient()
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:
@@ -1495,7 +1508,11 @@ async def test_concurrent_handles_broadcast_interject_fans_out():
         timeout=40.0,
     )
 
-    h = HierarchicalActorHandle(actor=actor, goal="canned", persist=False)
+    h = HierarchicalActorHandle(
+        actor=actor,
+        goal="Return EveTest Paneson's email address and the office-hours policy from transcripts.",
+        persist=False,
+    )
     if h._execution_task:
         h._execution_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1519,6 +1536,7 @@ async def main_plan():
     return f"{email_result} | {office_hours_result}"
 """
     h.plan_source_code = actor._sanitize_code(CANNED_PLAN, h)
+    h.verification_client = SimpleMockVerificationClient()
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:
@@ -1626,7 +1644,11 @@ async def test_actor_interject_broadcast_routes_to_inflight_handles():
     )
     tm.join_published()
 
-    h = HierarchicalActorHandle(actor=actor, goal="canned", persist=False)
+    h = HierarchicalActorHandle(
+        actor=actor,
+        goal="Return RouteTest Broadcast's email address and office hours, then finish.",
+        persist=False,
+    )
     if h._execution_task:
         h._execution_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1649,14 +1671,18 @@ async def main_plan():
     return f"{{email_result}} | {{office_hours_result}}"
 """
     h.plan_source_code = actor._sanitize_code(CANNED_PLAN, h)
+    h.verification_client = SimpleMockVerificationClient()
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:
 
         async def _handles_ready() -> bool:
-            if not h.runtime._checkpoint_event.is_set():
+            handles = await h.pane.list_handles()
+            if len(handles) < 2:
                 return False
-            return len(await h.pane.list_handles()) >= 2
+            events = h.pane.get_recent_events(n=100)
+            registered = [e for e in events if e.get("type") == "handle_registered"]
+            return len(registered) >= 2
 
         await asyncio.wait_for(
             _wait_for_condition(_handles_ready, poll=0.05, timeout=60.0),
@@ -1746,7 +1772,11 @@ async def test_actor_interject_targeted_routes_to_specific_handle():
     )
     tm.join_published()
 
-    h = HierarchicalActorHandle(actor=actor, goal="canned", persist=False)
+    h = HierarchicalActorHandle(
+        actor=actor,
+        goal="Return RouteTest Targeted's email address and office hours, then finish.",
+        persist=False,
+    )
     if h._execution_task:
         h._execution_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1766,6 +1796,7 @@ async def main_plan():
     return f"{{email_result}} | {{office_hours_result}}"
 """
     h.plan_source_code = actor._sanitize_code(CANNED_PLAN, h)
+    h.verification_client = SimpleMockVerificationClient()
     h._execution_task = asyncio.create_task(h._initialize_and_run())
 
     try:

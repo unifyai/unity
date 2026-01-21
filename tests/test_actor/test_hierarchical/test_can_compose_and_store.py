@@ -33,7 +33,7 @@ def mock_function_manager():
     fm.list_functions = MagicMock(return_value={})
     fm.add_functions = MagicMock()
     fm.search_functions = MagicMock(return_value=[])
-    fm.search_functions = MagicMock(return_value=[])
+    fm.filter_functions = MagicMock(return_value=[])
     return fm
 
 
@@ -167,6 +167,19 @@ async def send_email_task():
             "verify": False,
         },
     }
+    mock_function_manager.filter_functions.side_effect = lambda **kwargs: (
+        [
+            {
+                "function_id": 42,
+                "name": "send_email_task",
+                "implementation": matching_code,
+                "calls": [],
+                "verify": False,
+            },
+        ]
+        if kwargs.get("filter") in (None, "function_id == 42")
+        else []
+    )
 
     # Create actor with can_compose=False
     monkeypatch.setattr(
@@ -285,6 +298,19 @@ async def my_task():
             "verify": False,
         },
     }
+    mock_function_manager.filter_functions.side_effect = lambda **kwargs: (
+        [
+            {
+                "function_id": 1,
+                "name": "my_task",
+                "implementation": entrypoint_code,
+                "calls": [],
+                "verify": False,
+            },
+        ]
+        if kwargs.get("filter") in (None, "function_id == 1")
+        else []
+    )
 
     # Create actor with can_compose=False
     monkeypatch.setattr(
