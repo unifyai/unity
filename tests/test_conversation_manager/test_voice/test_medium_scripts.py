@@ -278,34 +278,34 @@ class TestCommonHelpers:
 
         assert common.DEFAULT_INACTIVITY_TIMEOUT == 300
 
-    def test_should_dispatch_agent_with_dev_command(self, monkeypatch):
-        """should_dispatch_agent returns True for 'dev' command."""
+    def test_should_dispatch_livekit_agent_with_dev_command(self, monkeypatch):
+        """should_dispatch_livekit_agent returns True for 'dev' command."""
         from unity.conversation_manager.medium_scripts import common
 
         # Patch sys.argv in the common module's namespace
         monkeypatch.setattr(common.sys, "argv", ["call.py", "dev"])
-        assert common.should_dispatch_agent() is True
+        assert common.should_dispatch_livekit_agent() is True
 
-    def test_should_dispatch_agent_with_connect_command(self, monkeypatch):
-        """should_dispatch_agent returns True for 'connect' command."""
+    def test_should_dispatch_livekit_agent_with_connect_command(self, monkeypatch):
+        """should_dispatch_livekit_agent returns True for 'connect' command."""
         from unity.conversation_manager.medium_scripts import common
 
         monkeypatch.setattr(common.sys, "argv", ["call.py", "connect"])
-        assert common.should_dispatch_agent() is True
+        assert common.should_dispatch_livekit_agent() is True
 
-    def test_should_not_dispatch_agent_for_download_files(self, monkeypatch):
-        """should_dispatch_agent returns False for 'download-files' command."""
+    def test_should_not_dispatch_livekit_agent_for_download_files(self, monkeypatch):
+        """should_dispatch_livekit_agent returns False for 'download-files' command."""
         from unity.conversation_manager.medium_scripts import common
 
         monkeypatch.setattr(common.sys, "argv", ["call.py", "download-files"])
-        assert common.should_dispatch_agent() is False
+        assert common.should_dispatch_livekit_agent() is False
 
-    def test_should_not_dispatch_agent_with_no_args(self, monkeypatch):
-        """should_dispatch_agent returns False when no args provided."""
+    def test_should_not_dispatch_livekit_agent_with_no_args(self, monkeypatch):
+        """should_dispatch_livekit_agent returns False when no args provided."""
         from unity.conversation_manager.medium_scripts import common
 
         monkeypatch.setattr(common.sys, "argv", ["call.py"])
-        assert common.should_dispatch_agent() is False
+        assert common.should_dispatch_livekit_agent() is False
 
 
 class TestSTSUsageLogging:
@@ -729,7 +729,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        agent_name, room_name = common.configure_from_cli(
+        livekit_agent_name, room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -737,18 +737,18 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        assert agent_name == "unity_12345"
+        assert livekit_agent_name == "unity_12345"
         assert room_name == "unity_12345"
         assert SESSION_DETAILS.voice.provider == "elevenlabs"
         assert SESSION_DETAILS.voice.id == "voice123"
         assert SESSION_DETAILS.voice_call.outbound is True
         assert SESSION_DETAILS.voice_call.channel == "phone"
 
-    def test_configure_from_cli_agent_name_with_room(self, monkeypatch):
-        """configure_from_cli handles agent_name:room_name format for UnifyMeet calls.
+    def test_configure_from_cli_livekit_agent_name_with_room(self, monkeypatch):
+        """configure_from_cli handles livekit_agent_name:room_name format for UnifyMeet calls.
 
         For UnifyMeet, the caller (LivekitCallManager.start_unify_meet) passes
-        "agent_name:room_name" where both are already prefixed with "unity_".
+        "livekit_agent_name:room_name" where both are already prefixed with "unity_".
         The function splits on ":" and returns the two parts.
         """
         from unity.conversation_manager.medium_scripts import common
@@ -759,7 +759,7 @@ class TestCLIArgumentParsing:
         contact_json = json.dumps({"contact_id": 1, "first_name": "Test"})
         boss_json = json.dumps({"contact_id": 1, "first_name": "Boss"})
 
-        # Simulate UnifyMeet call with colon-separated agent_name:room_name
+        # Simulate UnifyMeet call with colon-separated livekit_agent_name:room_name
         # (This matches what LivekitCallManager.start_unify_meet passes)
         monkeypatch.setattr(
             common.sys,
@@ -778,7 +778,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        agent_name, room_name = common.configure_from_cli(
+        livekit_agent_name, room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -787,8 +787,8 @@ class TestCLIArgumentParsing:
         )
 
         # Colon triggers the split: "unity_assistant_web:unity_assistant_web"
-        # becomes agent_name="unity_assistant_web", room_name="unity_assistant_web"
-        assert agent_name == "unity_assistant_web"
+        # becomes livekit_agent_name="unity_assistant_web", room_name="unity_assistant_web"
+        assert livekit_agent_name == "unity_assistant_web"
         assert room_name == "unity_assistant_web"
 
     def test_configure_from_cli_defaults_none_voice_provider(self, monkeypatch):

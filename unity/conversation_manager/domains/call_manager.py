@@ -137,13 +137,13 @@ class LivekitCallManager:
         self,
         contact: dict,
         boss: dict,
-        agent_name: str | None,
+        livekit_agent_name: str | None,
         room_name: str | None,
     ):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        agent_name = (
-            agent_name
-            if agent_name
+        livekit_agent_name = (
+            livekit_agent_name
+            if livekit_agent_name
             else (
                 f"unity_{self.assistant_id}_web"
                 if self.assistant_id
@@ -162,7 +162,7 @@ class LivekitCallManager:
         # Both TTS and Realtime modes use the fast brain architecture and need
         # boss details and assistant bio for the phone agent prompt
         args = [
-            f"{agent_name}:{room_name}",
+            f"{livekit_agent_name}:{room_name}",
             self.voice_provider,
             self.voice_id,
             False,

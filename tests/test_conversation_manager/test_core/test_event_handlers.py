@@ -731,7 +731,7 @@ class TestUnifyMeetHandlers:
         mock_cm.mode = "text"
         event = UnifyMeetReceived(
             contact={"contact_id": 1},  # Boss contact
-            agent_name="TestAgent",
+            livekit_agent_name="TestAgent",
             room_name="room_123",
         )
 

@@ -720,7 +720,7 @@ class TestUnifyMeetHandling:
             message = create_pubsub_message(
                 "unify_meet",
                 {
-                    "agent_name": "TestAgent",
+                    "livekit_agent_name": "TestAgent",
                     "livekit_room": "room_123",
                     "contacts": contacts,
                 },
@@ -736,7 +736,7 @@ class TestUnifyMeetHandling:
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, UnifyMeetReceived)
-            assert event.agent_name == "TestAgent"
+            assert event.livekit_agent_name == "TestAgent"
             assert event.room_name == "room_123"
 
 

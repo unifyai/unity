@@ -451,7 +451,7 @@ class CommsManager:
                     if thread == "unify_meet":
                         event = UnifyMeetReceived(
                             contact=next(c for c in contacts if c["contact_id"] == 1),
-                            agent_name=event.get("agent_name"),
+                            livekit_agent_name=event.get("livekit_agent_name"),
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_meet_received"
