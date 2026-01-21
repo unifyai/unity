@@ -425,28 +425,29 @@ class TestRenderer:
             on_call=False,
         )
 
-    def test_render_active_tasks_empty(self, renderer):
-        """Renders empty active tasks."""
-        result = renderer.render_active_tasks({})
-        assert "No active tasks" in result
-        assert "<active_tasks>" in result
-        assert "</active_tasks>" in result
+    def test_render_in_flight_tasks_empty(self, renderer):
+        """Renders empty in-flight tasks."""
+        result = renderer.render_in_flight_tasks({})
+        assert "No tasks currently executing" in result
+        assert "<in_flight_tasks>" in result
+        assert "</in_flight_tasks>" in result
 
-    def test_render_active_tasks_with_task(self, renderer):
-        """Renders active tasks with task data."""
+    def test_render_in_flight_tasks_with_task(self, renderer):
+        """Renders in-flight tasks with task data."""
         tasks = {
             0: {
                 "query": "List all contacts",
                 "handle_actions": [],
             },
         }
-        result = renderer.render_active_tasks(tasks)
+        result = renderer.render_in_flight_tasks(tasks)
         assert "<task id='0'" in result
+        assert "status='executing'" in result
         assert "List all contacts" in result
         assert "ask_" in result
         assert "stop_" in result
 
-    def test_render_active_tasks_with_clarification(self, renderer):
+    def test_render_in_flight_tasks_with_clarification(self, renderer):
         """Renders tasks with pending clarifications."""
         tasks = {
             0: {
@@ -460,7 +461,7 @@ class TestRenderer:
                 ],
             },
         }
-        result = renderer.render_active_tasks(tasks)
+        result = renderer.render_in_flight_tasks(tasks)
         assert "answer_clarification" in result
         assert "clarification_request" in result
         assert "Need more info?" in result

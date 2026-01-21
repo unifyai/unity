@@ -63,6 +63,8 @@ async def test_contact_lookup_triggers_act(initialized_cm):
         "Contact preference lookup should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -89,6 +91,8 @@ async def test_contact_search_by_location_triggers_act(initialized_cm):
         "Location-based contact search should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -115,6 +119,8 @@ async def test_create_contact_triggers_act(initialized_cm):
         "Contact creation should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -146,6 +152,8 @@ async def test_knowledge_query_triggers_act(initialized_cm):
         "Knowledge query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -172,6 +180,8 @@ async def test_knowledge_about_product_triggers_act(initialized_cm):
         "Product knowledge query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -198,6 +208,8 @@ async def test_store_knowledge_triggers_act(initialized_cm):
         "Storing knowledge should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -229,6 +241,8 @@ async def test_task_query_triggers_act(initialized_cm):
         "Task query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -255,6 +269,8 @@ async def test_create_task_triggers_act(initialized_cm):
         "Task creation should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -281,6 +297,8 @@ async def test_priority_task_query_triggers_act(initialized_cm):
         "Priority task query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -312,6 +330,8 @@ async def test_transcript_search_triggers_act(initialized_cm):
         "Transcript search should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -338,6 +358,8 @@ async def test_recent_messages_search_triggers_act(initialized_cm):
         "Recent messages search should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -364,6 +386,8 @@ async def test_specific_topic_search_triggers_act(initialized_cm):
         "Topic-based message search should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -395,6 +419,8 @@ async def test_weather_query_triggers_act(initialized_cm):
         "Weather query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -421,6 +447,8 @@ async def test_news_query_triggers_act(initialized_cm):
         "News query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -447,6 +475,8 @@ async def test_current_events_query_triggers_act(initialized_cm):
         "Current events query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -478,6 +508,8 @@ async def test_guidance_query_triggers_act(initialized_cm):
         "Guidance query should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -509,6 +541,8 @@ async def test_find_and_action_triggers_act(initialized_cm):
         "Find-and-action request should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -535,6 +569,8 @@ async def test_research_request_triggers_act(initialized_cm):
         "Research request should trigger act",
         cm=cm,
     )
+
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -587,6 +623,7 @@ async def test_email_summarize_attachment_triggers_act_with_filepath(initialized
         f"got query: {actor_events[0].query}"
     )
 
+    # Efficiency assertions at end
     assert_efficient(result)
 
 
@@ -634,4 +671,5 @@ async def test_unify_message_summarize_attachment_triggers_act_with_filepath(
         f"got query: {actor_events[0].query}"
     )
 
+    # Efficiency assertions at end
     assert_efficient(result)

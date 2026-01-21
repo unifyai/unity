@@ -13,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -263,13 +264,18 @@ class CMStepDriver:
                 if tool_name:
                     self.all_tool_calls.append(tool_name)
 
-                # Stop if 'wait' was called
-                if tool_name == "wait":
-                    break
+                # Yield control to allow any background tasks (e.g., async ask
+                # completions) to run and potentially emit events
+                await asyncio.sleep(0)
 
-                # Check if another LLM run was requested (e.g., by event handlers)
+                # Check if another LLM run was requested (e.g., by event handlers
+                # processing events from background tasks)
                 llm_requested = bool(step_requests)
                 step_requests.clear()
+
+                # Stop if 'wait' was called AND no new requests came in
+                if tool_name == "wait" and not llm_requested:
+                    break
 
                 # If no explicit request but we didn't call 'wait', continue
                 if not llm_requested and tool_name != "wait":
