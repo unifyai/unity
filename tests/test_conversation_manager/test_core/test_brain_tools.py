@@ -161,10 +161,10 @@ class TestCmGetMode:
         mock_cm.mode = "call"
         assert brain_tools.cm_get_mode() == "call"
 
-    def test_returns_unify_meet_mode(self, brain_tools, mock_cm):
-        """Returns 'unify_meet' when CM is in unify_meet mode."""
-        mock_cm.mode = "unify_meet"
-        assert brain_tools.cm_get_mode() == "unify_meet"
+    def test_returns_meet_mode(self, brain_tools, mock_cm):
+        """Returns 'meet' when CM is in meet mode."""
+        mock_cm.mode = "meet"
+        assert brain_tools.cm_get_mode() == "meet"
 
     def test_converts_mode_to_string(self, brain_tools, mock_cm):
         """Converts mode to string regardless of type."""

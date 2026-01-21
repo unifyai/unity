@@ -757,20 +757,20 @@ class TestUnifyMeetEventHandlers:
             mock_start.assert_called_once()
 
     async def test_unify_meet_started_changes_mode(self, initialized_cm, boss_contact):
-        """UnifyMeetStarted event changes mode to 'unify_meet'."""
+        """UnifyMeetStarted event changes mode to 'meet'."""
         assert initialized_cm.cm.mode == "text"
 
         event = UnifyMeetStarted(contact=boss_contact)
         await initialized_cm.step(event)
 
-        assert initialized_cm.cm.mode == "unify_meet"
+        assert initialized_cm.cm.mode == "meet"
 
     async def test_unify_meet_ended_resets_mode(self, initialized_cm, boss_contact):
         """UnifyMeetEnded resets mode to 'text'."""
         # Start a meeting
         started_event = UnifyMeetStarted(contact=boss_contact)
         await initialized_cm.step(started_event)
-        assert initialized_cm.cm.mode == "unify_meet"
+        assert initialized_cm.cm.mode == "meet"
 
         # End it
         ended_event = UnifyMeetEnded(contact=boss_contact)
@@ -1109,7 +1109,7 @@ class TestFullCallLifecycle:
         # 2. Meeting started
         started_event = UnifyMeetStarted(contact=boss_contact)
         await initialized_cm.step(started_event)
-        assert initialized_cm.cm.mode == "unify_meet"
+        assert initialized_cm.cm.mode == "meet"
 
         # 3. User speaks
         user_utterance = InboundUnifyMeetUtterance(

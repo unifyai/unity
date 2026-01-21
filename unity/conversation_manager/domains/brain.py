@@ -21,7 +21,7 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
     The response model only captures the LLM's reasoning.
 
     Returns:
-        dict: Response models for different modes (Mode.CALL, Mode.UNIFY_MEET, Mode.TEXT)
+        dict: Response models for different modes (Mode.CALL, Mode.MEET, Mode.TEXT)
     """
     # Text mode: just thoughts
     TextResponse = create_model(
@@ -52,7 +52,7 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
 
     return {
         Mode.CALL: VoiceResponse,
-        Mode.UNIFY_MEET: VoiceResponse,
+        Mode.MEET: VoiceResponse,
         Mode.TEXT: TextResponse,
     }
 
@@ -65,7 +65,7 @@ def build_response_models() -> dict[Mode, type[BaseModel]]:
     """
     Public accessor for response models used by ConversationManager's brain.
 
-    Returns cached models for different modes (Mode.CALL, Mode.UNIFY_MEET, Mode.TEXT).
+    Returns cached models for different modes (Mode.CALL, Mode.MEET, Mode.TEXT).
     """
     return _RESPONSE_MODELS
 
