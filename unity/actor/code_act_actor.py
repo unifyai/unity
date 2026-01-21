@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import functools
 import inspect
 import io
@@ -15,7 +16,8 @@ from pydantic import BaseModel
 
 from unity.actor.base import BaseCodeActActor
 from unity.actor.handle import ActorHandle
-from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_loop
+from unity.common.llm_client import new_llm_client
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
 from unity.events.manager_event_logging import log_manager_call
@@ -87,8 +89,22 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         images: list | dict | None = None,
     ) -> SteerableToolHandle:
         status = "completed" if self.done() else "still running"
-        return _StaticAnswerHandle(
-            f"Entrypoint {self._entrypoint_id} status: {status}.",
+        client = new_llm_client()
+        client.set_system_message(
+            "You are an AI assistant answering a status question about an in-flight entrypoint execution. "
+            "Be brief and factual."
+        )
+        msg = (
+            f"Entrypoint {self._entrypoint_id} status: {status}.\n\n"
+            f"User question: {question}"
+        )
+        return start_async_tool_loop(
+            client=client,
+            message=msg,
+            tools={},
+            loop_id=f"EntrypointQuestion({self._entrypoint_id})",
+            max_consecutive_failures=1,
+            timeout=30,
         )
 
     async def interject(
