@@ -132,6 +132,7 @@ def sample_contacts():
             "surname": "Smith",
             "phone_number": "+15551111111",
             "email_address": "alice@example.com",
+            "should_respond": True,
         },
         {
             "contact_id": 2,
@@ -139,6 +140,7 @@ def sample_contacts():
             "surname": "Johnson",
             "phone_number": "+15552222222",
             "email_address": "bob@example.com",
+            "should_respond": True,
         },
     ]
 
