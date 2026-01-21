@@ -1053,21 +1053,28 @@ class TestPreHireChatLogging:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
-            # Should publish contacts first
-            msg1 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg1 is not None
+            # Collect pre-hire messages (may arrive in any order)
+            pre_hire_messages = []
+            for _ in range(5):  # Allow for contacts message + 2 pre-hire messages
+                msg = await pubsub.get_message(
+                    timeout=1.0,
+                    ignore_subscribe_messages=True,
+                )
+                if msg and msg["channel"] == "app:comms:pre_hire":
+                    event = Event.from_json(msg["data"])
+                    if isinstance(event, PreHireMessage):
+                        pre_hire_messages.append(event)
 
-            # Should publish pre-hire messages
-            msg2 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg2 is not None
-            assert msg2["channel"] == "app:managers:input"
+            # Should have received at least one pre-hire message
+            assert len(pre_hire_messages) >= 1
 
-            event = Event.from_json(msg2["data"])
-            assert isinstance(event, PreHireMessage)
-            assert event.role == "user"
-            assert event.content == "Hello, I need help"
+            # Find the user message and verify it
+            user_messages = [m for m in pre_hire_messages if m.role == "user"]
+            assert len(user_messages) >= 1, "Should have at least one user message"
+            user_msg = user_messages[0]
+            assert user_msg.content == "Hello, I need help"
             # exchange_id should be UNASSIGNED so log_message creates a new exchange
-            assert event.exchange_id == UNASSIGNED
+            assert user_msg.exchange_id == UNASSIGNED
 
     @pytest.mark.asyncio
     async def test_handle_pre_hire_chats_all_messages_have_unassigned_exchange_id(
@@ -1088,7 +1095,7 @@ class TestPreHireChatLogging:
         cm.loop = asyncio.get_event_loop()
 
         async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:managers:*")
+            await pubsub.psubscribe("app:comms:*")
 
             contacts = [
                 {
@@ -1123,7 +1130,7 @@ class TestPreHireChatLogging:
                     timeout=1.0,
                     ignore_subscribe_messages=True,
                 )
-                if msg and msg["channel"] == "app:managers:input":
+                if msg and msg["channel"] == "app:comms:pre_hire":
                     event = Event.from_json(msg["data"])
                     if isinstance(event, PreHireMessage):
                         messages_received.append(event)
