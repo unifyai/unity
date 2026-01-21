@@ -7,6 +7,10 @@ from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.state_managers import BaseStateManager
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,7 @@ __all__ = [
     "PhoneCallHandle",
     "BrowserSessionHandle",
     "ComsManager",
+    "BaseCodeActActor",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -259,3 +264,71 @@ class BaseActor(ABC):
         Returns:
             A SteerableToolHandle for controlling and awaiting the result.
         """
+
+
+class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
+    """
+    Abstract contract for the CodeAct-style actor.
+
+    Notes
+    -----
+    - Still shares the global actor base class: `BaseActor`.
+    - Adds CodeAct-specific `act()` parameters (notifications, entrypoint, images) while
+      preserving manager tool-registration patterns via `BaseStateManager`.
+    """
+
+    _as_caller_description: str = (
+        "the CodeActActor, executing code-first actions on behalf of the end user"
+    )
+
+    def __init__(
+        self,
+        *,
+        environments: Optional[list["BaseEnvironment"]] = None,
+        computer_primitives: Optional["ComputerPrimitives"] = None,
+        function_manager: Optional["FunctionManager"] = None,
+        session_connect_url: Optional[str] = None,
+        headless: bool = False,
+        computer_mode: str = "magnitude",
+        agent_mode: str = "browser",
+        agent_server_url: str = "http://localhost:3000",
+        connect_now: bool = False,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> None:
+        BaseActor.__init__(
+            self,
+            environments=environments,
+            computer_primitives=computer_primitives,
+            function_manager=function_manager,
+            session_connect_url=session_connect_url,
+            headless=headless,
+            computer_mode=computer_mode,
+            agent_mode=agent_mode,
+            agent_server_url=agent_server_url,
+            connect_now=connect_now,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+        BaseStateManager.__init__(self)
+
+    @abstractmethod
+    async def act(
+        self,
+        description: str,
+        *,
+        clarification_enabled: bool = True,
+        response_format: Optional[Type[BaseModel]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _notification_up_q: Optional[asyncio.Queue[dict]] = None,
+        _call_id: Optional[str] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+        entrypoint: Optional[int] = None,
+        entrypoint_args: Optional[list[Any]] = None,
+        entrypoint_kwargs: Optional[dict[str, Any]] = None,
+        persist: bool = True,
+    ) -> SteerableToolHandle:
+        """Perform work from a natural-language description and return a steerable handle."""
+        raise NotImplementedError
