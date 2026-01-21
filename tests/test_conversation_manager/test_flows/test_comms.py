@@ -44,6 +44,7 @@ from unity.conversation_manager.events import (
     UnifyMessageReceived,
     UnifyMessageSent,
 )
+from unity.conversation_manager.types import Medium
 
 pytestmark = pytest.mark.eval
 
@@ -527,10 +528,12 @@ async def test_phone_call(initialized_cm):
     await cm.step(PhoneCallStarted(contact=contact))
     await cm.step(InboundPhoneUtterance(contact=contact, content="Tell me a joke"))
 
-    voice_thread = list(
-        cm.contact_index.active_conversations[contact["contact_id"]].threads["voice"],
+    phone_thread = list(
+        cm.contact_index.active_conversations[contact["contact_id"]].threads[
+            Medium.PHONE_CALL
+        ],
     )
-    assert any(getattr(m, "content", None) == "Tell me a joke" for m in voice_thread)
+    assert any(getattr(m, "content", None) == "Tell me a joke" for m in phone_thread)
 
     await cm.step(PhoneCallEnded(contact=contact))
 
@@ -635,10 +638,12 @@ async def test_unify_meet(initialized_cm):
     await cm.step(UnifyMeetStarted(contact=contact))
     await cm.step(InboundUnifyMeetUtterance(contact=contact, content="Tell me a joke"))
 
-    voice_thread = list(
-        cm.contact_index.active_conversations[contact["contact_id"]].threads["voice"],
+    meet_thread = list(
+        cm.contact_index.active_conversations[contact["contact_id"]].threads[
+            Medium.UNIFY_MEET
+        ],
     )
-    assert any(getattr(m, "content", None) == "Tell me a joke" for m in voice_thread)
+    assert any(getattr(m, "content", None) == "Tell me a joke" for m in meet_thread)
 
     await cm.step(UnifyMeetEnded(contact=contact))
 
