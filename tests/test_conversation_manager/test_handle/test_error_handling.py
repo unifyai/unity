@@ -31,6 +31,7 @@ from unity.conversation_manager.events import (
     Ping,
     ActorResult,
 )
+from unity.conversation_manager.types import Medium
 
 pytestmark = pytest.mark.symbolic
 
@@ -338,7 +339,7 @@ class TestContactIndexEdgeCases:
         cm.contact_index.push_message(
             contact_id=new_contact_id,
             sender_name="New Person",
-            thread_name="sms",
+            thread_name=Medium.SMS_MESSAGE,
             message_content="Hello",
             role="user",
         )
@@ -346,7 +347,9 @@ class TestContactIndexEdgeCases:
         # Now contact 888 should have an active conversation
         assert new_contact_id in cm.contact_index.active_conversations
         sms_thread = list(
-            cm.contact_index.active_conversations[new_contact_id].threads["sms"],
+            cm.contact_index.active_conversations[new_contact_id].threads[
+                Medium.SMS_MESSAGE
+            ],
         )
         assert len(sms_thread) == 1
 
