@@ -1541,19 +1541,22 @@ async def main_plan():
 
     try:
 
-        async def _checkpoint_reached() -> bool:
-            return bool(h.runtime._checkpoint_event.is_set())
+        async def _handles_ready() -> bool:
+            handles = await h.pane.list_handles()
+            if len(handles) < 2:
+                return False
+            have_contacts = any(
+                "primitives.contacts" in (hnd.get("origin_tool") or "")
+                for hnd in handles
+            )
+            have_transcripts = any(
+                "primitives.transcripts" in (hnd.get("origin_tool") or "")
+                for hnd in handles
+            )
+            return have_contacts and have_transcripts
 
         await asyncio.wait_for(
-            _wait_for_condition(_checkpoint_reached, poll=0.05, timeout=60.0),
-            timeout=70.0,
-        )
-
-        async def _two_handles_registered() -> bool:
-            return len(await h.pane.list_handles()) >= 2
-
-        await asyncio.wait_for(
-            _wait_for_condition(_two_handles_registered, poll=0.05, timeout=60.0),
+            _wait_for_condition(_handles_ready, poll=0.05, timeout=60.0),
             timeout=70.0,
         )
 
@@ -1802,9 +1805,18 @@ async def main_plan():
     try:
 
         async def _have_ids() -> bool:
-            if not h.runtime._checkpoint_event.is_set():
+            handles = await h.pane.list_handles()
+            if len(handles) < 2:
                 return False
-            return len(await h.pane.list_handles()) >= 2
+            have_contacts = any(
+                "primitives.contacts" in (hnd.get("origin_tool") or "")
+                for hnd in handles
+            )
+            have_transcripts = any(
+                "primitives.transcripts" in (hnd.get("origin_tool") or "")
+                for hnd in handles
+            )
+            return have_contacts and have_transcripts
 
         await asyncio.wait_for(
             _wait_for_condition(_have_ids, poll=0.05, timeout=60.0),
