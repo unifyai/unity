@@ -421,7 +421,7 @@ class CommsManager:
                             )
 
                             self._publish_from_callback(
-                                "app:managers:input",
+                                "app:comms:pre_hire",
                                 payload.to_json(),
                             )
                             published += 1
