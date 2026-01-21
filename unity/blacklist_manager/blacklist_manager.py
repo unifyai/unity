@@ -10,7 +10,7 @@ from ..common.data_store import DataStore
 from ..common.model_to_fields import model_to_fields
 from ..common.filter_utils import normalize_filter_expr
 from ..blacklist_manager.types.blacklist import BlackList
-from ..transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium
 from .base import BaseBlackListManager
 from ..common.context_registry import ContextRegistry, TableContext
 

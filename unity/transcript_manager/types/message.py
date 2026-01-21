@@ -9,7 +9,7 @@ from pydantic import (
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
 from typing import ClassVar, Optional
-from .medium import Medium
+from unity.conversation_manager.types import Medium
 
 UNASSIGNED = -1
 

@@ -1,7 +1,7 @@
 import pytest
 
 from unity.blacklist_manager.blacklist_manager import BlackListManager
-from unity.transcript_manager.types.medium import Medium
+from unity.conversation_manager.types import Medium
 from tests.helpers import _handle_project
 
 
