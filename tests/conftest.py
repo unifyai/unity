@@ -24,6 +24,7 @@ import os
 import random
 import re
 import threading
+import hashlib
 
 import httpx
 import pytest
@@ -42,6 +43,88 @@ if not _root_logger_early.handlers:
 
 from tests.helpers import PRECREATED_CONTEXTS, set_session_tags
 from tests.settings import SETTINGS
+from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
+
+
+def _derive_test_context(item: pytest.Item) -> str:
+    """
+    Derive a per-test Unify context path that is stable and unique.
+
+    Matches the intent of tests.helpers._TestContext.setup(), but runs early enough
+    (pytest_runtest_setup) to wrap fixture setup + teardown, preventing cross-test
+    interference when fixtures create/clear managers that delete contexts.
+    """
+    # Build "tests/<relpath-without-.py>/<func_name>" prefix
+    file_path = str(getattr(item, "fspath", "") or "")
+    parts = file_path.split(f"{os.sep}tests{os.sep}")
+    if len(parts) > 1:
+        rel_path = parts[1].replace(os.sep, "/")
+        if rel_path.endswith(".py"):
+            rel_path = rel_path[:-3]
+        test_path = f"tests/{rel_path}"
+    else:
+        # Fallback (should be rare): use nodeid as the "path"
+        test_path = "tests/unknown"
+
+    func_name = getattr(item, "originalname", None) or getattr(item, "name", "test")
+
+    # Parametrized tests: include a stable suffix so contexts don't collide
+    nodeid = getattr(item, "nodeid", "")
+    if "[" in nodeid:
+        normalized = _normalize_pytest_nodeid(nodeid)
+        if normalized is None:
+            normalized = hashlib.md5(nodeid.encode("utf-8")).hexdigest()[:8]
+        func_name = f"{func_name}/{normalized}"
+
+    # Mirror production-like hierarchy: .../<DefaultUser>/<Assistant>
+    return f"{test_path}/{func_name}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+
+
+def _set_unify_context_for_test(item: pytest.Item) -> None:
+    """Set a unique per-test Unify context early (before fixtures)."""
+    ctx = _derive_test_context(item)
+    setattr(item, "_unity_unify_test_ctx", ctx)
+
+    # Clean slate unless contexts are pre-created during collection.
+    skip_ctx_create = False
+    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
+        skip_ctx_create = ctx in PRECREATED_CONTEXTS
+    else:
+        try:
+            unify.delete_context(ctx)
+        except Exception:
+            pass
+
+    unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+
+    # Ensure singleton registries don't leak across tests and that fixtures see
+    # the correct context for any context-derived subcontexts (e.g. FunctionManager).
+    try:
+        from unity.common.context_registry import ContextRegistry
+        from unity.manager_registry import ManagerRegistry
+        from unity.events.event_bus import EVENT_BUS
+
+        ManagerRegistry.clear()
+        ContextRegistry.clear()
+        EVENT_BUS.clear(delete_contexts=False)
+    except Exception:
+        pass
+
+
+def _unset_unify_context_for_test(item: pytest.Item) -> None:
+    """Unset (and optionally delete) the per-test Unify context after fixture teardown."""
+    ctx = getattr(item, "_unity_unify_test_ctx", None)
+    try:
+        if ctx and SETTINGS.UNIFY_DELETE_CONTEXT_ON_EXIT:
+            try:
+                unify.delete_context(ctx)
+            except Exception:
+                pass
+    finally:
+        try:
+            unify.unset_context()
+        except Exception:
+            pass
 
 
 def pytest_report_header(config):
@@ -490,6 +573,7 @@ def pytest_configure(config):
 # Skip tests marked with requires_real_unify when using the unify stub
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
+    _set_unify_context_for_test(item)
 
 
 def _normalize_pytest_nodeid(nodeid):
@@ -538,7 +622,8 @@ def pytest_runtest_call(item):
     setattr(target_obj, "_unity_pytest_nodeid", func_name)
 
 
-def pytest_runtest_teardown(item):
+def pytest_runtest_teardown(item, nextitem=None):
+    _unset_unify_context_for_test(item)
     test_name_log_filter.reset_test_name()
 
 
