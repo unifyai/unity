@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 
-from tests.test_actor.test_state_managers.utils import make_actor
+from tests.test_actor.test_state_managers.utils import make_hierarchical_actor
 
 pytestmark = pytest.mark.eval
 
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.eval
 async def test_update_uses_only_guidance_update_tool(
     mock_verification,
 ):
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
         request_text = (
             "Create a new guidance entry titled 'Runbook: DB Failover' with the content "
             "'Promote replica and update connection strings.'"

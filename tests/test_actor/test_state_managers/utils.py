@@ -221,7 +221,8 @@ async def make_code_act_actor(
 
     # Optionally strip FunctionManager tools to focus on on-the-fly routing via primitives.
     if not include_function_manager_tools:
-        actor._tools = {"execute_python_code": actor._tools["execute_python_code"]}
+        act_tools = actor.get_tools("act")
+        actor.add_tools("act", {"execute_python_code": act_tools["execute_python_code"]})
 
     try:
         yield actor, primitives, calls
@@ -455,7 +456,7 @@ async def _mock_reason(*args: Any, **kwargs: Any) -> Any:
 
 
 @asynccontextmanager
-async def make_actor(
+async def make_hierarchical_actor(
     *,
     impl: Literal["real", "simulated"],
     can_compose: bool = True,

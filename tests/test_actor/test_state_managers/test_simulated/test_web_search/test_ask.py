@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 
-from tests.test_actor.test_state_managers.utils import make_actor
+from tests.test_actor.test_state_managers.utils import make_hierarchical_actor
 
 pytestmark = pytest.mark.eval
 
@@ -31,7 +31,7 @@ async def test_live_events_use_only_web_tool(
     question: str,
     mock_verification,
 ):
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
         handle = await actor.act(
             f"{question} Do not ask clarifying questions. Do not create any stubs. Generate the full plan. Proceed with the best interpretation of the request.",
             persist=False,

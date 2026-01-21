@@ -12,7 +12,7 @@ from tests.test_actor.test_state_managers.utils import (
     assert_memoized_function_used,
     assert_tool_called,
     get_state_manager_tools,
-    make_actor,
+    make_hierarchical_actor,
 )
 from unity.contact_manager.types.contact import Contact
 from unity.function_manager.function_manager import FunctionManager
@@ -25,7 +25,7 @@ from unity.manager_registry import ManagerRegistry
 @_handle_project
 async def test_ask_calls_manager(mock_verification):
     """Test that Actor calls TranscriptManager.ask for transcript queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real ContactManager and TranscriptManager
         cm = ManagerRegistry.get_contact_manager()
@@ -80,7 +80,7 @@ async def test_ask_calls_manager(mock_verification):
 @_handle_project
 async def test_ask_calls_manager_memoized(mock_verification):
     """Test that Actor uses memoized function for transcript queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real ContactManager and TranscriptManager
         cm = ManagerRegistry.get_contact_manager()

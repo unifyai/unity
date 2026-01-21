@@ -13,7 +13,7 @@ import pytest
 
 from tests.test_actor.test_state_managers.utils import (
     get_state_manager_tools,
-    make_actor,
+    make_hierarchical_actor,
 )
 
 pytestmark = pytest.mark.eval
@@ -41,7 +41,7 @@ async def test_file_questions_use_files_primitives(
     mock_verification,
 ):
     """Verify Actor generates plans calling primitives.files.* for file queries."""
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
 
         handle = await actor.act(
             f"{question} Do not ask clarifying questions. Generate the full plan.",
@@ -76,7 +76,7 @@ async def test_file_ask_questions_use_ask_about_file(
     mock_verification,
 ):
     """Verify Actor generates plans calling primitives.files.ask for file content queries."""
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
 
         handle = await actor.act(
             f"{question} Do not ask clarifying questions. Generate the full plan.",

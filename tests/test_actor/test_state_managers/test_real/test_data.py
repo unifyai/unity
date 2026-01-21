@@ -14,7 +14,7 @@ import pytest
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
     get_state_manager_tools,
-    make_actor,
+    make_hierarchical_actor,
 )
 from unity.manager_registry import ManagerRegistry
 
@@ -38,7 +38,7 @@ async def _safe_call(method, *args, **kwargs) -> Any:
 @_handle_project
 async def test_filter_calls_data_manager(mock_verification):
     """Test that Actor calls DataManager.filter for data filtering queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real DataManager and create a test table with data
         dm = ManagerRegistry.get_data_manager()
@@ -91,7 +91,7 @@ async def test_filter_calls_data_manager(mock_verification):
 @_handle_project
 async def test_reduce_calls_data_manager(mock_verification):
     """Test that Actor calls DataManager.reduce for aggregation queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real DataManager
         dm = ManagerRegistry.get_data_manager()
@@ -144,7 +144,7 @@ async def test_reduce_calls_data_manager(mock_verification):
 @_handle_project
 async def test_describe_table_calls_data_manager(mock_verification):
     """Test that Actor calls DataManager.describe_table for schema queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real DataManager
         dm = ManagerRegistry.get_data_manager()

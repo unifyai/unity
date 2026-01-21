@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 
-from tests.test_actor.test_state_managers.utils import make_actor
+from tests.test_actor.test_state_managers.utils import make_hierarchical_actor
 
 pytestmark = pytest.mark.eval
 
@@ -61,7 +61,7 @@ async def ask_contacts_question(question: str, response_format=None) -> str:
     result = await handle.result()
     return result
 '''
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
         from unity.function_manager.function_manager import FunctionManager
 
         fm = FunctionManager()

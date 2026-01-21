@@ -120,13 +120,13 @@ tools = get_state_manager_tools(handle)
 assert "primitives.contacts.ask" in tools
 ```
 
-### `make_actor(impl, can_compose, can_store)`
+### `make_hierarchical_actor(impl, can_compose, can_store)`
 
 Context manager for creating `HierarchicalActor` with browser mocks. Automatically mocks browser primitives to prevent Keychain prompts and network access.
 
 **Example**:
 ```python
-async with make_actor(impl="simulated", can_compose=True) as actor:
+async with make_hierarchical_actor(impl="simulated", can_compose=True) as actor:
     handle = await actor.act("goal", persist=False)
     result = await handle.result()
 ```
