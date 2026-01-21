@@ -328,28 +328,26 @@ class TestContactIndexEdgeCases:
         """push_message to new contact should create active_conversation entry."""
         cm = initialized_cm
 
-        new_contact = {
-            "contact_id": 888,
-            "first_name": "New",
-            "surname": "Person",
-            "email_address": "new@example.com",
-            "phone_number": "+18888888888",
-        }
+        new_contact_id = 888
 
         # Contact 888 not in active_conversations yet
-        assert 888 not in cm.contact_index.active_conversations
+        assert new_contact_id not in cm.contact_index.active_conversations
 
-        # Push a message
+        # Push a message using the correct signature:
+        # push_message(contact_id, sender_name, thread_name, message_content=...)
         cm.contact_index.push_message(
-            new_contact,
-            "sms",
+            contact_id=new_contact_id,
+            sender_name="New Person",
+            thread_name="sms",
             message_content="Hello",
             role="user",
         )
 
         # Now contact 888 should have an active conversation
-        assert 888 in cm.contact_index.active_conversations
-        sms_thread = list(cm.contact_index.active_conversations[888].threads["sms"])
+        assert new_contact_id in cm.contact_index.active_conversations
+        sms_thread = list(
+            cm.contact_index.active_conversations[new_contact_id].threads["sms"],
+        )
         assert len(sms_thread) == 1
 
 
@@ -594,11 +592,17 @@ class TestContactFallback:
     """Tests for contact fallback behavior when ContactManager is unavailable."""
 
     @pytest.mark.asyncio
-    async def test_contact_manager_not_set_falls_back_to_local_cache(
+    async def test_contact_manager_not_set_returns_none(
         self,
         initialized_cm,
     ):
-        """When ContactManager is not set, should fall back to local cache."""
+        """When ContactManager is not set, get_contact returns None.
+
+        ContactIndex.get_contact() delegates entirely to ContactManager.
+        When ContactManager is not set, it correctly returns None rather
+        than attempting any fallback. This is by design - ContactManager
+        is the single source of truth for contact data.
+        """
         cm = initialized_cm
 
         # Temporarily unset the contact_manager
@@ -606,13 +610,11 @@ class TestContactFallback:
         cm.contact_index._contact_manager = None
 
         try:
-            # Should still work using local cache for contacts in TEST_CONTACTS
+            # Without ContactManager, get_contact returns None
             contact = cm.contact_index.get_contact(
                 contact_id=TEST_CONTACTS[1]["contact_id"],
             )
-            # Should find it in local cache
-            assert contact is not None
-            assert contact["first_name"] == TEST_CONTACTS[1]["first_name"]
+            assert contact is None
         finally:
             # Restore
             cm.contact_index._contact_manager = original_cm

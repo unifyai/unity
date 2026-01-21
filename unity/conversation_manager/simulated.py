@@ -197,25 +197,30 @@ class SimulatedConversationManagerHandle(
 
             async def result(inner_self) -> Any:
                 if inner_self._result_cache is None:
-                    response_str = await simulated_llm_roundtrip(
+                    response = await simulated_llm_roundtrip(
                         inner_self._llm,
                         label=inner_self._log_label,
                         prompt=inner_self._prompt,
                         response_format=inner_self._model,
                     )
                     if inner_self._model:
-                        try:
-                            inner_self._result_cache = (
-                                inner_self._model.model_validate_json(
-                                    response_str,
+                        # simulated_llm_roundtrip may return a validated model instance
+                        # directly, so check before attempting to parse again
+                        if isinstance(response, inner_self._model):
+                            inner_self._result_cache = response
+                        else:
+                            try:
+                                inner_self._result_cache = (
+                                    inner_self._model.model_validate_json(
+                                        response,
+                                    )
                                 )
-                            )
-                        except Exception as e:
-                            raise ValueError(
-                                f"Failed to parse LLM response into {inner_self._model.__name__}: {e}\nResponse: {response_str}",
-                            )
+                            except Exception as e:
+                                raise ValueError(
+                                    f"Failed to parse LLM response into {inner_self._model.__name__}: {e}\nResponse: {response}",
+                                )
                     else:
-                        inner_self._result_cache = response_str
+                        inner_self._result_cache = response
                     inner_self._done = True
                 return inner_self._result_cache
 
