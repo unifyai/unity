@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 
-from tests.test_actor.test_state_managers.utils import make_actor
+from tests.test_actor.test_state_managers.utils import make_hierarchical_actor
 
 pytestmark = pytest.mark.eval
 
@@ -12,7 +12,7 @@ pytestmark = pytest.mark.eval
 @pytest.mark.timeout(240)
 async def test_verification_bypass_works(mock_verification):
     """Verify that verification is bypassed but plan generation works."""
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
         # Use a state-manager-only prompt to avoid any dependency on browser reasoning models.
         # Persist defaults to True on HierarchicalActor.act; in tests we want the handle to complete
         # immediately rather than pausing for interjections after the main plan finishes.

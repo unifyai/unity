@@ -13,7 +13,7 @@ import pytest
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
     get_state_manager_tools,
-    make_actor,
+    make_hierarchical_actor,
 )
 from unity.manager_registry import ManagerRegistry
 
@@ -24,7 +24,7 @@ from unity.manager_registry import ManagerRegistry
 @_handle_project
 async def test_describe_calls_file_manager(mock_verification, tmp_path: Path):
     """Test that Actor calls FileManager.describe for file discovery."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Create a test file
         test_file = tmp_path / "actor_test_report.csv"
@@ -64,7 +64,7 @@ async def test_describe_calls_file_manager(mock_verification, tmp_path: Path):
 @_handle_project
 async def test_filter_files_calls_file_manager(mock_verification, tmp_path: Path):
     """Test that Actor calls FileManager.filter_files for file queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Create test files
         test_file1 = tmp_path / "sales_q1.csv"
@@ -103,7 +103,7 @@ async def test_filter_files_calls_file_manager(mock_verification, tmp_path: Path
 @_handle_project
 async def test_ask_about_file_calls_file_manager(mock_verification, tmp_path: Path):
     """Test that Actor calls FileManager.ask for file content queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Create a test file with content
         test_file = tmp_path / "company_report.txt"
@@ -147,7 +147,7 @@ async def test_file_manager_delegates_to_data_manager(
     tmp_path: Path,
 ):
     """Test that FileManager correctly delegates data operations to DataManager."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Create a CSV with numeric data for aggregation
         test_file = tmp_path / "metrics.csv"

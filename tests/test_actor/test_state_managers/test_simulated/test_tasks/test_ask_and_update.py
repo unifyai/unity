@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.test_actor.test_state_managers.utils import make_actor
+from tests.test_actor.test_state_managers.utils import make_hierarchical_actor
 
 pytestmark = pytest.mark.eval
 
@@ -41,7 +41,7 @@ async def test_combined_queries_call_ask_and_update(
     mock_verification,
 ):
     """Verify Actor generates plans calling primitives.tasks.ask and primitives.tasks.update."""
-    async with make_actor(impl="simulated") as actor:
+    async with make_hierarchical_actor(impl="simulated") as actor:
 
         handle = await actor.act(
             f"{request_text} Do not ask clarifying questions. Do not create any stubs. Generate the full plan. Proceed with the best interpretation of the request.",

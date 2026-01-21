@@ -11,7 +11,7 @@ from tests.test_actor.test_state_managers.utils import (
     assert_memoized_function_used,
     assert_tool_called,
     get_state_manager_tools,
-    make_actor,
+    make_hierarchical_actor,
 )
 from unity.function_manager.function_manager import FunctionManager
 from unity.manager_registry import ManagerRegistry
@@ -23,7 +23,7 @@ from unity.manager_registry import ManagerRegistry
 @_handle_project
 async def test_ask_calls_manager(mock_verification):
     """Test that Actor calls GuidanceManager.ask for guidance queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real GuidanceManager and seed data
         gm = ManagerRegistry.get_guidance_manager()
@@ -58,7 +58,7 @@ async def test_ask_calls_manager(mock_verification):
 @_handle_project
 async def test_ask_calls_manager_memoized(mock_verification):
     """Test that Actor uses memoized function for guidance queries."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real GuidanceManager and seed data
         gm = ManagerRegistry.get_guidance_manager()
@@ -124,7 +124,7 @@ async def ask_guidance_question(question: str, response_format=None) -> str:
 @_handle_project
 async def test_update_calls_manager(mock_verification):
     """Test that Actor calls GuidanceManager.update for guidance mutations."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real GuidanceManager
         gm = ManagerRegistry.get_guidance_manager()
@@ -162,7 +162,7 @@ async def test_update_calls_manager(mock_verification):
 @_handle_project
 async def test_update_calls_manager_memoized(mock_verification):
     """Test that Actor uses memoized function for guidance mutations."""
-    async with make_actor(impl="real") as actor:
+    async with make_hierarchical_actor(impl="real") as actor:
 
         # Access real GuidanceManager
         gm = ManagerRegistry.get_guidance_manager()
