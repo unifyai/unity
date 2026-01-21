@@ -3,6 +3,8 @@ import functools
 import pytest
 
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
+from pydantic import BaseModel, Field
+from typing import List
 from tests.helpers import (
     _handle_project,
     _assert_blocks_while_paused,
@@ -25,6 +27,37 @@ async def test_start_and_act():
     handle = await actor.act("Perform a quick demo.")
     result = await handle.result()
     assert isinstance(result, str) and result.strip(), "Result should be non-empty"
+
+
+class ActionResult(BaseModel):
+    """Structured result from an actor action."""
+
+    completed: bool = Field(..., description="Whether the action completed")
+    steps_taken: List[str] = Field(
+        default_factory=list,
+        description="List of steps taken",
+    )
+    outcome: str = Field(..., description="Description of the outcome")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_act_response_format():
+    """Simulated Actor.act should return structured output when response_format is provided."""
+    actor = SimulatedActor(steps=2, duration=1)
+
+    handle = await actor.act(
+        "Perform a quick demo task and report results",
+        response_format=ActionResult,
+    )
+    result = await handle.result()
+
+    # SimulatedActor returns a JSON string; validate it conforms to the schema.
+    parsed = ActionResult.model_validate_json(result)
+
+    assert isinstance(parsed.completed, bool)
+    assert isinstance(parsed.steps_taken, list)
+    assert parsed.outcome.strip(), "Outcome should be non-empty"
 
 
 # ────────────────────────────────────────────────────────────────────────────
