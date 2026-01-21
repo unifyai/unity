@@ -1,12 +1,15 @@
 import asyncio
 import base64
 import copy
+import contextvars
 import enum
 import functools
 import json
 import logging
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
+
+from pydantic import BaseModel
 
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
@@ -52,6 +55,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         notification_up_q: Optional[asyncio.Queue[dict]] = None,
+        call_id: Optional[str] = None,
+        on_finally: Optional[Callable[[], Awaitable[None]]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
         timeout: Optional[float] = 1000,
         persist: bool = False,
@@ -75,6 +80,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._clar_up_q_internal: Optional[asyncio.Queue[str]] = clarification_up_q
         self._clar_down_q_internal: Optional[asyncio.Queue[str]] = clarification_down_q
         self._notification_up_q_internal: Optional[asyncio.Queue[dict]] = notification_up_q
+        self._call_id: Optional[str] = call_id
 
         self._state: _HandleState = _HandleState.IDLE
         self._loop_handle: Optional[SteerableToolHandle] = None
@@ -289,6 +295,14 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             if self._result_str is None:
                 self._result_str = f"Failed with unexpected error: {self._error_str}"
         finally:
+            if self._on_finally is not None:
+                try:
+                    await self._on_finally()
+                except Exception as e:
+                    logger.warning(
+                        f"Handle {self._task_id}: on_finally callback failed: {e}",
+                        exc_info=True,
+                    )
             logger.info(
                 f"Handle {self._task_id}: Completion event set. Final state: {self._state.name}",
             )
