@@ -32,12 +32,11 @@ pytestmark = pytest.mark.eval
 
 
 # ---------------------------------------------------------------------------
-#  Test contacts with different should_respond / response_policy settings
+#  Test contact definitions (contact_id populated dynamically)
 # ---------------------------------------------------------------------------
 
 # Contact that CAN be responded to (should_respond=True)
-CONTACT_RESPOND_YES = {
-    "contact_id": 10,
+CONTACT_RESPOND_YES_DEF = {
     "first_name": "Alice",
     "surname": "Responder",
     "email_address": "alice@respond.com",
@@ -47,8 +46,7 @@ CONTACT_RESPOND_YES = {
 }
 
 # Contact that CANNOT be responded to (should_respond=False)
-CONTACT_RESPOND_NO = {
-    "contact_id": 11,
+CONTACT_RESPOND_NO_DEF = {
     "first_name": "Bob",
     "surname": "NoContact",
     "email_address": "bob@nocontact.com",
@@ -58,8 +56,7 @@ CONTACT_RESPOND_NO = {
 }
 
 # Contact with should_respond=False but no response_policy
-CONTACT_RESPOND_NO_POLICY = {
-    "contact_id": 12,
+CONTACT_RESPOND_NO_POLICY_DEF = {
     "first_name": "Carol",
     "surname": "Silent",
     "email_address": "carol@silent.com",
@@ -69,8 +66,7 @@ CONTACT_RESPOND_NO_POLICY = {
 }
 
 # Contact with should_respond=True and specific response_policy
-CONTACT_RESPOND_WITH_POLICY = {
-    "contact_id": 13,
+CONTACT_RESPOND_WITH_POLICY_DEF = {
     "first_name": "David",
     "surname": "VIP",
     "email_address": "david@vip.com",
@@ -85,31 +81,49 @@ CONTACT_RESPOND_WITH_POLICY = {
 # ---------------------------------------------------------------------------
 
 
-def setup_test_contacts(cm):
-    """Add test contacts to the conversation manager via ContactManager."""
-    if cm.contact_manager is None:
-        return
+def setup_test_contacts(cm) -> dict:
+    """
+    Add test contacts to the conversation manager via ContactManager.
 
-    for contact_dict in [
-        CONTACT_RESPOND_YES,
-        CONTACT_RESPOND_NO,
-        CONTACT_RESPOND_NO_POLICY,
-        CONTACT_RESPOND_WITH_POLICY,
-    ]:
-        # Create contact if it doesn't exist, then update with test values
-        get_or_create_contact(
+    Returns a dict mapping definition names to fully populated contact dicts
+    (with actual contact_ids from the database).
+    """
+    contacts = {}
+
+    if cm.contact_manager is None:
+        return contacts
+
+    contact_defs = [
+        ("respond_yes", CONTACT_RESPOND_YES_DEF),
+        ("respond_no", CONTACT_RESPOND_NO_DEF),
+        ("respond_no_policy", CONTACT_RESPOND_NO_POLICY_DEF),
+        ("respond_with_policy", CONTACT_RESPOND_WITH_POLICY_DEF),
+    ]
+
+    for name, contact_def in contact_defs:
+        # Create contact and get the actual contact_id from the database
+        contact_id = get_or_create_contact(
             cm.contact_manager,
-            first_name=contact_dict["first_name"],
-            surname=contact_dict.get("surname"),
-            email_address=contact_dict.get("email_address"),
-            phone_number=contact_dict.get("phone_number"),
+            first_name=contact_def["first_name"],
+            surname=contact_def.get("surname"),
+            email_address=contact_def.get("email_address"),
+            phone_number=contact_def.get("phone_number"),
         )
-        # Update should_respond and response_policy
+
+        # Update should_respond and response_policy using the actual contact_id
         cm.contact_manager.update_contact(
-            contact_id=contact_dict["contact_id"],
-            should_respond=contact_dict.get("should_respond", True),
-            response_policy=contact_dict.get("response_policy", ""),
+            contact_id=contact_id,
+            should_respond=contact_def.get("should_respond", True),
+            response_policy=contact_def.get("response_policy") or "",
         )
+
+        # Build the full contact dict with actual contact_id
+        contacts[name] = {
+            "contact_id": contact_id,
+            **contact_def,
+        }
+
+    return contacts
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +136,8 @@ def setup_test_contacts(cm):
 async def test_sms_allowed_when_should_respond_true(initialized_cm):
     """SMS response is allowed when contact has should_respond=True."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_YES
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_yes"]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -144,8 +158,8 @@ async def test_sms_allowed_when_should_respond_true(initialized_cm):
 async def test_email_allowed_when_should_respond_true(initialized_cm):
     """Email response is allowed when contact has should_respond=True."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_YES
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_yes"]
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -168,8 +182,8 @@ async def test_email_allowed_when_should_respond_true(initialized_cm):
 async def test_unify_message_allowed_when_should_respond_true(initialized_cm):
     """Unify message response is allowed when contact has should_respond=True."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_YES
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_yes"]
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(
@@ -195,8 +209,8 @@ async def test_unify_message_allowed_when_should_respond_true(initialized_cm):
 async def test_sms_blocked_when_should_respond_false(initialized_cm):
     """SMS response is blocked when contact has should_respond=False."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_NO
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_no"]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -205,11 +219,15 @@ async def test_sms_blocked_when_should_respond_false(initialized_cm):
         ),
     )
 
-    # Should NOT have any SMSSent events (response blocked)
+    # Should NOT have any SMSSent events TO THE BLOCKED CONTACT.
+    # (The LLM may inform the boss that it can't respond, which is allowed.)
     sms_events = filter_events_by_type(result.output_events, SMSSent)
-    assert len(sms_events) == 0, (
-        f"Expected 0 SMSSent events for should_respond=False contact, "
-        f"got {len(sms_events)}"
+    sms_to_blocked = [
+        e for e in sms_events if e.contact.get("contact_id") == contact["contact_id"]
+    ]
+    assert len(sms_to_blocked) == 0, (
+        f"Expected 0 SMSSent events to should_respond=False contact, "
+        f"got {len(sms_to_blocked)}"
     )
 
 
@@ -218,8 +236,8 @@ async def test_sms_blocked_when_should_respond_false(initialized_cm):
 async def test_email_blocked_when_should_respond_false(initialized_cm):
     """Email response is blocked when contact has should_respond=False."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_NO
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_no"]
 
     result = await cm.step_until_wait(
         EmailReceived(
@@ -230,11 +248,15 @@ async def test_email_blocked_when_should_respond_false(initialized_cm):
         ),
     )
 
-    # Should NOT have any EmailSent events (response blocked)
+    # Should NOT have any EmailSent events TO THE BLOCKED CONTACT.
+    # (The LLM may inform the boss that it can't respond, which is allowed.)
     email_events = filter_events_by_type(result.output_events, EmailSent)
-    assert len(email_events) == 0, (
-        f"Expected 0 EmailSent events for should_respond=False contact, "
-        f"got {len(email_events)}"
+    email_to_blocked = [
+        e for e in email_events if e.contact.get("contact_id") == contact["contact_id"]
+    ]
+    assert len(email_to_blocked) == 0, (
+        f"Expected 0 EmailSent events to should_respond=False contact, "
+        f"got {len(email_to_blocked)}"
     )
 
 
@@ -243,8 +265,8 @@ async def test_email_blocked_when_should_respond_false(initialized_cm):
 async def test_unify_message_blocked_when_should_respond_false(initialized_cm):
     """Unify message response is blocked when contact has should_respond=False."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_NO
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_no"]
 
     result = await cm.step_until_wait(
         UnifyMessageReceived(
@@ -253,11 +275,15 @@ async def test_unify_message_blocked_when_should_respond_false(initialized_cm):
         ),
     )
 
-    # Should NOT have any UnifyMessageSent events (response blocked)
+    # Should NOT have any UnifyMessageSent events TO THE BLOCKED CONTACT.
+    # (The LLM may inform the boss that it can't respond, which is allowed.)
     msg_events = filter_events_by_type(result.output_events, UnifyMessageSent)
-    assert len(msg_events) == 0, (
-        f"Expected 0 UnifyMessageSent events for should_respond=False contact, "
-        f"got {len(msg_events)}"
+    msg_to_blocked = [
+        e for e in msg_events if e.contact.get("contact_id") == contact["contact_id"]
+    ]
+    assert len(msg_to_blocked) == 0, (
+        f"Expected 0 UnifyMessageSent events to should_respond=False contact, "
+        f"got {len(msg_to_blocked)}"
     )
 
 
@@ -266,8 +292,8 @@ async def test_unify_message_blocked_when_should_respond_false(initialized_cm):
 async def test_sms_blocked_no_policy_when_should_respond_false(initialized_cm):
     """SMS is blocked when should_respond=False even without response_policy."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_NO_POLICY
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_no_policy"]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -276,11 +302,15 @@ async def test_sms_blocked_no_policy_when_should_respond_false(initialized_cm):
         ),
     )
 
-    # Should NOT have any SMSSent events (response blocked)
+    # Should NOT have any SMSSent events TO THE BLOCKED CONTACT.
+    # (The LLM may inform the boss that it can't respond, which is allowed.)
     sms_events = filter_events_by_type(result.output_events, SMSSent)
-    assert len(sms_events) == 0, (
-        f"Expected 0 SMSSent events for should_respond=False contact, "
-        f"got {len(sms_events)}"
+    sms_to_blocked = [
+        e for e in sms_events if e.contact.get("contact_id") == contact["contact_id"]
+    ]
+    assert len(sms_to_blocked) == 0, (
+        f"Expected 0 SMSSent events to should_respond=False contact, "
+        f"got {len(sms_to_blocked)}"
     )
 
 
@@ -294,8 +324,8 @@ async def test_sms_blocked_no_policy_when_should_respond_false(initialized_cm):
 async def test_vip_policy_allows_response(initialized_cm):
     """Contact with VIP response_policy and should_respond=True gets a response."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_WITH_POLICY
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_with_policy"]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -321,8 +351,8 @@ async def test_vip_policy_allows_response(initialized_cm):
 async def test_cross_channel_blocked_when_should_respond_false(initialized_cm):
     """Cross-channel communication (SMS asking for email) is blocked when should_respond=False."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_NO
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_no"]
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -331,18 +361,25 @@ async def test_cross_channel_blocked_when_should_respond_false(initialized_cm):
         ),
     )
 
-    # Should NOT have any EmailSent events (response blocked)
+    # Should NOT have any EmailSent events TO THE BLOCKED CONTACT.
+    # (The LLM may inform the boss that it can't respond, which is allowed.)
     email_events = filter_events_by_type(result.output_events, EmailSent)
-    assert len(email_events) == 0, (
-        f"Expected 0 EmailSent events for should_respond=False contact, "
-        f"got {len(email_events)}"
+    email_to_blocked = [
+        e for e in email_events if e.contact.get("contact_id") == contact["contact_id"]
+    ]
+    assert len(email_to_blocked) == 0, (
+        f"Expected 0 EmailSent events to should_respond=False contact, "
+        f"got {len(email_to_blocked)}"
     )
 
-    # Should also NOT have any SMSSent events
+    # Should also NOT have any SMSSent events TO THE BLOCKED CONTACT.
     sms_events = filter_events_by_type(result.output_events, SMSSent)
-    assert len(sms_events) == 0, (
-        f"Expected 0 SMSSent events for should_respond=False contact, "
-        f"got {len(sms_events)}"
+    sms_to_blocked = [
+        e for e in sms_events if e.contact.get("contact_id") == contact["contact_id"]
+    ]
+    assert len(sms_to_blocked) == 0, (
+        f"Expected 0 SMSSent events to should_respond=False contact, "
+        f"got {len(sms_to_blocked)}"
     )
 
 
@@ -351,8 +388,8 @@ async def test_cross_channel_blocked_when_should_respond_false(initialized_cm):
 async def test_cross_channel_allowed_when_should_respond_true(initialized_cm):
     """Cross-channel communication (SMS asking for email) is allowed when should_respond=True."""
     cm = initialized_cm
-    setup_test_contacts(cm)
-    contact = CONTACT_RESPOND_YES
+    contacts = setup_test_contacts(cm)
+    contact = contacts["respond_yes"]
 
     result = await cm.step_until_wait(
         SMSReceived(
