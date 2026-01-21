@@ -1069,6 +1069,7 @@ class CodeActActor(BaseCodeActActor):
             tool_policy=None,
             computer_primitives=self._computer_primitives,
             images=images,
+            response_format=response_format,
         )
         return handle
 
