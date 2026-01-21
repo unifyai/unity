@@ -107,14 +107,15 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
         cm.last_snapshot,
     )
 
-    boss_contact = cm.contact_index.boss_contact
+    # Get boss contact (contact_id=1) from ContactManager - the source of truth
+    boss_contact = cm.contact_index.get_contact(1) or {}
     system_prompt = build_system_prompt(
         bio=cm.assistant_about,
-        contact_id=boss_contact.contact_id,
-        first_name=boss_contact.first_name,
-        surname=boss_contact.surname,
-        phone_number=boss_contact.phone_number,
-        email_address=boss_contact.email_address,
+        contact_id=1,
+        first_name=boss_contact.get("first_name") or "",
+        surname=boss_contact.get("surname") or "",
+        phone_number=boss_contact.get("phone_number"),
+        email_address=boss_contact.get("email_address"),
         is_voice_call=cm.call_manager.uses_realtime_api,
     )
 

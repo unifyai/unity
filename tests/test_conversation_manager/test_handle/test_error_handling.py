@@ -29,7 +29,6 @@ from unity.conversation_manager.events import (
     PhoneCallEnded,
     UnifyMeetEnded,
     Ping,
-    GetContactsResponse,
     ActorResult,
 )
 
@@ -270,31 +269,6 @@ class TestStateRecovery:
 
         # Clean up
         await cm.step(PhoneCallEnded(contact=contact))
-
-    @pytest.mark.asyncio
-    async def test_get_contacts_response_adds_contacts(self, initialized_cm):
-        """GetContactsResponse should add/update contacts in the index."""
-        cm = initialized_cm
-
-        original_count = len(cm.contact_index.contacts)
-
-        # Send new contact
-        new_contacts = [
-            {
-                "contact_id": 100,
-                "first_name": "New",
-                "surname": "Contact",
-                "email_address": "new@test.com",
-                "phone_number": "+15555550100",
-            },
-        ]
-        await cm.step(GetContactsResponse(contacts=new_contacts))
-
-        # Contact 100 should now exist (added to existing contacts)
-        assert 100 in cm.contact_index.contacts
-        assert cm.contact_index.contacts[100].first_name == "New"
-        # Original contacts should still exist
-        assert len(cm.contact_index.contacts) == original_count + 1
 
     @pytest.mark.asyncio
     async def test_actor_result_for_nonexistent_task(self, initialized_cm):

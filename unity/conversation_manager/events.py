@@ -359,11 +359,6 @@ class LogMessageResponse(Event):
 
 
 @dataclass
-class GetContactsResponse(Event):
-    contacts: list[dict[str, Any]]
-
-
-@dataclass
 class ContactInfoResponse(Event):
     contact_details: dict[str, Any]
 

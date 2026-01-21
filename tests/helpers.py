@@ -7,10 +7,12 @@ import traceback
 import os
 from os import sep
 from pathlib import Path
-from typing import Any, Callable, List
+from typing import TYPE_CHECKING, Any, Callable, List
+
+if TYPE_CHECKING:
+    from unity.contact_manager.contact_manager import ContactManager
+    from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.events.event_bus import EVENT_BUS
-from unity.common.context_registry import ContextRegistry
-from unity.manager_registry import ManagerRegistry
 from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
 
 from tests.settings import SETTINGS
@@ -420,7 +422,15 @@ class _TestContext:
         self.trace_id: str | None = None
 
     def setup(self) -> None:
-        """Prepare test context before execution."""
+        """Prepare test bookkeeping before execution.
+
+        NOTE:
+        Unify context management is handled centrally in tests/conftest.py
+        (pytest_runtest_setup/teardown) so it wraps fixture setup + teardown.
+        Doing unify.set_context()/unset_context() here (inside the test call
+        phase) can cause flaky cross-test interference when fixtures create
+        or clear managers that delete contexts.
+        """
         try:
             test_fn_name = getattr(self.wrapper, "_unity_pytest_nodeid")
         except AttributeError:
@@ -433,32 +443,15 @@ class _TestContext:
         self.ctx = f"{test_path}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
         self.fpath = _test_fpath(self.test_fn, test_fn_name)
 
-        skip_ctx_create = False
-        if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
-            skip_ctx_create = self.ctx in PRECREATED_CONTEXTS
-        elif not self.try_reuse_prev_ctx:
-            unify.delete_context(self.ctx)
-
         self.llm_io_before = _list_llm_io_files()
         self.start_time = time.perf_counter()
-
-        unify.set_context(self.ctx, relative=False, skip_create=skip_ctx_create)
-        ManagerRegistry.clear()
-        ContextRegistry.clear()
-        EVENT_BUS.clear(delete_contexts=False)
-
-        if not EVENT_BUS:
-            import unity as _unity_mod
-
-            _unity_mod.init("UnityTests")
-            EVENT_BUS.clear()
 
     def set_trace_id(self, trace_id: str | None) -> None:
         """Store the trace_id for this test run."""
         self.trace_id = trace_id
 
     def teardown(self) -> None:
-        """Clean up test context after execution."""
+        """Finalize bookkeeping after execution (no Unify context mutation)."""
         duration = time.perf_counter() - self.start_time
         llm_io_after = _list_llm_io_files()
         new_llm_io_files = llm_io_after - self.llm_io_before
@@ -467,10 +460,6 @@ class _TestContext:
 
         # Upload trace data to {TestContext}/Trace
         _upload_trace_to_context(self.ctx, self.trace_id)
-
-        if self.delete_ctx_on_exit:
-            unify.delete_context(self.ctx)
-        unify.unset_context()
 
 
 def _handle_project(
