@@ -57,6 +57,7 @@ from unity.conversation_manager.events import (
 )
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
+from unity.conversation_manager.types import Mode
 
 
 # =============================================================================
@@ -551,7 +552,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_received_in_text_mode_starts_call(self, mock_cm):
         """PhoneCallReceived in text mode starts a call."""
-        mock_cm.mode = "text"
+        mock_cm.mode = Mode.TEXT
         event = PhoneCallReceived(
             contact={"contact_id": 2, "phone_number": "+15555552222"},
             conference_name="conf_123",
@@ -565,7 +566,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_received_pushes_notification(self, mock_cm):
         """PhoneCallReceived pushes call notification."""
-        mock_cm.mode = "text"
+        mock_cm.mode = Mode.TEXT
         event = PhoneCallReceived(
             contact={"contact_id": 2, "phone_number": "+15555552222"},
             conference_name="conf_123",
@@ -582,7 +583,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_received_during_call_does_nothing(self, mock_cm):
         """PhoneCallReceived during existing call doesn't start new call."""
-        mock_cm.mode = "call"  # Already in a call
+        mock_cm.mode = Mode.CALL  # Already in a call
         event = PhoneCallReceived(
             contact={"contact_id": 2, "phone_number": "+15555552222"},
             conference_name="conf_456",
@@ -595,7 +596,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_answered_during_call_publishes_status(self, mock_cm):
         """PhoneCallAnswered during call publishes status event."""
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
         event = PhoneCallAnswered(
             contact={"contact_id": 2, "phone_number": "+15555552222"},
         )
@@ -609,7 +610,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_started_sets_mode(self, mock_cm):
         """PhoneCallStarted sets CM mode to 'call'."""
-        mock_cm.mode = "text"
+        mock_cm.mode = Mode.TEXT
         event = PhoneCallStarted(
             contact={"contact_id": 2, "phone_number": "+15555552222"},
         )
@@ -657,7 +658,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_ended_resets_mode(self, mock_cm):
         """PhoneCallEnded resets mode to 'text'."""
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
         # Need to have an active conversation first
         mock_cm.contact_index.push_message(
             {"contact_id": 2, "phone_number": "+15555552222"},
@@ -678,7 +679,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_ended_clears_conference_name(self, mock_cm):
         """PhoneCallEnded clears the conference name."""
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
         mock_cm.call_manager.conference_name = "conf_123"
         mock_cm.contact_index.push_message(
             {"contact_id": 2, "phone_number": "+15555552222"},
@@ -698,7 +699,7 @@ class TestPhoneCallHandlers:
     @pytest.mark.asyncio
     async def test_phone_call_ended_cleanup_and_llm_run(self, mock_cm):
         """PhoneCallEnded triggers cleanup and LLM run."""
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
         mock_cm.contact_index.push_message(
             {"contact_id": 2, "phone_number": "+15555552222"},
             "voice",
@@ -728,7 +729,7 @@ class TestUnifyMeetHandlers:
     @pytest.mark.asyncio
     async def test_unify_meet_received_starts_meet(self, mock_cm):
         """UnifyMeetReceived starts a UnifyMeet session."""
-        mock_cm.mode = "text"
+        mock_cm.mode = Mode.TEXT
         event = UnifyMeetReceived(
             contact={"contact_id": 1},  # Boss contact
             livekit_agent_name="TestAgent",
@@ -742,7 +743,7 @@ class TestUnifyMeetHandlers:
     @pytest.mark.asyncio
     async def test_unify_meet_started_sets_mode(self, mock_cm):
         """UnifyMeetStarted sets mode to 'unify_meet'."""
-        mock_cm.mode = "text"
+        mock_cm.mode = Mode.TEXT
         event = UnifyMeetStarted(
             contact={"contact_id": 1},
         )
@@ -754,7 +755,7 @@ class TestUnifyMeetHandlers:
     @pytest.mark.asyncio
     async def test_unify_meet_ended_resets_mode(self, mock_cm):
         """UnifyMeetEnded resets mode to 'text'."""
-        mock_cm.mode = "meet"
+        mock_cm.mode = Mode.MEET
         mock_cm.contact_index.push_message(
             {"contact_id": 1},
             "voice",
@@ -907,7 +908,7 @@ class TestActorEventHandlers:
         await EventHandler.handle_event(event, mock_cm)
 
         assert len(mock_cm.notifications_bar.notifications) == 1
-        assert "Task started" in mock_cm.notifications_bar.notifications[0].content
+        assert "Action started" in mock_cm.notifications_bar.notifications[0].content
 
     @pytest.mark.asyncio
     async def test_actor_handle_started_requests_llm_run(self, mock_cm):
@@ -1177,7 +1178,7 @@ class TestDirectMessageEventHandler:
     @pytest.mark.asyncio
     async def test_direct_message_publishes_to_call_guidance_during_call(self, mock_cm):
         """DirectMessageEvent publishes to call_guidance channel during call."""
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
         event = DirectMessageEvent(
             content="Speak this directly",
             source="handle",
@@ -1192,7 +1193,7 @@ class TestDirectMessageEventHandler:
     @pytest.mark.asyncio
     async def test_direct_message_records_in_contact_index(self, mock_cm):
         """DirectMessageEvent records message in contact_index."""
-        mock_cm.mode = "call"
+        mock_cm.mode = Mode.CALL
         event = DirectMessageEvent(
             content="Direct message content",
             source="system",
