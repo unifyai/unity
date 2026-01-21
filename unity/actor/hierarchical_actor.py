@@ -2383,6 +2383,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
         persist: bool = True,
+        response_format: Optional[Type[BaseModel]] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
@@ -2419,6 +2420,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
+        self.response_format = response_format
         self.entrypoint = entrypoint
         self.entrypoint_args = entrypoint_args or []
         self.entrypoint_kwargs = entrypoint_kwargs or {}
@@ -2516,7 +2518,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         self._module: Optional[types.ModuleType] = None
         self._module_spec: Optional[importlib.machinery.ModuleSpec] = None
 
-        self._final_result_str: Optional[str] = None
+        self._final_result_str: Any = None
         self.parent_chat_context = parent_chat_context
         self.clarification_up_q = clarification_up_q
         self.clarification_down_q = clarification_down_q
@@ -3046,7 +3048,40 @@ async def main_plan():
 
         try:
             result = await main_task
-            self._final_result_str = str(result)
+
+            # If a response_format was requested, coerce the final output into it.
+            # We try zero-LLM parsing first (JSON / dict / already-a-model), then
+            # fall back to a final formatting LLM call only if needed.
+            final_out: Any = result
+            if self.response_format is not None:
+                try:
+                    if isinstance(final_out, self.response_format):
+                        pass
+                    elif isinstance(final_out, dict):
+                        final_out = self.response_format.model_validate(final_out)
+                    elif isinstance(final_out, str):
+                        final_out = self.response_format.model_validate_json(final_out)
+                    else:
+                        raise TypeError("Unsupported final result type for response_format.")
+                except Exception:
+                    # Fall back: ask an LLM to format the final output into the schema.
+                    try:
+                        prompt = (
+                            "Return a JSON object that strictly matches the requested schema.\n\n"
+                            f"User goal:\n{self.goal}\n\n"
+                            f"Raw result (may be unstructured):\n{str(result)}\n"
+                        )
+                        self.ask_client.set_response_format(self.response_format)
+                        try:
+                            formatted = await llm_call(self.ask_client, prompt)
+                        finally:
+                            self.ask_client.reset_response_format()
+                        final_out = self.response_format.model_validate_json(formatted)
+                    except Exception:
+                        # Last resort: return the raw string form.
+                        final_out = str(result)
+
+            self._final_result_str = final_out
 
             if self.persist:
                 self.action_log.append(
@@ -3088,7 +3123,10 @@ async def main_plan():
 
                 await self._cancel_all_background_tasks()
                 self._set_state(_HierarchicalHandleState.COMPLETED)
-                self._set_final_result(str(result))
+                # Preserve any response_format coercion performed in _start_main_execution_loop.
+                self._set_final_result(
+                    self._final_result_str if self._final_result_str is not None else str(result),
+                )
                 return
 
         except Exception as e:
@@ -5986,6 +6024,7 @@ class HierarchicalActor(BaseActor):
             max_escalations=self.max_escalations,
             max_local_retries=self.max_local_retries,
             persist=persist,
+            response_format=response_format,
             images=images,
             entrypoint=entrypoint,
             entrypoint_args=entrypoint_args,
@@ -7193,6 +7232,7 @@ class HierarchicalActor(BaseActor):
                         else f"Last attempt failed: {last_error}. Please fix."
                     ),
                     images=plan.images,
+                    response_format=plan.response_format,
                 )
                 response = await llm_call(
                     plan.plan_generation_client,
