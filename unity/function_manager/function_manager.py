@@ -4573,6 +4573,9 @@ class FunctionManager(BaseFunctionManager):
     # On Windows: 'C:\Unity'
     REMOTE_WINDOWS_WORKSPACE_DIR = "C:\\Unity"
 
+    # Shell mode for remote Windows command execution ('powershell' or 'cmd')
+    REMOTE_WINDOWS_SHELL_MODE = "powershell"
+
     def _should_execute_python_function_on_remote_windows(
         self,
         func_data: Dict[str, Any],
@@ -4773,6 +4776,7 @@ class FunctionManager(BaseFunctionManager):
                     "command": "uv sync",
                     "cwd": venv_full_path,
                     "timeout": 600000,  # 10 minutes for dependency installation
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
                 },
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=660),
@@ -4917,6 +4921,7 @@ if __name__ == "__main__":
                     "command": f'"{python_path}" "scripts\\_exec_{exec_id}.py"',
                     "cwd": cwd,
                     "timeout": 3600000,  # 1 hour
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
                 },
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=3660),
