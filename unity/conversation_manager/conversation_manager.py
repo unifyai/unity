@@ -211,11 +211,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return conversation_turns, last_message_timestamp
 
         contact_id = contact.get("contact_id")
-        if contact_id not in self.contact_index.active_conversations:
+        conv_state = self.contact_index.get_conversation_state(contact_id)
+        if not conv_state:
             return conversation_turns, last_message_timestamp
 
-        active_contact = self.contact_index.active_conversations[contact_id]
-        voice_thread = active_contact.threads.get("voice", [])
+        voice_thread = conv_state.threads.get("voice", [])
 
         # Optionally limit to last N messages
         if max_messages is not None:
@@ -266,11 +266,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return conversation_turns, last_message_timestamp
 
         contact_id = contact.get("contact_id")
-        if contact_id not in self.contact_index.active_conversations:
+        conv_state = self.contact_index.get_conversation_state(contact_id)
+        if not conv_state:
             return conversation_turns, last_message_timestamp
 
-        active_contact = self.contact_index.active_conversations[contact_id]
-        global_thread = list(active_contact.global_thread)
+        global_thread = list(conv_state.global_thread)
 
         # Optionally limit to last N messages
         if max_messages is not None:
@@ -732,9 +732,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             # Record in contact_index
             contact = self.get_active_contact()
             if contact:
+                contact_id = contact.get("contact_id")
                 self.contact_index.push_message(
-                    contact,
-                    "voice",
+                    contact_id=contact_id,
+                    sender_name="You",
+                    thread_name="voice",
                     message_content=decision.content,
                     role="assistant",
                 )

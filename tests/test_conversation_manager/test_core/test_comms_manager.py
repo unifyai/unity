@@ -40,7 +40,6 @@ from unity.conversation_manager.events import (
     ActorPause,
     ActorResume,
     SyncContacts,
-    GetContactsResponse,
     PreHireMessage,
     Ping,
 )
@@ -327,70 +326,18 @@ class TestSMSMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
-            # Should receive contacts event
-            msg1 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg1 is not None
-            assert "contacts" in msg1["channel"]
-
             # Should receive SMS message event
-            msg2 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg2 is not None
-            assert msg2["channel"] == "app:comms:msg_message"
+            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            assert msg is not None
+            assert msg["channel"] == "app:comms:msg_message"
 
             # Verify event data
-            event = Event.from_json(msg2["data"])
+            event = Event.from_json(msg["data"])
             assert isinstance(event, SMSReceived)
             assert event.content == "Hello from SMS!"
 
             # Message should be acked
             assert message._acked
-
-    @pytest.mark.asyncio
-    async def test_handle_sms_adds_local_contact(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test that SMS handling adds local contact to contacts list."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:comms:contacts")
-
-            contacts = [
-                {
-                    "contact_id": 1,
-                    "first_name": "Test",
-                    "surname": "Contact",
-                    "phone_number": "+15555551111",
-                    "email_address": "test@contact.com",
-                },
-            ]
-            message = create_pubsub_message(
-                "msg",
-                {
-                    "body": "Hello!",
-                    "from_number": "+15555551111",
-                    "contacts": contacts,
-                },
-            )
-
-            cm.handle_message(message)
-            await asyncio.sleep(0.1)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg is not None
-
-            event = Event.from_json(msg["data"])
-            assert isinstance(event, GetContactsResponse)
-
-            # Should have original contact + local contact
-            assert len(event.contacts) == 2
-            assert any(c["contact_id"] == -1 for c in event.contacts)  # Local contact
 
 
 # =============================================================================

@@ -119,17 +119,25 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
     cm.mode = "call"  # Default to voice mode where proactive speech is active
     cm._proactive_speech_task = None
 
-    # Set up contact index with sample contacts
+    # Create a mock ContactManager that returns sample contacts
+    mock_contact_manager = MagicMock()
+    contacts_by_id = {c["contact_id"]: c for c in sample_contacts}
+    mock_contact_manager.get_contact_info = MagicMock(
+        side_effect=lambda cid: (
+            {cid: contacts_by_id.get(cid)} if cid in contacts_by_id else {}
+        ),
+    )
+    mock_contact_manager.filter_contacts = MagicMock(return_value={"contacts": []})
+
+    # Set up contact index with mock ContactManager
     cm.contact_index = ContactIndex()
-    cm.contact_index.set_contacts(sample_contacts)
+    cm.contact_index.set_contact_manager(mock_contact_manager)
 
     # Set up proactive speech instance
     cm.proactive_speech = ProactiveSpeech()
 
-    # Mock get_active_contact
-    cm.get_active_contact = MagicMock(
-        return_value=cm.contact_index.get_contact(contact_id=1),
-    )
+    # Mock get_active_contact to return boss contact
+    cm.get_active_contact = MagicMock(return_value=sample_contacts[1])
 
     # Mock get_recent_voice_transcript
     cm.get_recent_voice_transcript = MagicMock(return_value=([], None))

@@ -294,12 +294,8 @@ class CommsManager:
                     message.ack()
                     return
 
-                # Publish contacts
+                # Get contacts for message routing
                 contacts = [*event.get("contacts", []), _get_local_contact()]
-                self._publish_from_callback(
-                    "app:comms:contacts",
-                    GetContactsResponse(contacts=contacts).to_json(),
-                )
 
                 content = event["body"]
                 topic = ""
@@ -395,10 +391,6 @@ class CommsManager:
             elif thread == "log_pre_hire_chats":
                 try:
                     contacts = [*event.get("contacts", []), _get_local_contact()]
-                    self._publish_from_callback(
-                        "app:comms:contacts",
-                        GetContactsResponse(contacts=contacts).to_json(),
-                    )
                     assistant_id = event.get("assistant_id", "")
                     body = event.get("body", []) or []
 
@@ -453,10 +445,6 @@ class CommsManager:
 
                     # Publish contacts
                     contacts = [*event.get("contacts", []), _get_local_contact()]
-                    self._publish_from_callback(
-                        "app:comms:contacts",
-                        GetContactsResponse(contacts=contacts).to_json(),
-                    )
 
                     # Create the event based on the thread
                     if thread == "unify_meet":
