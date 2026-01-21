@@ -45,12 +45,14 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         *,
         entrypoint_id: int,
         execution_task: asyncio.Task[Any],
+        on_finally: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
         self._entrypoint_id = int(entrypoint_id)
         self._execution_task = execution_task
         self._completion_event = asyncio.Event()
         self._result_str: Optional[str] = None
         self._stopped = False
+        self._on_finally = on_finally
 
         asyncio.create_task(self._monitor_execution())
 
@@ -65,6 +67,11 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         except Exception as e:
             self._result_str = f"Error: {e}"
         finally:
+            if self._on_finally is not None:
+                try:
+                    await self._on_finally()
+                except Exception:
+                    pass
             self._completion_event.set()
 
     async def ask(
