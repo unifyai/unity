@@ -219,7 +219,11 @@ def log_manager_call(
     def _decorator(func):
         @functools.wraps(func, updated=())
         async def _wrapper(self, *args, **kwargs):
-            if "text" in kwargs:
+            # Prefer the declared payload_key if present, falling back to the common "text"
+            # convention or first positional arg.
+            if payload_key in kwargs:
+                payload_value = kwargs[payload_key]
+            elif "text" in kwargs:
                 payload_value = kwargs["text"]
             elif len(args) >= 1:
                 payload_value = args[0]
