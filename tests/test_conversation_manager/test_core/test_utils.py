@@ -87,6 +87,37 @@ class TestDeriveShortName:
         result = derive_short_name("Send 100 emails to 50 people")
         assert result == "send_100_emails_to"
 
+    def test_slashes_become_word_separators(self):
+        """Slashes and other punctuation become word separators, not removed."""
+        # This was the bug that caused tool names to exceed 64 chars:
+        # "transcripts/messages/emails" became "transcriptsmessagesemails" (one word)
+        # Now it becomes "transcripts messages emails" (three words)
+        result = derive_short_name("Search transcripts/messages/emails/notes")
+        assert result == "search_transcripts_messages_emails"
+        # Each slash-separated segment is now a separate word
+
+    def test_character_limit_enforced(self):
+        """Short name is truncated to stay under character limit."""
+        # 25 chars max for short_name to guarantee tool names < 64 chars
+        long_query = "superlongwordthatexceedstwentyfivecharacters easily"
+        result = derive_short_name(long_query)
+        assert len(result) <= 25
+
+    def test_character_limit_with_long_words(self):
+        """Even queries with long words stay under the limit."""
+        # Each word is long - tests truncation of the joined result
+        query = "internationalization documentation implementation"
+        result = derive_short_name(query)
+        assert len(result) <= 25
+
+    def test_truncation_removes_trailing_underscore(self):
+        """Truncation doesn't leave trailing underscores."""
+        # If truncation happens right after an underscore, it should be stripped
+        query = "a b c d e f g h i j k l m n o p q r s t u v w x y z"
+        result = derive_short_name(query)
+        assert not result.endswith("_")
+        assert len(result) <= 25
+
 
 class TestSafeCallIdSuffix:
     """Tests for safe_call_id_suffix function."""
@@ -771,6 +802,113 @@ class TestContactIndex:
         assert contact.global_thread[1].subject == "Email 1"
         assert contact.global_thread[2].content == "Voice 1"
         assert contact.global_thread[3].content == "SMS 2"
+
+
+# =============================================================================
+# Tool name length guarantee tests
+# =============================================================================
+
+
+class TestToolNameLengthGuarantee:
+    """Stress tests ensuring tool names NEVER exceed OpenAI's 64-char limit.
+
+    These tests verify the fix for the bug where LLM-generated descriptions
+    with slashes (e.g., "transcripts/messages/emails") caused tool names to
+    exceed 64 characters and fail OpenAI API validation.
+    """
+
+    # OpenAI's maximum tool name length
+    MAX_TOOL_NAME_LENGTH = 64
+
+    def _assert_all_tool_names_valid(self, query: str, handle_id: int = 0):
+        """Helper: assert all generated tool names are ≤ 64 chars."""
+        # Include a pending clarification to test answer_clarification_ tools
+        pending = [{"call_id": "test-clarification-id-12345678"}]
+        actions = iter_steering_tools_for_action(
+            handle_id=handle_id,
+            query=query,
+            pending_clarifications=pending,
+        )
+        for tool_name, _ in actions:
+            assert len(tool_name) <= self.MAX_TOOL_NAME_LENGTH, (
+                f"Tool name exceeds {self.MAX_TOOL_NAME_LENGTH} chars:\n"
+                f"  Name: {tool_name}\n"
+                f"  Length: {len(tool_name)}\n"
+                f"  Query: {query}"
+            )
+
+    def test_slash_separated_description_bug(self):
+        """Regression test for the exact bug from CI failure.
+
+        The LLM generated:
+        "Search Default User's transcripts/messages/emails/meeting notes..."
+
+        This caused "transcripts/messages/emails/meeting" to become ONE word
+        "transcriptsmessagesemailsmeeting" (31 chars), creating tool names
+        like "interject_search_default_users_transcriptsmessagesemailsmeeting__0"
+        which was 66 chars - exceeding the 64-char limit.
+        """
+        query = (
+            "Search Default User's transcripts/messages/emails/meeting notes "
+            "for mentions of quarterly budget review"
+        )
+        self._assert_all_tool_names_valid(query)
+
+    def test_pathological_long_words(self):
+        """Words longer than the entire character limit."""
+        query = "supercalifragilisticexpialidocious antidisestablishmentarianism"
+        self._assert_all_tool_names_valid(query)
+
+    def test_many_slashes(self):
+        """Many slash-separated segments."""
+        query = "a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z"
+        self._assert_all_tool_names_valid(query)
+
+    def test_mixed_punctuation(self):
+        """Various punctuation types that could concatenate words."""
+        query = "files.txt,data.csv;report.pdf|summary.doc"
+        self._assert_all_tool_names_valid(query)
+
+    def test_very_long_query(self):
+        """Extremely long query string."""
+        query = " ".join(["word"] * 1000)
+        self._assert_all_tool_names_valid(query)
+
+    def test_unicode_characters(self):
+        """Unicode characters in query."""
+        query = "Rechercher les données über München 東京 москва"
+        self._assert_all_tool_names_valid(query)
+
+    def test_high_handle_id(self):
+        """Large handle IDs don't break the limit."""
+        query = "Search for something"
+        # Test with 5-digit handle ID (the max we designed for)
+        self._assert_all_tool_names_valid(query, handle_id=99999)
+
+    def test_all_steering_operations(self):
+        """Every steering operation stays under limit with worst-case input."""
+        worst_case_query = (
+            "transcripts/messages/emails/documents/notes/files/records/data"
+        )
+        pending = [{"call_id": "clarification-uuid-12345678901234567890"}]
+        actions = iter_steering_tools_for_action(
+            handle_id=99999,  # 5-digit handle
+            query=worst_case_query,
+            pending_clarifications=pending,
+        )
+
+        for tool_name, _ in actions:
+            assert (
+                len(tool_name) <= self.MAX_TOOL_NAME_LENGTH
+            ), f"Tool '{tool_name}' is {len(tool_name)} chars (max {self.MAX_TOOL_NAME_LENGTH})"
+
+    def test_boundary_condition_exactly_25_chars(self):
+        """Short name that would be exactly 25 chars without truncation."""
+        # Craft a query that produces exactly 25 chars
+        query = "abcdefghij klmnopqrst uvwxy"  # 3 words, joined = "abcdefghij_klmnopqrst_uvwxy" = 27 chars
+        short_name = derive_short_name(query)
+        assert len(short_name) <= 25
+        self._assert_all_tool_names_valid(query)
 
 
 # =============================================================================

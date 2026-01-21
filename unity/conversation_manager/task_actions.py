@@ -84,22 +84,40 @@ def get_steering_operation(name: str) -> Optional[SteeringOperation]:
 # Short name derivation
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Maximum character length for short_name to guarantee tool names stay under
+# OpenAI's 64-character limit. Calculated as:
+#   64 (max) - 21 (answer_clarification_) - 2 (__) - 5 (handle_id up to 99999)
+#            - 2 (__) - 8 (call_id_suffix) = 26 chars
+# Using 25 for safety margin.
+_MAX_SHORT_NAME_CHARS = 25
+
 
 def derive_short_name(query: str, max_words: int = 4) -> str:
     """Derive a short, descriptive name from an action query for use in action names.
 
-    Takes the first few words, lowercased, with non-alphanumeric chars removed,
-    joined by underscores. Ensures no __ (reserved as structural delimiter).
+    Takes the first few words, lowercased, with non-alphanumeric chars replaced
+    by spaces (so they act as word separators), joined by underscores.
+    Ensures no __ (reserved as structural delimiter) and enforces a character
+    limit to guarantee generated tool names never exceed OpenAI's 64-char limit.
 
     Examples:
         "List all contacts" -> "list_all_contacts"
         "What's the weather?" -> "whats_the_weather"
+        "Search transcripts/messages/emails" -> "search_transcripts_messages_emails"
     """
-    words = re.sub(r"[^a-zA-Z0-9\s]", "", query.lower()).split()[:max_words]
-    result = "_".join(words) if words else "action"
+    # Replace non-alphanumeric chars with spaces (so slashes etc. become word breaks)
+    normalized = re.sub(r"[^a-zA-Z0-9\s]", " ", query.lower())
+    words = normalized.split()[:max_words]
+    result = "_".join(words) if words else "task"
+
     # Collapse any accidental double underscores (__ is our structural delimiter)
     while _DELIM in result:
         result = result.replace(_DELIM, "_")
+
+    # Truncate to max length to guarantee tool names stay under 64 chars
+    if len(result) > _MAX_SHORT_NAME_CHARS:
+        result = result[:_MAX_SHORT_NAME_CHARS].rstrip("_")
+
     return result
 
 
