@@ -8,10 +8,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 from unity.actor.hierarchical_actor import HierarchicalActor, HierarchicalActorHandle
-from unity.function_manager.computer_backends import MockComputerBackend, VALID_MOCK_SCREENSHOT_PNG
+from unity.function_manager.computer_backends import (
+    MockComputerBackend,
+    VALID_MOCK_SCREENSHOT_PNG,
+)
 from unity.function_manager.function_manager import FunctionManager
 
-from tests.test_actor.test_hierarchical.helpers import SimpleMockVerificationClient, wait_for_log_entry
+from tests.test_actor.test_hierarchical.helpers import (
+    SimpleMockVerificationClient,
+    wait_for_log_entry,
+)
 
 
 # --- Entrypoint skill definition ---
@@ -88,13 +94,20 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
                 pass
 
         active_task.verification_client = SimpleMockVerificationClient()
-        active_task.plan_source_code = actor._sanitize_code(CANNED_ENTRYPOINT_PLAN, active_task)
+        active_task.plan_source_code = actor._sanitize_code(
+            CANNED_ENTRYPOINT_PLAN,
+            active_task,
+        )
 
         # Simulate the TaskScheduler entrypoint hot-path being used.
         active_task.action_log.append("Bypassing LLM generation - entrypoint provided")
-        active_task.action_log.append("Injecting entrypoint 'my_entrypoint_skill' into plan")
+        active_task.action_log.append(
+            "Injecting entrypoint 'my_entrypoint_skill' into plan",
+        )
 
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
         await asyncio.wait_for(act_called.wait(), timeout=30)
 
         # This is a non-persist plan; it should complete on its own. Avoid stop(),
@@ -113,7 +126,11 @@ async def test_entrypoint_skill_loads_from_function_manager_and_executes():
                 await active_task.stop()
             except Exception:
                 pass
-        if active_task and active_task._execution_task and not active_task._execution_task.done():
+        if (
+            active_task
+            and active_task._execution_task
+            and not active_task._execution_task.done()
+        ):
             active_task._execution_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await asyncio.wait_for(active_task._execution_task, timeout=10)
@@ -242,7 +259,9 @@ async def test_skill_from_function_manager_is_recursively_sanitized_with_verify_
             CANNED_PLAN_WITH_SKILL_SKILL_INJECTION_AND_SANITIZATION,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(active_task, "run_diagnostic_flow", timeout=30)
         await asyncio.sleep(1)
@@ -335,7 +354,11 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
     active_task_1 = None
     active_task_2 = None
     try:
-        active_task_1 = HierarchicalActorHandle(actor=actor, goal="Teach skill", persist=False)
+        active_task_1 = HierarchicalActorHandle(
+            actor=actor,
+            goal="Teach skill",
+            persist=False,
+        )
         if active_task_1._execution_task:
             active_task_1._execution_task.cancel()
             try:
@@ -348,7 +371,9 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
             CANNED_PLAN_PHASE_1_SKILL_MEMOIZATION,
             active_task_1,
         )
-        active_task_1._execution_task = asyncio.create_task(active_task_1._initialize_and_run())
+        active_task_1._execution_task = asyncio.create_task(
+            active_task_1._initialize_and_run(),
+        )
         await wait_for_log_entry(active_task_1, "search_recipe", timeout=30)
         await asyncio.sleep(1)
         if not active_task_1.done():
@@ -356,7 +381,11 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
 
         assert "search_recipe" in active_task_1.plan_source_code
 
-        active_task_2 = HierarchicalActorHandle(actor=actor, goal="Reuse skill", persist=False)
+        active_task_2 = HierarchicalActorHandle(
+            actor=actor,
+            goal="Reuse skill",
+            persist=False,
+        )
         if active_task_2._execution_task:
             active_task_2._execution_task.cancel()
             try:
@@ -369,7 +398,9 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
             CANNED_PLAN_PHASE_2_SKILL_MEMOIZATION,
             active_task_2,
         )
-        active_task_2._execution_task = asyncio.create_task(active_task_2._initialize_and_run())
+        active_task_2._execution_task = asyncio.create_task(
+            active_task_2._initialize_and_run(),
+        )
         await wait_for_log_entry(active_task_2, "search_recipe", timeout=30)
         await asyncio.sleep(1)
         if not active_task_2.done():
@@ -395,4 +426,3 @@ async def test_learned_skill_is_saved_and_reused_across_sessions():
             await actor.close()
         except Exception:
             pass
-

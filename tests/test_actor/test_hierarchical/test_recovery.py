@@ -24,7 +24,6 @@ from unity.function_manager.function_manager import FunctionManager
 
 from tests.test_actor.test_hierarchical.helpers import (
     ConfigurableMockVerificationClient,
-    SimpleMockVerificationClient,
     wait_for_log_entry,
 )
 
@@ -94,14 +93,21 @@ async def test_recovery_agent_launches_on_user_interjection():
 
     active_task = None
     try:
+
         async def mock_recovery_agent(plan, target_screenshot, trajectory):
             assert target_screenshot is not None
             assert "about-us" in trajectory[0]
-            active_task.action_log.append("COURSE CORRECTION: Mock agent for interjection is running.")
+            active_task.action_log.append(
+                "COURSE CORRECTION: Mock agent for interjection is running.",
+            )
 
         actor._run_course_correction_agent = mock_recovery_agent
 
-        active_task = HierarchicalActorHandle(actor=actor, goal="Test interjection recovery.", persist=True)
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test interjection recovery.",
+            persist=True,
+        )
         if active_task._execution_task:
             active_task._execution_task.cancel()
             try:
@@ -129,24 +135,34 @@ async def test_recovery_agent_launches_on_user_interjection():
             ],
             cache=CacheInvalidateSpec(
                 invalidate_steps=[
-                    CacheStepRange(function_name="_multi_step_function", from_step_inclusive=2),
+                    CacheStepRange(
+                        function_name="_multi_step_function",
+                        from_step_inclusive=2,
+                    ),
                 ],
             ),
         )
-        active_task.modification_client.generate = AsyncMock(return_value=mock_decision.model_dump_json())
+        active_task.modification_client.generate = AsyncMock(
+            return_value=mock_decision.model_dump_json(),
+        )
 
         active_task.plan_source_code = actor._sanitize_code(
             CANNED_PLAN_FOR_INTERJECTION_TEST_ADVANCE_COURSE_CORRECTION,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(active_task, "about-us-6648102")
         while len(active_task.idempotency_cache) != 2:
             await asyncio.sleep(0.1)
 
         await active_task.interject("Change the plan after the first search.")
-        await wait_for_log_entry(active_task, "COURSE CORRECTION: Mock agent for interjection is running.")
+        await wait_for_log_entry(
+            active_task,
+            "COURSE CORRECTION: Mock agent for interjection is running.",
+        )
         await wait_for_log_entry(active_task, "Search for 'brownies' instead.")
 
         await active_task.stop("Test complete.")
@@ -186,12 +202,21 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
     active_task = None
     try:
         mock_v_client = ConfigurableMockVerificationClient()
-        mock_v_client.set_behavior("_step_1_navigate_and_search", [("ok", "Navigated successfully.")])
-        mock_v_client.set_behavior("_step_2_deviate_state", [("ok", "State deviated as planned.")])
+        mock_v_client.set_behavior(
+            "_step_1_navigate_and_search",
+            [("ok", "Navigated successfully.")],
+        )
+        mock_v_client.set_behavior(
+            "_step_2_deviate_state",
+            [("ok", "State deviated as planned.")],
+        )
         mock_v_client.set_behavior(
             "_step_3_attempt_action_on_wrong_page",
             [
-                ("reimplement_local", "Action failed, element not found on the 'About Us' page."),
+                (
+                    "reimplement_local",
+                    "Action failed, element not found on the 'About Us' page.",
+                ),
                 ("ok", "Action succeeded after state recovery."),
             ],
         )
@@ -240,7 +265,9 @@ async def test_recovery_agent_launches_on_verification_failure_and_restores_stat
             CANNED_PLAN_FOR_VERIFICATION_FAILURE_TEST_ADVANCE_COURSE_CORRECTION,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         final_result = await asyncio.wait_for(active_task.result(), timeout=60)
         _ = final_result
@@ -279,7 +306,11 @@ async def test_modify_task_skips_course_correction_when_disabled():
 
     active_task = None
     try:
-        active_task = HierarchicalActorHandle(actor=actor, goal="Test course correction gating.", persist=True)
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test course correction gating.",
+            persist=True,
+        )
 
         if active_task._execution_task:
             active_task._execution_task.cancel()
@@ -292,16 +323,31 @@ async def test_modify_task_skips_course_correction_when_disabled():
         active_task._clear_browser_queue_for_run = AsyncMock(return_value=None)
 
         key_valid = (("main_plan",), (), (), 1, "computer_primitives.act", "valid")
-        key_invalid = (("main_plan",), (), (), 2, "computer_primitives.observe", "invalid")
+        key_invalid = (
+            ("main_plan",),
+            (),
+            (),
+            2,
+            "computer_primitives.observe",
+            "invalid",
+        )
         active_task.idempotency_cache = {
             key_valid: {
-                "meta": {"function": "main_plan", "step": 1, "post_state_screenshot": VALID_MOCK_SCREENSHOT_PNG},
+                "meta": {
+                    "function": "main_plan",
+                    "step": 1,
+                    "post_state_screenshot": VALID_MOCK_SCREENSHOT_PNG,
+                },
                 "interaction_log": ["", "computer_primitives.act(...)", ""],
                 "result": None,
             },
             key_invalid: {
                 "meta": {"function": "main_plan", "step": 2, "impure": True},
-                "interaction_log": ["", "computer_primitives.observe(...)", "Returned: ok"],
+                "interaction_log": [
+                    "",
+                    "computer_primitives.observe(...)",
+                    "Returned: ok",
+                ],
                 "result": None,
             },
         }
@@ -323,7 +369,9 @@ async def test_modify_task_skips_course_correction_when_disabled():
                 ),
             ],
             cache=CacheInvalidateSpec(
-                invalidate_steps=[CacheStepRange(function_name="main_plan", from_step_inclusive=2)],
+                invalidate_steps=[
+                    CacheStepRange(function_name="main_plan", from_step_inclusive=2),
+                ],
             ),
         )
 
@@ -336,4 +384,3 @@ async def test_modify_task_skips_course_correction_when_disabled():
                 await active_task.stop()
         with contextlib.suppress(Exception):
             await actor.close()
-

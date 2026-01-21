@@ -6,4 +6,3 @@ Conftest should stay small and fixture-focused to avoid hidden magic.
 """
 
 import pytest  # noqa: F401
-

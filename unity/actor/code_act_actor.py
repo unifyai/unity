@@ -4,7 +4,6 @@ import functools
 import inspect
 import io
 import traceback
-import json
 import ast
 import copy
 import uuid
@@ -30,8 +29,10 @@ if TYPE_CHECKING:
     from unity.function_manager.function_manager import FunctionManager
 
 
-_CURRENT_SANDBOX: contextvars.ContextVar["CodeExecutionSandbox"] = contextvars.ContextVar(
-    "code_act_current_sandbox"
+_CURRENT_SANDBOX: contextvars.ContextVar["CodeExecutionSandbox"] = (
+    contextvars.ContextVar(
+        "code_act_current_sandbox",
+    )
 )
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         client = new_llm_client()
         client.set_system_message(
             "You are an AI assistant answering a status question about an in-flight entrypoint execution. "
-            "Be brief and factual."
+            "Be brief and factual.",
         )
         msg = (
             f"Entrypoint {self._entrypoint_id} status: {status}.\n\n"
@@ -203,6 +204,7 @@ class CodeExecutionSandbox:
 
         # Expose sandbox metadata to user code (best-effort; callers may ignore).
         self.global_state["__sandbox_id__"] = self.id
+
         # Notification queue is injected per-call by CodeActActor via:
         # sandbox.global_state["__notification_up_q__"] = <asyncio.Queue>
         #
@@ -292,7 +294,10 @@ class CodeExecutionSandbox:
             self.global_state.clear()
         except Exception as e:
             try:
-                logger.warning(f"CodeExecutionSandbox.close() failed: {e}", exc_info=True)
+                logger.warning(
+                    f"CodeExecutionSandbox.close() failed: {e}",
+                    exc_info=True,
+                )
             except Exception:
                 pass
 
@@ -554,7 +559,7 @@ class CodeActActor(BaseCodeActActor):
                             "type": "execution_started",
                             "sandbox_id": sandbox.id,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }
+                        },
                     )
                 except Exception:
                     pass
@@ -579,7 +584,7 @@ class CodeActActor(BaseCodeActActor):
                                 "error_kind": "exception",
                                 "traceback_preview": tb[:2000],
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                            }
+                            },
                         )
                     except Exception:
                         pass
@@ -637,12 +642,14 @@ class CodeActActor(BaseCodeActActor):
                         {
                             "type": "execution_finished",
                             "sandbox_id": sandbox.id,
-                            "status": "ok" if not execution_result.get("error") else "error",
+                            "status": (
+                                "ok" if not execution_result.get("error") else "error"
+                            ),
                             "stdout_len": len(execution_result.get("stdout") or ""),
                             "stderr_len": len(execution_result.get("stderr") or ""),
                             "browser_used": bool(execution_result.get("browser_used")),
                             "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }
+                        },
                     )
                 except Exception:
                     pass
@@ -740,7 +747,9 @@ class CodeActActor(BaseCodeActActor):
                 """
                 fm = self.function_manager
                 if fm is None:
-                    raise RuntimeError("FunctionManager is not configured on this actor.")
+                    raise RuntimeError(
+                        "FunctionManager is not configured on this actor.",
+                    )
                 return fm.add_functions(
                     implementations=implementations,
                     language=language,  # type: ignore[arg-type]
@@ -910,7 +919,9 @@ class CodeActActor(BaseCodeActActor):
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
 
-        effective_can_compose = self.can_compose if can_compose is None else bool(can_compose)
+        effective_can_compose = (
+            self.can_compose if can_compose is None else bool(can_compose)
+        )
         effective_can_store = self.can_store if can_store is None else bool(can_store)
 
         # can_compose=False mode: do not run an LLM tool loop or allow arbitrary code execution.
@@ -976,15 +987,22 @@ class CodeActActor(BaseCodeActActor):
 
             return SingleFunctionActorHandle(
                 function_name=fn_name,
-                function_id=matches[0].get("function_id") if isinstance(matches[0], dict) else None,
+                function_id=(
+                    matches[0].get("function_id")
+                    if isinstance(matches[0], dict)
+                    else None
+                ),
                 execution_task=asyncio.create_task(_run_found()),
                 is_primitive=False,
                 verify=False,
                 goal=description,
-                docstring=(matches[0].get("docstring") if isinstance(matches[0], dict) else None),
+                docstring=(
+                    matches[0].get("docstring")
+                    if isinstance(matches[0], dict)
+                    else None
+                ),
             )
 
-        
         initial_prompt = (
             "This is an interactive session. Acknowledge that you are ready and "
             "wait for the user to provide instructions via interjection."
@@ -1016,14 +1034,20 @@ class CodeActActor(BaseCodeActActor):
         for ns, env in self.environments.items():
             # Prefer explicit reconstruction for known env types.
             try:
-                if _ComputerEnvironment is not None and isinstance(env, _ComputerEnvironment):
+                if _ComputerEnvironment is not None and isinstance(
+                    env,
+                    _ComputerEnvironment,
+                ):
                     sandbox_envs[ns] = _ComputerEnvironment(
                         env.get_instance(),
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
                     )
                     continue
-                if _StateManagerEnvironment is not None and isinstance(env, _StateManagerEnvironment):
+                if _StateManagerEnvironment is not None and isinstance(
+                    env,
+                    _StateManagerEnvironment,
+                ):
                     sandbox_envs[ns] = _StateManagerEnvironment(
                         env.get_instance(),
                         exposed_managers=getattr(env, "_exposed_managers", None),
@@ -1141,10 +1165,13 @@ class CodeActActor(BaseCodeActActor):
         # If can_store is disabled, prevent any function-persistence tools from being exposed.
         tool_policy = None
         if not effective_can_store:
+
             def _policy(step: int, tools: Dict[str, Any]):
                 _ = step
                 filtered = {
-                    k: v for k, v in tools.items() if k != "FunctionManager_add_functions"
+                    k: v
+                    for k, v in tools.items()
+                    if k != "FunctionManager_add_functions"
                 }
                 return "", filtered
 

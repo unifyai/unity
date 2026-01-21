@@ -6,11 +6,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from unity.actor.hierarchical_actor import HierarchicalActor, HierarchicalActorHandle, ImplementationDecision
-from unity.function_manager.computer_backends import MockComputerBackend, VALID_MOCK_SCREENSHOT_PNG
+from unity.actor.hierarchical_actor import (
+    HierarchicalActor,
+    HierarchicalActorHandle,
+    ImplementationDecision,
+)
+from unity.function_manager.computer_backends import (
+    MockComputerBackend,
+    VALID_MOCK_SCREENSHOT_PNG,
+)
 from unity.function_manager.function_manager import FunctionManager
 
-from tests.test_actor.test_hierarchical.helpers import SimpleMockVerificationClient, wait_for_log_entry
+from tests.test_actor.test_hierarchical.helpers import (
+    SimpleMockVerificationClient,
+    wait_for_log_entry,
+)
 
 
 CANNED_PLAN_FOR_SANDBOX_TEST_SANDBOX_ISOLATION_AND_MERGE = textwrap.dedent(
@@ -79,10 +89,16 @@ async def test_exploration_runs_in_isolated_sandbox_and_merges_results():
             CANNED_PLAN_FOR_SANDBOX_TEST_SANDBOX_ISOLATION_AND_MERGE,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         # These tests assert against action_log (not stdout prints).
-        await wait_for_log_entry(active_task, "Executing computer_primitives.navigate", timeout=30)
+        await wait_for_log_entry(
+            active_task,
+            "Executing computer_primitives.navigate",
+            timeout=30,
+        )
 
         _ = await asyncio.wait_for(active_task.result(), timeout=30)
 
@@ -159,7 +175,9 @@ async def test_nested_functions_maintain_correct_scope_in_prompts():
             CANNED_PLAN_FOR_CONTEXT_TEST_SCOPED_CONTEXT,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(active_task, "main_plan", timeout=30)
         _ = await asyncio.wait_for(active_task.result(), timeout=30)
@@ -173,4 +191,3 @@ async def test_nested_functions_maintain_correct_scope_in_prompts():
         if active_task and not active_task.done():
             await active_task.stop()
         await actor.close()
-

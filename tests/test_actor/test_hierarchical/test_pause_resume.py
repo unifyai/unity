@@ -22,7 +22,10 @@ class _OkVerificationClient:
 
     def __init__(self):
         self.generate = AsyncMock(
-            return_value=VerificationAssessment(status="ok", reason="Mock OK").model_dump_json(),
+            return_value=VerificationAssessment(
+                status="ok",
+                reason="Mock OK",
+            ).model_dump_json(),
         )
 
     def set_response_format(self, *_args, **_kwargs):
@@ -51,7 +54,9 @@ async def _wait_for_state(
             return
         await asyncio.sleep(poll)
     tail = "\n".join(plan.action_log[-15:])
-    raise AssertionError(f"Timed out waiting for {expected.name}; state={plan._state.name}\n---\n{tail}")
+    raise AssertionError(
+        f"Timed out waiting for {expected.name}; state={plan._state.name}\n---\n{tail}",
+    )
 
 
 CANNED_PLAN_SIMPLE_IMMEDIATE_PAUSE_RESUME = textwrap.dedent(
@@ -105,14 +110,21 @@ async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
     actor.computer_primitives.observe = AsyncMock(return_value=None)  # type: ignore[attr-defined]
     actor.computer_primitives.navigate = AsyncMock(return_value=None)  # type: ignore[attr-defined]
 
-    plan = HierarchicalActorHandle(actor=actor, goal="Immediate pause test", persist=False)
+    plan = HierarchicalActorHandle(
+        actor=actor,
+        goal="Immediate pause test",
+        persist=False,
+    )
 
     if plan._execution_task:
         plan._execution_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await plan._execution_task
 
-    plan.plan_source_code = actor._sanitize_code(CANNED_PLAN_SIMPLE_IMMEDIATE_PAUSE_RESUME, plan)
+    plan.plan_source_code = actor._sanitize_code(
+        CANNED_PLAN_SIMPLE_IMMEDIATE_PAUSE_RESUME,
+        plan,
+    )
     plan.verification_client = _OkVerificationClient()
     plan._execution_task = asyncio.create_task(plan._initialize_and_run())
 
@@ -125,7 +137,10 @@ async def test_immediate_pause_cancels_action_and_restarts_function_cleanly():
     result = await plan.result()
 
     log = "\n".join(plan.action_log)
-    assert "Retrying 'step' Reason: Action 'computer_primitives.act((('first',), {}))' interrupted by immediate pause" in log
+    assert (
+        "Retrying 'step' Reason: Action 'computer_primitives.act((('first',), {}))' interrupted by immediate pause"
+        in log
+    )
     assert actor.computer_primitives.act.call_count >= 3  # type: ignore[attr-defined]
     assert "ERROR" not in str(result)
 
@@ -166,13 +181,20 @@ async def test_immediate_pause_caches_completed_actions_for_replay_after_resume(
     actor.computer_primitives.observe = AsyncMock(side_effect=observe_side_effect)  # type: ignore[attr-defined]
     actor.computer_primitives.navigate = AsyncMock(return_value=None)  # type: ignore[attr-defined]
 
-    plan = HierarchicalActorHandle(actor=actor, goal="Immediate pause with observe", persist=False)
+    plan = HierarchicalActorHandle(
+        actor=actor,
+        goal="Immediate pause with observe",
+        persist=False,
+    )
     if plan._execution_task:
         plan._execution_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await plan._execution_task
 
-    plan.plan_source_code = actor._sanitize_code(CANNED_PLAN_WITH_OBSERVE_IMMEDIATE_PAUSE_RESUME, plan)
+    plan.plan_source_code = actor._sanitize_code(
+        CANNED_PLAN_WITH_OBSERVE_IMMEDIATE_PAUSE_RESUME,
+        plan,
+    )
     plan.verification_client = _OkVerificationClient()
     plan._execution_task = asyncio.create_task(plan._initialize_and_run())
 
@@ -208,4 +230,3 @@ async def test_immediate_pause_resume_orchestrator():
         print(f"\n\n❌❌❌ A TEST FAILED: {e} ❌❌❌")
         traceback.print_exc()
         raise
-

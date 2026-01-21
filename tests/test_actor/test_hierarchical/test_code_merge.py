@@ -190,7 +190,10 @@ async def _run_nested_function_replacement_test():
     mock_actor = MagicMock(spec=HierarchicalActor)
     mock_actor._sanitize_code.side_effect = lambda code, plan: code
 
-    active_task = HierarchicalActorHandle(actor=mock_actor, goal="Test nested replacement")
+    active_task = HierarchicalActorHandle(
+        actor=mock_actor,
+        goal="Test nested replacement",
+    )
     if active_task._execution_task:
         active_task._execution_task.cancel()
 
@@ -248,4 +251,3 @@ async def _run_nested_function_replacement_test():
 @pytest.mark.timeout(120)
 async def test_deeply_nested_function_replaced_without_corrupting_plan():
     await _run_nested_function_replacement_test()
-

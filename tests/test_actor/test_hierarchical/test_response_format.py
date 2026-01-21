@@ -45,4 +45,3 @@ async def test_hierarchical_actor_response_format_returns_model():
             await actor.close()
         except Exception:
             pass
-
