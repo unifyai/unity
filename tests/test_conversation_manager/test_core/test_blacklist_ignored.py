@@ -253,16 +253,12 @@ class TestSMSBlacklistFiltering:
                 cm.handle_message(message)
                 await asyncio.sleep(0.1)
 
-            # Should receive contacts event
-            msg1 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg1 is not None
-
             # Should receive SMS message event
-            msg2 = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg2 is not None
-            assert msg2["channel"] == "app:comms:msg_message"
+            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            assert msg is not None
+            assert msg["channel"] == "app:comms:msg_message"
 
-            event = Event.from_json(msg2["data"])
+            event = Event.from_json(msg["data"])
             assert isinstance(event, SMSReceived)
             assert event.content == "Hello, legitimate message!"
 
@@ -371,9 +367,6 @@ class TestEmailBlacklistFiltering:
             ):
                 cm.handle_message(message)
                 await asyncio.sleep(0.1)
-
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
 
             # Should receive email message event
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
@@ -487,9 +480,6 @@ class TestPhoneCallBlacklistFiltering:
                 # (handle_message uses blocking future.result() for call events)
                 await asyncio.to_thread(cm.handle_message, message)
 
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-
             # Should receive call_received event
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -548,9 +538,6 @@ class TestFailOpenBehavior:
             ):
                 cm.handle_message(message)
                 await asyncio.sleep(0.1)
-
-            # Skip contacts message
-            await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
 
             # Should still receive SMS message event (fail-open)
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
