@@ -745,7 +745,12 @@ class TestCLIArgumentParsing:
         assert SESSION_DETAILS.voice_call.channel == "phone"
 
     def test_configure_from_cli_agent_name_with_room(self, monkeypatch):
-        """configure_from_cli handles agent_name:room_name format."""
+        """configure_from_cli handles agent_name:room_name format for UnifyMeet calls.
+
+        For UnifyMeet, the caller (LivekitCallManager.start_unify_meet) passes
+        "agent_name:room_name" where both are already prefixed with "unity_".
+        The function splits on ":" and returns the two parts.
+        """
         from unity.conversation_manager.medium_scripts import common
         from unity.session_details import SESSION_DETAILS
 
@@ -754,47 +759,15 @@ class TestCLIArgumentParsing:
         contact_json = json.dumps({"contact_id": 1, "first_name": "Test"})
         boss_json = json.dumps({"contact_id": 1, "first_name": "Boss"})
 
-        # The assistant_number field contains "agent_name room_name" (space-separated, not colon)
-        # Looking at the code: if " " in assistant_number: agent_name, room_name = assistant_number.split(":")
-        # Wait, that's inconsistent. Let me check the actual code more carefully.
-        # The code checks for space but splits on colon. That seems like a bug in the code,
-        # but let's test what the actual behavior is.
+        # Simulate UnifyMeet call with colon-separated agent_name:room_name
+        # (This matches what LivekitCallManager.start_unify_meet passes)
         monkeypatch.setattr(
             common.sys,
             "argv",
             [
                 "call.py",
                 "dev",
-                "agent_name room_name",  # Space triggers the split, but split is on ":"
-                "cartesia",
-                "voice456",
-                "False",
-                "meet",
-                contact_json,
-                boss_json,
-                "Bio",
-            ],
-        )
-
-        # The code has: if " " in assistant_number: agent_name, room_name = assistant_number.split(":")
-        # This will fail if there's a space but no colon. Let's test with the right format.
-        # Actually looking at the code again:
-        #   if " " in assistant_number:
-        #       agent_name, room_name = assistant_number.split(":")
-        # This checks for space but splits on colon - likely a bug, but let's test actual behavior.
-        # For the test to pass, we need a string with a space that also contains a colon.
-        # Actually, I think the intention was to use colon as separator, let me re-read...
-        # The check should probably be ":" not " ". Let's test with colon separator.
-
-        # Reset and try with proper colon format
-        SESSION_DETAILS.reset()
-        monkeypatch.setattr(
-            common.sys,
-            "argv",
-            [
-                "call.py",
-                "dev",
-                "agent_name:room_name",  # Use colon - but code checks for space
+                "unity_assistant_web:unity_assistant_web",  # Already prefixed by caller
                 "cartesia",
                 "voice456",
                 "False",
@@ -813,11 +786,10 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        # Since there's no space, it goes to the else branch: agent_name = f"unity_{assistant_number}"
-        # So agent_name would be "unity_agent_name:room_name" and room_name would be the same
-        # This is the current behavior - the test should match it
-        assert agent_name == "unity_agent_name:room_name"
-        assert room_name == "unity_agent_name:room_name"
+        # Colon triggers the split: "unity_assistant_web:unity_assistant_web"
+        # becomes agent_name="unity_assistant_web", room_name="unity_assistant_web"
+        assert agent_name == "unity_assistant_web"
+        assert room_name == "unity_assistant_web"
 
     def test_configure_from_cli_defaults_none_voice_provider(self, monkeypatch):
         """configure_from_cli defaults 'None' voice provider to cartesia."""
