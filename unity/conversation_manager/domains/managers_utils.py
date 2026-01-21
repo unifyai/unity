@@ -273,6 +273,54 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     print(f"[ManagersWorker] Published exchange_id {exchange_id}")
 
 
+# Contact updates
+
+
+async def update_session_contacts(
+    cm: "ConversationManager",
+    assistant_name: str,
+    assistant_number: str,
+    assistant_email: str,
+    user_name: str,
+    user_number: str,
+    user_email: str,
+) -> None:
+    """
+    Update the assistant (contact_id=0) and boss (contact_id=1) contacts
+    in the ContactManager when session details change.
+
+    Called when an AssistantUpdateEvent is received.
+    """
+    if cm.contact_manager is None:
+        print("[ManagersWorker] Cannot update contacts: contact_manager is None")
+        return
+
+    def _get_name_parts(name: str) -> tuple[str, str]:
+        if " " in name:
+            parts = name.split(" ", 1)
+            return parts[0], parts[1]
+        return name, ""
+
+    async def _update_contact(contact_id: int, first_name: str, surname: str, phone_number: str, email_address: str):
+        try:
+            await asyncio.to_thread(
+                cm.contact_manager.update_contact,
+                contact_id=contact_id,
+                phone_number=phone_number,
+                email_address=email_address,
+                first_name=first_name,
+                surname=surname,
+            )
+            print(f"[ManagersWorker] Updated contact {contact_id}: {first_name} {surname}")
+        except Exception as e:
+            print(f"[ManagersWorker] Failed to update contact {contact_id}: {e}")
+
+    user_first_name, user_last_name = _get_name_parts(user_name)
+    assistant_first_name, assistant_last_name = _get_name_parts(assistant_name)
+    await _update_contact(0, assistant_first_name, assistant_last_name, assistant_number, assistant_email)
+    await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
+
+
 # Queueing operations that need managers
 
 _operations_queue = asyncio.Queue()

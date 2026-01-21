@@ -54,6 +54,7 @@ from unity.conversation_manager.events import (
     LogMessageResponse,
     SummarizeContext,
     DirectMessageEvent,
+    AssistantUpdateEvent,
 )
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
@@ -189,6 +190,7 @@ class TestEventHandlerRegistry:
             ActorResult,
             NotificationInjectedEvent,
             NotificationUnpinnedEvent,
+            AssistantUpdateEvent,
         ]
         for event_cls in expected_events:
             assert (
@@ -1247,3 +1249,283 @@ class TestEventHandlerEdgeCases:
 
         # No notifications should be pushed
         assert len(mock_cm.notifications_bar.notifications) == 0
+
+
+# =============================================================================
+# 16. AssistantUpdateEvent Handler Tests
+# =============================================================================
+
+
+class TestAssistantUpdateEventHandler:
+    """Tests for AssistantUpdateEvent handler (updates contact manager)."""
+
+    @pytest.mark.asyncio
+    async def test_assistant_update_logs_event(self, mock_cm):
+        """AssistantUpdateEvent logs the update event."""
+        event = AssistantUpdateEvent(
+            api_key="test_key",
+            medium="assistant_update",
+            assistant_id="asst_123",
+            user_id="user_456",
+            assistant_name="Updated Assistant",
+            assistant_age="25",
+            assistant_nationality="US",
+            assistant_about="Test assistant",
+            assistant_number="+15555550001",
+            assistant_email="assistant@updated.com",
+            user_name="Updated Boss",
+            user_number="+15555550002",
+            user_email="boss@updated.com",
+            voice_id="voice_123",
+            voice_provider="cartesia",
+            voice_mode="tts",
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils",
+        ) as mock_utils:
+            mock_utils.queue_operation = AsyncMock()
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm._session_logger.info.assert_any_call(
+            "assistant_update",
+            "Received assistant update event",
+        )
+
+    @pytest.mark.asyncio
+    async def test_assistant_update_calls_set_details(self, mock_cm):
+        """AssistantUpdateEvent calls set_details with payload."""
+        mock_cm.set_details = MagicMock()
+        mock_cm.get_call_config = MagicMock(return_value={})
+
+        event = AssistantUpdateEvent(
+            api_key="test_key",
+            medium="assistant_update",
+            assistant_id="asst_123",
+            user_id="user_456",
+            assistant_name="Updated Assistant",
+            assistant_age="25",
+            assistant_nationality="US",
+            assistant_about="Test assistant",
+            assistant_number="+15555550001",
+            assistant_email="assistant@updated.com",
+            user_name="Updated Boss",
+            user_number="+15555550002",
+            user_email="boss@updated.com",
+            voice_id="voice_123",
+            voice_provider="cartesia",
+            voice_mode="tts",
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils",
+        ) as mock_utils:
+            mock_utils.queue_operation = AsyncMock()
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.set_details.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_assistant_update_updates_call_config(self, mock_cm):
+        """AssistantUpdateEvent updates the call manager config."""
+        mock_cm.set_details = MagicMock()
+        mock_cm.get_call_config = MagicMock(return_value={"voice_id": "new_voice"})
+
+        event = AssistantUpdateEvent(
+            api_key="test_key",
+            medium="assistant_update",
+            assistant_id="asst_123",
+            user_id="user_456",
+            assistant_name="Updated Assistant",
+            assistant_age="25",
+            assistant_nationality="US",
+            assistant_about="Test assistant",
+            assistant_number="+15555550001",
+            assistant_email="assistant@updated.com",
+            user_name="Updated Boss",
+            user_number="+15555550002",
+            user_email="boss@updated.com",
+            voice_id="voice_123",
+            voice_provider="cartesia",
+            voice_mode="tts",
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils",
+        ) as mock_utils:
+            mock_utils.queue_operation = AsyncMock()
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.call_manager.set_config.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_assistant_update_queues_contact_update(self, mock_cm):
+        """AssistantUpdateEvent queues update_session_contacts operation."""
+        mock_cm.set_details = MagicMock()
+        mock_cm.get_call_config = MagicMock(return_value={})
+
+        event = AssistantUpdateEvent(
+            api_key="test_key",
+            medium="assistant_update",
+            assistant_id="asst_123",
+            user_id="user_456",
+            assistant_name="New Assistant Name",
+            assistant_age="25",
+            assistant_nationality="US",
+            assistant_about="Test assistant",
+            assistant_number="+15555559999",
+            assistant_email="new_assistant@test.com",
+            user_name="New Boss Name",
+            user_number="+15555558888",
+            user_email="new_boss@test.com",
+            voice_id="voice_123",
+            voice_provider="cartesia",
+            voice_mode="tts",
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils",
+        ) as mock_utils:
+            mock_utils.queue_operation = AsyncMock()
+            await EventHandler.handle_event(event, mock_cm)
+
+            # Verify queue_operation was called with update_session_contacts
+            mock_utils.queue_operation.assert_called_once()
+            call_args = mock_utils.queue_operation.call_args
+            # First arg is the function (update_session_contacts)
+            assert call_args[0][0] == mock_utils.update_session_contacts
+            # Remaining args are: cm, assistant_name, assistant_number, assistant_email,
+            # user_name, user_number, user_email
+            assert call_args[0][1] == mock_cm
+            assert call_args[0][2] == "New Assistant Name"
+            assert call_args[0][3] == "+15555559999"
+            assert call_args[0][4] == "new_assistant@test.com"
+            assert call_args[0][5] == "New Boss Name"
+            assert call_args[0][6] == "+15555558888"
+            assert call_args[0][7] == "new_boss@test.com"
+
+    @pytest.mark.asyncio
+    async def test_assistant_update_handles_no_contact_manager(self, mock_cm):
+        """AssistantUpdateEvent handles missing contact_manager gracefully."""
+        mock_cm.set_details = MagicMock()
+        mock_cm.get_call_config = MagicMock(return_value={})
+        mock_cm.contact_manager = None  # No contact manager
+
+        event = AssistantUpdateEvent(
+            api_key="test_key",
+            medium="assistant_update",
+            assistant_id="asst_123",
+            user_id="user_456",
+            assistant_name="Updated Assistant",
+            assistant_age="25",
+            assistant_nationality="US",
+            assistant_about="Test assistant",
+            assistant_number="+15555550001",
+            assistant_email="assistant@updated.com",
+            user_name="Updated Boss",
+            user_number="+15555550002",
+            user_email="boss@updated.com",
+            voice_id="voice_123",
+            voice_provider="cartesia",
+            voice_mode="tts",
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils",
+        ) as mock_utils:
+            mock_utils.queue_operation = AsyncMock()
+            # Should not raise
+            await EventHandler.handle_event(event, mock_cm)
+
+        # set_details should still be called
+        mock_cm.set_details.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_session_contacts_updates_both_contacts(self, mock_cm):
+        """update_session_contacts updates both assistant (0) and boss (1) contacts."""
+        from unity.conversation_manager.domains.managers_utils import (
+            update_session_contacts,
+        )
+
+        mock_cm.contact_manager.update_contact = MagicMock()
+
+        await update_session_contacts(
+            mock_cm,
+            assistant_name="New Assistant",
+            assistant_number="+15555559999",
+            assistant_email="new_assistant@test.com",
+            user_name="New Boss",
+            user_number="+15555558888",
+            user_email="new_boss@test.com",
+        )
+
+        # Verify update_contact was called for both contacts
+        calls = mock_cm.contact_manager.update_contact.call_args_list
+        assert len(calls) == 2
+
+        # Check assistant contact (ID 0) - "New Assistant" splits to first="New", surname="Assistant"
+        call_0 = next(c for c in calls if c.kwargs.get("contact_id") == 0)
+        assert call_0.kwargs["phone_number"] == "+15555559999"
+        assert call_0.kwargs["email_address"] == "new_assistant@test.com"
+        assert call_0.kwargs["first_name"] == "New"
+        assert call_0.kwargs["surname"] == "Assistant"
+
+        # Check boss contact (ID 1) - "New Boss" splits to first="New", surname="Boss"
+        call_1 = next(c for c in calls if c.kwargs.get("contact_id") == 1)
+        assert call_1.kwargs["phone_number"] == "+15555558888"
+        assert call_1.kwargs["email_address"] == "new_boss@test.com"
+        assert call_1.kwargs["first_name"] == "New"
+        assert call_1.kwargs["surname"] == "Boss"
+
+    @pytest.mark.asyncio
+    async def test_update_session_contacts_handles_failure(self, mock_cm, capsys):
+        """update_session_contacts logs errors when update_contact fails."""
+        from unity.conversation_manager.domains.managers_utils import (
+            update_session_contacts,
+        )
+
+        mock_cm.contact_manager.update_contact = MagicMock(
+            side_effect=Exception("Update failed"),
+        )
+
+        # Should not raise - errors are caught and logged
+        await update_session_contacts(
+            mock_cm,
+            assistant_name="Updated Assistant",
+            assistant_number="+15555550001",
+            assistant_email="assistant@updated.com",
+            user_name="Updated Boss",
+            user_number="+15555550002",
+            user_email="boss@updated.com",
+        )
+
+        # Errors should be printed
+        captured = capsys.readouterr()
+        assert "Failed to update contact 0" in captured.out
+        assert "Failed to update contact 1" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_update_session_contacts_handles_no_contact_manager(
+        self, mock_cm, capsys
+    ):
+        """update_session_contacts handles None contact_manager gracefully."""
+        from unity.conversation_manager.domains.managers_utils import (
+            update_session_contacts,
+        )
+
+        mock_cm.contact_manager = None
+
+        # Should not raise
+        await update_session_contacts(
+            mock_cm,
+            assistant_name="Test",
+            assistant_number="+1555",
+            assistant_email="test@test.com",
+            user_name="Boss",
+            user_number="+1666",
+            user_email="boss@test.com",
+        )
+
+        # Should print a message about missing contact_manager
+        captured = capsys.readouterr()
+        assert "contact_manager is None" in captured.out
