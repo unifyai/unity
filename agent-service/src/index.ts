@@ -71,7 +71,24 @@ interface ExecResult {
   duration: number;
 }
 
-function executeCommand(command: string, cwd: string, timeout: number): Promise<ExecResult> {
+type ShellMode = 'cmd' | 'powershell';
+
+function getShellConfig(shellMode: ShellMode): string | boolean {
+  const isWindows = process.platform === 'win32';
+
+  if (!isWindows) {
+    return true;  // Use default /bin/sh on Unix
+  }
+
+  if (shellMode === 'cmd') {
+    return 'cmd.exe';
+  }
+
+  // PowerShell (default on Windows)
+  return 'powershell.exe';
+}
+
+function executeCommand(command: string, cwd: string, timeout: number, shellMode: ShellMode = 'powershell'): Promise<ExecResult> {
   return new Promise((resolve) => {
     const startTime = Date.now();
     let stdout = '';
@@ -79,7 +96,7 @@ function executeCommand(command: string, cwd: string, timeout: number): Promise<
     let killed = false;
 
     const proc = spawn(command, [], {
-      shell: true,
+      shell: getShellConfig(shellMode),
       cwd,
       timeout,
     });
@@ -803,7 +820,7 @@ app.post('/interrupt_action', isAgentReady, async (req: Request, res: Response) 
 
 // --- /exec endpoint: Execute shell commands with optional file attachments ---
 app.post('/exec', async (req: Request, res: Response) => {
-  const { command, files, cwd, timeout } = req.body;
+  const { command, files, cwd, timeout, shell_mode } = req.body;
   const execId = randomUUID();
 
   if (!command || typeof command !== 'string') {
@@ -812,6 +829,7 @@ app.post('/exec', async (req: Request, res: Response) => {
 
   const workDir = cwd || UNITY_WORKSPACE_DIR;
   const execTimeout = typeof timeout === 'number' && timeout > 0 ? timeout : DEFAULT_EXEC_TIMEOUT;
+  const shellMode: ShellMode = shell_mode === 'cmd' ? 'cmd' : 'powershell';
 
   try {
     // Validate working directory
@@ -836,8 +854,8 @@ app.post('/exec', async (req: Request, res: Response) => {
     }
 
     // Execute the command
-    console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, execId: ${execId})`);
-    const result = await executeCommand(command, resolvedWorkDir, execTimeout);
+    console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, shell: ${shellMode}, execId: ${execId})`);
+    const result = await executeCommand(command, resolvedWorkDir, execTimeout, shellMode);
 
     res.json({
       status: result.exitCode === 0 ? 'success' : 'error',
