@@ -11,7 +11,7 @@ Tests cover:
 These tests verify the tool implementations directly, testing:
 - Tool method signatures and return types
 - Tool docstrings (important for LLM understanding)
-- Dynamic tool generation for task steering
+- Dynamic tool generation for action steering
 - Integration with ConversationManager state
 """
 
@@ -93,7 +93,7 @@ def mock_cm():
     cm = MagicMock()
     cm.mode = "text"
     cm.contact_index = ContactIndex()
-    cm.active_tasks = {}
+    cm.in_flight_actions = {}
     cm.notifications_bar = NotificationBar()
     cm.chat_history = []
     cm.assistant_number = "+15555550000"
@@ -200,22 +200,22 @@ class TestCmGetContact:
         assert "global_thread" not in result
 
 
-class TestCmListActiveTasks:
-    """Tests for cm_list_active_tasks tool."""
+class TestCmListInFlightActions:
+    """Tests for cm_list_in_flight_actions tool."""
 
-    def test_returns_empty_list_when_no_tasks(self, brain_tools, mock_cm):
-        """Returns empty list when no active tasks."""
-        mock_cm.active_tasks = {}
-        result = brain_tools.cm_list_active_tasks()
+    def test_returns_empty_list_when_no_actions(self, brain_tools, mock_cm):
+        """Returns empty list when no in-flight actions."""
+        mock_cm.in_flight_actions = {}
+        result = brain_tools.cm_list_in_flight_actions()
         assert result == []
 
-    def test_returns_task_summary(self, brain_tools, mock_cm):
-        """Returns summary for each active task."""
-        mock_cm.active_tasks = {
+    def test_returns_action_summary(self, brain_tools, mock_cm):
+        """Returns summary for each in-flight action."""
+        mock_cm.in_flight_actions = {
             0: {"query": "Search for contacts", "handle_actions": []},
             1: {"query": "Send an email", "handle_actions": [{"action": "test"}]},
         }
-        result = brain_tools.cm_list_active_tasks()
+        result = brain_tools.cm_list_in_flight_actions()
         assert len(result) == 2
         assert result[0]["handle_id"] == 0
         assert result[0]["query"] == "Search for contacts"
@@ -224,18 +224,18 @@ class TestCmListActiveTasks:
         assert result[1]["query"] == "Send an email"
         assert result[1]["num_handle_actions"] == 1
 
-    def test_handles_none_active_tasks(self, brain_tools, mock_cm):
-        """Handles None active_tasks gracefully."""
-        mock_cm.active_tasks = None
-        result = brain_tools.cm_list_active_tasks()
+    def test_handles_none_in_flight_actions(self, brain_tools, mock_cm):
+        """Handles None in-flight actions gracefully."""
+        mock_cm.in_flight_actions = None
+        result = brain_tools.cm_list_in_flight_actions()
         assert result == []
 
     def test_handles_none_handle_actions(self, brain_tools, mock_cm):
-        """Handles None handle_actions in task data."""
-        mock_cm.active_tasks = {
-            0: {"query": "Task", "handle_actions": None},
+        """Handles None handle_actions in action data."""
+        mock_cm.in_flight_actions = {
+            0: {"query": "Action", "handle_actions": None},
         }
-        result = brain_tools.cm_list_active_tasks()
+        result = brain_tools.cm_list_in_flight_actions()
         assert result[0]["num_handle_actions"] == 0
 
 
@@ -287,7 +287,7 @@ class TestBrainToolsAsTools:
         expected = {
             "cm_get_mode",
             "cm_get_contact",
-            "cm_list_active_tasks",
+            "cm_list_in_flight_actions",
             "cm_list_notifications",
         }
         assert set(tools.keys()) == expected
@@ -724,29 +724,33 @@ class TestActTool:
 
 
 # =============================================================================
-# Dynamic Task Steering Tools Tests
+# Dynamic Action Steering Tools Tests
 # =============================================================================
 
 
-class TestBuildTaskSteeringTools:
-    """Tests for build_task_steering_tools method."""
+class TestBuildActionSteeringTools:
+    """Tests for build_action_steering_tools method."""
 
-    def test_returns_empty_dict_when_no_active_tasks(self, brain_action_tools, mock_cm):
-        """Returns empty dict when no active tasks."""
-        mock_cm.active_tasks = {}
-        tools = brain_action_tools.build_task_steering_tools()
+    def test_returns_empty_dict_when_no_in_flight_actions(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Returns empty dict when no in-flight actions."""
+        mock_cm.in_flight_actions = {}
+        tools = brain_action_tools.build_action_steering_tools()
         assert tools == {}
 
-    def test_generates_tools_for_active_task(self, brain_action_tools, mock_cm):
-        """Generates steering tools for each active task."""
-        mock_cm.active_tasks = {
+    def test_generates_tools_for_in_flight_action(self, brain_action_tools, mock_cm):
+        """Generates steering tools for each in-flight action."""
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "List all contacts",
                 "handle": MagicMock(),
                 "handle_actions": [],
             },
         }
-        tools = brain_action_tools.build_task_steering_tools()
+        tools = brain_action_tools.build_action_steering_tools()
         # Should have tools for ask, stop, interject, pause, resume
         # (but NOT answer_clarification without pending clarifications)
         non_clar_ops = [
@@ -756,14 +760,14 @@ class TestBuildTaskSteeringTools:
 
     def test_tool_names_follow_expected_format(self, brain_action_tools, mock_cm):
         """Tool names follow the build_action_name format."""
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Search web",
                 "handle": MagicMock(),
                 "handle_actions": [],
             },
         }
-        tools = brain_action_tools.build_task_steering_tools()
+        tools = brain_action_tools.build_action_steering_tools()
         for name in tools.keys():
             # Should be parseable
             parsed = parse_action_name(name)
@@ -776,7 +780,7 @@ class TestBuildTaskSteeringTools:
         mock_cm,
     ):
         """Generates answer_clarification tool when pending clarifications exist."""
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Do something",
                 "handle": MagicMock(),
@@ -789,28 +793,28 @@ class TestBuildTaskSteeringTools:
                 ],
             },
         }
-        tools = brain_action_tools.build_task_steering_tools()
+        tools = brain_action_tools.build_action_steering_tools()
         answer_tools = [n for n in tools.keys() if "answer_clarification" in n]
         assert len(answer_tools) == 1
 
     def test_no_answer_clarification_without_pending(self, brain_action_tools, mock_cm):
         """No answer_clarification tool when no pending clarifications."""
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Do something",
                 "handle": MagicMock(),
                 "handle_actions": [],  # No pending clarifications
             },
         }
-        tools = brain_action_tools.build_task_steering_tools()
+        tools = brain_action_tools.build_action_steering_tools()
         answer_tools = [n for n in tools.keys() if "answer_clarification" in n]
         assert len(answer_tools) == 0
 
     def test_skips_answered_clarifications(self, brain_action_tools, mock_cm):
         """Does not generate tool for already answered clarifications."""
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
-                "query": "Task",
+                "query": "Do something",
                 "handle": MagicMock(),
                 "handle_actions": [
                     {
@@ -822,49 +826,51 @@ class TestBuildTaskSteeringTools:
                 ],
             },
         }
-        tools = brain_action_tools.build_task_steering_tools()
+        tools = brain_action_tools.build_action_steering_tools()
         answer_tools = [n for n in tools.keys() if "answer_clarification" in n]
         assert len(answer_tools) == 0
 
-    def test_handles_multiple_tasks(self, brain_action_tools, mock_cm):
-        """Generates tools for multiple active tasks."""
-        mock_cm.active_tasks = {
+    def test_handles_multiple_actions(self, brain_action_tools, mock_cm):
+        """Generates tools for multiple in-flight actions."""
+        mock_cm.in_flight_actions = {
             0: {
-                "query": "Task one",
+                "query": "Action one",
                 "handle": MagicMock(),
                 "handle_actions": [],
             },
             1: {
-                "query": "Task two",
+                "query": "Action two",
                 "handle": MagicMock(),
                 "handle_actions": [],
             },
         }
-        tools = brain_action_tools.build_task_steering_tools()
-        # Should have steering tools for both tasks
-        task0_tools = [n for n in tools.keys() if "__0" in n]
-        task1_tools = [n for n in tools.keys() if "__1" in n]
-        assert len(task0_tools) > 0
-        assert len(task1_tools) > 0
+        tools = brain_action_tools.build_action_steering_tools()
+        # Should have steering tools for both actions
+        action0_tools = [n for n in tools.keys() if "__0" in n]
+        action1_tools = [n for n in tools.keys() if "__1" in n]
+        assert len(action0_tools) > 0
+        assert len(action1_tools) > 0
 
     def test_steering_tools_have_docstrings(self, brain_action_tools, mock_cm):
         """Generated steering tools have docstrings."""
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
-                "query": "Test task",
+                "query": "Test action",
                 "handle": MagicMock(),
                 "handle_actions": [],
             },
         }
-        tools = brain_action_tools.build_task_steering_tools()
+        tools = brain_action_tools.build_action_steering_tools()
         for name, fn in tools.items():
             assert fn.__doc__ is not None, f"{name} should have docstring"
-            assert "Test task" in fn.__doc__, f"{name} docstring should mention task"
+            assert (
+                "Test action" in fn.__doc__
+            ), f"{name} docstring should mention action"
 
-    def test_handles_none_active_tasks(self, brain_action_tools, mock_cm):
-        """Handles None active_tasks gracefully."""
-        mock_cm.active_tasks = None
-        tools = brain_action_tools.build_task_steering_tools()
+    def test_handles_none_in_flight_actions(self, brain_action_tools, mock_cm):
+        """Handles None in_flight_actions gracefully."""
+        mock_cm.in_flight_actions = None
+        tools = brain_action_tools.build_action_steering_tools()
         assert tools == {}
 
 
@@ -879,7 +885,7 @@ class TestMakeSteeringTool:
         mock_ask_handle.result = AsyncMock(return_value="Answer")
         mock_handle.ask = AsyncMock(return_value=mock_ask_handle)
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -902,10 +908,10 @@ class TestMakeSteeringTool:
 
     @pytest.mark.asyncio
     async def test_stop_operation_calls_handle_stop(self, brain_action_tools, mock_cm):
-        """Stop operation calls handle.stop and removes task."""
+        """Stop operation calls handle.stop and removes action."""
         mock_handle = MagicMock()
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -918,13 +924,13 @@ class TestMakeSteeringTool:
             handle=mock_handle,
             operation="stop",
             param_name="reason",
-            docstring="Stop the task",
+            docstring="Stop the action",
             query="Test",
         )
         result = await tool(reason="No longer needed")
         mock_handle.stop.assert_called_once_with(reason="No longer needed")
         assert result["operation"] == "stop"
-        assert 0 not in mock_cm.active_tasks  # Task should be removed
+        assert 0 not in mock_cm.in_flight_actions  # Action should be removed
 
     @pytest.mark.asyncio
     async def test_interject_operation_calls_handle_interject(
@@ -936,7 +942,7 @@ class TestMakeSteeringTool:
         mock_handle = MagicMock()
         mock_handle.interject = AsyncMock()
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -966,7 +972,7 @@ class TestMakeSteeringTool:
         mock_handle = MagicMock()
         mock_handle.pause = AsyncMock()
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -979,7 +985,7 @@ class TestMakeSteeringTool:
             handle=mock_handle,
             operation="pause",
             param_name="",
-            docstring="Pause the task",
+            docstring="Pause the action",
             query="Test",
         )
         result = await tool()
@@ -996,7 +1002,7 @@ class TestMakeSteeringTool:
         mock_handle = MagicMock()
         mock_handle.resume = AsyncMock()
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -1009,7 +1015,7 @@ class TestMakeSteeringTool:
             handle=mock_handle,
             operation="resume",
             param_name="",
-            docstring="Resume the task",
+            docstring="Resume the action",
             query="Test",
         )
         result = await tool()
@@ -1026,7 +1032,7 @@ class TestMakeSteeringTool:
         mock_handle = MagicMock()
         mock_handle.answer_clarification = AsyncMock()
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -1060,7 +1066,7 @@ class TestMakeSteeringTool:
         mock_handle = MagicMock()
         mock_handle.pause = AsyncMock()
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -1078,7 +1084,7 @@ class TestMakeSteeringTool:
         )
         await tool()
 
-        actions = mock_cm.active_tasks[0]["handle_actions"]
+        actions = mock_cm.in_flight_actions[0]["handle_actions"]
         assert len(actions) == 1
         assert actions[0]["action_name"] == "pause_0"
 
@@ -1088,7 +1094,7 @@ class TestMakeSteeringTool:
         mock_handle = MagicMock()
         mock_handle.pause = AsyncMock(side_effect=RuntimeError("Test error"))
 
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": mock_handle,
@@ -1208,7 +1214,7 @@ class TestBrainToolsIntegration:
         mock_cm,
     ):
         """Dynamic steering tools don't overlap with static action tools."""
-        mock_cm.active_tasks = {
+        mock_cm.in_flight_actions = {
             0: {
                 "query": "Test",
                 "handle": MagicMock(),
@@ -1216,6 +1222,6 @@ class TestBrainToolsIntegration:
             },
         }
         static_names = set(brain_action_tools.as_tools().keys())
-        steering_names = set(brain_action_tools.build_task_steering_tools().keys())
+        steering_names = set(brain_action_tools.build_action_steering_tools().keys())
         overlap = static_names & steering_names
         assert len(overlap) == 0, f"Overlapping tool names: {overlap}"

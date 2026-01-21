@@ -139,7 +139,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
-        self.active_tasks: dict[int, dict] = (
+        self.in_flight_actions: dict[int, dict] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = prompt_now(as_string=False)
@@ -151,7 +151,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
 
-        # ask handles (for Actor tasks)
+        # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
 
         # LLM run requests recorded during event handling (production path).
@@ -399,16 +399,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Log LLM thinking start
         self._session_logger.log_llm_thinking(f"mode={self.mode}")
 
-        # Build response model dynamically with current active tasks
+        # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
 
         brain_tools = ConversationManagerBrainTools(self)
         action_tools = ConversationManagerBrainActionTools(self)
-        # Combine static tools with dynamic task steering tools
+        # Combine static tools with dynamic action steering tools
         tools = {
             **brain_tools.as_tools(),
             **action_tools.as_tools(),
-            **action_tools.build_task_steering_tools(),
+            **action_tools.build_action_steering_tools(),
         }
 
         # Single-shot LLM call: one decision, one action

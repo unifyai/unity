@@ -9,9 +9,9 @@ and test_transcript_manager/test_tool_docstrings.py.
 
 The ConversationManager uses two sets of brain tools:
 - ConversationManagerBrainTools: Read-only state inspection tools
-- ConversationManagerBrainActionTools: Communication and task management tools
+- ConversationManagerBrainActionTools: Communication and action management tools
 
-Dynamic steering tools (generated based on active tasks) are not tested here
+Dynamic steering tools (generated based on in-flight actions) are not tested here
 since they are created at runtime with generated docstrings.
 """
 
@@ -47,7 +47,7 @@ def test_brain_tools_docstrings(initialized_cm):
     These are read-only tools for state inspection:
     - cm_get_mode
     - cm_get_contact
-    - cm_list_active_tasks
+    - cm_list_in_flight_actions
     - cm_list_notifications
     """
     from unity.conversation_manager.domains.brain_tools import (
@@ -166,7 +166,7 @@ def _build_brain_tools_schema_in_subprocess(tool_class: str) -> str:
             mode = "text"
             contact_index = None
             notifications_bar = None
-            active_tasks = {{}}
+            in_flight_actions = {{}}
             contact_manager = None
             assistant_number = None
             assistant_email = None

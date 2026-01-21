@@ -271,11 +271,11 @@ class TestStateRecovery:
         await cm.step(PhoneCallEnded(contact=contact))
 
     @pytest.mark.asyncio
-    async def test_actor_result_for_nonexistent_task(self, initialized_cm):
-        """ActorResult for a task not in active_tasks should not crash."""
+    async def test_actor_result_for_nonexistent_action(self, initialized_cm):
+        """ActorResult for an action not in in_flight_actions should not crash."""
         cm = initialized_cm
 
-        # Send result for a task that doesn't exist
+        # Send result for an action that doesn't exist
         result = await cm.step(
             ActorResult(
                 handle_id=99999,  # Non-existent

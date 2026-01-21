@@ -20,7 +20,7 @@ from unity.conversation_manager.task_actions import (
     derive_short_name,
     get_steering_operation,
     is_dynamic_action,
-    iter_available_actions_for_task,
+    iter_steering_tools_for_action,
     parse_action_name,
     safe_call_id_suffix,
 )
@@ -244,12 +244,12 @@ class TestIsDynamicAction:
             assert not is_dynamic_action(name), f"{name} should not be dynamic"
 
 
-class TestIterAvailableActionsForTask:
-    """Tests for iter_available_actions_for_task function."""
+class TestIterSteeringToolsForAction:
+    """Tests for iter_steering_tools_for_action function."""
 
     def test_basic_actions(self):
-        """Generates standard actions for a task."""
-        actions = iter_available_actions_for_task(0, "List contacts")
+        """Generates standard steering tools for an action."""
+        actions = iter_steering_tools_for_action(0, "List contacts")
         action_names = [a[0] for a in actions]
 
         assert any("ask_" in n for n in action_names)
@@ -260,9 +260,9 @@ class TestIterAvailableActionsForTask:
 
     def test_no_answer_clarification_without_pending(self):
         """No answer_clarification without pending clarifications."""
-        actions = iter_available_actions_for_task(
+        actions = iter_steering_tools_for_action(
             0,
-            "Task",
+            "Action",
             pending_clarifications=None,
         )
         action_names = [a[0] for a in actions]
@@ -272,9 +272,9 @@ class TestIterAvailableActionsForTask:
     def test_answer_clarification_with_pending(self):
         """Generates answer_clarification for pending clarifications."""
         pending = [{"call_id": "test_call_123"}]
-        actions = iter_available_actions_for_task(
+        actions = iter_steering_tools_for_action(
             0,
-            "Task",
+            "Action",
             pending_clarifications=pending,
         )
         action_names = [a[0] for a in actions]
@@ -282,8 +282,8 @@ class TestIterAvailableActionsForTask:
         assert any("answer_clarification" in n for n in action_names)
 
     def test_actions_have_descriptions(self):
-        """All actions have non-empty descriptions."""
-        actions = iter_available_actions_for_task(0, "Test task")
+        """All steering tools have non-empty descriptions."""
+        actions = iter_steering_tools_for_action(0, "Test action")
         for name, description in actions:
             assert len(description) > 0, f"{name} should have a description"
 
@@ -425,31 +425,31 @@ class TestRenderer:
             on_call=False,
         )
 
-    def test_render_in_flight_tasks_empty(self, renderer):
-        """Renders empty in-flight tasks."""
-        result = renderer.render_in_flight_tasks({})
-        assert "No tasks currently executing" in result
-        assert "<in_flight_tasks>" in result
-        assert "</in_flight_tasks>" in result
+    def test_render_in_flight_actions_empty(self, renderer):
+        """Renders empty in-flight actions."""
+        result = renderer.render_in_flight_actions({})
+        assert "No actions currently executing" in result
+        assert "<in_flight_actions>" in result
+        assert "</in_flight_actions>" in result
 
-    def test_render_in_flight_tasks_with_task(self, renderer):
-        """Renders in-flight tasks with task data."""
-        tasks = {
+    def test_render_in_flight_actions_with_action(self, renderer):
+        """Renders in-flight actions with action data."""
+        actions = {
             0: {
                 "query": "List all contacts",
                 "handle_actions": [],
             },
         }
-        result = renderer.render_in_flight_tasks(tasks)
-        assert "<task id='0'" in result
+        result = renderer.render_in_flight_actions(actions)
+        assert "<action id='0'" in result
         assert "status='executing'" in result
         assert "List all contacts" in result
         assert "ask_" in result
         assert "stop_" in result
 
-    def test_render_in_flight_tasks_with_clarification(self, renderer):
-        """Renders tasks with pending clarifications."""
-        tasks = {
+    def test_render_in_flight_actions_with_clarification(self, renderer):
+        """Renders actions with pending clarifications."""
+        actions = {
             0: {
                 "query": "Do something",
                 "handle_actions": [
@@ -461,7 +461,7 @@ class TestRenderer:
                 ],
             },
         }
-        result = renderer.render_in_flight_tasks(tasks)
+        result = renderer.render_in_flight_actions(actions)
         assert "answer_clarification" in result
         assert "clarification_request" in result
         assert "Need more info?" in result
@@ -805,9 +805,9 @@ class TestActionNameFormatIntegration:
                 assert is_dynamic_action(action_name)
 
     def test_action_names_in_iter_match_parser(self):
-        """Actions from iter_available_actions_for_task parse correctly."""
+        """Actions from iter_steering_tools_for_action parse correctly."""
         pending = [{"call_id": "clarification-uuid-12345"}]
-        actions = iter_available_actions_for_task(
+        actions = iter_steering_tools_for_action(
             handle_id=3,
             query="Do something important",
             pending_clarifications=pending,

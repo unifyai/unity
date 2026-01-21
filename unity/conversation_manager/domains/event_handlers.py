@@ -280,26 +280,28 @@ async def _(
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     if isinstance(event, ActorClarificationRequest):
-        if event.handle_id in cm.active_tasks:
-            cm.active_tasks[event.handle_id]["handle_actions"].append(
+        if event.handle_id in cm.in_flight_actions:
+            cm.in_flight_actions[event.handle_id]["handle_actions"].append(
                 {
                     "action_name": "clarification_request",
                     "query": event.query,
                     "call_id": event.call_id,
                 },
             )
-            task_query = cm.active_tasks[event.handle_id].get("query", "")
-            short_desc = task_query[:30] + "..." if len(task_query) > 30 else task_query
+            action_query = cm.in_flight_actions[event.handle_id].get("query", "")
+            short_desc = (
+                action_query[:30] + "..." if len(action_query) > 30 else action_query
+            )
             cm.notifications_bar.push_notif(
-                "Task",
-                f"Task '{short_desc}' needs clarification: {event.query}",
+                "Action",
+                f"Action '{short_desc}' needs clarification: {event.query}",
                 event.timestamp,
             )
             await cm.request_llm_run()
     elif isinstance(event, ActorHandleResponse):
         # Handle response from an ask operation
-        if event.handle_id in cm.active_tasks:
-            handle_data = cm.active_tasks[event.handle_id]
+        if event.handle_id in cm.in_flight_actions:
+            handle_data = cm.in_flight_actions[event.handle_id]
             handle_actions = handle_data.get("handle_actions", [])
 
             # Find the pending ask action and update it with the response
@@ -449,6 +451,7 @@ async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwa
         event.user_email,
     )
 
+
 @EventHandler.register(GetChatHistory)
 async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.debug(
@@ -461,8 +464,8 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
 @EventHandler.register(ActorHandleStarted)
 async def _(event: ActorHandleStarted, cm: "ConversationManager", *args, **kwargs):
     cm.notifications_bar.push_notif(
-        "Task",
-        f"Task started: {event.query[:50]}{'...' if len(event.query) > 50 else ''}",
+        "Action",
+        f"Action started: {event.query[:50]}{'...' if len(event.query) > 50 else ''}",
         event.timestamp,
     )
     await cm.request_llm_run()
@@ -509,16 +512,16 @@ async def _(
 
 @EventHandler.register(ActorResult)
 async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
-    task_data = cm.active_tasks.get(event.handle_id, {})
-    task_query = task_data.get("query", f"Task {event.handle_id}")
-    short_desc = task_query[:30] + "..." if len(task_query) > 30 else task_query
+    action_data = cm.in_flight_actions.get(event.handle_id, {})
+    action_query = action_data.get("query", f"Action {event.handle_id}")
+    short_desc = action_query[:30] + "..." if len(action_query) > 30 else action_query
 
     cm.notifications_bar.push_notif(
-        "Task",
-        f"Task completed: {short_desc}\nResult: {event.result}",
+        "Action",
+        f"Action completed: {short_desc}\nResult: {event.result}",
         event.timestamp,
     )
-    cm.active_tasks.pop(event.handle_id, None)
+    cm.in_flight_actions.pop(event.handle_id, None)
     await cm.request_llm_run()
 
 
@@ -529,17 +532,17 @@ async def _(
     *args,
     **kwargs,
 ):
-    action = "pause" if isinstance(event, ActorPause) else "resume"
-    cm._session_logger.info("actor_request", f"Received task {action} event")
+    op = "pause" if isinstance(event, ActorPause) else "resume"
+    cm._session_logger.info("actor_request", f"Received action {op} event")
     reason = getattr(event, "reason", "")
     affected: list[int] = []
-    for hid, data in list(cm.active_tasks.items()):
+    for hid, data in list(cm.in_flight_actions.items()):
         handle = data.get("handle")
         if handle is None:
             continue
 
         try:
-            if action == "pause":
+            if op == "pause":
                 pause_r = handle.pause()
                 if asyncio.iscoroutine(pause_r) or isinstance(pause_r, asyncio.Future):
                     await pause_r
@@ -554,7 +557,7 @@ async def _(
         except Exception as e:
             cm._session_logger.error(
                 "actor_request",
-                f"Failed to {action} task {hid}: {e}",
+                f"Failed to {op} action {hid}: {e}",
             )
 
     for hid in affected:
@@ -563,13 +566,13 @@ async def _(
                 "app:actor:notification",
                 ActorNotification(
                     handle_id=int(hid),
-                    response=f"Task {action}d: {reason}",
+                    response=f"Action {op}d: {reason}",
                 ).to_json(),
             )
         except Exception as e:
             cm._session_logger.error(
                 "actor_request",
-                f"Failed to publish {action} notification for task {hid}: {e}",
+                f"Failed to publish {op} notification for action {hid}: {e}",
             )
 
 

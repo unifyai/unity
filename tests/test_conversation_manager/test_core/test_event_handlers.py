@@ -134,7 +134,7 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.call_manager = mock_call_manager
     cm.mode = "text"
     cm.chat_history = []
-    cm.active_tasks = {}
+    cm.in_flight_actions = {}
     cm.is_summarizing = False
     cm.memory_manager = None
 
@@ -923,28 +923,28 @@ class TestActorEventHandlers:
         mock_cm.request_llm_run.assert_called()
 
     @pytest.mark.asyncio
-    async def test_actor_result_removes_task_and_notifies(self, mock_cm):
-        """ActorResult removes task from active_tasks and notifies."""
-        mock_cm.active_tasks = {
-            1: {"query": "Test task", "handle_actions": []},
+    async def test_actor_result_removes_action_and_notifies(self, mock_cm):
+        """ActorResult removes action from in_flight_actions and notifies."""
+        mock_cm.in_flight_actions = {
+            1: {"query": "Test action", "handle_actions": []},
         }
         event = ActorResult(
             handle_id=1,
             success=True,
-            result="Task completed successfully",
+            result="Action completed successfully",
         )
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert 1 not in mock_cm.active_tasks
+        assert 1 not in mock_cm.in_flight_actions
         assert len(mock_cm.notifications_bar.notifications) == 1
-        assert "Task completed" in mock_cm.notifications_bar.notifications[0].content
+        assert "Action completed" in mock_cm.notifications_bar.notifications[0].content
 
     @pytest.mark.asyncio
     async def test_actor_clarification_request_updates_handle_actions(self, mock_cm):
         """ActorClarificationRequest adds clarification to handle_actions."""
-        mock_cm.active_tasks = {
-            1: {"query": "Ambiguous task", "handle_actions": []},
+        mock_cm.in_flight_actions = {
+            1: {"query": "Ambiguous action", "handle_actions": []},
         }
         event = ActorClarificationRequest(
             handle_id=1,
@@ -954,18 +954,18 @@ class TestActorEventHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert len(mock_cm.active_tasks[1]["handle_actions"]) == 1
-        clarification = mock_cm.active_tasks[1]["handle_actions"][0]
+        assert len(mock_cm.in_flight_actions[1]["handle_actions"]) == 1
+        clarification = mock_cm.in_flight_actions[1]["handle_actions"][0]
         assert clarification["action_name"] == "clarification_request"
         assert clarification["query"] == "What do you mean by 'documents'?"
 
     @pytest.mark.asyncio
-    async def test_actor_pause_pauses_task_handles(self, mock_cm):
-        """ActorPause pauses all active task handles."""
+    async def test_actor_pause_pauses_action_handles(self, mock_cm):
+        """ActorPause pauses all in-flight action handles."""
         mock_handle = MagicMock()
         mock_handle.pause = MagicMock(return_value=None)
-        mock_cm.active_tasks = {
-            1: {"query": "Task 1", "handle": mock_handle, "handle_actions": []},
+        mock_cm.in_flight_actions = {
+            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
         }
         event = ActorPause(reason="User requested pause")
 
@@ -974,12 +974,12 @@ class TestActorEventHandlers:
         mock_handle.pause.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_actor_resume_resumes_task_handles(self, mock_cm):
-        """ActorResume resumes all paused task handles."""
+    async def test_actor_resume_resumes_action_handles(self, mock_cm):
+        """ActorResume resumes all paused action handles."""
         mock_handle = MagicMock()
         mock_handle.resume = MagicMock(return_value=None)
-        mock_cm.active_tasks = {
-            1: {"query": "Task 1", "handle": mock_handle, "handle_actions": []},
+        mock_cm.in_flight_actions = {
+            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
         }
         event = ActorResume(reason="Continue execution")
 
@@ -992,8 +992,8 @@ class TestActorEventHandlers:
         """ActorPause handles async pause methods."""
         mock_handle = MagicMock()
         mock_handle.pause = AsyncMock()
-        mock_cm.active_tasks = {
-            1: {"query": "Task 1", "handle": mock_handle, "handle_actions": []},
+        mock_cm.in_flight_actions = {
+            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
         }
         event = ActorPause(reason="Async pause")
 
@@ -1215,10 +1215,10 @@ class TestEventHandlerEdgeCases:
 
     @pytest.mark.asyncio
     async def test_actor_pause_handles_missing_handle(self, mock_cm):
-        """ActorPause handles tasks without handles gracefully."""
-        # Task with no handle (None)
-        mock_cm.active_tasks = {
-            1: {"query": "Task without handle", "handle": None, "handle_actions": []},
+        """ActorPause handles actions without handles gracefully."""
+        # Action with no handle (None)
+        mock_cm.in_flight_actions = {
+            1: {"query": "Action without handle", "handle": None, "handle_actions": []},
         }
         event = ActorPause(reason="Test pause")
 
@@ -1230,8 +1230,8 @@ class TestEventHandlerEdgeCases:
         """ActorPause handles exceptions from handle.pause() gracefully."""
         mock_handle = MagicMock()
         mock_handle.pause = MagicMock(side_effect=Exception("Pause failed"))
-        mock_cm.active_tasks = {
-            1: {"query": "Task", "handle": mock_handle, "handle_actions": []},
+        mock_cm.in_flight_actions = {
+            1: {"query": "Do something", "handle": mock_handle, "handle_actions": []},
         }
         event = ActorPause(reason="Test")
 
@@ -1242,9 +1242,9 @@ class TestEventHandlerEdgeCases:
         mock_cm._session_logger.error.assert_called()
 
     @pytest.mark.asyncio
-    async def test_actor_clarification_for_nonexistent_task(self, mock_cm):
-        """ActorClarificationRequest for non-existent task does nothing."""
-        mock_cm.active_tasks = {}  # No tasks
+    async def test_actor_clarification_for_nonexistent_action(self, mock_cm):
+        """ActorClarificationRequest for non-existent action does nothing."""
+        mock_cm.in_flight_actions = {}  # No actions
         event = ActorClarificationRequest(
             handle_id=999,  # Non-existent
             query="Question?",
@@ -1513,7 +1513,9 @@ class TestAssistantUpdateEventHandler:
 
     @pytest.mark.asyncio
     async def test_update_session_contacts_handles_no_contact_manager(
-        self, mock_cm, capsys
+        self,
+        mock_cm,
+        capsys,
     ):
         """update_session_contacts handles None contact_manager gracefully."""
         from unity.conversation_manager.domains.managers_utils import (

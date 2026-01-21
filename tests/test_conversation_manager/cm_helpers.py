@@ -108,28 +108,28 @@ def assert_efficient(result: "StepResult", context: str = "") -> None:
 
 
 # =============================================================================
-# Task and Steering Helpers
+# Action and Steering Helpers
 # =============================================================================
 
 
-def get_active_task_count(cm: "CMStepDriver") -> int:
-    """Get the number of active tasks from the ConversationManager.
+def get_in_flight_action_count(cm: "CMStepDriver") -> int:
+    """Get the number of in-flight actions from the ConversationManager.
 
     Args:
         cm: CMStepDriver instance wrapping the ConversationManager.
 
     Returns:
-        Number of active tasks.
+        Number of in-flight actions (actor handles currently doing work).
     """
-    return len(cm.cm.active_tasks or {})
+    return len(cm.cm.in_flight_actions or {})
 
 
 def has_steering_tool_call(cm: "CMStepDriver", operation_prefix: str) -> bool:
     """Check if any steering tool with the given operation prefix was called.
 
     Checks all tool calls made during the test (tracked by CMStepDriver),
-    not just active tasks, since completed/stopped tasks are removed from
-    active_tasks.
+    not just in-flight actions, since completed/stopped actions are removed from
+    in_flight_actions.
 
     Args:
         cm: CMStepDriver instance wrapping the ConversationManager.
@@ -187,8 +187,8 @@ def build_cm_context(
 
     if cm is not None:
         context["all_tool_calls"] = cm.all_tool_calls
-        if hasattr(cm, "cm") and hasattr(cm.cm, "active_tasks"):
-            context["active_tasks"] = list(cm.cm.active_tasks.keys())
+        if hasattr(cm, "cm") and hasattr(cm.cm, "in_flight_actions"):
+            context["in_flight_actions"] = list(cm.cm.in_flight_actions.keys())
 
     if result is not None:
         context["output_event_types"] = [type(e).__name__ for e in result.output_events]

@@ -6,13 +6,13 @@ Tests that verify ConversationManager correctly uses steering tools to control
 in-flight actions started via `act`.
 
 These tests follow a pattern:
-1. User sends a request that triggers `act` (starts a task)
-2. User sends distractor small talk (should not affect the task)
+1. User sends a request that triggers `act` (starts an action)
+2. User sends distractor small talk (should not affect the action)
 3. User sends a steering command (ask, stop, pause, resume, interject)
 4. We verify the appropriate steering tool was called
 
 Uses SimulatedActor under the hood with configurable `steps` to ensure
-tasks remain in-flight long enough for steering to be applied.
+actions remain in-flight long enough for steering to be applied.
 """
 
 import pytest
@@ -23,7 +23,7 @@ from tests.test_conversation_manager.cm_helpers import (
     assert_efficient,
     assert_steering_called,
     build_cm_context,
-    get_active_task_count,
+    get_in_flight_action_count,
     has_steering_tool_call,
 )
 from tests.assertion_helpers import assertion_failed
@@ -39,7 +39,7 @@ pytestmark = pytest.mark.eval
 
 
 # ---------------------------------------------------------------------------
-#  Ask steering tests - querying task status
+#  Ask steering tests - querying action status
 # ---------------------------------------------------------------------------
 
 
@@ -57,7 +57,7 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task that triggers act
+    # Step 1: Start an action that triggers act
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -67,18 +67,18 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     assert_act_triggered(
         result1,
         ActorHandleStarted,
-        "Initial task should trigger act",
+        "Initial request should trigger act",
         cm=cm,
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Small talk distractor (should not affect the task)
+    # Step 2: Small talk distractor (should not affect the action)
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -103,7 +103,7 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: small talk")
     assert_efficient(result3, "Step 3: ask status")
 
@@ -121,18 +121,18 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="What's our company's refund policy? I need the details.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -144,7 +144,7 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
         ),
     )
 
-    # Step 3: Ask about task progress
+    # Step 3: Ask about action progress
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -160,13 +160,13 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: unrelated question")
     assert_efficient(result3, "Step 3: ask progress")
 
 
 # ---------------------------------------------------------------------------
-#  Stop steering tests - canceling tasks
+#  Stop steering tests - canceling actions
 # ---------------------------------------------------------------------------
 
 
@@ -184,22 +184,22 @@ async def test_stop_task_after_small_talk(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Search the web for the latest news about AI regulations.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Genuine small talk (not task-related)
+    # Step 2: Genuine small talk (not action-related)
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -207,7 +207,7 @@ async def test_stop_task_after_small_talk(initialized_cm):
         ),
     )
 
-    # Step 3: Stop the task
+    # Step 3: Stop the action
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -223,7 +223,7 @@ async def test_stop_task_after_small_talk(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: small talk")
     assert_efficient(result3, "Step 3: cancel request")
 
@@ -241,22 +241,22 @@ async def test_stop_task_change_of_mind(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Create a reminder to call Bob tomorrow at 3pm.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Genuine small talk (not task-related)
+    # Step 2: Genuine small talk (not action-related)
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -280,13 +280,13 @@ async def test_stop_task_change_of_mind(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: small talk")
     assert_efficient(result3, "Step 3: cancel request")
 
 
 # ---------------------------------------------------------------------------
-#  Pause steering tests - temporarily halting tasks
+#  Pause steering tests - temporarily halting actions
 # ---------------------------------------------------------------------------
 
 
@@ -303,18 +303,18 @@ async def test_pause_task_for_meeting(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a research task
+    # Step 1: Start a research action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Research our competitors' pricing strategies and summarize.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -342,7 +342,7 @@ async def test_pause_task_for_meeting(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: mention meeting")
     assert_efficient(result3, "Step 3: pause request")
 
@@ -359,18 +359,18 @@ async def test_pause_task_hold_on(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Search my past conversations with Alice about the project deadline.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -390,12 +390,12 @@ async def test_pause_task_hold_on(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: hold on request")
 
 
 # ---------------------------------------------------------------------------
-#  Resume steering tests - continuing paused tasks
+#  Resume steering tests - continuing paused actions
 # ---------------------------------------------------------------------------
 
 
@@ -412,18 +412,18 @@ async def test_resume_after_pause(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="List all high-priority tasks that are due this week.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -451,7 +451,7 @@ async def test_resume_after_pause(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: hold request")
     assert_efficient(result3, "Step 3: resume request")
 
@@ -470,18 +470,18 @@ async def test_resume_continue_where_left_off(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Search for Bob's contact information and recent messages.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -517,14 +517,14 @@ async def test_resume_continue_where_left_off(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: hold request")
     assert_efficient(result3, "Step 3: small talk")
     assert_efficient(result4, "Step 4: resume request")
 
 
 # ---------------------------------------------------------------------------
-#  Interject steering tests - providing new information to running tasks
+#  Interject steering tests - providing new information to running actions
 # ---------------------------------------------------------------------------
 
 
@@ -541,18 +541,18 @@ async def test_interject_additional_constraint(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Find all contacts who work in engineering.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -580,7 +580,7 @@ async def test_interject_additional_constraint(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: side comment")
     assert_efficient(result3, "Step 3: interject constraint")
 
@@ -598,18 +598,18 @@ async def test_interject_extension(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="What's the Q3 revenue report say?",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -621,7 +621,7 @@ async def test_interject_extension(initialized_cm):
         ),
     )
 
-    # Step 3: Extension via interjection (clearly adding to existing task)
+    # Step 3: Extension via interjection (clearly adding to existing action)
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -637,7 +637,7 @@ async def test_interject_extension(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: anticipation")
     assert_efficient(result3, "Step 3: extension")
 
@@ -655,18 +655,18 @@ async def test_interject_new_priority(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a broad task
+    # Step 1: Start a broad action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Research what competitors are doing in the market.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -694,7 +694,7 @@ async def test_interject_new_priority(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: conversation")
     assert_efficient(result3, "Step 3: narrow focus")
 
@@ -714,18 +714,18 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task (web search reliably triggers act)
+    # Step 1: Start an action (web search reliably triggers act)
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Search the web for information about project management best practices.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -767,7 +767,7 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: pause request")
     assert_efficient(result3, "Step 3: interject while paused")
     assert_efficient(result4, "Step 4: resume request")
@@ -777,24 +777,24 @@ async def test_pause_interject_resume_sequence(initialized_cm):
 @_handle_project
 async def test_multiple_distractors_then_stop(initialized_cm):
     """
-    Multiple distractor messages before stopping a task.
+    Multiple distractor messages before stopping an action.
 
-    Tests that the LLM maintains task context through multiple turns.
+    Tests that the LLM maintains action context through multiple turns.
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Generate a report on all customer interactions this month.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -836,7 +836,7 @@ async def test_multiple_distractors_then_stop(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: distractor 1")
     assert_efficient(result3, "Step 3: distractor 2")
     assert_efficient(result4, "Step 4: distractor 3")
@@ -865,18 +865,18 @@ async def test_ask_shows_pending_then_completed(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Search my transcripts for anything about the quarterly budget review.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -897,13 +897,13 @@ async def test_ask_shows_pending_then_completed(initialized_cm):
         result=result2,
     )
 
-    # Verify the task history contains the ask action with completed status
+    # Verify the action history contains the ask action with completed status
     # (since the async response should have arrived by now)
-    active_tasks = cm._cm.active_tasks
-    assert len(active_tasks) >= 1, "Should have at least one active task"
+    in_flight_actions = cm._cm.in_flight_actions
+    assert len(in_flight_actions) >= 1, "Should have at least one in-flight action"
 
-    # Find the task and check its history
-    for handle_id, handle_data in active_tasks.items():
+    # Find the action and check its history
+    for handle_id, handle_data in in_flight_actions.items():
         handle_actions = handle_data.get("handle_actions", [])
         ask_actions = [
             a
@@ -927,7 +927,7 @@ async def test_ask_shows_pending_then_completed(initialized_cm):
             assert last_ask.get("response"), assertion_failed(
                 expected="Ask action with non-empty response",
                 actual=f"Ask action with response='{last_ask.get('response')}'",
-                reasoning=["Async ask should have a response from the task"],
+                reasoning=["Async ask should have a response from the action"],
                 description="Ask action should have a response",
                 context_data={
                     "handle_actions": handle_actions,
@@ -936,11 +936,11 @@ async def test_ask_shows_pending_then_completed(initialized_cm):
             )
             break
     else:
-        # No task found with ask actions - this is unexpected
-        pytest.fail("Expected at least one task with ask actions in history")
+        # No action found with ask actions - this is unexpected
+        pytest.fail("Expected at least one action with ask actions in history")
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")
 
 
 @pytest.mark.asyncio
@@ -957,18 +957,18 @@ async def test_ask_response_triggers_llm_followup(initialized_cm):
     """
     cm = initialized_cm
 
-    # Step 1: Start a task
+    # Step 1: Start an action
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="Look through all my emails for anything mentioning the Henderson account.",
         ),
     )
-    assert get_active_task_count(cm) >= 1, assertion_failed(
-        expected="At least 1 active task",
-        actual=f"{get_active_task_count(cm)} active tasks",
+    assert get_in_flight_action_count(cm) >= 1, assertion_failed(
+        expected="At least 1 in-flight action",
+        actual=f"{get_in_flight_action_count(cm)} in-flight actions",
         reasoning=[],
-        description="Initial task should create an active task",
+        description="Initial request should create an in-flight action",
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
@@ -1007,4 +1007,4 @@ async def test_ask_response_triggers_llm_followup(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial task")
+    assert_efficient(result1, "Step 1: initial action")

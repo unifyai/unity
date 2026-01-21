@@ -256,9 +256,9 @@ def initialized_cm(
     # Clear any conversation state from previous tests
     conversation_manager.contact_index.clear_conversations()
 
-    # Clear active tasks (from previous act() calls)
-    # These create task steering tools that persist across tests
-    conversation_manager.cm.active_tasks.clear()
+    # Clear in-flight actions (from previous act() calls)
+    # These create action steering tools that persist across tests
+    conversation_manager.cm.in_flight_actions.clear()
 
     # Clear chat history (LLM message history)
     conversation_manager.cm.chat_history.clear()

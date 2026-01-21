@@ -1,10 +1,10 @@
 """
-Centralized utilities for dynamic task action generation in ConversationManager.
+Centralized utilities for action steering operations in ConversationManager.
 
 This module provides a single source of truth for:
 - Steering operations derived from SteerableToolHandle
 - Action name generation and parsing
-- Short name derivation from task queries
+- Short name derivation from action queries
 
 Dynamic action names use a structured format with __ as the delimiter:
     {operation}_{short_name}__{handle_id}
@@ -36,7 +36,7 @@ _DELIM = "__"
 
 @dataclass(frozen=True)
 class SteeringOperation:
-    """Describes a steering operation that can be performed on an active task."""
+    """Describes a steering operation that can be performed on an active action."""
 
     name: str  # e.g., "ask", "stop"
     method_name: str  # Method name on SteerableToolHandle
@@ -86,7 +86,7 @@ def get_steering_operation(name: str) -> Optional[SteeringOperation]:
 
 
 def derive_short_name(query: str, max_words: int = 4) -> str:
-    """Derive a short, descriptive name from a task query for use in action names.
+    """Derive a short, descriptive name from an action query for use in action names.
 
     Takes the first few words, lowercased, with non-alphanumeric chars removed,
     joined by underscores. Ensures no __ (reserved as structural delimiter).
@@ -96,7 +96,7 @@ def derive_short_name(query: str, max_words: int = 4) -> str:
         "What's the weather?" -> "whats_the_weather"
     """
     words = re.sub(r"[^a-zA-Z0-9\s]", "", query.lower()).split()[:max_words]
-    result = "_".join(words) if words else "task"
+    result = "_".join(words) if words else "action"
     # Collapse any accidental double underscores (__ is our structural delimiter)
     while _DELIM in result:
         result = result.replace(_DELIM, "_")
@@ -122,12 +122,12 @@ def build_action_name(
 
     Args:
         operation: The steering operation (e.g., "ask", "stop")
-        short_name: The short name derived from the task query
-        handle_id: The task handle ID
+        short_name: The short name derived from the action query
+        handle_id: The action handle ID
         call_id_suffix: Optional suffix for clarification call IDs
 
     Returns:
-        Action name like "ask_list_contacts__0" or "answer_clarification_task__0__abc123"
+        Action name like "ask_list_contacts__0" or "answer_clarification_action__0__abc123"
     """
     base = f"{operation}_{short_name}{_DELIM}{handle_id}"
     if call_id_suffix:
@@ -213,24 +213,24 @@ def parse_action_name(action_name: str) -> ParsedActionName:
 
 
 def is_dynamic_action(action_name: str) -> bool:
-    """Check if an action name is a dynamic task action."""
+    """Check if an action name is a dynamic steering action."""
     return any(action_name.startswith(f"{op.name}_") for op in STEERING_OPERATIONS)
 
 
-def iter_available_actions_for_task(
+def iter_steering_tools_for_action(
     handle_id: int,
     query: str,
     pending_clarifications: list[dict] | None = None,
 ) -> list[tuple[str, str]]:
-    """Generate (action_name, description) pairs for a task's available actions.
+    """Generate (action_name, description) pairs for an action's steering tools.
 
     Args:
-        handle_id: The task handle ID
-        query: The original task query
+        handle_id: The action handle ID
+        query: The original action query
         pending_clarifications: List of pending clarification dicts with "call_id" keys
 
-    Yields:
-        (action_name, description) tuples
+    Returns:
+        List of (action_name, description) tuples
     """
     short_name = derive_short_name(query)
     actions = []
@@ -244,13 +244,13 @@ def iter_available_actions_for_task(
                 name = build_action_name(op.name, short_name, handle_id, suffix)
                 desc = (
                     op.get_docstring()
-                    or f"{op.name.replace('_', ' ').title()} this task"
+                    or f"{op.name.replace('_', ' ').title()} this action"
                 )
                 actions.append((name, desc))
         else:
             name = build_action_name(op.name, short_name, handle_id)
             desc = (
-                op.get_docstring() or f"{op.name.replace('_', ' ').title()} this task"
+                op.get_docstring() or f"{op.name.replace('_', ' ').title()} this action"
             )
             actions.append((name, desc))
 
