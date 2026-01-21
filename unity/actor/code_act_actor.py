@@ -23,60 +23,11 @@ if TYPE_CHECKING:
     from unity.function_manager.function_manager import FunctionManager
 
 
-class _StaticAnswerHandle(SteerableToolHandle):  # type: ignore[abstract-method]
-    """Trivial handle that returns a static answer string (used for ask())."""
+_CURRENT_SANDBOX: contextvars.ContextVar["CodeExecutionSandbox"] = contextvars.ContextVar(
+    "code_act_current_sandbox"
+)
 
-    def __init__(self, answer: str) -> None:
-        self._answer = answer
-
-    async def ask(
-        self,
-        question: str,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
-    ) -> SteerableToolHandle:
-        return self
-
-    async def interject(
-        self,
-        message: str,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
-    ) -> Optional[str]:
-        return None
-
-    async def stop(
-        self,
-        reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
-    ) -> Optional[str]:
-        return None
-
-    async def pause(self) -> Optional[str]:
-        return None
-
-    async def resume(self) -> Optional[str]:
-        return None
-
-    def done(self) -> bool:
-        return True
-
-    async def result(self) -> str:
-        return self._answer
-
-    async def next_clarification(self) -> dict:
-        await asyncio.Event().wait()
-        return {}
-
-    async def next_notification(self) -> dict:
-        await asyncio.Event().wait()
-        return {}
-
-    async def answer_clarification(self, call_id: str, answer: str) -> None:
-        return None
+logger = logging.getLogger(__name__)
 
 
 class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-method]
@@ -401,6 +352,7 @@ class CodeExecutionSandbox:
         """
         from unity.function_manager.execution_env import create_execution_globals
 
+        self.id: str = str(uuid.uuid4())
         self.global_state: Dict[str, Any] = create_execution_globals()
         self._browser_used: bool = False
 
@@ -673,12 +625,6 @@ class CodeActActor(BaseCodeActActor):
         self._venv_pool = VenvPool()
         self._shell_pool = ShellPool()
 
-        self._sandbox = CodeExecutionSandbox(
-            computer_primitives=self._computer_primitives,
-            environments=self.environments,
-            venv_pool=self._venv_pool,
-            shell_pool=self._shell_pool,
-        )
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
         self._tools = self._build_tools()
@@ -688,6 +634,11 @@ class CodeActActor(BaseCodeActActor):
             self._main_event_loop = asyncio.get_running_loop()
         except RuntimeError:
             pass
+
+        # Concurrency guard: limit active sandboxes per actor instance.
+        self._act_semaphore = asyncio.Semaphore(20)
+        # Timeout used when acquiring the semaphore (prevents unbounded waits).
+        self._act_semaphore_timeout_s: float = 30.0
 
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ComputerPrimitives."""
@@ -857,7 +808,7 @@ class CodeActActor(BaseCodeActActor):
                     query=query,
                     n=n,
                     return_callable=True,
-                    namespace=self._sandbox.global_state,
+                    namespace=_CURRENT_SANDBOX.get().global_state,
                     also_return_metadata=True,
                 )
                 return result["metadata"]
@@ -878,7 +829,7 @@ class CodeActActor(BaseCodeActActor):
                     offset=offset,
                     limit=limit,
                     return_callable=True,
-                    namespace=self._sandbox.global_state,
+                    namespace=_CURRENT_SANDBOX.get().global_state,
                     also_return_metadata=True,
                 )
                 return result["metadata"]
@@ -895,7 +846,7 @@ class CodeActActor(BaseCodeActActor):
                 result = self.function_manager.list_functions(
                     include_implementations=include_implementations,
                     return_callable=True,
-                    namespace=self._sandbox.global_state,
+                    namespace=_CURRENT_SANDBOX.get().global_state,
                     also_return_metadata=True,
                 )
                 return result["metadata"]
@@ -929,8 +880,9 @@ class CodeActActor(BaseCodeActActor):
                 summary_parts: list[str] = []
 
                 # Default context (in-process Python execution environment)
+                sandbox = _CURRENT_SANDBOX.get()
                 default_state = {}
-                for name, value in self._sandbox.global_state.items():
+                for name, value in sandbox.global_state.items():
                     # Skip internal names and infrastructure
                     if name.startswith("_"):
                         continue
@@ -1048,6 +1000,7 @@ class CodeActActor(BaseCodeActActor):
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _notification_up_q: Optional[asyncio.Queue[dict]] = None,
+        _call_id: Optional[str] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
@@ -1076,29 +1029,85 @@ class CodeActActor(BaseCodeActActor):
             clarification_up_q = None
             clarification_down_q = None
 
-        # Wire clarification queues to environments per-execution (not per-actor), then recreate the sandbox.
-        # This ensures nested manager handles invoked from the sandbox can request clarifications
-        # that bubble up via the handle's queues.
-        for env in self.environments.values():
-            # Environments implement BaseEnvironment and store queues as private attrs.
-            # Preserve all other environment configuration (e.g., exposed_managers filtering).
-            if hasattr(env, "_clarification_up_q"):
-                setattr(env, "_clarification_up_q", clarification_up_q)
-            if hasattr(env, "_clarification_down_q"):
-                setattr(env, "_clarification_down_q", clarification_down_q)
+        # Create per-call environments so clarification queues are not stored on shared actor environments.
+        sandbox_envs: Dict[str, "BaseEnvironment"] = {}
+        try:
+            from unity.actor.environments import (
+                ComputerEnvironment as _ComputerEnvironment,
+                StateManagerEnvironment as _StateManagerEnvironment,
+            )
+        except Exception:
+            _ComputerEnvironment = None  # type: ignore
+            _StateManagerEnvironment = None  # type: ignore
 
-        # Recreate sandbox so injected globals (e.g. `primitives`) use get_sandbox_instance()
-        # with the updated clarification queue injector wrapper.
-        # Note: We preserve the same pools so persistent state survives across act() calls.
-        self._sandbox = CodeExecutionSandbox(
+        for ns, env in self.environments.items():
+            # Prefer explicit reconstruction for known env types.
+            try:
+                if _ComputerEnvironment is not None and isinstance(env, _ComputerEnvironment):
+                    sandbox_envs[ns] = _ComputerEnvironment(
+                        env.get_instance(),
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                    )
+                    continue
+                if _StateManagerEnvironment is not None and isinstance(env, _StateManagerEnvironment):
+                    sandbox_envs[ns] = _StateManagerEnvironment(
+                        env.get_instance(),
+                        exposed_managers=getattr(env, "_exposed_managers", None),
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                    )
+                    continue
+            except Exception:
+                pass
+
+            # Fallback: shallow-copy and set private queue attrs on the copy only.
+            try:
+                env_copy = copy.copy(env)
+                if hasattr(env_copy, "_clarification_up_q"):
+                    setattr(env_copy, "_clarification_up_q", clarification_up_q)
+                if hasattr(env_copy, "_clarification_down_q"):
+                    setattr(env_copy, "_clarification_down_q", clarification_down_q)
+                sandbox_envs[ns] = env_copy
+            except Exception:
+                sandbox_envs[ns] = env
+
+        # Concurrency/backpressure guard. If we can't acquire within 30s, treat as resource exhaustion.
+        try:
+            await asyncio.wait_for(
+                self._act_semaphore.acquire(),
+                timeout=float(getattr(self, "_act_semaphore_timeout_s", 30.0)),
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                "CodeActActor is at capacity (too many concurrent sessions). "
+                "Try again later or reduce concurrency.",
+            )
+        sandbox = CodeExecutionSandbox(
             computer_primitives=self._computer_primitives,
-            environments=self.environments,
+            environments=sandbox_envs,
             venv_pool=self._venv_pool,
             shell_pool=self._shell_pool,
         )
         if _notification_up_q is not None:
             sandbox.global_state["__notification_up_q__"] = _notification_up_q
         token = _CURRENT_SANDBOX.set(sandbox)
+
+        async def _cleanup() -> None:
+            try:
+                # Best-effort cleanup; CodeExecutionSandbox will grow a close() in a later ticket.
+                if hasattr(sandbox, "close") and callable(getattr(sandbox, "close")):
+                    await sandbox.close()  # type: ignore[misc]
+            except Exception:
+                pass
+            try:
+                _CURRENT_SANDBOX.reset(token)
+            except Exception:
+                pass
+            try:
+                self._act_semaphore.release()
+            except Exception:
+                pass
 
         # If an explicit FunctionManager entrypoint is provided (e.g., TaskScheduler task execution),
         # bypass the CodeAct LLM loop and run the function directly.
@@ -1117,7 +1126,7 @@ class CodeActActor(BaseCodeActActor):
                 out = fm.filter_functions(
                     filter=f"function_id == {entrypoint_id}",
                     return_callable=True,
-                    namespace=self._sandbox.global_state,
+                    namespace=sandbox.global_state,
                     also_return_metadata=True,
                 )
                 metadata = []
@@ -1132,7 +1141,7 @@ class CodeActActor(BaseCodeActActor):
                     raise ValueError(
                         f"Entrypoint {entrypoint_id} has no valid function name.",
                     )
-                fn = self._sandbox.global_state.get(fn_name)
+                fn = sandbox.global_state.get(fn_name)
                 if fn is None:
                     raise ValueError(
                         f"Entrypoint {entrypoint_id} ({fn_name}) was not injected into the sandbox namespace.",
@@ -1147,6 +1156,7 @@ class CodeActActor(BaseCodeActActor):
             entry_handle = _CodeActEntrypointHandle(
                 entrypoint_id=entrypoint_id,
                 execution_task=entry_task,
+                on_finally=_cleanup,
             )
             return entry_handle
 
@@ -1160,6 +1170,9 @@ class CodeActActor(BaseCodeActActor):
             parent_chat_context=_parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
+            notification_up_q=_notification_up_q,
+            call_id=_call_id,
+            on_finally=_cleanup,
             main_event_loop=self._main_event_loop,
             timeout=self._timeout,
             persist=is_interactive_session,
