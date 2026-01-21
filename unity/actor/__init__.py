@@ -7,6 +7,7 @@ __all__ = [
     "SingleFunctionActor",
     "ActorHandle",
     "SingleFunctionActorHandle",
+    "BaseCodeActActor",
 ]
 
 _lazy_map = {
@@ -15,6 +16,7 @@ _lazy_map = {
     "SingleFunctionActor": "unity.actor.single_function_actor",
     "ActorHandle": "unity.actor.handle",
     "SingleFunctionActorHandle": "unity.actor.single_function_actor",
+    "BaseCodeActActor": "unity.actor.base",
 }
 
 
@@ -34,3 +36,4 @@ if TYPE_CHECKING:
     from .code_act_actor import CodeActActor
     from .single_function_actor import SingleFunctionActor, SingleFunctionActorHandle
     from .handle import ActorHandle
+    from .base import BaseCodeActActor
