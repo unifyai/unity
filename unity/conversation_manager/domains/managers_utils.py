@@ -14,6 +14,7 @@ from unity.conversation_manager.events import *
 from unity.common.prompt_helpers import now as prompt_now
 from unity.events.event_bus import EVENT_BUS
 from unity.manager_registry import ManagerRegistry
+from unity.transcript_manager.types.medium import Medium
 
 if TYPE_CHECKING:
     from unity.actor.base import BaseActor
@@ -130,13 +131,13 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     print("publishing transcript", event_name)
     event_name = event_name.lower()
     if "unify" in event_name or "prehire" in event_name:
-        medium = "unify_meet" if "call" in event_name else "unify_message"
+        medium = Medium.UNIFY_MEET if "call" in event_name else Medium.UNIFY_MESSAGE
     elif "phone" in event_name:
-        medium = "phone_call"
+        medium = Medium.PHONE_CALL
     elif "sms" in event_name:
-        medium = "sms_message"
+        medium = Medium.SMS_MESSAGE
     else:
-        medium = "email"
+        medium = Medium.EMAIL
     role = "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
     if "prehire" in event_name:
         role = event.role.capitalize()
@@ -179,9 +180,9 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         if _pre_hire_exchange_id is not None:
             exchange_id = _pre_hire_exchange_id
         # else: stays UNASSIGNED, will create new exchange
-    elif medium == "phone_call":
+    elif medium == Medium.PHONE_CALL:
         exchange_id = cm.call_manager.call_exchange_id
-    elif medium == "unify_meet":
+    elif medium == Medium.UNIFY_MEET:
         exchange_id = cm.call_manager.unify_meet_exchange_id
 
     call_utterance_timestamp = ""
@@ -189,10 +190,10 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     # compute utterance timestamp based on active call type
     timestamp = (
         cm.call_manager.call_start_timestamp
-        if medium == "phone_call"
+        if medium == Medium.PHONE_CALL
         else (
             cm.call_manager.unify_meet_start_timestamp
-            if medium == "unify_meet"
+            if medium == Medium.UNIFY_MEET
             else None
         )
     )
@@ -301,7 +302,13 @@ async def update_session_contacts(
             return parts[0], parts[1]
         return name, ""
 
-    async def _update_contact(contact_id: int, first_name: str, surname: str, phone_number: str, email_address: str):
+    async def _update_contact(
+        contact_id: int,
+        first_name: str,
+        surname: str,
+        phone_number: str,
+        email_address: str,
+    ):
         try:
             await asyncio.to_thread(
                 cm.contact_manager.update_contact,
@@ -311,13 +318,21 @@ async def update_session_contacts(
                 first_name=first_name,
                 surname=surname,
             )
-            print(f"[ManagersWorker] Updated contact {contact_id}: {first_name} {surname}")
+            print(
+                f"[ManagersWorker] Updated contact {contact_id}: {first_name} {surname}",
+            )
         except Exception as e:
             print(f"[ManagersWorker] Failed to update contact {contact_id}: {e}")
 
     user_first_name, user_last_name = _get_name_parts(user_name)
     assistant_first_name, assistant_last_name = _get_name_parts(assistant_name)
-    await _update_contact(0, assistant_first_name, assistant_last_name, assistant_number, assistant_email)
+    await _update_contact(
+        0,
+        assistant_first_name,
+        assistant_last_name,
+        assistant_number,
+        assistant_email,
+    )
     await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
 
 

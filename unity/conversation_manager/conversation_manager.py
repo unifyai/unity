@@ -34,6 +34,7 @@ from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.medium import Mode, Thread
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 
@@ -135,7 +136,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Note: uses_realtime_api flag is stored for prompt building in _run_llm
         self._uses_realtime_api = self.call_manager.uses_realtime_api
 
-        self.mode = "text"
+        self.mode: Mode = Mode.TEXT
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
@@ -215,7 +216,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if not conv_state:
             return conversation_turns, last_message_timestamp
 
-        voice_thread = conv_state.threads.get("voice", [])
+        voice_thread = conv_state.threads.get(Thread.VOICE, [])
 
         # Optionally limit to last N messages
         if max_messages is not None:
@@ -430,7 +431,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             thoughts = getattr(structured, "thoughts", "")
 
             # Handle call_guidance for voice modes
-            if self.mode in ["call", "unify_meet"]:
+            if self.mode.is_voice:
                 call_guidance = getattr(structured, "call_guidance", "")
                 if call_guidance:
                     contact = self.get_active_contact()
@@ -626,10 +627,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         await self.cancel_proactive_speech()
 
         # Only schedule if we are in a call/voice mode where silence matters
-        if self.mode not in ["call", "unify_meet"]:
+        if not self.mode.is_voice:
             self._session_logger.debug(
                 "proactive_speech",
-                f"Skipping: mode {self.mode} not in supported modes",
+                f"Skipping: mode {self.mode} not a voice mode",
             )
             return
 
@@ -736,7 +737,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.contact_index.push_message(
                     contact_id=contact_id,
                     sender_name="You",
-                    thread_name="voice",
+                    thread_name=Thread.VOICE,
                     message_content=decision.content,
                     role="assistant",
                 )

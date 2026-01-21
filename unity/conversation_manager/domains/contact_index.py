@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from unity.common.prompt_helpers import now as prompt_now
+from unity.transcript_manager.types.medium import Thread
 
 if TYPE_CHECKING:
     from unity.contact_manager.base import BaseContactManager
@@ -56,12 +57,12 @@ class ConversationState:
     contact_id: int
     on_call: bool = False
     global_thread: deque = field(default_factory=lambda: deque(maxlen=50))
-    threads: dict[str, deque] = field(
+    threads: dict[Thread, deque] = field(
         default_factory=lambda: {
-            "sms": deque(maxlen=25),
-            "email": deque(maxlen=25),
-            "voice": deque(maxlen=25),
-            "unify_message": deque(maxlen=25),
+            Thread.SMS: deque(maxlen=25),
+            Thread.EMAIL: deque(maxlen=25),
+            Thread.VOICE: deque(maxlen=25),
+            Thread.UNIFY_MESSAGE: deque(maxlen=25),
         },
     )
 
@@ -158,7 +159,7 @@ class ContactIndex:
         self,
         contact_id: int,
         sender_name: str,
-        thread_name: str,
+        thread_name: Thread,
         message_content: str | None = None,
         subject: str | None = None,
         body: str | None = None,
@@ -173,8 +174,8 @@ class ContactIndex:
         Args:
             contact_id: The contact's ID.
             sender_name: Display name for the message sender.
-            thread_name: Which thread to push to (sms, email, voice, unify_message).
-            message_content: Message text (for sms, voice).
+            thread_name: Which thread to push to (Thread.SMS, Thread.EMAIL, etc.).
+            message_content: Message text (for SMS, voice).
             subject: Email subject (for email).
             body: Email body (for email).
             email_id: Email ID (for email).
@@ -191,7 +192,7 @@ class ContactIndex:
         name = sender_name if role == "user" else "You" if role == "assistant" else role
 
         # Create appropriate message type
-        if thread_name == "email":
+        if thread_name == Thread.EMAIL:
             message = EmailMessage(
                 name=name,
                 subject=subject or "",
@@ -200,7 +201,7 @@ class ContactIndex:
                 timestamp=timestamp,
                 attachments=attachments or [],
             )
-        elif thread_name == "unify_message":
+        elif thread_name == Thread.UNIFY_MESSAGE:
             message = UnifyMessage(
                 name=name,
                 content=message_content or "",

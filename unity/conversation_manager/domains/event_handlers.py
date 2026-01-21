@@ -5,6 +5,7 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
+from unity.transcript_manager.types.medium import Medium, Mode, Thread
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -83,7 +84,7 @@ CallEvents = Union[
     (PhoneCallReceived, PhoneCallSent, UnifyMeetReceived, PhoneCallAnswered),
 )
 async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
-    if cm.mode in ["call", "unify_meet"]:
+    if cm.mode.is_voice:
         if isinstance(event, PhoneCallAnswered):
             await cm.event_broker.publish(
                 "app:call:status",
@@ -132,7 +133,7 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         cm.contact_index.push_message(
             contact_id=contact_id,
             sender_name=sender_name,
-            thread_name="voice",
+            thread_name=Thread.VOICE,
             message_content=message_content,
             role=role,
             timestamp=event.timestamp,
@@ -147,13 +148,13 @@ async def _(
     **kwargs,
 ):
     if isinstance(event, PhoneCallStarted):
-        cm.mode = "call"
+        cm.mode = Mode.CALL
         phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
         if contact is None:
             contact = event.contact
     else:
-        cm.mode = "unify_meet"
+        cm.mode = Mode.UNIFY_MEET
         contact = cm.contact_index.get_contact(contact_id=1)
 
     contact_id = contact.get("contact_id") if contact else 1
@@ -168,7 +169,7 @@ async def _(
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name="voice",
+        thread_name=Thread.VOICE,
         message_content="<Call Started>",
         timestamp=event.timestamp,
     )
@@ -202,7 +203,7 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name="voice",
+        thread_name=Thread.VOICE,
         message_content=event.content,
         role=role,
     )
@@ -232,7 +233,7 @@ async def _(
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name="voice",
+        thread_name=Thread.VOICE,
         message_content=event.content,
         role="Guidance",
     )
@@ -245,7 +246,7 @@ async def _(
     *args,
     **kwargs,
 ):
-    cm.mode = "text"
+    cm.mode = Mode.TEXT
     cm.call_manager.call_contact = None
     if isinstance(event, PhoneCallEnded):
         cm.call_manager.conference_name = None
@@ -355,17 +356,17 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 
     match event:
         case SMSSent():
-            thread = "sms"
+            thread = Thread.SMS
             message_content = event.content
             notif_content = f"SMS sent to {sender_name}"
             role = "assistant"
         case SMSReceived():
-            thread = "sms"
+            thread = Thread.SMS
             message_content = event.content
             notif_content = f"SMS Received from {sender_name}"
             role = "user"
         case EmailSent():
-            thread = "email"
+            thread = Thread.EMAIL
             subject = event.subject
             body = event.body
             email_id = event.email_id_replied_to
@@ -373,7 +374,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Email sent to {sender_name}"
             role = "assistant"
         case EmailReceived():
-            thread = "email"
+            thread = Thread.EMAIL
             subject = event.subject
             body = event.body
             email_id = event.email_id
@@ -381,13 +382,13 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Email Received from {sender_name}"
             role = "user"
         case UnifyMessageSent():
-            thread = "unify_message"
+            thread = Thread.UNIFY_MESSAGE
             message_content = event.content
             attachments = event.attachments
             notif_content = f"Unify message sent to {sender_name}"
             role = "assistant"
         case UnifyMessageReceived():
-            thread = "unify_message"
+            thread = Thread.UNIFY_MESSAGE
             message_content = event.content
             attachments = event.attachments
             notif_content = f"Unify message from {sender_name}"
@@ -605,10 +606,13 @@ async def _(
 
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
-    if event.medium == "phone_call" and cm.call_manager.call_exchange_id == UNASSIGNED:
+    if (
+        event.medium == Medium.PHONE_CALL
+        and cm.call_manager.call_exchange_id == UNASSIGNED
+    ):
         cm.call_manager.call_exchange_id = event.exchange_id
     if (
-        event.medium == "unify_meet"
+        event.medium == Medium.UNIFY_MEET
         and cm.call_manager.unify_meet_exchange_id == UNASSIGNED
     ):
         cm.call_manager.unify_meet_exchange_id = event.exchange_id
@@ -673,7 +677,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
         f"Direct message: {event.content[:50]}...",
     )
 
-    if cm.mode in ["call", "unify_meet"]:
+    if cm.mode.is_voice:
         await cm.event_broker.publish(
             "app:call:call_guidance",
             json.dumps({"content": event.content}),
@@ -686,7 +690,7 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
-        thread_name="voice",
+        thread_name=Thread.VOICE,
         message_content=event.content,
         role="assistant",
         timestamp=event.timestamp,
