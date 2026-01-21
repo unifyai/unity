@@ -385,6 +385,26 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     asyncio.create_task(managers_utils.listen_to_operations(cm))
 
 
+@EventHandler.register(AssistantUpdateEvent)
+async def _(event: AssistantUpdateEvent, cm: "ConversationManager", *args, **kwargs):
+    cm._session_logger.info("assistant_update", "Received assistant update event")
+    payload = event.to_dict()["payload"]
+    cm.set_details(payload)
+    cm.call_manager.set_config(cm.get_call_config())
+
+    # Update contact manager with new assistant/user details
+    await managers_utils.queue_operation(
+        managers_utils.update_session_contacts,
+        cm,
+        event.assistant_name,
+        event.assistant_number,
+        event.assistant_email,
+        event.user_name,
+        event.user_number,
+        event.user_email,
+    )
+
+
 @EventHandler.register(GetContactsResponse)
 async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info("state_update", f"Setting {len(event.contacts)} contacts")
