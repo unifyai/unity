@@ -9,7 +9,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, Optional, Callable, Awaitable, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
-from unity.actor.base import BaseActor
+from unity.actor.base import BaseCodeActActor
 from unity.actor.handle import ActorHandle
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.primitives import ComputerPrimitives
@@ -605,7 +605,7 @@ class CodeExecutionSandbox:
         }
 
 
-class CodeActActor(BaseActor):
+class CodeActActor(BaseCodeActActor):
     """
     An actor that uses a conversational tool loop and a stateful code execution
     sandbox to accomplish tasks. It acts as a baseline for code-centric agents.
