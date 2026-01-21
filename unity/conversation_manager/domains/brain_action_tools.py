@@ -23,6 +23,7 @@ from unity.conversation_manager.events import (
     ActorHandleResponse,
     Error,
 )
+from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
     derive_short_name,
@@ -776,8 +777,16 @@ class ConversationManagerBrainActionTools:
 
             return {"status": "ok", "operation": operation, "result": result}
 
-        steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
-        if param_name:
-            steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
+        # Copy signature and docstring from the handle's method to get proper tool schema
+        if handle is not None and hasattr(handle, operation):
+            DynamicToolFactory._adopt_signature_and_annotations(
+                getattr(handle, operation),
+                steering_tool,
+            )
+        else:
+            # Fallback: set docstring manually (no signature available)
+            steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
+            if param_name:
+                steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
 
         return steering_tool

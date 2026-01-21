@@ -307,3 +307,114 @@ def test_wait_tool_has_usage_guidance(initialized_cm):
     assert (
         "prefer" in doc_lower or "when" in doc_lower
     ), "'wait' docstring should explain when to use it"
+
+
+# =============================================================================
+# Dynamic Steering Tool Schema Tests
+# =============================================================================
+
+
+def test_steering_tools_have_proper_signatures(initialized_cm):
+    """
+    Test that dynamic steering tools have proper function signatures.
+
+    This verifies that the steering tools (interject, pause, resume, etc.)
+    correctly inherit signatures from the underlying handle methods, so
+    that the LLM sees proper required parameters in the tool schema.
+
+    This test was added after a bug where steering tools were created with
+    only **kwargs, causing the LLM to call them with empty arguments.
+    """
+    from typing import Optional
+
+    from unity.common.llm_helpers import method_to_schema
+    from unity.conversation_manager.domains.brain_action_tools import (
+        ConversationManagerBrainActionTools,
+    )
+
+    # Create a mock handle with properly-typed methods that match SteerableToolHandle
+    class MockHandle:
+        """Mock handle with proper signatures matching SteerableToolHandle."""
+
+        async def interject(
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont: list[dict] | None = None,
+            images: list | None = None,
+        ) -> Optional[str]:
+            """Provide additional information or instructions to the running task."""
+
+        async def pause(self) -> Optional[str]:
+            """Pause this task temporarily without cancelling it."""
+
+        async def resume(self) -> Optional[str]:
+            """Resume a task that was previously paused."""
+
+        def stop(
+            self,
+            reason: Optional[str] = None,
+            *,
+            parent_chat_context_cont: list[dict] | None = None,
+        ) -> Optional[str]:
+            """Stop this task immediately, cancelling any pending work."""
+
+        async def ask(
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont: list[dict] | None = None,
+            images: list | dict | None = None,
+        ):
+            """Query the status or progress of this running task."""
+
+    mock_handle = MockHandle()
+
+    # Set up an in-flight action with the mock handle
+    cm = initialized_cm.cm
+    cm.in_flight_actions = {
+        0: {
+            "query": "Test action",
+            "handle": mock_handle,
+            "handle_actions": [],
+        },
+    }
+
+    # Build the steering tools
+    action_tools = ConversationManagerBrainActionTools(cm)
+    steering_tools = action_tools.build_action_steering_tools()
+
+    # Find the interject tool
+    interject_tool = None
+    for name, fn in steering_tools.items():
+        if name.startswith("interject_"):
+            interject_tool = fn
+            break
+
+    assert interject_tool is not None, "Should have an interject steering tool"
+
+    # Get the schema for the interject tool
+    schema = method_to_schema(interject_tool, "interject_test")
+    params = schema["function"]["parameters"]
+
+    # The schema should have proper properties (not empty)
+    # Either 'message' or 'content' should be defined
+    props = params.get("properties", {})
+    assert props, (
+        f"Steering tool schema should have properties defined, got empty. "
+        f"Full schema: {schema}"
+    )
+
+    # Check that the 'message' parameter is present and required
+    has_message = "message" in props
+    assert has_message, (
+        f"Steering tool should have 'message' parameter. "
+        f"Got properties: {list(props.keys())}. Full schema: {schema}"
+    )
+
+    # The 'message' parameter should be required (no default value in original signature)
+    required = params.get("required", [])
+    assert "message" in required, (
+        f"'message' parameter should be required. "
+        f"Got required: {required}. Full schema: {schema}"
+    )
