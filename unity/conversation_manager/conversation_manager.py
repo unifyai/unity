@@ -34,7 +34,8 @@ from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.medium import Mode, Thread
+from unity.conversation_manager.types import Mode
+from unity.transcript_manager.types.medium import Medium
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 
@@ -216,7 +217,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if not conv_state:
             return conversation_turns, last_message_timestamp
 
-        voice_thread = conv_state.threads.get(Thread.VOICE, [])
+        voice_medium = (
+            Medium.UNIFY_MEET if self.mode == Mode.UNIFY_MEET else Medium.PHONE_CALL
+        )
+        voice_thread = conv_state.threads.get(voice_medium, [])
 
         # Optionally limit to last N messages
         if max_messages is not None:
@@ -734,10 +738,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
             contact = self.get_active_contact()
             if contact:
                 contact_id = contact.get("contact_id")
+                voice_medium = (
+                    Medium.UNIFY_MEET
+                    if self.mode == Mode.UNIFY_MEET
+                    else Medium.PHONE_CALL
+                )
                 self.contact_index.push_message(
                     contact_id=contact_id,
                     sender_name="You",
-                    thread_name=Thread.VOICE,
+                    thread_name=voice_medium,
                     message_content=decision.content,
                     role="assistant",
                 )

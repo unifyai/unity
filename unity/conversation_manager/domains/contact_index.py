@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from unity.common.prompt_helpers import now as prompt_now
-from unity.transcript_manager.types.medium import Thread
+from unity.transcript_manager.types.medium import Medium
 
 if TYPE_CHECKING:
     from unity.contact_manager.base import BaseContactManager
@@ -57,12 +57,13 @@ class ConversationState:
     contact_id: int
     on_call: bool = False
     global_thread: deque = field(default_factory=lambda: deque(maxlen=50))
-    threads: dict[Thread, deque] = field(
+    threads: dict[Medium, deque] = field(
         default_factory=lambda: {
-            Thread.SMS: deque(maxlen=25),
-            Thread.EMAIL: deque(maxlen=25),
-            Thread.VOICE: deque(maxlen=25),
-            Thread.UNIFY_MESSAGE: deque(maxlen=25),
+            Medium.SMS_MESSAGE: deque(maxlen=25),
+            Medium.EMAIL: deque(maxlen=25),
+            Medium.PHONE_CALL: deque(maxlen=25),
+            Medium.UNIFY_MEET: deque(maxlen=25),
+            Medium.UNIFY_MESSAGE: deque(maxlen=25),
         },
     )
 
@@ -159,7 +160,7 @@ class ContactIndex:
         self,
         contact_id: int,
         sender_name: str,
-        thread_name: Thread,
+        thread_name: Medium,
         message_content: str | None = None,
         subject: str | None = None,
         body: str | None = None,
@@ -174,7 +175,7 @@ class ContactIndex:
         Args:
             contact_id: The contact's ID.
             sender_name: Display name for the message sender.
-            thread_name: Which thread to push to (Thread.SMS, Thread.EMAIL, etc.).
+            thread_name: Which thread to push to (Medium.SMS_MESSAGE, Medium.EMAIL, etc.).
             message_content: Message text (for SMS, voice).
             subject: Email subject (for email).
             body: Email body (for email).
@@ -192,7 +193,7 @@ class ContactIndex:
         name = sender_name if role == "user" else "You" if role == "assistant" else role
 
         # Create appropriate message type
-        if thread_name == Thread.EMAIL:
+        if thread_name == Medium.EMAIL:
             message = EmailMessage(
                 name=name,
                 subject=subject or "",
@@ -201,7 +202,7 @@ class ContactIndex:
                 timestamp=timestamp,
                 attachments=attachments or [],
             )
-        elif thread_name == Thread.UNIFY_MESSAGE:
+        elif thread_name == Medium.UNIFY_MESSAGE:
             message = UnifyMessage(
                 name=name,
                 content=message_content or "",
