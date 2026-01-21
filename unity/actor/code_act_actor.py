@@ -5,6 +5,10 @@ import io
 import traceback
 import json
 import ast
+import copy
+import uuid
+from datetime import datetime, timezone
+import logging
 from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, Optional, Callable, Awaitable, Type, TYPE_CHECKING
 from pydantic import BaseModel
@@ -13,7 +17,7 @@ from unity.actor.base import BaseCodeActActor
 from unity.actor.handle import ActorHandle
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.primitives import ComputerPrimitives
-from unity.actor.prompt_builders import _build_code_act_rules_and_examples
+from unity.actor.prompt_builders import build_code_act_prompt
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
@@ -139,189 +143,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         return None
-
-
-def build_code_act_system_prompt(
-    environments: Dict[str, "BaseEnvironment"],
-    tools: Optional[Dict[str, Callable]] = None,
-) -> str:
-    """Builds the rich system prompt for the CodeActActor with enhanced quality.
-
-    Args:
-        environments: Active execution environments (computer_primitives, primitives, etc.)
-        tools: The tools dict - used to dynamically render additional tools (e.g. FunctionManager).
-    """
-    from unity.common.prompt_helpers import render_tools_block
-
-    rules_and_examples = _build_code_act_rules_and_examples(environments=environments)
-
-    # Primary execution tool - always present and deserves its own dedicated section
-    execute_tool = {
-        "execute_python_code": {
-            "signature": "async def execute_python_code(thought: str, code: str) -> Any",
-            "docstring": (
-                "Executes a block of Python code in a stateful sandbox and returns the result.\n"
-                "You have access to environment globals injected into the sandbox (e.g. `computer_primitives`, `primitives`).\n"
-                "All variables are preserved between calls. The sandbox is asynchronous - use await for all async methods."
-            ),
-        },
-    }
-    execute_tool_reference = json.dumps(execute_tool, indent=4)
-
-    has_browser_env = "computer_primitives" in environments
-    role_line = "You are an expert agent that solves tasks by writing and executing Python code."
-    capabilities_line = (
-        "Your primary tool is a stateful code execution sandbox where you can control browsers, "
-        "send communications, and perform complex automation tasks."
-        if has_browser_env
-        else "Your primary tool is a stateful code execution sandbox where you can use whatever tool "
-        "domains are available via injected environment globals (e.g. state managers, and optionally browser/desktop)."
-    )
-
-    prompt = f"""
-### Your Role: Code-First Automation Agent
-{role_line} {capabilities_line}
-
-### Primary Execution Tool
-```json
-{execute_tool_reference}
-```
-
-{rules_and_examples}
-"""
-
-    # Dynamically render additional tools (e.g. FunctionManager tools) if present
-    if tools:
-        # Filter out execute_python_code since it has its own dedicated section above
-        additional_tools = {
-            k: v for k, v in tools.items() if k != "execute_python_code"
-        }
-        if additional_tools:
-            prompt += (
-                f"\n### Additional Tools (JSON Tool Calls)\n"
-                f"These tools are called via **structured JSON tool calls**, NOT inside Python code.\n\n"
-                f"{render_tools_block(additional_tools)}\n"
-            )
-
-        # Add FunctionManager guidance if its tools are present
-        has_fm_tools = any(k.startswith("FunctionManager_") for k in tools)
-        if has_fm_tools:
-            prompt += """
-### Function Library (CRITICAL)
-
-You have access to a catalogue of **pre-stored reusable functions** via the FunctionManager tools listed above.
-
-**🎯 FUNCTION-FIRST WORKFLOW:**
-
-1. **ALWAYS search first** using FunctionManager tools (structured JSON tool calls, NOT Python code):
-   - `FunctionManager_search_functions` - semantic search for functions
-   - `FunctionManager_filter_functions` - filter-based search
-   - `FunctionManager_list_functions` - list all available functions
-
-   **Important**: Do this **before** you call `execute_python_code` for a new user request.
-   Even if you *think* the correct answer is a direct `primitives.*` call, still search first —
-   many memoized skills are thin wrappers around state managers (contacts/tasks/knowledge/transcripts/guidance/web).
-
-2. **Functions are automatically injected into your Python sandbox** after searching.
-   - The function name(s) returned by the tool become available immediately in Python.
-   - Dependencies are injected automatically (including nested helper functions).
-   - Venv-backed functions work transparently (subprocess RPC hidden behind an awaitable callable).
-
-3. **If found → USE IT**: Pre-saved functions are tested, optimized, and handle edge cases.
-   Don't re-explore tables/schemas when a function already does the job.
-
-4. **Read signatures carefully**: Check `argspec` in the search results for parameter options
-   like `group_by`, `include_plots`, date filters, etc.
-
-5. **Execute found functions** in your Python code (after the JSON tool call).
-
-Example workflow:
-- Tool call (JSON): `FunctionManager_search_functions(query="contacts prefer phone", n=5)`
-- Python code (after search): `result = await ask_contacts_question("Which contacts prefer phone?"); print(result)`
-
-**❌ ANTI-PATTERN (AVOID THIS):**
-```python
-# DON'T explore tables when a function already exists!
-storage = await primitives.files.describe(file_path="...")  # Unnecessary!
-columns = await primitives.files.list_columns(context="...")  # Unnecessary!
-```
-
-**✅ CORRECT WORKFLOW:**
-1. Call `FunctionManager_search_functions` tool with your query
-2. Review the returned functions and their `argspec`
-3. Execute the function in Python code with appropriate parameters
-
-**When passing tools to functions:**
-- Functions accepting `tools: FileTools` need: `tools = primitives.files.get_tools()`
-- For direct data operations, use: `await primitives.files.reduce(...)`
-
-### Function Execution Modes
-
-Functions support three **execution modes** for fine-grained state control.
-By default, functions execute **statefully** (state persists across calls), but you can
-override this on a per-call basis:
-
-| Mode | Syntax | State Behavior |
-|------|--------|----------------|
-| **stateful** (default) | `await func(...)` | Variables persist across calls |
-| **stateless** | `await func.stateless(...)` | Fresh environment, no inherited state |
-| **read_only** | `await func.read_only(...)` | Sees current state, but changes are discarded |
-
-**When to use each mode:**
-
-- **stateful** (default): Use for iterative workflows where you build up state incrementally.
-  Example: load data once, then run multiple analyses that reference the loaded data.
-
-- **stateless**: Use for pure functions that should produce identical results regardless of
-  execution history. Guarantees reproducibility and prevents accidental state pollution.
-  Example: running a deterministic computation multiple times with different inputs.
-
-- **read_only**: Use for "what-if" exploration without side effects. Inspect or transform
-  current state without committing changes.
-  Example: preview a data transformation before deciding whether to apply it permanently.
-
-**Example usage:**
-```python
-# Stateful (default) - state persists
-await load_dataset(path="data.csv")  # First call: loads 'df' into context
-await analyze_dataset()               # Second call: can access 'df'
-
-# Stateless - isolated execution, no side effects
-result = await compute_score.stateless(values=[1, 2, 3])
-
-# Read-only - see state without modifying it
-preview = await transform_data.read_only(sample_size=100)  # 'df' unchanged
-# If preview looks good, run statefully to persist:
-await transform_data(sample_size=100)  # Now 'df' is transformed
-```
-
-### Inspecting Execution State
-
-Before deciding how to call a function (stateful/stateless/read_only), you can inspect
-what state currently exists using the `inspect_state` tool:
-
-```
-inspect_state()
-```
-
-This returns:
-- **contexts**: Dict mapping context names to their variables (e.g., `default`, `venv_1`, `bash_0`)
-- **summary**: Human-readable overview of active contexts and variables
-
-**When to inspect state:**
-- Before calling a function that might depend on prior state
-- When debugging unexpected behavior (is the state what you expect?)
-- When deciding whether to use stateless (isolation) vs stateful (extend existing state)
-- Before using read_only mode (to see what state you'll be reading)
-
-**Example workflow:**
-1. Call `inspect_state()` to see current state across all contexts
-2. If a context has data you need → use default stateful call
-3. If a context has state you want to avoid → use `.stateless()`
-4. If you want to preview without modifying → use `.read_only()`
-"""
-
-    return prompt
 
 
 class CodeExecutionSandbox:
