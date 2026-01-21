@@ -3062,7 +3062,9 @@ async def main_plan():
                     elif isinstance(final_out, str):
                         final_out = self.response_format.model_validate_json(final_out)
                     else:
-                        raise TypeError("Unsupported final result type for response_format.")
+                        raise TypeError(
+                            "Unsupported final result type for response_format.",
+                        )
                 except Exception:
                     # Fall back: ask an LLM to format the final output into the schema.
                     try:
@@ -3125,7 +3127,11 @@ async def main_plan():
                 self._set_state(_HierarchicalHandleState.COMPLETED)
                 # Preserve any response_format coercion performed in _start_main_execution_loop.
                 self._set_final_result(
-                    self._final_result_str if self._final_result_str is not None else str(result),
+                    (
+                        self._final_result_str
+                        if self._final_result_str is not None
+                        else str(result)
+                    ),
                 )
                 return
 

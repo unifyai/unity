@@ -97,6 +97,7 @@ async def _test_non_blocking_and_success(actor):
     """Non-blocking verification + successful completion."""
     active_task = None
     try:
+
         async def tiny_delay(*_a, **_k):
             await asyncio.sleep(0.01)
 
@@ -125,9 +126,14 @@ async def _test_non_blocking_and_success(actor):
             CANNED_PLAN_SUCCESS_ASYNC_VERIFICATION,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION)
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
 
         final_log = "\n".join(active_task.action_log)
         assert "step_A_navigate" in final_log
@@ -144,6 +150,7 @@ async def _test_failure_and_cancellation(actor):
     """Verification failure triggers recovery; later verifications are cancelled."""
     active_task = None
     try:
+
         async def tiny_delay(*_a, **_k):
             await asyncio.sleep(0.01)
 
@@ -151,7 +158,12 @@ async def _test_failure_and_cancellation(actor):
         actor.computer_primitives.act = AsyncMock(side_effect=tiny_delay)
 
         mock_client = ConfigurableMockVerificationClient()
-        mock_client.set_behavior("step_A_navigate", 0.1, status="ok", reason="Mock success")
+        mock_client.set_behavior(
+            "step_A_navigate",
+            0.1,
+            status="ok",
+            reason="Mock success",
+        )
         mock_client.set_behavior(
             "step_B_fail_verification",
             0.1,
@@ -203,7 +215,9 @@ async def _test_failure_and_cancellation(actor):
         active_task.course_correction_client = mock_client
         active_task.summarization_client = mock_client
 
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
         _ = await asyncio.wait_for(active_task.result(), timeout=60)
 
         final_log = "\n".join(active_task.action_log)
@@ -219,6 +233,7 @@ async def _test_preemption(actor):
     """Earlier failure preempts recovery of later failure."""
     active_task = None
     try:
+
         async def tiny_delay(*_a, **_k):
             await asyncio.sleep(0.01)
 
@@ -248,7 +263,11 @@ async def _test_preemption(actor):
             ],
         )
 
-        active_task = HierarchicalActorHandle(actor=actor, goal="Test preemption.", persist=False)
+        active_task = HierarchicalActorHandle(
+            actor=actor,
+            goal="Test preemption.",
+            persist=False,
+        )
         active_task.can_store = False
         if active_task._execution_task:
             active_task._execution_task.cancel()
@@ -263,7 +282,9 @@ async def _test_preemption(actor):
             CANNED_PLAN_PREEMPTION_ASYNC_VERIFICATION,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         async def slow_generate(*_a, **_k):
             await asyncio.sleep(1.0)
@@ -277,7 +298,9 @@ async def _test_preemption(actor):
             """,
             )
 
-        active_task.implementation_client.generate = AsyncMock(side_effect=slow_generate)
+        active_task.implementation_client.generate = AsyncMock(
+            side_effect=slow_generate,
+        )
         active_task.course_correction_client = mock_client
         active_task.summarization_client = mock_client
 
@@ -376,10 +399,17 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
             CANNED_PLAN_WITH_NESTED_FAILURE_ROBUSTNESS_FIXES,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         mock_v_client = ConfigurableMockVerificationClient()
-        mock_v_client.set_behavior("parent_skill", 0.1, status="ok", reason="Parent skill looks fine.")
+        mock_v_client.set_behavior(
+            "parent_skill",
+            0.1,
+            status="ok",
+            reason="Parent skill looks fine.",
+        )
         mock_v_client.set_behavior(
             "_nested_child_fails_verification",
             2.0,
@@ -395,7 +425,9 @@ async def test_nested_verification_failure_does_not_corrupt_parent_execution():
                 return "Fixed parent skill finished successfully."
         """,
         )
-        active_task.implementation_client = MockImplementationClient(new_code=new_parent_code)
+        active_task.implementation_client = MockImplementationClient(
+            new_code=new_parent_code,
+        )
         active_task.course_correction_client = mock_v_client
         active_task.summarization_client = mock_v_client
 
@@ -480,8 +512,14 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
         fm = FunctionManager()
         fm.clear()
 
-        fm.add_functions(implementations=[FUNCTION_WITHOUT_VERIFY], verify={"simple_navigation": False})
-        fm.add_functions(implementations=[FUNCTION_WITH_VERIFY], verify={"complex_data_entry": True})
+        fm.add_functions(
+            implementations=[FUNCTION_WITHOUT_VERIFY],
+            verify={"simple_navigation": False},
+        )
+        fm.add_functions(
+            implementations=[FUNCTION_WITH_VERIFY],
+            verify={"complex_data_entry": True},
+        )
 
         actor = HierarchicalActor(
             function_manager=fm,
@@ -514,7 +552,9 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
             CANNED_PLAN_WITH_FUNCTIONS_SKIP_VERIFY_FLAG,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(active_task, "main_plan", timeout=30)
 
@@ -535,4 +575,3 @@ async def test_functions_with_skip_verify_flag_bypass_verification():
                 pass
         if actor:
             await actor.close()
-

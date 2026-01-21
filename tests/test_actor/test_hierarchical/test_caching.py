@@ -57,13 +57,16 @@ async def test_loop_iterations_get_unique_cache_keys():
     active_task = None
 
     try:
+
         class StepResult(BaseModel):
             status: str = Field(description="Status of the step")
 
         StepResult.model_rebuild()
 
         actor.computer_primitives.act = AsyncMock(return_value="done")
-        actor.computer_primitives.observe = AsyncMock(return_value=StepResult(status="ok"))
+        actor.computer_primitives.observe = AsyncMock(
+            return_value=StepResult(status="ok"),
+        )
 
         active_task = HierarchicalActorHandle(
             actor=actor,
@@ -78,8 +81,13 @@ async def test_loop_iterations_get_unique_cache_keys():
             except asyncio.CancelledError:
                 pass
 
-        active_task.plan_source_code = actor._sanitize_code(LOOP_CACHING_PLAN, active_task)
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task.plan_source_code = actor._sanitize_code(
+            LOOP_CACHING_PLAN,
+            active_task,
+        )
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(
             active_task,
@@ -122,7 +130,10 @@ async def test_loop_iterations_get_unique_cache_keys():
 
         restart_log_index = -1
         for i, entry in enumerate(active_task.action_log):
-            if "RUN TRANSITION" in entry or "RESTART: Restarting execution loop" in entry:
+            if (
+                "RUN TRANSITION" in entry
+                or "RESTART: Restarting execution loop" in entry
+            ):
                 restart_log_index = i
                 break
         assert restart_log_index != -1
@@ -131,7 +142,10 @@ async def test_loop_iterations_get_unique_cache_keys():
         deadline = loop.time() + 30
         while loop.time() < deadline:
             current_log_slice = active_task.action_log[restart_log_index + 1 :]
-            if any("STATE CHANGE: RUNNING -> PAUSED_FOR_INTERJECTION" in e for e in current_log_slice):
+            if any(
+                "STATE CHANGE: RUNNING -> PAUSED_FOR_INTERJECTION" in e
+                for e in current_log_slice
+            ):
                 break
             await asyncio.sleep(0.1)
 
@@ -196,6 +210,7 @@ async def test_nested_loop_combinations_get_unique_cache_keys():
     active_task = None
 
     try:
+
         class NestedResult(BaseModel):
             value: int = Field(description="Result value")
 
@@ -224,8 +239,13 @@ async def test_nested_loop_combinations_get_unique_cache_keys():
             except asyncio.CancelledError:
                 pass
 
-        active_task.plan_source_code = actor._sanitize_code(NESTED_LOOP_PLAN, active_task)
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task.plan_source_code = actor._sanitize_code(
+            NESTED_LOOP_PLAN,
+            active_task,
+        )
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(
             active_task,
@@ -256,4 +276,3 @@ async def test_action_caching_orchestrator():
     pytest.skip(
         "Orchestrator test is redundant; run individual caching tests instead.",
     )
-

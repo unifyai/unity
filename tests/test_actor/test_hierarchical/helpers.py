@@ -211,4 +211,3 @@ async def wait_for_log_entry(
     raise AssertionError(
         f"Timed out waiting for log entry '{log_substring}'.\n--- Log Tail ---\n{tail}",
     )
-

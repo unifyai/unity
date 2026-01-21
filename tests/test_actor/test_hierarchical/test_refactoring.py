@@ -14,9 +14,15 @@ from unity.actor.hierarchical_actor import (
     InterjectionDecision,
     _HierarchicalHandleState,
 )
-from unity.function_manager.computer_backends import MockComputerBackend, VALID_MOCK_SCREENSHOT_PNG
+from unity.function_manager.computer_backends import (
+    MockComputerBackend,
+    VALID_MOCK_SCREENSHOT_PNG,
+)
 
-from tests.test_actor.test_hierarchical.helpers import SimpleMockVerificationClient, wait_for_state
+from tests.test_actor.test_hierarchical.helpers import (
+    SimpleMockVerificationClient,
+    wait_for_state,
+)
 
 
 INITIAL_PLAN = textwrap.dedent(
@@ -129,7 +135,10 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
                     action="modify_task",
                     reason="Teaching navigation to allrecipes.com",
                     patches=[
-                        FunctionPatch(function_name="main_plan", new_code=PLAN_AFTER_INTERJECTION_1),
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=PLAN_AFTER_INTERJECTION_1,
+                        ),
                     ],
                     cache=CacheInvalidateSpec(invalidate_steps=[]),
                 )
@@ -138,7 +147,10 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
                     action="modify_task",
                     reason="Teaching recipe summary step",
                     patches=[
-                        FunctionPatch(function_name="main_plan", new_code=PLAN_AFTER_INTERJECTION_2),
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=PLAN_AFTER_INTERJECTION_2,
+                        ),
                     ],
                     cache=CacheInvalidateSpec(invalidate_steps=[]),
                 )
@@ -147,7 +159,10 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
                     action="modify_task",
                     reason="Generalizing for chocolate chip cookies",
                     patches=[
-                        FunctionPatch(function_name="main_plan", new_code=PLAN_AFTER_GENERALIZATION),
+                        FunctionPatch(
+                            function_name="main_plan",
+                            new_code=PLAN_AFTER_GENERALIZATION,
+                        ),
                     ],
                     cache=CacheInvalidateSpec(invalidate_steps=[]),
                 )
@@ -168,20 +183,38 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
         active_task.modification_client.generate = mock_modification_generate
         active_task.plan_source_code = actor._sanitize_code(INITIAL_PLAN, active_task)
 
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION)
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
 
-        await active_task.interject("Navigate to allrecipes.com and search for 'chicken soup'")
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION)
+        await active_task.interject(
+            "Navigate to allrecipes.com and search for 'chicken soup'",
+        )
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
 
-        await active_task.interject("Click on the first search result and give me a brief summary.")
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION)
+        await active_task.interject(
+            "Click on the first search result and give me a brief summary.",
+        )
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
 
         await active_task.interject(
             "Perfect. Now, repeat the same process for 'chocolate chip cookies'.",
         )
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION)
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+        )
 
         await active_task.interject("Perfect. That's all. Thank you.")
 
@@ -195,7 +228,10 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
         assert "def main_plan" in final_code
         assert "async def search_recipe" in final_code
         assert "allrecipes.com" in final_log.lower()
-        assert "chicken soup" in final_log.lower() or "chocolate chip cookies" in final_log.lower()
+        assert (
+            "chicken soup" in final_log.lower()
+            or "chocolate chip cookies" in final_log.lower()
+        )
 
     finally:
         if active_task and not active_task.done():
@@ -207,4 +243,3 @@ async def test_demonstration_is_generalized_into_reusable_parameterized_skill():
             await actor.close()
         except Exception:
             pass
-

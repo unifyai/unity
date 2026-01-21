@@ -73,7 +73,9 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
             active_task,
         )
         active_task.verification_client = SimpleMockVerificationClient()
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(active_task, "main_plan", timeout=30)
         await asyncio.sleep(1)
@@ -94,4 +96,3 @@ async def test_plan_pauses_for_user_clarification_and_resumes_with_response():
             await actor.close()
         except Exception:
             pass
-

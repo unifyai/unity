@@ -64,6 +64,7 @@ async def test_cache_hits_after_interjection_for_browser_primitives():
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
     active_task = None
     try:
+
         class PageResult(BaseModel):
             heading: str = Field(description="The main heading of the page.")
 
@@ -71,7 +72,9 @@ async def test_cache_hits_after_interjection_for_browser_primitives():
 
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
         actor.computer_primitives.act = AsyncMock(return_value=None)
-        actor.computer_primitives.observe = AsyncMock(return_value=PageResult(heading="Mock Heading"))
+        actor.computer_primitives.observe = AsyncMock(
+            return_value=PageResult(heading="Mock Heading"),
+        )
 
         active_task = HierarchicalActorHandle(
             actor=actor,
@@ -90,7 +93,9 @@ async def test_cache_hits_after_interjection_for_browser_primitives():
             CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(
             active_task,
@@ -132,9 +137,12 @@ async def test_cache_hits_after_interjection_for_browser_primitives():
         loop = asyncio.get_event_loop()
         deadline = loop.time() + 30
         while loop.time() < deadline:
-            if "\n".join(active_task.action_log).count(
-                "STATE CHANGE: RUNNING -> PAUSED_FOR_INTERJECTION",
-            ) >= 2:
+            if (
+                "\n".join(active_task.action_log).count(
+                    "STATE CHANGE: RUNNING -> PAUSED_FOR_INTERJECTION",
+                )
+                >= 2
+            ):
                 break
             await asyncio.sleep(0.1)
 
@@ -184,7 +192,9 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
         active_task = HierarchicalActorHandle(
             actor=actor,
             goal="This goal will be replaced.",
-            parent_chat_context=[{"role": "user", "content": "Start the original test."}],
+            parent_chat_context=[
+                {"role": "user", "content": "Start the original test."},
+            ],
             max_escalations=1,
             max_local_retries=1,
         )
@@ -212,7 +222,9 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
             CANNED_PLAN_FOR_REPLACEMENT_STEERABLE_REPLACE,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await asyncio.sleep(1)
         status = await active_task.interject(
@@ -251,7 +263,9 @@ async def test_interject_with_various_image_formats():
     actor.computer_primitives.act = AsyncMock(return_value=None)
 
     im = ImageManager()
-    [img_id] = im.add_images([{"caption": "test image", "data": VALID_MOCK_SCREENSHOT_PNG}])
+    [img_id] = im.add_images(
+        [{"caption": "test image", "data": VALID_MOCK_SCREENSHOT_PNG}],
+    )
     img_id = int(img_id)
 
     active_task = None
@@ -286,8 +300,14 @@ async def test_interject_with_various_image_formats():
             ),
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION, timeout=30)
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
 
         list_images = [
             AnnotatedImageRef(
@@ -347,7 +367,9 @@ async def test_user_interjections_incrementally_build_and_modify_plan():
     active_task = None
     interjection_count = 0
 
-    def create_mock_modification_response(interjection_num: int) -> InterjectionDecision:
+    def create_mock_modification_response(
+        interjection_num: int,
+    ) -> InterjectionDecision:
         if interjection_num == 1:
             return InterjectionDecision(
                 action="modify_task",
@@ -414,10 +436,20 @@ async def test_user_interjections_incrementally_build_and_modify_plan():
         )
 
         _ = await active_task.interject("Navigate to allrecipes.com")
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION, timeout=30)
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
 
-        _ = await active_task.interject("Great, now search for 'chocolate chip cookies'.")
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION, timeout=30)
+        _ = await active_task.interject(
+            "Great, now search for 'chocolate chip cookies'.",
+        )
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
 
         _ = await active_task.interject("Perfect, that's all. We're done.")
         final_result = await asyncio.wait_for(active_task.result(), timeout=30)
@@ -531,7 +563,9 @@ async def test_explore_interjection_runs_in_detached_sandbox():
             CANNED_PLAN_FOR_EXPLORATION_STEERABLE_EXPLORE,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         # Poll faster to avoid edge timing where the log line appears right at the timeout boundary.
         await wait_for_log_entry(
@@ -540,9 +574,16 @@ async def test_explore_interjection_runs_in_detached_sandbox():
             timeout=30,
             poll=0.05,
         )
-        _ = await active_task.interject("Quick question, what is the title of the current page?")
+        _ = await active_task.interject(
+            "Quick question, what is the title of the current page?",
+        )
 
-        await wait_for_log_entry(active_task, "step_three_search", timeout=60, poll=0.05)
+        await wait_for_log_entry(
+            active_task,
+            "step_three_search",
+            timeout=60,
+            poll=0.05,
+        )
 
         _ = await asyncio.wait_for(active_task.result(), timeout=30)
 
@@ -642,7 +683,9 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
             CANNED_PLAN_FOR_MODIFICATION_STEERABLE_MODIFY,
             active_task,
         )
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_log_entry(active_task, "allrecipes.com", timeout=15)
         status = await active_task.interject(
@@ -673,4 +716,3 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
             await actor.close()
         except Exception:
             pass
-

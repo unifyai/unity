@@ -84,7 +84,9 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         # attempt to request clarification (the `request_clarification` tool will not be added).
         self._clar_up_q_internal: Optional[asyncio.Queue[str]] = clarification_up_q
         self._clar_down_q_internal: Optional[asyncio.Queue[str]] = clarification_down_q
-        self._notification_up_q_internal: Optional[asyncio.Queue[dict]] = notification_up_q
+        self._notification_up_q_internal: Optional[asyncio.Queue[dict]] = (
+            notification_up_q
+        )
         self._call_id: Optional[str] = call_id
 
         self._state: _HandleState = _HandleState.IDLE
@@ -131,7 +133,10 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         )
         # Preserve caller contextvars (e.g. per-request sandbox binding for CodeActActor).
         ctx = contextvars.copy_context()
-        asyncio.run_coroutine_threadsafe(ctx.run(self._manage_execution), self._main_event_loop)
+        asyncio.run_coroutine_threadsafe(
+            ctx.run(self._manage_execution),
+            self._main_event_loop,
+        )
 
     @property
     def chat_history(self) -> List[Dict[str, Any]]:
@@ -212,13 +217,18 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     loop_result_str = await self._loop_handle.result()
                     # If a response_format was requested, try to coerce the loop output into it.
                     # The underlying tool loop often returns a JSON string (e.g. '{"answer": 123}').
-                    if self._response_format is not None and loop_result_str is not None:
+                    if (
+                        self._response_format is not None
+                        and loop_result_str is not None
+                    ):
                         try:
                             if isinstance(loop_result_str, self._response_format):
                                 loop_result_str = loop_result_str
                             elif isinstance(loop_result_str, str):
-                                loop_result_str = self._response_format.model_validate_json(
-                                    loop_result_str,
+                                loop_result_str = (
+                                    self._response_format.model_validate_json(
+                                        loop_result_str,
+                                    )
                                 )
                             elif isinstance(loop_result_str, dict):
                                 loop_result_str = self._response_format.model_validate(
@@ -344,7 +354,10 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             return await self._notification_up_q_internal.get()
 
         # If we have both a caller queue and an inner loop, wait on whichever fires first.
-        if self._notification_up_q_internal is not None and self._loop_handle is not None:
+        if (
+            self._notification_up_q_internal is not None
+            and self._loop_handle is not None
+        ):
             loop_task = asyncio.create_task(self._loop_handle.next_notification())
             q_task = asyncio.create_task(self._notification_up_q_internal.get())
             done, pending = await asyncio.wait(

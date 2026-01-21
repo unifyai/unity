@@ -220,7 +220,10 @@ def provision_assistant_contact(self, assistant_log) -> None:
                 detail = str(e.response.json().get("detail", ""))
             except Exception:
                 detail = str(getattr(e.response, "text", ""))
-            if "Duplicate entry for unique field" in detail or "unique" in detail.lower():
+            if (
+                "Duplicate entry for unique field" in detail
+                or "unique" in detail.lower()
+            ):
                 return
         raise
 
@@ -320,7 +323,10 @@ def provision_user_contact(self, user_log) -> None:
                 detail = str(e.response.json().get("detail", ""))
             except Exception:
                 detail = str(getattr(e.response, "text", ""))
-            if "Duplicate entry for unique field" in detail or "unique" in detail.lower():
+            if (
+                "Duplicate entry for unique field" in detail
+                or "unique" in detail.lower()
+            ):
                 return
         raise
 

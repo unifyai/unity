@@ -222,7 +222,10 @@ async def make_code_act_actor(
     # Optionally strip FunctionManager tools to focus on on-the-fly routing via primitives.
     if not include_function_manager_tools:
         act_tools = actor.get_tools("act")
-        actor.add_tools("act", {"execute_python_code": act_tools["execute_python_code"]})
+        actor.add_tools(
+            "act",
+            {"execute_python_code": act_tools["execute_python_code"]},
+        )
 
     try:
         yield actor, primitives, calls

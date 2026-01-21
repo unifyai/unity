@@ -14,9 +14,15 @@ from unity.actor.hierarchical_actor import (
     InterjectionDecision,
     _HierarchicalHandleState,
 )
-from unity.function_manager.computer_backends import MockComputerBackend, VALID_MOCK_SCREENSHOT_PNG
+from unity.function_manager.computer_backends import (
+    MockComputerBackend,
+    VALID_MOCK_SCREENSHOT_PNG,
+)
 
-from tests.test_actor.test_hierarchical.helpers import SimpleMockVerificationClient, wait_for_state
+from tests.test_actor.test_hierarchical.helpers import (
+    SimpleMockVerificationClient,
+    wait_for_state,
+)
 
 
 @pytest.mark.asyncio
@@ -65,7 +71,9 @@ async def test_actor_extracts_information_from_images_during_execution():
 
         active_task.verification_client = SimpleMockVerificationClient()
 
-        def create_mock_modification_response(interjection_num: int) -> InterjectionDecision:
+        def create_mock_modification_response(
+            interjection_num: int,
+        ) -> InterjectionDecision:
             if interjection_num == 1:
                 return InterjectionDecision(
                     action="modify_task",
@@ -117,7 +125,9 @@ async def test_actor_extracts_information_from_images_during_execution():
             _ = (args, kwargs)
             nonlocal interjection_count
             interjection_count += 1
-            return create_mock_modification_response(interjection_count).model_dump_json()
+            return create_mock_modification_response(
+                interjection_count,
+            ).model_dump_json()
 
         active_task.modification_client.generate = mock_modification_generate
 
@@ -136,7 +146,9 @@ async def test_actor_extracts_information_from_images_during_execution():
             active_task,
         )
 
-        active_task._execution_task = asyncio.create_task(active_task._initialize_and_run())
+        active_task._execution_task = asyncio.create_task(
+            active_task._initialize_and_run(),
+        )
 
         await wait_for_state(
             active_task,
@@ -147,7 +159,11 @@ async def test_actor_extracts_information_from_images_during_execution():
         await active_task.interject(
             "Go to the 'My Drive' folder and Open the 'Unify TimeSheet' file.",
         )
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION, timeout=30)
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
 
         await active_task.interject(
             "Great! Now please calculate the total hrs for james and fill in the total in the cell highlighted in the image.",
@@ -158,7 +174,11 @@ async def test_actor_extracts_information_from_images_during_execution():
                 ),
             ],
         )
-        await wait_for_state(active_task, _HierarchicalHandleState.PAUSED_FOR_INTERJECTION, timeout=30)
+        await wait_for_state(
+            active_task,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
+            timeout=30,
+        )
 
         await active_task.interject("Perfect, the task is complete. Thank you.")
         _ = await asyncio.wait_for(active_task.result(), timeout=30)
@@ -173,4 +193,3 @@ async def test_actor_extracts_information_from_images_during_execution():
             await actor.close()
         except Exception:
             pass
-
