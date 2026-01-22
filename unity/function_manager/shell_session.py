@@ -24,6 +24,8 @@ class ShellExecutionResult:
     stderr: str
     exit_code: int
     error: Optional[str] = None
+    # Optional structured classification for callers (e.g., resource_limit).
+    error_type: Optional[str] = None
 
 
 class ShellSession:
