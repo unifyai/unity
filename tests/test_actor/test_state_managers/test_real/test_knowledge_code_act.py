@@ -8,7 +8,7 @@ import pytest
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
     assert_code_act_function_manager_used,
-    extract_code_act_execute_python_code_snippets,
+    extract_code_act_execute_code_snippets,
     make_code_act_actor,
 )
 from unity.function_manager.function_manager import FunctionManager
@@ -116,7 +116,7 @@ async def ask_knowledge_question(question: str, response_format=None) -> str:
 
         assert result and len(str(result)) > 0
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "ask_knowledge_question" in snippets
 
         assert "primitives.knowledge.ask" in calls
@@ -175,7 +175,7 @@ async def store_knowledge(fact: str) -> str:
         await handle.result()
 
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "store_knowledge" in snippets
 
         assert "primitives.knowledge.update" in calls

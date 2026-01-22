@@ -10,7 +10,7 @@ import pytest
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
     assert_code_act_function_manager_used,
-    extract_code_act_execute_python_code_snippets,
+    extract_code_act_execute_code_snippets,
     make_code_act_actor,
 )
 from unity.contact_manager.types.contact import Contact
@@ -110,7 +110,7 @@ async def ask_transcripts_question(question: str, response_format=None) -> str:
 
         assert result and len(str(result)) > 0
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "ask_transcripts_question" in snippets
 
         assert "primitives.transcripts.ask" in calls

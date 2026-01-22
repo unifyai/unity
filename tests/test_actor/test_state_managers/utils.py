@@ -149,8 +149,8 @@ def get_code_act_tool_calls(handle: Any) -> list[str]:
     return names
 
 
-def extract_code_act_execute_python_code_snippets(handle: Any) -> list[str]:
-    """Extract the `code` field from execute_python_code tool calls (best-effort)."""
+def extract_code_act_execute_code_snippets(handle: Any) -> list[str]:
+    """Extract the `code` field from execute_code tool calls (best-effort)."""
     try:
         chat_history = list(getattr(handle, "chat_history", []) or [])
     except Exception:
@@ -168,7 +168,7 @@ def extract_code_act_execute_python_code_snippets(handle: Any) -> list[str]:
             name = tc.get("name")
             args = tc.get("arguments")
 
-        if name != "execute_python_code":
+        if name != "execute_code":
             continue
 
         if isinstance(args, str):
@@ -224,7 +224,7 @@ async def make_code_act_actor(
         act_tools = actor.get_tools("act")
         actor.add_tools(
             "act",
-            {"execute_python_code": act_tools["execute_python_code"]},
+            {"execute_code": act_tools["execute_code"]},
         )
 
     try:

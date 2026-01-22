@@ -98,7 +98,7 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
     try:
         handle = await actor.act(
             "Call the tool FunctionManager_add_functions with implementations='async def x():\\n    return 1'. "
-            "Do not call execute_python_code.",
+            "Do not call execute_code.",
             can_store=False,
             persist=False,
             clarification_enabled=False,

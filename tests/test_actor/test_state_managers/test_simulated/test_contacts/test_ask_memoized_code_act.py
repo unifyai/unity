@@ -13,7 +13,7 @@ import pytest
 
 from tests.test_actor.test_state_managers.utils import (
     assert_code_act_function_manager_used,
-    extract_code_act_execute_python_code_snippets,
+    extract_code_act_execute_code_snippets,
     make_code_act_actor,
 )
 
@@ -66,7 +66,7 @@ async def ask_contacts_question(question: str, response_format=None) -> str:
 
         # Must have called the memoized function (not direct primitive call in the top-level code).
         code_snippets = "\n\n".join(
-            extract_code_act_execute_python_code_snippets(handle),
+            extract_code_act_execute_code_snippets(handle),
         )
         assert "ask_contacts_question" in code_snippets, (
             "Expected CodeAct to execute the memoized function in Python code. "
