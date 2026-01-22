@@ -58,6 +58,8 @@ dependencies = ["torch>=2.0", "transformers>=4.30"]
 - `precondition: Optional[dict]` - Required state before execution
 - `auto_sync: bool = True` - Set to False to exclude from auto-sync
 - `windows_os_required: bool = False` - Route execution to Windows VM when True
+- `data_required: Optional[list[str]]` - Args/paths to upload before remote execution
+- `data_output: Optional[list[str]]` - Args for output paths to download after execution
 
 ## Best Practice: Import Runtime Domain Types
 
@@ -89,8 +91,8 @@ async def is_admin(role: "Role") -> bool:
 - Removed from source = deleted from database
 """
 
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
 
 
 @dataclass
@@ -103,6 +105,8 @@ class CustomFunctionMetadata:
     precondition: Optional[Dict[str, Any]] = None
     auto_sync: bool = True
     windows_os_required: bool = False
+    data_required: List[str] = field(default_factory=list)
+    data_output: List[str] = field(default_factory=list)
 
 
 def custom_function(
@@ -113,6 +117,8 @@ def custom_function(
     precondition: Optional[Dict[str, Any]] = None,
     auto_sync: bool = True,
     windows_os_required: bool = False,
+    data_required: Optional[List[str]] = None,
+    data_output: Optional[List[str]] = None,
 ) -> Callable:
     """
     Decorator to mark a function for auto-sync to Functions/Compositional.
@@ -130,6 +136,12 @@ def custom_function(
                              when assistant has desktop_mode='windows' and
                              is_user_desktop=False. Use for Windows-only libraries
                              like xlwings or COM automation.
+        data_required: List of argument names or static paths for data to upload
+                       before remote execution. Argument names have their runtime
+                       values resolved; static paths (starting with '/') are uploaded
+                       directly. Paths are preserved under C:\\Unity on remote.
+        data_output: List of argument names whose values are output paths.
+                     After execution, these are downloaded from remote back to local.
 
     Example:
         @custom_function(venv_name="ml_env")
@@ -138,9 +150,14 @@ def custom_function(
             import torch
             return x * 2
 
-        @custom_function(venv_name="excel_env", windows_os_required=True)
-        async def process_excel(path: str) -> dict:
-            '''Run on Windows VM with xlwings.'''
+        @custom_function(
+            venv_name="excel_env",
+            windows_os_required=True,
+            data_required=["input_dir"],
+            data_output=["output_dir"],
+        )
+        async def process_excel(input_dir: str, output_dir: str) -> dict:
+            '''Run on Windows VM with data upload/download.'''
             import xlwings as xw
             return {"sheets": 1}
     """
@@ -154,6 +171,8 @@ def custom_function(
             precondition=precondition,
             auto_sync=auto_sync,
             windows_os_required=windows_os_required,
+            data_required=data_required or [],
+            data_output=data_output or [],
         )
         return func
 
