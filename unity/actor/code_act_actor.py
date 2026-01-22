@@ -37,6 +37,11 @@ _CURRENT_SANDBOX: contextvars.ContextVar["CodeExecutionSandbox"] = (
 
 logger = logging.getLogger(__name__)
 
+SupportedShellLanguage = Literal["bash", "zsh", "sh", "powershell"]
+SupportedLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
+StateMode = Literal["stateful", "read_only", "stateless"]
+SessionKey = Tuple[str, Optional[int], int]  # (language, venv_id, session_id)
+
 
 class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-method]
     """Execute a FunctionManager entrypoint function without invoking the CodeAct LLM loop.
