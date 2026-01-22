@@ -902,7 +902,7 @@ async def test_live_handle_management_tracks_steerable_primitives():
 async def test_code_act_actor_primitives_only_sandbox_can_call_state_managers():
     """
     Test that CodeActActor can run in primitives-only mode (no browser env) and
-    its CodeExecutionSandbox can successfully call state manager methods.
+    its PythonExecutionSession can successfully call state manager methods.
 
     This test is sandbox-only (no LLM/tool-loop) to keep it deterministic.
     """
@@ -916,7 +916,10 @@ async def test_code_act_actor_primitives_only_sandbox_can_call_state_managers():
 
     actor = CodeActActor(environments=[StateManagerEnvironment(primitives)])
     try:
-        exec_result = await actor._sandbox.execute(
+        from unity.actor.code_act_actor import PythonExecutionSession
+
+        sandbox = PythonExecutionSession(environments=actor.environments)
+        exec_result = await sandbox.execute(
             'h = await primitives.tasks.update("Schedule a reminder to call Mom tomorrow at 10am")\n'
             "print(await h.result())\n",
         )

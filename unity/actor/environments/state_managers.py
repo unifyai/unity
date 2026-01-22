@@ -115,10 +115,10 @@ class StateManagerEnvironment(BaseEnvironment):
     def get_sandbox_instance(self) -> Any:
         """Return the instance for sandbox injection, filtered if exposed_managers is set.
 
-        This is used by CodeExecutionSandbox in CodeActActor to inject a filtered proxy when
+        This is used by PythonExecutionSession in CodeActActor to inject a filtered proxy when
         exposed_managers is set. For normal use cases (HierarchicalActor, etc.),
         use get_instance() which always returns the full Primitives. This is a temporary
-        solution to avoid hardcoding the list of exposed managers in the CodeExecutionSandbox.
+        solution to avoid hardcoding the list of exposed managers in the PythonExecutionSession.
         """
         instance: Any
         if self._exposed_managers is None:

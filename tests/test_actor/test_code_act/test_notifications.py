@@ -3,7 +3,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
-from unity.actor.code_act_actor import CodeActActor, CodeExecutionSandbox
+from unity.actor.code_act_actor import CodeActActor, PythonExecutionSession
 
 
 @pytest.mark.asyncio
@@ -22,7 +22,7 @@ async def test_code_act_notifications_and_notify_helper():
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
-    sandbox = CodeExecutionSandbox(
+    sandbox = PythonExecutionSession(
         computer_primitives=actor._computer_primitives,
         environments=actor.environments,
         venv_pool=actor._venv_pool,

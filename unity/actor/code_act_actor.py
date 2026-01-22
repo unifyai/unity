@@ -411,7 +411,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         return None
 
 
-class CodeExecutionSandbox:
+class PythonExecutionSession:
     """
     A stateful execution environment for running Python code asynchronously.
 
@@ -543,7 +543,7 @@ class CodeExecutionSandbox:
         except Exception as e:
             try:
                 logger.warning(
-                    f"CodeExecutionSandbox.close() failed: {e}",
+                    f"PythonExecutionSession.close() failed: {e}",
                     exc_info=True,
                 )
             except Exception:
