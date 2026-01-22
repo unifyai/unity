@@ -196,7 +196,7 @@ async def test_handle_pause_and_resume(monkeypatch):
         raising=True,
     )
 
-    actor = SimulatedActor(steps=3)
+    actor = SimulatedActor(steps=2)  # pause + resume = 2 steps
     handle = await actor.act("Summarise all open opportunities.")
 
     pause_reply = await handle.pause()
@@ -302,7 +302,7 @@ def simulate_linkedin_sales_leads() -> str:
     )
     assert isinstance(fid, int)
 
-    actor = SimulatedActor(steps=2, duration=None)
+    actor = SimulatedActor(steps=1, duration=None)  # only ask() consumes a step
     handle = await actor.act("Search sales leads.", entrypoint=fid)
 
     ask_handle = await handle.ask(
@@ -342,7 +342,7 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
         ],
     )
 
-    actor = SimulatedActor(steps=3, duration=None)
+    actor = SimulatedActor(steps=2, duration=None)  # interject + ask = 2 steps
     handle = await actor.act(
         "We'll start working on organizing the rota for the admin assistants.",
     )
@@ -370,29 +370,31 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 11. next_notification emits progress and consumes a step                    #
+# 11. next_notification emits progress without consuming steps                #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_next_notification_emits_and_consumes_step():
-    actor = SimulatedActor(steps=2, duration=None)
+async def test_next_notification_emits_progress():
+    """next_notification returns a progress event without consuming steps (observing isn't work)."""
+    actor = SimulatedActor(steps=1, duration=None)
     handle = await actor.act("Quick simulated task.")
 
     # Capture remaining steps before
     before = handle.get_remaining_steps()
-    assert isinstance(before, int) and before == 2
+    assert isinstance(before, int) and before == 1
 
-    # next_notification should return a real event and consume one step
+    # next_notification should return a real event but NOT consume a step
     evt = await asyncio.wait_for(handle.next_notification(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(evt, dict)
     assert evt.get("type") == "notification"
     assert evt.get("tool_name") == "simulated_actor"
     assert isinstance(evt.get("message"), str) and evt.get("message").strip()
 
+    # Steps should remain unchanged (observing progress isn't work)
     after = handle.get_remaining_steps()
-    assert isinstance(after, int) and after == before - 1
+    assert isinstance(after, int) and after == before
 
-    # Complete the simulation and ensure result is available
+    # Complete the simulation by consuming the step and ensure result is available
     handle.simulate_step()
     res = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(res, str) and res.strip()

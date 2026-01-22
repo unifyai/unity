@@ -305,9 +305,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 pass
 
     async def result(self) -> str:
-        # Simulate consuming the final step *if* steps are used and not yet done
-        if self._steps is not None and not self._done_event.is_set():
-            self.simulate_step()
+        # Wait for action to complete (don't consume steps - observing isn't work)
         await asyncio.to_thread(self._done_event.wait)
         raw_result = self._result_str  # type: ignore
 
@@ -724,12 +722,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             await asyncio.to_thread(self._done_event.wait)
             return {}
 
-        # Consume a unit of progress and report a concise, simulation‑consistent update
-        try:
-            self.simulate_step()
-        except Exception:
-            pass
-
+        # Report progress without consuming steps (observing isn't work)
         # Compose a small progress message consistent with the configured mode
         try:
             desc = str(self._description) if self._description else "activity"
