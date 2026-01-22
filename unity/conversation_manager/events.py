@@ -559,6 +559,21 @@ class SyncContacts(Event):
 
 
 @dataclass
+class BackupContactsEvent(Event):
+    """
+    Fallback contacts from inbound messages for use before ContactManager initializes.
+
+    When an inbound message arrives before the ContactManager is ready, this event
+    carries the contacts list so they can be cached locally in ContactIndex. Once
+    ContactManager is initialized, this local cache is cleared and all contact
+    lookups go through ContactManager.
+    """
+
+    loggable: ClassVar[bool] = False
+    contacts: list[dict[str, Any]]
+
+
+@dataclass
 class LLMUserMessage(Event):
     content: str
 

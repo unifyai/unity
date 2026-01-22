@@ -38,6 +38,7 @@ except ImportError:
 # Noise cancellation plugin (macOS only, used by call.py)
 try:
     import sys as _sys
+
     if _sys.platform == "darwin":
         from livekit.plugins import noise_cancellation as _nc_preload  # noqa: F401
 except ImportError:

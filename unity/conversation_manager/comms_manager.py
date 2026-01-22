@@ -298,6 +298,12 @@ class CommsManager:
                 # Get contacts for message routing
                 contacts = [*event.get("contacts", []), _get_local_contact()]
 
+                # Publish backup contacts for use before ContactManager is initialized
+                self._publish_from_callback(
+                    "app:comms:backup_contacts",
+                    BackupContactsEvent(contacts=contacts).to_json(),
+                )
+
                 content = event["body"]
                 topic = ""
                 if thread == "email":
@@ -444,8 +450,14 @@ class CommsManager:
                             message.ack()
                             return
 
-                    # Publish contacts
+                    # Get contacts for call routing
                     contacts = [*event.get("contacts", []), _get_local_contact()]
+
+                    # Publish backup contacts for use before ContactManager is initialized
+                    self._publish_from_callback(
+                        "app:comms:backup_contacts",
+                        BackupContactsEvent(contacts=contacts).to_json(),
+                    )
 
                     # Create the event based on the thread
                     if thread == "unify_meet":

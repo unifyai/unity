@@ -430,6 +430,25 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     await cm.request_llm_run(delay=2)
 
 
+@EventHandler.register(BackupContactsEvent)
+async def _(event: BackupContactsEvent, cm: "ConversationManager", *args, **kwargs):
+    """
+    Cache contacts from inbound messages for quick lookup.
+
+    This handler is triggered when inbound messages arrive with contact data.
+    Contacts are cached in ContactIndex and checked first in get_contact(),
+    ensuring contacts from recent inbounds are always available even before
+    or during ContactManager initialization.
+    """
+    if cm.contact_index._contact_manager is None:
+        return
+    cm._session_logger.debug(
+        "backup_contacts",
+        f"Caching {len(event.contacts)} contacts from inbound",
+    )
+    cm.contact_index.set_fallback_contacts(event.contacts)
+
+
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info("startup", "Received startup event")
