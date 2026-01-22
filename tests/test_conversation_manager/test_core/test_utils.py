@@ -61,8 +61,9 @@ class TestDeriveShortName:
 
     def test_lowercases_words(self):
         """All words are lowercased."""
-        result = derive_short_name("Find IMPORTANT Documents NOW")
-        assert result == "find_important_documents_now"
+        # Use a shorter query that won't hit the 25-char truncation limit
+        result = derive_short_name("Find IMPORTANT Docs")
+        assert result == "find_important_docs"
 
     def test_max_words_limit(self):
         """Respects max_words parameter."""
@@ -96,8 +97,9 @@ class TestDeriveShortName:
         # This was the bug that caused tool names to exceed 64 chars:
         # "transcripts/messages/emails" became "transcriptsmessagesemails" (one word)
         # Now it becomes "transcripts messages emails" (three words)
-        result = derive_short_name("Search transcripts/messages/emails/notes")
-        assert result == "search_transcripts_messages_emails"
+        # Use a shorter example to avoid hitting the 25-char truncation limit
+        result = derive_short_name("Get docs/files/data")
+        assert result == "get_docs_files_data"
         # Each slash-separated segment is now a separate word
 
     def test_character_limit_enforced(self):
