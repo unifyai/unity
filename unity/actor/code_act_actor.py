@@ -691,6 +691,22 @@ class PythonExecutionSession:
             "browser_used": self._browser_used,
         }
 
+
+def _wrap_code_as_async_function(code: str) -> str:
+    """
+    Wrap an arbitrary code snippet into a single async function definition.
+
+    This is required for the venv runner protocol, which expects exactly one function
+    definition in the provided source.
+    """
+    # Ensure non-empty body.
+    body = code if code.strip() else "pass"
+    indented = "\n".join(
+        ("    " + line) if line.strip() else "    " for line in body.splitlines()
+    )
+    return "async def __unity_code_act__():\n" + indented + "\n"
+
+
 async def _execute_shell_stateless(
     *,
     language: SupportedLanguage,
