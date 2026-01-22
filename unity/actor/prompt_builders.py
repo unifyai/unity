@@ -1420,9 +1420,12 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
            {
            "tool_calls": [
             {
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
-                    "code": "print('The final answer is: 42')"
+                    "code": "print('The final answer is: 42')",
+                    "language": "python",
+                    "state_mode": "stateful",
+                    "session_id": 0
                 }
             }
            ],
@@ -1447,10 +1450,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "The first step is to navigate to the website specified in the user's request, which is playwright.dev.",
-                  "code": "await computer_primitives.navigate('https://playwright.dev/')"
+                  "code": "await computer_primitives.navigate('https://playwright.dev/')",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1467,10 +1473,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "Great, I'm on the page. Now I'll extract the heading and paragraph text into a structured object for clarity. I'll define a Pydantic model right here in the sandbox.",
-                  "code": "from pydantic import BaseModel, Field\n\nclass PageContent(BaseModel):\n    heading: str = Field(description=\"The main H1 heading of the page\")\n    first_paragraph: str = Field(description=\"The text of the first paragraph under the heading\")\n\nPageContent.model_rebuild()\n\npage_info = await computer_primitives.observe(\n    \"Extract the main heading and the first paragraph.\",\n    response_format=PageContent\n)\n\nprint(page_info.model_dump_json(indent=2))"
+                  "code": "from pydantic import BaseModel, Field\n\nclass PageContent(BaseModel):\n    heading: str = Field(description=\"The main H1 heading of the page\")\n    first_paragraph: str = Field(description=\"The text of the first paragraph under the heading\")\n\nPageContent.model_rebuild()\n\npage_info = await computer_primitives.observe(\n    \"Extract the main heading and the first paragraph.\",\n    response_format=PageContent\n)\n\nprint(page_info.model_dump_json(indent=2))",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1502,10 +1511,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "I need to navigate to example.com to get the title.",
-                  "code": "await computer_primitives.navigate('https://example.com/')"
+                  "code": "await computer_primitives.navigate('https://example.com/')",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1517,10 +1529,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "I need to get the title. I will use Pydantic, but I'll deliberately forget to call `model_rebuild()` to demonstrate error handling.",
-                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\n\ntitle_info = await computer_primitives.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info)"
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\n\ntitle_info = await computer_primitives.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info)",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1538,10 +1553,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "The error message is very clear. I forgot to call `model_rebuild()` on my Pydantic class. I will add that line and retry.",
-                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# CORRECTED: I've added the required model_rebuild() call.\nPageTitle.model_rebuild()\n\ntitle_info = await computer_primitives.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info.title)"
+                  "code": "from pydantic import BaseModel\n\nclass PageTitle(BaseModel):\n    title: str\n\n# CORRECTED: I've added the required model_rebuild() call.\nPageTitle.model_rebuild()\n\ntitle_info = await computer_primitives.observe(\n    \"Extract the page title\",\n    response_format=PageTitle\n)\nprint(title_info.title)",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1564,10 +1582,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "This is a multi-step task. First, I'll extract all products. I know I'll need to parse prices that might be strings (e.g., '$25.99'), so I'll define a helper function to clean them. This function will persist in the sandbox for later.",
-                  "code": "import re\nfrom pydantic import BaseModel, Field\nfrom typing import List\n\ndef parse_price(price_str: str) -> float:\n    nums = re.findall(r'[\\d.]+', price_str)\n    return float(nums[0]) if nums else 0.0\n\nclass Product(BaseModel):\n    name: str\n    price_text: str = Field(alias=\"price\")\n\nclass ProductList(BaseModel):\n    products: List[Product]\n\nProductList.model_rebuild()\n\nglobal all_products_data\nall_products_data = await computer_primitives.observe(\n    \"Extract all products with their name and price text\",\n    response_format=ProductList\n)\nprint(f\"Extracted {len(all_products_data.products)} products.\")"
+                  "code": "import re\nfrom pydantic import BaseModel, Field\nfrom typing import List\n\ndef parse_price(price_str: str) -> float:\n    nums = re.findall(r'[\\d.]+', price_str)\n    return float(nums[0]) if nums else 0.0\n\nclass Product(BaseModel):\n    name: str\n    price_text: str = Field(alias=\"price\")\n\nclass ProductList(BaseModel):\n    products: List[Product]\n\nProductList.model_rebuild()\n\nglobal all_products_data\nall_products_data = await computer_primitives.observe(\n    \"Extract all products with their name and price text\",\n    response_format=ProductList\n)\nprint(f\"Extracted {len(all_products_data.products)} products.\")",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1583,10 +1604,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "I have the product data in the `all_products_data` variable and my `parse_price` function is defined. Now I can perform the calculation in pure Python.",
-                  "code": "prices_under_100 = []\nfor product in all_products_data.products:\n    price = parse_price(product.price_text)\n    if price < 100.0:\n        prices_under_100.append(price)\n\nif prices_under_100:\n    average = sum(prices_under_100) / len(prices_under_100)\n    result_text = f\"The average price of products under $100 is ${average:.2f}.\"\nelse:\n    result_text = \"No products found under $100.\"\n\nprint(result_text)"
+                  "code": "prices_under_100 = []\nfor product in all_products_data.products:\n    price = parse_price(product.price_text)\n    if price < 100.0:\n        prices_under_100.append(price)\n\nif prices_under_100:\n    average = sum(prices_under_100) / len(prices_under_100)\n    result_text = f\"The average price of products under $100 is ${average:.2f}.\"\nelse:\n    result_text = \"No products found under $100.\"\n\nprint(result_text)",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1609,10 +1633,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "I'll start by sending the SMS. The `send_sms_message` tool returns a handle, which I'll await to ensure the message is sent and get a result.",
-                  "code": "sms_handle = await computer_primitives.send_sms_message(\n    description=\"Text Jane Doe to confirm her appointment for tomorrow at 3 PM.\"\n)\n\nsms_result = await sms_handle.result()\nprint(sms_result)"
+                  "code": "sms_handle = await computer_primitives.send_sms_message(\n    description=\"Text Jane Doe to confirm her appointment for tomorrow at 3 PM.\"\n)\n\nsms_result = await sms_handle.result()\nprint(sms_result)",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1628,10 +1655,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "The SMS is sent. Now I need to make the phone call. The `start_call` tool also returns a handle. I will store this handle in a global variable so I can interact with it in the next turn.",
-                  "code": "global active_call_handle\nactive_call_handle = computer_primitives.start_call(\n    phone_number=\"Jane Doe\",\n    purpose=\"Ask about dietary restrictions for a lunch meeting.\"\n)\nprint(f\"Initiated call to Jane Doe. Handle ID: {active_call_handle._loop_id}\")"
+                  "code": "global active_call_handle\nactive_call_handle = computer_primitives.start_call(\n    phone_number=\"Jane Doe\",\n    purpose=\"Ask about dietary restrictions for a lunch meeting.\"\n)\nprint(f\"Initiated call to Jane Doe. Handle ID: {active_call_handle._loop_id}\")",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1649,10 +1679,13 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```json
             {
               "tool_calls": [{
-                "name": "execute_python_code",
+                "name": "execute_code",
                 "arguments": {
                   "thought": "The call is now active and the handle is stored in `active_call_handle`. I will use the handle's `.ask()` method to pose the question and get the answer.",
-                  "code": "ask_handle = await active_call_handle.ask(\"Do you have any dietary restrictions for the lunch tomorrow?\")\n\ndietary_info = await ask_handle.result()\nprint(f\"Received dietary info: {dietary_info}\")\n\nawait active_call_handle.stop()\nprint(\"Call ended.\")"
+                  "code": "ask_handle = await active_call_handle.ask(\"Do you have any dietary restrictions for the lunch tomorrow?\")\n\ndietary_info = await ask_handle.result()\nprint(f\"Received dietary info: {dietary_info}\")\n\nawait active_call_handle.stop()\nprint(\"Call ended.\")",
+                  "language": "python",
+                  "state_mode": "stateful",
+                  "session_id": 0
                 }
               }]
             }
@@ -1702,7 +1735,7 @@ def _build_generic_execution_rules() -> str:
         4. **Pydantic for Structured Data (When Supported)**: If a tool supports structured outputs via a `response_format` or schema, define Pydantic models inside the code and call `model_rebuild()` on the outermost model.
 
         5. **Function-First (When Available)**:
-           - If any tool names start with `FunctionManager_`, you **MUST** perform a FunctionManager search **before** you call `execute_python_code` for a new user request.
+           - If any tool names start with `FunctionManager_`, you **MUST** perform a FunctionManager search **before** you call `execute_code` for a new user request.
            - This rule applies even if the request seems “simple” (including direct state manager calls like `primitives.contacts.ask`, `primitives.tasks.update`, `primitives.guidance.update`, etc.). Many stored functions are thin wrappers around these primitives.
            - Workflow:
              1) Make a FunctionManager tool call (structured JSON tool call) to search.
