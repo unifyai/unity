@@ -159,6 +159,11 @@ override this on a per-call basis:
 | **stateless** | `await func.stateless(...)` | Fresh environment, no inherited state |
 | **read_only** | `await func.read_only(...)` | Sees current state, but changes are discarded |
 
+**Important mental model:**
+- These modes apply to the **function’s own execution context** (the function runtime), not necessarily your current Python
+  `execute_code` session globals. A stateful function call may persist its own internal state even if you don’t see new globals
+  appear in your current Python session.
+
 **When to use each mode:**
 
 - **stateful** (default): Use for iterative workflows where you build up state incrementally.
@@ -187,18 +192,19 @@ preview = await transform_data.read_only(sample_size=100)  # 'df' unchanged
 await transform_data(sample_size=100)  # Now 'df' is transformed
 ```
 
-### Inspecting Execution State
+### Inspecting Code Sessions (execute_code)
 
 Before deciding how to call a function (stateful/stateless/read_only), you can inspect
-what state currently exists using the `inspect_state` tool:
+what state currently exists using the `list_sessions` + `inspect_state` tools:
 
 ```
-inspect_state()
+list_sessions()
 ```
 
-This returns:
-- **contexts**: Dict mapping context names to their variables (e.g., `default`, `venv_1`, `bash_0`)
-- **summary**: Human-readable overview of active contexts and variables
+Then inspect a specific session:
+```
+inspect_state(detail="summary", session_name="repo_nav")
+```
 
 **When to inspect state:**
 - Before calling a function that might depend on prior state
@@ -207,10 +213,11 @@ This returns:
 - Before using read_only mode (to see what state you'll be reading)
 
 **Example workflow:**
-1. Call `inspect_state()` to see current state across all contexts
-2. If a context has data you need → use default stateful call
-3. If a context has state you want to avoid → use `.stateless()`
-4. If you want to preview without modifying → use `.read_only()`
+1. Use `list_sessions()` to see what **CodeAct sessions** exist (Python + shell).
+2. Use `inspect_state(...)` to inspect a specific **CodeAct session** (e.g., to check cwd / variable names).
+3. Choose a session and run `execute_code(..., state_mode="stateful"/"read_only")` for multi-step work in that session.
+4. For FunctionManager-injected skills, choose the function execution mode (`await fn(...)` / `.stateless` / `.read_only`)
+   based on whether you want that **skill’s internal state** to persist, be isolated, or be discarded.
 """
     return prompt
 
