@@ -8,20 +8,27 @@ from unity.actor.code_act_actor import CodeActActor
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
-async def test_execute_python_code_returns_error_when_sandbox_not_bound():
-    """execute_python_code should fail gracefully if the sandbox ContextVar is missing."""
+async def test_execute_code_can_run_without_bound_sandbox():
+    """execute_code should work even if the sandbox ContextVar is missing."""
     actor = CodeActActor(headless=True, computer_mode="mock")
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
     tools = actor.get_tools("act")
-    execute_python_code = tools["execute_python_code"]
+    execute_code = tools["execute_code"]
 
-    out = await execute_python_code("run", "print('x')")
+    out = await execute_code(
+        "run",
+        "print('x')",
+        language="python",
+        state_mode="stateful",
+        session_id=0,
+        venv_id=None,
+    )
     assert isinstance(out, dict)
-    assert out.get("error") is not None
-    assert "not bound" in str(out.get("error")).lower()
+    assert out.get("error") is None
+    assert "x" in str(out.get("stdout") or "")
 
     await actor.close()
 

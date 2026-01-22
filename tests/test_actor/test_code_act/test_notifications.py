@@ -33,11 +33,15 @@ async def test_code_act_notifications_and_notify_helper():
 
     try:
         tools = actor.get_tools("act")
-        execute_python_code = tools["execute_python_code"]
+        execute_code = tools["execute_code"]
 
-        _ = await execute_python_code(
+        _ = await execute_code(
             "emit notifications",
             "notify({'type': 'custom_progress', 'step': 1})\nprint('hi')",
+            language="python",
+            state_mode="stateful",
+            session_id=0,
+            venv_id=None,
         )
 
         started = await asyncio.wait_for(notification_q.get(), timeout=30)

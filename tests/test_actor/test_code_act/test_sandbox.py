@@ -1,13 +1,13 @@
 import pytest
 
-from unity.actor.code_act_actor import CodeExecutionSandbox
+from unity.actor.code_act_actor import PythonExecutionSession
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
 async def test_sandbox_stateful_variable_execution():
     """Tests that the sandbox maintains simple variable state between calls."""
-    sandbox = CodeExecutionSandbox()
+    sandbox = PythonExecutionSession()
 
     result1 = await sandbox.execute("x = 100")
     assert result1["error"] is None
@@ -25,7 +25,7 @@ async def test_sandbox_stateful_variable_execution():
 @pytest.mark.timeout(30)
 async def test_sandbox_stateful_import_execution():
     """Tests that the sandbox maintains imported modules between calls."""
-    sandbox = CodeExecutionSandbox()
+    sandbox = PythonExecutionSession()
 
     result1 = await sandbox.execute("import json")
     assert result1["error"] is None
@@ -42,7 +42,7 @@ async def test_sandbox_stateful_import_execution():
 @pytest.mark.timeout(30)
 async def test_sandbox_stateful_function_definition():
     """Tests that the sandbox maintains function definitions between calls."""
-    sandbox = CodeExecutionSandbox()
+    sandbox = PythonExecutionSession()
 
     func_def_code = "def my_adder(a, b):\n    return a + b"
     result1 = await sandbox.execute(func_def_code)
@@ -60,7 +60,7 @@ async def test_sandbox_stateful_function_definition():
 @pytest.mark.timeout(30)
 async def test_sandbox_stateful_class_definition():
     """Tests that the sandbox maintains class definitions between calls."""
-    sandbox = CodeExecutionSandbox()
+    sandbox = PythonExecutionSession()
 
     class_def_code = (
         "class Greeter:\n"
@@ -86,7 +86,7 @@ async def test_sandbox_browser_tool_execution(mock_computer_primitives):
     Tests that the sandbox can execute code that calls browser tools via
     the injected computer_primitives.
     """
-    sandbox = CodeExecutionSandbox(computer_primitives=mock_computer_primitives)
+    sandbox = PythonExecutionSession(computer_primitives=mock_computer_primitives)
 
     nav_code = "await computer_primitives.navigate('https://example.com')"
     nav_result = await sandbox.execute(nav_code)
@@ -118,7 +118,7 @@ print(result['data'])
 @pytest.mark.timeout(30)
 async def test_sandbox_error_handling():
     """Tests that the sandbox correctly captures and reports exceptions."""
-    sandbox = CodeExecutionSandbox()
+    sandbox = PythonExecutionSession()
     result = await sandbox.execute("x = 1 / 0")
 
     assert result["stdout"] == ""

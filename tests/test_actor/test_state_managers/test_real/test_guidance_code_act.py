@@ -8,7 +8,7 @@ import pytest
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
     assert_code_act_function_manager_used,
-    extract_code_act_execute_python_code_snippets,
+    extract_code_act_execute_code_snippets,
     make_code_act_actor,
 )
 from unity.function_manager.function_manager import FunctionManager
@@ -73,7 +73,7 @@ async def ask_guidance_question(question: str, response_format=None) -> str:
 
         assert "onboarding" in str(result).lower()
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "ask_guidance_question" in snippets
 
         assert "primitives.guidance.ask" in calls
@@ -137,7 +137,7 @@ async def create_guidance_entry(title: str, content: str) -> str:
         await handle.result()
 
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "create_guidance_entry" in snippets
 
         assert "primitives.guidance.update" in calls

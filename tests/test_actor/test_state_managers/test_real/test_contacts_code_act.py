@@ -8,7 +8,7 @@ import pytest
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
     assert_code_act_function_manager_used,
-    extract_code_act_execute_python_code_snippets,
+    extract_code_act_execute_code_snippets,
     make_code_act_actor,
 )
 from unity.function_manager.function_manager import FunctionManager
@@ -78,7 +78,7 @@ async def ask_contacts(question: str, response_format=None) -> str:
 
         # Either via injected function call or direct primitive call is acceptable,
         # but the FunctionManager tool must have been used.
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "ask_contacts" in snippets
 
         assert "primitives.contacts.ask" in calls
@@ -150,7 +150,7 @@ async def update_contact_phone(email: str, phone: str) -> str:
         await handle.result()
 
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "update_contact_phone" in snippets
 
         assert "primitives.contacts.update" in calls

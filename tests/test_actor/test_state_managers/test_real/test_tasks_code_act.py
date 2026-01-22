@@ -8,7 +8,7 @@ import pytest
 from tests.helpers import _handle_project
 from tests.test_actor.test_state_managers.utils import (
     assert_code_act_function_manager_used,
-    extract_code_act_execute_python_code_snippets,
+    extract_code_act_execute_code_snippets,
     make_code_act_actor,
 )
 from unity.function_manager.function_manager import FunctionManager
@@ -77,7 +77,7 @@ async def ask_tasks(question: str, response_format=None) -> str:
 
         assert "quarterly report" in str(result).lower()
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "ask_tasks" in snippets
 
         assert "primitives.tasks.ask" in calls
@@ -145,7 +145,7 @@ async def create_or_update_or_delete_tasks(name: str, description: str) -> str:
         await handle.result()
 
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "create_or_update_or_delete_tasks" in snippets
 
         assert "primitives.tasks.update" in calls
@@ -269,7 +269,7 @@ async def execute_task_by_name(task_name: str) -> str:
         await handle.result()
 
         assert_code_act_function_manager_used(handle)
-        snippets = "\n\n".join(extract_code_act_execute_python_code_snippets(handle))
+        snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
         assert "execute_task_by_name" in snippets
 
         assert "primitives.tasks.execute" in calls

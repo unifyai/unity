@@ -57,7 +57,7 @@ async def test_code_act_images_available_via_live_images_overview():
 
     handle = await actor.act(
         "How many images were provided to you? Return {count: <int>}.\n"
-        "You may answer directly; do not call execute_python_code.",
+        "You may answer directly; do not call execute_code.",
         clarification_enabled=False,
         response_format=ImageCountModel,
         images=images,
