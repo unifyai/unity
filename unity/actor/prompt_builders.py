@@ -1014,8 +1014,25 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
-def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
-    """Formats the library of existing functions into clean code blocks."""
+def _format_existing_functions(
+    existing_functions: Dict[str, Any],
+    *,
+    include_source: bool = True,
+    max_doc_lines: int = 40,
+) -> str:
+    """Format the library of existing functions for prompts.
+
+    Why this exists
+    ---------------
+    In plan-generation prompts, showing full function source can cause LLMs to
+    "copy the internals" (e.g., call `primitives.*` directly) instead of calling
+    the function by name. To reduce that failure mode, callers can set
+    `include_source=False` to render a "skill card" (name + signature + docstring)
+    that remains trustworthy without exposing implementation details.
+
+    The runtime still injects the real implementations; this formatting is
+    purely for the LLM's planning guidance.
+    """
     if not existing_functions:
         return "None."
 
@@ -1027,26 +1044,55 @@ def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
         if implementation is None:
             implementation = ""
 
-        # Show implementation if it's not too large (< 1000 lines)
-        impl_lines = implementation.count("\n") + 1 if implementation else 0
-        if impl_lines > 1000:
-            # Too large - hide it
+        # Prefer a "skill card" view when include_source=False.
+        # This prevents models from copying internal `primitives.*` calls.
+        if not include_source:
+            # Heuristic: preserve async vs sync display if the stored implementation indicates it.
             prefix = (
                 "async def"
                 if isinstance(implementation, str)
-                and "async def" in implementation.lstrip()[:10]
+                and "async def" in implementation.lstrip()[:20]
                 else "def"
             )
+            # Truncate docstring to keep prompts tight but still high-signal.
+            doc = docstring.strip()
+            if max_doc_lines is not None and isinstance(max_doc_lines, int):
+                lines = doc.splitlines()
+                if len(lines) > max_doc_lines:
+                    doc = "\n".join(lines[:max_doc_lines]).rstrip() + "\n…"
             summary = (
                 f"{prefix} {name}{signature}:\n"
                 f'    """\n'
-                f"    {textwrap.indent(docstring, '    ').strip()}\n"
+                f"{textwrap.indent(doc, '    ').rstrip()}\n"
                 f'    """\n'
-                f"    # ... (implementation is hidden)\n"
+                f"    # Implementation is already loaded at runtime. Call this function by name.\n"
             )
         else:
-            # Show the full implementation
-            summary = implementation.strip()
+            # Show implementation if it's not too large (< 1000 lines)
+            impl_lines = implementation.count("\n") + 1 if implementation else 0
+            if impl_lines > 1000:
+                # Too large - hide it
+                prefix = (
+                    "async def"
+                    if isinstance(implementation, str)
+                    and "async def" in implementation.lstrip()[:10]
+                    else "def"
+                )
+                doc = docstring.strip()
+                if max_doc_lines is not None and isinstance(max_doc_lines, int):
+                    lines = doc.splitlines()
+                    if len(lines) > max_doc_lines:
+                        doc = "\n".join(lines[:max_doc_lines]).rstrip() + "\n…"
+                summary = (
+                    f"{prefix} {name}{signature}:\n"
+                    f'    """\n'
+                    f"{textwrap.indent(doc, '    ').rstrip()}\n"
+                    f'    """\n'
+                    f"    # ... (implementation is hidden)\n"
+                )
+            else:
+                # Show the full implementation
+                summary = implementation.strip()
 
         formatted_summaries.append(summary)
 
