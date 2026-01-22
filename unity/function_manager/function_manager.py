@@ -806,6 +806,7 @@ class VenvPool:
             for conn in self._connections.values():
                 await conn.shutdown()
             self._connections.clear()
+            self._metadata.clear()
 
     def __del__(self) -> None:
         """Ensure cleanup on garbage collection."""
@@ -1180,7 +1181,7 @@ class _VenvFunctionProxy:
             func_name=self.__name__,
         )
 
-        # Check if a persistent venv pool is available (injected by CodeExecutionSandbox)
+        # Check if a persistent venv pool is available (injected by PythonExecutionSession)
         venv_pool = self._namespace.get("__venv_pool__")
         venv_id_int = int(venv_id)
 
