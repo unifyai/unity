@@ -1799,6 +1799,7 @@ def _build_code_act_rules_and_examples(
     from unity.actor.prompt_examples import (
         get_code_act_pattern_examples,
         get_code_act_function_first_examples,
+        get_code_act_session_examples,
     )
 
     core_patterns = get_code_act_pattern_examples()
@@ -1809,6 +1810,13 @@ def _build_code_act_rules_and_examples(
     function_first = get_code_act_function_first_examples()
     if function_first:
         parts.append(f"### Function-First Workflow (CRITICAL)\n\n{function_first}")
+
+    # Add multi-language + multi-session examples for execute_code.
+    session_examples = get_code_act_session_examples()
+    if session_examples:
+        parts.append(
+            f"### Sessions & Multi-Language Execution (CRITICAL)\n\n{session_examples}",
+        )
 
     cp = None
     if "computer_primitives" in environments:
