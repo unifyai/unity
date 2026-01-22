@@ -24,6 +24,7 @@ from unity.conversation_manager.events import (
     Error,
 )
 from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
+from unity.common._async_tool.utils import get_handle_paused_state
 from unity.conversation_manager.types import Medium
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
@@ -603,7 +604,13 @@ class ConversationManagerBrainActionTools:
         }
 
     def build_action_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
-        """Build dynamic tools for steering in-flight actions."""
+        """Build dynamic tools for steering in-flight actions.
+
+        Conditionally generates pause/resume tools based on current state:
+        - If action is paused: only generate resume_* (skip pause_*)
+        - If action is running: only generate pause_* (skip resume_*)
+        - If state unknown: only generate pause_* (default to running)
+        """
         tools: dict[str, Callable[..., Any]] = {}
 
         for handle_id, handle_data in (self._cm.in_flight_actions or {}).items():
@@ -611,6 +618,9 @@ class ConversationManagerBrainActionTools:
             short_name = derive_short_name(query)
             handle = handle_data.get("handle")
             handle_actions = handle_data.get("handle_actions", [])
+
+            # Check pause state to conditionally generate pause/resume tools
+            is_paused = get_handle_paused_state(handle)
 
             pending_clarifications = [
                 a
@@ -620,6 +630,14 @@ class ConversationManagerBrainActionTools:
             ]
 
             for op in STEERING_OPERATIONS:
+                # Conditionally skip pause/resume based on current state
+                # is_paused=True: skip pause, only offer resume
+                # is_paused=False or None: skip resume, only offer pause (default to running)
+                if op.name == "pause" and is_paused is True:
+                    continue  # Already paused, don't offer pause
+                if op.name == "resume" and is_paused is not True:
+                    continue  # Not paused (running or unknown), don't offer resume
+
                 if op.requires_clarification:
                     for clar in pending_clarifications:
                         call_id = clar.get("call_id", "")

@@ -230,11 +230,11 @@ class TestPromptBuilders:
             is_voice_call=False,
         )
 
-        # Basic structure checks
-        assert "<role>" in prompt
-        assert "<bio>" in prompt
-        assert "<boss_details>" in prompt
-        assert "<output_format>" in prompt
+        # Basic structure checks - now uses Markdown headers
+        assert "Role\n----" in prompt
+        assert "Bio\n---" in prompt
+        assert "Boss details\n------------" in prompt
+        assert "Output format\n-------------" in prompt
 
         # Stage 2: All voice modes use call_guidance
         assert "call_guidance" in prompt
@@ -256,7 +256,7 @@ class TestPromptBuilders:
 
         # Stage 2: All voice modes use guidance-based architecture
         assert "call_guidance" in prompt
-        assert "<voice_calls_guide>" in prompt
+        assert "Voice calls guide\n-----------------" in prompt
         assert "Voice Agent" in prompt
 
     def test_build_voice_agent_prompt(self):
@@ -276,7 +276,7 @@ class TestPromptBuilders:
         # Fast brain specific content
         assert "fast brain" in prompt.lower() or "small" in prompt.lower()
         assert "conversation manager" in prompt.lower()
-        assert "<communication_guidelines>" in prompt
+        assert "Communication guidelines\n------------------------" in prompt
 
     def test_build_system_prompt_tts_mode_uses_guidance_after_refactor(self):
         """

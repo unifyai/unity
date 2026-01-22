@@ -82,16 +82,22 @@ def assert_has_one(events: list, typ: type) -> bool:
 # Efficiency Assertion Helpers
 # =============================================================================
 
-# Maximum LLM steps for efficient tool calling
+# Maximum LLM steps for efficient tool calling (strict)
 # - Ideal: 2 steps (action + acknowledge concurrent, then wait)
 # - Acceptable: 3 steps (action, acknowledge, wait - or action + query + wait)
 MAX_EFFICIENT_STEPS = 3
 
+# Maximum LLM steps for reasonably efficient tool calling (lenient)
+# - Allows proactive behavior: interject context, ask progress, start expedited work
+# - Used when user messages contain actionable context (time constraints, preferences)
+MAX_REASONABLE_STEPS = 5
+
 
 def assert_efficient(result: "StepResult", context: str = "") -> None:
-    """Assert that the LLM completed efficiently (≤ MAX_EFFICIENT_STEPS steps).
+    """Assert that the LLM completed efficiently (≤ 3 steps).
 
-    The LLM should call tools concurrently in one step, then wait.
+    Use for steps that should be minimal: pure small talk, simple acknowledgments,
+    or straightforward steering commands.
 
     Args:
         result: StepResult from CMStepDriver.step_until_wait()
@@ -101,9 +107,29 @@ def assert_efficient(result: "StepResult", context: str = "") -> None:
         AssertionError: If the LLM took more than MAX_EFFICIENT_STEPS steps.
     """
     assert result.llm_step_count <= MAX_EFFICIENT_STEPS, (
-        f"Expected efficient concurrent tool calling (<= {MAX_EFFICIENT_STEPS} steps), "
+        f"Expected efficient tool calling (<= {MAX_EFFICIENT_STEPS} steps), "
         f"but took {result.llm_step_count} steps. "
         f"LLM should call tools concurrently in one step, then wait. {context}"
+    )
+
+
+def assert_reasonably_efficient(result: "StepResult", context: str = "") -> None:
+    """Assert that the LLM completed reasonably efficiently (≤ 5 steps).
+
+    Use for steps where proactive behavior is acceptable: the user's message
+    contains actionable context (time constraints, implicit preferences) that
+    a helpful assistant might reasonably act on.
+
+    Args:
+        result: StepResult from CMStepDriver.step_until_wait()
+        context: Optional context string for error messages.
+
+    Raises:
+        AssertionError: If the LLM took more than MAX_REASONABLE_STEPS steps.
+    """
+    assert result.llm_step_count <= MAX_REASONABLE_STEPS, (
+        f"Expected reasonably efficient tool calling (<= {MAX_REASONABLE_STEPS} steps), "
+        f"but took {result.llm_step_count} steps. {context}"
     )
 
 
