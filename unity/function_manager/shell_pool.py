@@ -224,12 +224,35 @@ class ShellPool:
 
         async with self._lock:
             if key not in self._sessions:
+                if self._active_session_count() >= self._max_total_sessions:
+                    return ShellExecutionResult(
+                        stdout="",
+                        stderr="",
+                        exit_code=-1,
+                        error=(
+                            f"Maximum sessions reached for {language} "
+                            f"({self._active_session_count()}/{self._max_total_sessions})"
+                        ),
+                        error_type="resource_limit",
+                    )
                 session = ShellSession(language=language, env=env, cwd=cwd)
                 await session.start()
                 self._sessions[key] = session
+                now = datetime.now(timezone.utc)
+                self._metadata[key] = SessionMetadata(
+                    language=str(language),
+                    session_id=int(session_id),
+                    created_at=now,
+                    last_used=now,
+                )
 
         session = self._sessions[key]
-        return await session.execute(command, timeout=timeout)
+        res = await session.execute(command, timeout=timeout)
+        # Update last_used (best-effort)
+        md = self._metadata.get(key)
+        if md is not None:
+            md.last_used = datetime.now(timezone.utc)
+        return res
 
     async def get_session(
         self,
@@ -258,10 +281,25 @@ class ShellPool:
 
         async with self._lock:
             if key not in self._sessions:
+                if self._active_session_count() >= self._max_total_sessions:
+                    raise RuntimeError(
+                        f"Maximum sessions reached for {language} "
+                        f"({self._active_session_count()}/{self._max_total_sessions})",
+                    )
                 session = ShellSession(language=language, env=env, cwd=cwd)
                 await session.start()
                 self._sessions[key] = session
+                now = datetime.now(timezone.utc)
+                self._metadata[key] = SessionMetadata(
+                    language=str(language),
+                    session_id=int(session_id),
+                    created_at=now,
+                    last_used=now,
+                )
 
+        md = self._metadata.get(key)
+        if md is not None:
+            md.last_used = datetime.now(timezone.utc)
         return self._sessions[key]
 
     async def close_session(
@@ -286,6 +324,7 @@ class ShellPool:
             if key in self._sessions:
                 await self._sessions[key].close()
                 del self._sessions[key]
+                self._metadata.pop(key, None)
                 return True
             return False
 
@@ -299,6 +338,7 @@ class ShellPool:
             for session in self._sessions.values():
                 await session.close()
             self._sessions.clear()
+            self._metadata.clear()
 
     def get_active_sessions(self) -> list[Tuple[ShellLanguage, int]]:
         """
