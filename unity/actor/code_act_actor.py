@@ -2399,7 +2399,7 @@ class CodeActActor(BaseCodeActActor):
                 "CodeActActor is at capacity (too many concurrent sessions). "
                 "Try again later or reduce concurrency.",
             )
-        sandbox = CodeExecutionSandbox(
+        sandbox = PythonExecutionSession(
             computer_primitives=self._computer_primitives,
             environments=sandbox_envs,
             venv_pool=self._venv_pool,
@@ -2411,7 +2411,7 @@ class CodeActActor(BaseCodeActActor):
 
         async def _cleanup() -> None:
             try:
-                # Best-effort cleanup; CodeExecutionSandbox will grow a close() in a later ticket.
+                # Best-effort cleanup
                 if hasattr(sandbox, "close") and callable(getattr(sandbox, "close")):
                     await sandbox.close()  # type: ignore[misc]
             except Exception:
@@ -2481,20 +2481,43 @@ class CodeActActor(BaseCodeActActor):
             tools=dict(self.get_tools("act")),
         )
 
-        # If can_store is disabled, prevent any function-persistence tools from being exposed.
-        tool_policy = None
-        if not effective_can_store:
+        # Tool policy controls which tools are visible per turn, and whether a tool call
+        # is required. We use this for two concerns:
+        # 1) If can_store is disabled, hide persistence tools.
+        # 2) If FunctionManager tools are present, enforce "function-first" by preventing
+        #    the very first turn from being `execute_code` (push the model to search/list
+        #    and inject memoized functions first).
+        _all_tools_for_policy = dict(self.get_tools("act"))
+        _has_fm_tools = any(
+            isinstance(k, str) and k.startswith("FunctionManager_")
+            for k in _all_tools_for_policy.keys()
+        )
 
-            def _policy(step: int, tools: Dict[str, Any]):
-                _ = step
-                filtered = {
+        def _tool_policy(step: int, tools: Dict[str, Any]):
+            filtered = dict(tools)
+
+            # 1) Hide persistence tool if disabled
+            if not effective_can_store:
+                filtered.pop("FunctionManager_add_functions", None)
+
+            # 2) Function-first: on the first model turn, require a FunctionManager call
+            # (search/filter/list) when those tools exist. This avoids the model skipping
+            # the function library and going straight to `execute_code`.
+            if step == 0 and _has_fm_tools:
+                fm_only = {
                     k: v
-                    for k, v in tools.items()
-                    if k != "FunctionManager_add_functions"
+                    for k, v in filtered.items()
+                    if isinstance(k, str)
+                    and k.startswith("FunctionManager_")
+                    and k != "FunctionManager_add_functions"
                 }
-                return "", filtered
+                if fm_only:
+                    return "required", fm_only
 
-            tool_policy = _policy
+            return "auto", filtered
+
+        tool_policy = _tool_policy
+
         handle = ActorHandle(
             task_description=description or initial_prompt,
             tools=dict(self.get_tools("act")),
