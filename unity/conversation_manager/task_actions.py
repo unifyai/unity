@@ -91,12 +91,22 @@ def get_steering_operation(name: str) -> Optional[SteeringOperation]:
 # Using 25 for safety margin.
 _MAX_SHORT_NAME_CHARS = 25
 
+# Characters to strip entirely (no word boundary created).
+# These appear within words (contractions, quotes) or terminate sentences.
+# - Apostrophes: ' and Unicode variants ' '
+# - Quotes: " and Unicode variants " " plus backtick `
+# - Sentence terminators: ! ?
+_STRIP_CHARS_PATTERN = re.compile(r"['\u2018\u2019\"\u201c\u201d`!?]")
+
 
 def derive_short_name(query: str, max_words: int = 4) -> str:
     """Derive a short, descriptive name from an action query for use in action names.
 
-    Takes the first few words, lowercased, with non-alphanumeric chars replaced
-    by spaces (so they act as word separators), joined by underscores.
+    Takes the first few words, lowercased, joined by underscores. Punctuation is
+    handled in two ways:
+    - Apostrophes, quotes, and sentence terminators are stripped (no word boundary)
+    - Other punctuation (slashes, hyphens, etc.) becomes word separators
+
     Ensures no __ (reserved as structural delimiter) and enforces a character
     limit to guarantee generated tool names never exceed OpenAI's 64-char limit.
 
@@ -105,7 +115,9 @@ def derive_short_name(query: str, max_words: int = 4) -> str:
         "What's the weather?" -> "whats_the_weather"
         "Search transcripts/messages/emails" -> "search_transcripts_messages_emails"
     """
-    # Replace non-alphanumeric chars with spaces (so slashes etc. become word breaks)
+    # First, strip apostrophes/quotes/terminators (they don't create word boundaries)
+    query = _STRIP_CHARS_PATTERN.sub("", query)
+    # Then replace remaining non-alphanumeric chars with spaces (word separators)
     normalized = re.sub(r"[^a-zA-Z0-9\s]", " ", query.lower())
     words = normalized.split()[:max_words]
     result = "_".join(words) if words else "task"
