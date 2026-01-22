@@ -1016,3 +1016,84 @@ async def test_interjection_provides_answer_terminates_inflight_tool(model) -> N
     # Verify the tool was cancelled (not allowed to complete)
     assert tool_cancelled["value"] is True, "In-flight tool should have been cancelled"
     assert tool_completed["value"] is False, "In-flight tool should NOT have completed"
+
+
+# --------------------------------------------------------------------------- #
+#  EARLY TERMINATION: FINAL_ANSWER WITH RESPONSE_FORMAT DURING IN-FLIGHT TOOL #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_final_answer_with_response_format_terminates_inflight_tool(
+    model,
+) -> None:
+    """
+    When response_format is specified and the LLM calls final_answer while a
+    tool is in-flight, the loop should terminate immediately and auto-kill
+    the pending tool.
+
+    This tests the scenario:
+    1. LLM calls a long-running tool to search for information
+    2. User interjects with the answer directly
+    3. LLM calls final_answer with the structured response
+    4. The loop should cancel in-flight tools and return the answer
+
+    Previously, final_answer was hidden when tools were in-flight, causing
+    the LLM to be stuck (tool_choice=required but no way to terminate).
+    """
+    from pydantic import BaseModel
+
+    class TestAnswer(BaseModel):
+        value: str
+
+    # Track whether the tool was allowed to complete vs cancelled
+    tool_completed = {"value": False}
+    tool_cancelled = {"value": False}
+    tool_started = asyncio.Event()
+
+    async def long_tool() -> str:
+        """A long-running tool for testing."""
+        tool_started.set()
+        try:
+            await asyncio.sleep(3600)  # 1 hour - effectively infinite
+            tool_completed["value"] = True
+            return "done"
+        except asyncio.CancelledError:
+            tool_cancelled["value"] = True
+            raise
+
+    client = new_llm_client(model=model)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message=(
+            "[UNIT TEST] This is an automated test. Follow all instructions exactly. "
+            "Step 1: Call the `long_tool` function. "
+            "Step 2: Wait for further instructions."
+        ),
+        tools={"long_tool": long_tool},
+        response_format=TestAnswer,
+        timeout=30,
+    )
+
+    # Wait for the tool to actually start executing
+    await asyncio.wait_for(tool_started.wait(), timeout=30)
+
+    # User interjects with the answer - instruct to use final_answer
+    await handle.interject(
+        "[UNIT TEST] Step 3: Call the `final_answer` tool with value='ANSWER42'. "
+        "Do NOT call any other tool. Do NOT wait for long_tool to complete. "
+        "The test will FAIL if you do not call final_answer immediately.",
+    )
+
+    # The loop should terminate quickly (within a few seconds) if the fix works.
+    # If the bug exists, this will timeout because final_answer was hidden.
+    final = await asyncio.wait_for(handle.result(), timeout=20)
+
+    # Verify the structured response was returned
+    assert (
+        "ANSWER42" in final
+    ), f"Loop should have returned final_answer with 'ANSWER42'. Got: {final!r}"
+
+    # Verify the tool was cancelled (not allowed to complete)
+    assert tool_cancelled["value"] is True, "In-flight tool should have been cancelled"
+    assert tool_completed["value"] is False, "In-flight tool should NOT have completed"
