@@ -1861,62 +1861,199 @@ class CodeActActor(BaseCodeActActor):
                                 s["state_summary"] = st["summary"]
                     except Exception:
                         continue
-                    # Skip modules, classes, and functions (show only data)
-                    if isinstance(value, type) or callable(value):
-                        # But include function proxies - show their names
-                        if hasattr(value, "__name__") and not isinstance(value, type):
-                            default_state[name] = f"<callable: {value.__name__}>"
+
+            return {"sessions": sessions}
+
+        async def inspect_state(
+            session_name: str | None = None,
+            session_id: int | None = None,
+            language: str | None = None,
+            venv_id: int | None = None,
+            detail: str = "summary",
+        ) -> Dict[str, Any]:
+            """
+            Inspect the state of a specific session (Python or shell).
+
+            This tool is for debugging and for deciding whether to:
+            - continue in the same session (stateful)
+            - start a fresh session (stateful without session_id/session_name)
+            - run a one-off (stateless)
+            - do a what-if (read_only)
+
+            Parameters
+            ----------
+            session_name:
+                Optional human-friendly alias for a session (preferred when available).
+            session_id + language (+ optional venv_id):
+                Directly identify a session. `session_id` is scoped per (language, venv_id).
+            detail:
+                "summary" | "names" | "full"
+                - Prefer "summary" when you just need quick context.
+                - Use "names" to see what variables exist without dumping values.
+                - Use "full" sparingly (can be large; values are truncated/redacted best-effort).
+
+            Defaults
+            --------
+            If no session selector is provided, this inspects the **current per-call Python sandbox**
+            (python session_id=0, venv_id=None) when bound.
+
+            Returns
+            -------
+            dict with:
+            - session: {language, session_id, session_name, venv_id}
+            - state: implementation-specific state representation (Python vars; shell cwd/env/functions/aliases)
+            """
+            detail = (detail or "summary").strip()
+
+            # Resolve session.
+            resolved: SessionKey | None = None
+            if session_name:
+                resolved = self._resolve_session_name(session_name)
+                if resolved is None:
+                    return {
+                        "error": f"Session {session_name!r} not found",
+                        "error_type": "validation",
+                    }
+            elif session_id is not None and language is not None:
+                resolved = (str(language), venv_id, int(session_id))
+
+            # Default: current sandbox.
+            if resolved is None:
+                try:
+                    sb = _CURRENT_SANDBOX.get()
+                except Exception as e:
+                    return {
+                        "error": f"No sandbox bound: {type(e).__name__}",
+                        "error_type": "internal",
+                    }
+
+                names: list[str] = []
+                full_map: dict[str, str] = {}
+                for k, v in sb.global_state.items():
+                    if not isinstance(k, str) or k.startswith("_"):
                         continue
-                    # Try to represent the value
-                    try:
-                        repr_val = repr(value)
-                        if len(repr_val) > 500:
-                            repr_val = repr_val[:500] + "..."
-                        default_state[name] = repr_val
-                    except Exception:
-                        default_state[name] = f"<{type(value).__name__}>"
+                    if callable(v) or isinstance(v, type):
+                        continue
+                    names.append(k)
+                    if detail == "full":
+                        try:
+                            s = repr(v)
+                            if len(s) > 500:
+                                s = s[:500] + "..."
+                        except Exception:
+                            s = f"<{type(v).__name__}>"
+                        full_map[k] = s
 
-                contexts["default"] = default_state
-                if default_state:
-                    summary_parts.append(f"default: {len(default_state)} variables")
+                names = sorted(names)
+                state_obj: dict[str, Any]
+                if detail == "full":
+                    state_obj = {"variables": full_map, "functions": []}
+                else:
+                    state_obj = {"variables": names, "functions": []}
 
-                # Python venv contexts
-                if self._venv_pool is not None:
-                    active_venv_sessions = self._venv_pool.list_active_sessions()
+                return {
+                    "session": {
+                        "language": "python",
+                        "session_id": 0,
+                        "session_name": self._get_session_name(
+                            language="python",
+                            venv_id=None,
+                            session_id=0,
+                        ),
+                        "venv_id": None,
+                    },
+                    "state": state_obj,
+                }
 
-                    if active_venv_sessions:
-                        all_venv_states = await self._venv_pool.get_all_states(
-                            function_manager=self.function_manager,
-                            timeout=10.0,
-                        )
-                        for (venv_id, session_id), state in all_venv_states.items():
-                            # Use simplified key: venv_{id} for session 0, venv_{id}_session_{n} for others
-                            if session_id == 0:
-                                key = f"venv_{venv_id}"
-                            else:
-                                key = f"venv_{venv_id}_session_{session_id}"
+            lang, resolved_venv_id, sid = resolved
 
-                            # Filter state
-                            filtered_state = {}
-                            for name, value in state.items():
-                                if name.startswith("_"):
-                                    continue
-                                try:
-                                    repr_val = (
-                                        repr(value)
-                                        if not isinstance(value, str)
-                                        else value
-                                    )
-                                    if len(str(repr_val)) > 500:
-                                        repr_val = str(repr_val)[:500] + "..."
-                                    filtered_state[name] = repr_val
-                                except Exception:
-                                    filtered_state[name] = "<unserializable>"
-                            contexts[key] = filtered_state
-                            if filtered_state:
-                                summary_parts.append(
-                                    f"{key}: {len(filtered_state)} variables",
-                                )
+            # Python venv-backed
+            if lang == "python" and resolved_venv_id is not None:
+                st = await self._venv_pool.get_session_state(
+                    venv_id=int(resolved_venv_id),
+                    session_id=int(sid),
+                    function_manager=self.function_manager,
+                    detail=detail,
+                )
+                return {
+                    "session": {
+                        "language": "python",
+                        "session_id": int(sid),
+                        "session_name": self._get_session_name(
+                            language="python",
+                            venv_id=int(resolved_venv_id),
+                            session_id=int(sid),
+                        ),
+                        "venv_id": int(resolved_venv_id),
+                    },
+                    "state": st,
+                }
+
+            # Python in-process session (SessionExecutor)
+            if lang == "python" and resolved_venv_id is None:
+                key = (None, int(sid))
+                sb = self._session_executor._python_sessions.get(
+                    key,
+                )  # pylint: disable=protected-access
+                if sb is None:
+                    return {
+                        "error": f"Python session {sid} not found",
+                        "error_type": "validation",
+                    }
+                names: list[str] = []
+                full_map: dict[str, str] = {}
+                for k, v in sb.global_state.items():
+                    if not isinstance(k, str) or k.startswith("_"):
+                        continue
+                    if callable(v) or isinstance(v, type):
+                        continue
+                    names.append(k)
+                    if detail == "full":
+                        try:
+                            s = repr(v)
+                            if len(s) > 500:
+                                s = s[:500] + "..."
+                        except Exception:
+                            s = f"<{type(v).__name__}>"
+                        full_map[k] = s
+                names = sorted(names)
+                state_obj = {
+                    "variables": full_map if detail == "full" else names,
+                    "functions": [],
+                }
+                return {
+                    "session": {
+                        "language": "python",
+                        "session_id": int(sid),
+                        "session_name": self._get_session_name(
+                            language="python",
+                            venv_id=None,
+                            session_id=int(sid),
+                        ),
+                        "venv_id": None,
+                    },
+                    "state": state_obj,
+                }
+
+            # Shell
+            st = await self._shell_pool.get_session_state(
+                language=lang,  # type: ignore[arg-type]
+                session_id=int(sid),
+                detail=detail,
+            )
+            return {
+                "session": {
+                    "language": str(lang),
+                    "session_id": int(sid),
+                    "session_name": self._get_session_name(
+                        language=str(lang),
+                        venv_id=None,
+                        session_id=int(sid),
+                    ),
+                    "venv_id": None,
+                },
+                "state": st,
+            }
 
                 # Shell contexts
                 if self._shell_pool is not None:
