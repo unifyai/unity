@@ -43,6 +43,249 @@ StateMode = Literal["stateful", "read_only", "stateless"]
 SessionKey = Tuple[str, Optional[int], int]  # (language, venv_id, session_id)
 
 
+def _validation_error(
+    *,
+    message: str,
+    suggestion: str,
+    state_mode: str,
+    session_id: int | None,
+    session_name: str | None,
+    language: str,
+    venv_id: int | None = None,
+) -> dict:
+    return {
+        "error": message,
+        "error_type": "validation",
+        "suggestion": suggestion,
+        "received": {
+            "state_mode": state_mode,
+            "session_id": session_id,
+            "session_name": session_name,
+            "language": language,
+            "venv_id": venv_id,
+        },
+    }
+
+
+def _validate_execution_params(
+    *,
+    state_mode: str,
+    session_id: int | None,
+    session_name: str | None,
+    language: str,
+    venv_id: int | None = None,
+    supported_languages: tuple[str, ...] = (
+        "python",
+        "bash",
+        "zsh",
+        "sh",
+        "powershell",
+    ),
+    # Name resolution/lookup is actor-owned, so validation accepts callables.
+    resolve_session_name: Optional[Callable[[str], Optional[SessionKey]]] = None,
+    get_session_name_for_id: Optional[
+        Callable[[str, Optional[int], int], Optional[str]]
+    ] = None,
+    session_exists: Optional[Callable[[str, Optional[int], int], bool]] = None,
+    max_sessions_total: Optional[int] = None,
+    active_session_count: Optional[int] = None,
+) -> dict | None:
+    """
+    Validate state_mode + session selection rules for execute_code.
+
+    Returns:
+        None if valid, otherwise a structured validation error dict.
+
+    Notes:
+        This function intentionally returns structured errors (not exceptions)
+        so the LLM can self-correct deterministically.
+    """
+    if language not in supported_languages:
+        return _validation_error(
+            message=f"Unsupported language: {language!r}",
+            suggestion=f"Use one of: {sorted(supported_languages)}",
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=language,
+            venv_id=venv_id,
+        )
+
+    if state_mode not in ("stateful", "read_only", "stateless"):
+        return _validation_error(
+            message=f"Unsupported state_mode: {state_mode!r}",
+            suggestion="Use one of: 'stateful', 'read_only', 'stateless'",
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=language,
+            venv_id=venv_id,
+        )
+
+    # Stateless must not reference sessions.
+    if state_mode == "stateless" and (
+        session_id is not None or session_name is not None
+    ):
+        return _validation_error(
+            message="Cannot use state_mode='stateless' with a session.",
+            suggestion="Remove session_id/session_name or switch to state_mode='stateful' or 'read_only'.",
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=language,
+            venv_id=venv_id,
+        )
+
+    # Read-only requires an existing session.
+    if state_mode == "read_only" and (session_id is None and session_name is None):
+        return _validation_error(
+            message="Cannot use state_mode='read_only' without specifying a session.",
+            suggestion="Provide session_id or session_name (must refer to an existing session), or use state_mode='stateless'.",
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=language,
+            venv_id=venv_id,
+        )
+
+    # If both are present, ensure they match.
+    if session_id is not None and session_name is not None:
+        if resolve_session_name is None:
+            return _validation_error(
+                message="Cannot validate session_name against session_id (no resolver configured).",
+                suggestion="Specify only one of session_id or session_name.",
+                state_mode=state_mode,
+                session_id=session_id,
+                session_name=session_name,
+                language=language,
+                venv_id=venv_id,
+            )
+        key = resolve_session_name(session_name)
+        if key is None:
+            # For stateful, the caller may choose to create+bind; for read_only it must exist.
+            if state_mode == "read_only":
+                return _validation_error(
+                    message=f"Session name {session_name!r} not found for read_only execution.",
+                    suggestion="Use an existing session_name (see list_sessions) or specify an existing session_id.",
+                    state_mode=state_mode,
+                    session_id=session_id,
+                    session_name=session_name,
+                    language=language,
+                    venv_id=venv_id,
+                )
+        else:
+            resolved_language, resolved_venv_id, resolved_session_id = key
+            if (
+                resolved_language != language
+                or resolved_venv_id != venv_id
+                or resolved_session_id != session_id
+            ):
+                return _validation_error(
+                    message=(
+                        f"session_id and session_name refer to different sessions. "
+                        f"{session_name!r} resolves to {(resolved_language, resolved_venv_id, resolved_session_id)} "
+                        f"but received {(language, venv_id, session_id)}."
+                    ),
+                    suggestion="Specify only one of session_id or session_name, or make them consistent.",
+                    state_mode=state_mode,
+                    session_id=session_id,
+                    session_name=session_name,
+                    language=language,
+                    venv_id=venv_id,
+                )
+
+    # If session_name is provided alone:
+    if session_name is not None and session_id is None:
+        if resolve_session_name is None:
+            return _validation_error(
+                message="Cannot resolve session_name (no resolver configured).",
+                suggestion="Specify session_id instead, or configure a session registry.",
+                state_mode=state_mode,
+                session_id=session_id,
+                session_name=session_name,
+                language=language,
+                venv_id=venv_id,
+            )
+        key = resolve_session_name(session_name)
+        if key is None and state_mode == "read_only":
+            return _validation_error(
+                message=f"Session name {session_name!r} not found for read_only execution.",
+                suggestion="Use an existing session_name (see list_sessions) or specify an existing session_id.",
+                state_mode=state_mode,
+                session_id=session_id,
+                session_name=session_name,
+                language=language,
+                venv_id=venv_id,
+            )
+
+    # Optional: enforce a global session cap (actor-owned pools, so this is per-actor).
+    if (
+        max_sessions_total is not None
+        and active_session_count is not None
+        and state_mode == "stateful"
+        and session_id is None
+        and session_name is None
+        and active_session_count >= max_sessions_total
+    ):
+        return _validation_error(
+            message=f"Session limit exceeded: {active_session_count} active sessions (max {max_sessions_total}).",
+            suggestion="Close an existing session (close_session) or reuse an existing session_id/session_name.",
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=language,
+            venv_id=venv_id,
+        )
+
+    # If an explicit session_id is provided for stateful execution, enforce limits when it would
+    # CREATE a new session (important for in-process Python sessions where pool-level limits may not apply).
+    if (
+        max_sessions_total is not None
+        and active_session_count is not None
+        and state_mode == "stateful"
+        and session_id is not None
+        and session_exists is not None
+        and active_session_count >= max_sessions_total
+    ):
+        try:
+            exists = bool(session_exists(language, venv_id, session_id))
+        except Exception:
+            exists = False
+        if not exists:
+            return _validation_error(
+                message=f"Session limit exceeded: {active_session_count} active sessions (max {max_sessions_total}).",
+                suggestion="Close an existing session (close_session) or reuse an existing session_id/session_name.",
+                state_mode=state_mode,
+                session_id=session_id,
+                session_name=session_name,
+                language=language,
+                venv_id=venv_id,
+            )
+
+    # If session_id is provided and we can validate existence for read_only, do so.
+    if (
+        state_mode == "read_only"
+        and session_id is not None
+        and session_exists is not None
+    ):
+        if not session_exists(language, venv_id, session_id):
+            name_hint = None
+            if get_session_name_for_id is not None:
+                name_hint = get_session_name_for_id(language, venv_id, session_id)
+            hint = f" (known name: {name_hint!r})" if name_hint else ""
+            return _validation_error(
+                message=f"Session {(language, venv_id, session_id)} does not exist for read_only execution{hint}.",
+                suggestion="Use list_sessions to find an existing session, or switch to state_mode='stateful' to create a new session.",
+                state_mode=state_mode,
+                session_id=session_id,
+                session_name=session_name,
+                language=language,
+                venv_id=venv_id,
+            )
+
+    return None
+
+
 class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-method]
     """Execute a FunctionManager entrypoint function without invoking the CodeAct LLM loop.
 
