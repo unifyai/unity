@@ -3205,8 +3205,16 @@ async def async_tool_loop_inner(
                         tools_data.pending.discard(t)
                     # Fall through to return the final answer
                 else:
-                    # Some tasks are still actively running - wait for them
-                    continue
+                    # LLM gave text-only response while tools are in-flight.
+                    # This is a valid termination signal - cancel all running
+                    # tasks and return the LLM's response.
+                    logger.info(
+                        f"LLM returned text-only response while {len(not_blocked)} "
+                        f"task(s) are in-flight. Auto-cancelling to terminate.",
+                        prefix="🔚",
+                    )
+                    await tools_data.cancel_pending_tasks()
+                    # Fall through to return the final answer
 
             # If a patient interjection arrived during the last LLM step, or if there
             # are unprocessed interjections queued, process them before returning.
