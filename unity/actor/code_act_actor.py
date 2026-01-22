@@ -2055,31 +2055,161 @@ class CodeActActor(BaseCodeActActor):
                 "state": st,
             }
 
-                # Shell contexts
-                if self._shell_pool is not None:
-                    active_shell_sessions = self._shell_pool.get_active_sessions()
+        async def close_session(
+            session_name: str | None = None,
+            session_id: int | None = None,
+            language: str | None = None,
+            venv_id: int | None = None,
+        ) -> Dict[str, Any]:
+            """
+            Close a specific session and free resources.
 
-                    for language, session_id in active_shell_sessions:
-                        # Use simplified key: {lang}_0 for session 0, {lang}_{n} for others
-                        key = f"{language}_{session_id}"
-                        # Shell state is not easily inspectable like Python state
-                        # Just indicate the context exists
-                        contexts[key] = {
-                            "_note": "Shell session active (state not inspectable)",
-                        }
-                        summary_parts.append(f"{key}: active")
+            Use this to proactively manage resources when you are done with a session.
+            This operation is **idempotent**: closing an already-closed/non-existent session
+            returns `closed=False, reason="not_found"` rather than raising.
 
+            Parameters
+            ----------
+            session_name:
+                Preferred: close by human-friendly alias.
+            session_id + language (+ optional venv_id):
+                Close by canonical identity.
+
+            Returns
+            -------
+            dict:
+                - closed: bool
+                - reason: "success" | "not_found" | "error"
+                - session: {language, session_id, session_name}
+            """
+            resolved: SessionKey | None = None
+            if session_name:
+                resolved = self._resolve_session_name(session_name)
+                if resolved is None:
+                    return {
+                        "closed": False,
+                        "reason": "not_found",
+                        "session": {
+                            "language": language,
+                            "session_id": session_id,
+                            "session_name": session_name,
+                        },
+                    }
+            elif session_id is not None and language is not None:
+                resolved = (str(language), venv_id, int(session_id))
+            else:
                 return {
-                    "contexts": contexts,
-                    "summary": (
-                        f"{len(contexts)} contexts"
-                        + (f" ({', '.join(summary_parts)})" if summary_parts else "")
-                        if contexts
-                        else "No active contexts"
-                    ),
+                    "closed": False,
+                    "reason": "error",
+                    "error": "Must provide session_name or (language + session_id).",
                 }
 
-            tools["inspect_state"] = inspect_state
+            lang, resolved_venv_id, sid = resolved
+            closed = False
+
+            if lang == "python" and resolved_venv_id is not None:
+                closed = await self._venv_pool.close_session(
+                    venv_id=int(resolved_venv_id),
+                    session_id=int(sid),
+                )
+            elif lang == "python" and resolved_venv_id is None:
+                closed = await self._session_executor.close_in_process_python_session(
+                    session_id=int(sid),
+                    venv_id=None,
+                )
+            else:
+                closed = await self._shell_pool.close_session(language=lang, session_id=int(sid))  # type: ignore[arg-type]
+
+            # Unregister all aliases for this session.
+            self._unregister_all_names_for_session(
+                key=(str(lang), resolved_venv_id, int(sid)),
+            )
+
+            return {
+                "closed": bool(closed),
+                "reason": "success" if closed else "not_found",
+                "session": {
+                    "language": str(lang),
+                    "session_id": int(sid),
+                    "session_name": session_name
+                    or self._get_session_name(
+                        language=str(lang),
+                        venv_id=resolved_venv_id,
+                        session_id=int(sid),
+                    ),
+                },
+            }
+
+        async def close_all_sessions() -> Dict[str, Any]:
+            """
+            Close all active sessions across all languages.
+
+            This is a blunt cleanup tool. Prefer `close_session(...)` when you only
+            want to discard a specific polluted/unused session.
+
+            Returns
+            -------
+            dict:
+                - closed_count: int
+                - languages: list[str] (languages that had sessions closed)
+                - details: per-language counts
+            """
+            closed_counts: dict[str, int] = {
+                "python": 0,
+                "bash": 0,
+                "zsh": 0,
+                "sh": 0,
+                "powershell": 0,
+            }
+
+            # Close in-process python sessions.
+            for s in list(self._session_executor.list_in_process_python_sessions()):
+                sid = int(s.get("session_id", 0))
+                if await self._session_executor.close_in_process_python_session(
+                    session_id=sid,
+                    venv_id=None,
+                ):
+                    closed_counts["python"] += 1
+                    self._unregister_all_names_for_session(key=("python", None, sid))
+
+            # Close venv python sessions.
+            for vid, sid in list(self._venv_pool.list_active_sessions()):
+                if await self._venv_pool.close_session(
+                    venv_id=int(vid),
+                    session_id=int(sid),
+                ):
+                    closed_counts["python"] += 1
+                    self._unregister_all_names_for_session(
+                        key=("python", int(vid), int(sid)),
+                    )
+
+            # Close shell sessions.
+            for lang, sid in list(self._shell_pool.get_active_sessions()):
+                if await self._shell_pool.close_session(
+                    language=lang,
+                    session_id=int(sid),
+                ):
+                    closed_counts[str(lang)] = closed_counts.get(str(lang), 0) + 1
+                    self._unregister_all_names_for_session(
+                        key=(str(lang), None, int(sid)),
+                    )
+
+            # Clear any remaining aliases.
+            self._session_names.clear()
+            self._session_names_rev.clear()
+
+            closed_total = sum(closed_counts.values())
+            langs = [k for k, v in closed_counts.items() if v > 0]
+            return {
+                "closed_count": closed_total,
+                "languages": langs,
+                "details": closed_counts,
+            }
+
+        tools["list_sessions"] = list_sessions
+        tools["inspect_state"] = inspect_state
+        tools["close_session"] = close_session
+        tools["close_all_sessions"] = close_all_sessions
 
         return tools
 
