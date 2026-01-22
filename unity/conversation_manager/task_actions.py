@@ -91,12 +91,22 @@ def get_steering_operation(name: str) -> Optional[SteeringOperation]:
 # Using 25 for safety margin.
 _MAX_SHORT_NAME_CHARS = 25
 
+# Characters to strip entirely (no word boundary created).
+# These appear within words (contractions, quotes) or terminate sentences.
+# - Apostrophes: ' and Unicode variants ' '
+# - Quotes: " and Unicode variants " " plus backtick `
+# - Sentence terminators: ! ?
+_STRIP_CHARS_PATTERN = re.compile(r"['\u2018\u2019\"\u201c\u201d`!?]")
+
 
 def derive_short_name(query: str, max_words: int = 4) -> str:
     """Derive a short, descriptive name from an action query for use in action names.
 
-    Takes the first few words, lowercased, with non-alphanumeric chars replaced
-    by spaces (so they act as word separators), joined by underscores.
+    Takes the first few words, lowercased, joined by underscores. Punctuation is
+    handled in two ways:
+    - Apostrophes, quotes, and sentence terminators are stripped (no word boundary)
+    - Other punctuation (slashes, hyphens, etc.) becomes word separators
+
     Ensures no __ (reserved as structural delimiter) and enforces a character
     limit to guarantee generated tool names never exceed OpenAI's 64-char limit.
 
@@ -105,7 +115,9 @@ def derive_short_name(query: str, max_words: int = 4) -> str:
         "What's the weather?" -> "whats_the_weather"
         "Search transcripts/messages/emails" -> "search_transcripts_messages_emails"
     """
-    # Replace non-alphanumeric chars with spaces (so slashes etc. become word breaks)
+    # First, strip apostrophes/quotes/terminators (they don't create word boundaries)
+    query = _STRIP_CHARS_PATTERN.sub("", query)
+    # Then replace remaining non-alphanumeric chars with spaces (word separators)
     normalized = re.sub(r"[^a-zA-Z0-9\s]", " ", query.lower())
     words = normalized.split()[:max_words]
     result = "_".join(words) if words else "task"
@@ -239,6 +251,7 @@ def iter_steering_tools_for_action(
     handle_id: int,
     query: str,
     pending_clarifications: list[dict] | None = None,
+    is_paused: bool | None = None,
 ) -> list[tuple[str, str]]:
     """Generate (action_name, description) pairs for an action's steering tools.
 
@@ -246,6 +259,9 @@ def iter_steering_tools_for_action(
         handle_id: The action handle ID
         query: The original action query
         pending_clarifications: List of pending clarification dicts with "call_id" keys
+        is_paused: If True, only include resume (skip pause).
+                   If False, only include pause (skip resume).
+                   If None, include both (backward compatible behavior).
 
     Returns:
         List of (action_name, description) tuples
@@ -254,6 +270,13 @@ def iter_steering_tools_for_action(
     actions = []
 
     for op in STEERING_OPERATIONS:
+        # Conditionally skip pause/resume based on current state
+        if is_paused is not None:
+            if op.name == "pause" and is_paused:
+                continue  # Skip pause when already paused
+            if op.name == "resume" and not is_paused:
+                continue  # Skip resume when not paused (running)
+
         if op.requires_clarification:
             # Only generate answer_clarification if there are pending ones
             for clar in pending_clarifications or []:

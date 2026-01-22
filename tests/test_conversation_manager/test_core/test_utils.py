@@ -61,8 +61,9 @@ class TestDeriveShortName:
 
     def test_lowercases_words(self):
         """All words are lowercased."""
-        result = derive_short_name("Find IMPORTANT Documents NOW")
-        assert result == "find_important_documents_now"
+        # Use a shorter query that won't hit the 25-char truncation limit
+        result = derive_short_name("Find IMPORTANT Docs")
+        assert result == "find_important_docs"
 
     def test_max_words_limit(self):
         """Respects max_words parameter."""
@@ -96,8 +97,9 @@ class TestDeriveShortName:
         # This was the bug that caused tool names to exceed 64 chars:
         # "transcripts/messages/emails" became "transcriptsmessagesemails" (one word)
         # Now it becomes "transcripts messages emails" (three words)
-        result = derive_short_name("Search transcripts/messages/emails/notes")
-        assert result == "search_transcripts_messages_emails"
+        # Use a shorter example to avoid hitting the 25-char truncation limit
+        result = derive_short_name("Get docs/files/data")
+        assert result == "get_docs_files_data"
         # Each slash-separated segment is now a separate word
 
     def test_character_limit_enforced(self):
@@ -283,7 +285,8 @@ class TestIterSteeringToolsForAction:
     """Tests for iter_steering_tools_for_action function."""
 
     def test_basic_actions(self):
-        """Generates standard steering tools for an action."""
+        """Generates standard steering tools for an action (backward compatible)."""
+        # With is_paused=None (default), both pause and resume are included
         actions = iter_steering_tools_for_action(0, "List contacts")
         action_names = [a[0] for a in actions]
 
@@ -292,6 +295,36 @@ class TestIterSteeringToolsForAction:
         assert any("interject_" in n for n in action_names)
         assert any("pause_" in n for n in action_names)
         assert any("resume_" in n for n in action_names)
+
+    def test_is_paused_true_only_shows_resume(self):
+        """When is_paused=True, only resume is shown (not pause)."""
+        actions = iter_steering_tools_for_action(
+            0,
+            "List contacts",
+            is_paused=True,
+        )
+        action_names = [a[0] for a in actions]
+
+        assert any("resume_" in n for n in action_names)
+        assert not any("pause_" in n for n in action_names)
+        # Other steering tools should still be present
+        assert any("ask_" in n for n in action_names)
+        assert any("stop_" in n for n in action_names)
+
+    def test_is_paused_false_only_shows_pause(self):
+        """When is_paused=False, only pause is shown (not resume)."""
+        actions = iter_steering_tools_for_action(
+            0,
+            "List contacts",
+            is_paused=False,
+        )
+        action_names = [a[0] for a in actions]
+
+        assert any("pause_" in n for n in action_names)
+        assert not any("resume_" in n for n in action_names)
+        # Other steering tools should still be present
+        assert any("ask_" in n for n in action_names)
+        assert any("stop_" in n for n in action_names)
 
     def test_no_answer_clarification_without_pending(self):
         """No answer_clarification without pending clarifications."""
@@ -446,19 +479,23 @@ class TestRenderer:
         return Renderer()
 
     @pytest.fixture
-    def sample_contact(self):
-        return Contact(
-            contact_id=1,
-            first_name="John",
-            surname="Doe",
-            phone_number="+15551234567",
-            email_address="john@example.com",
-            bio="Test bio",
-            rolling_summary="Test summary",
-            response_policy="Be polite",
-            threads={},
-            on_call=False,
-        )
+    def sample_contact_info(self):
+        """Contact info dict (from ContactManager)."""
+        return {
+            "contact_id": 1,
+            "first_name": "John",
+            "surname": "Doe",
+            "phone_number": "+15551234567",
+            "email_address": "john@example.com",
+            "bio": "Test bio",
+            "rolling_summary": "Test summary",
+            "response_policy": "Be polite",
+        }
+
+    @pytest.fixture
+    def sample_conv_state(self):
+        """Conversation state (from ContactIndex)."""
+        return ConversationState(contact_id=1, on_call=False)
 
     def test_render_in_flight_actions_empty(self, renderer):
         """Renders empty in-flight actions."""
@@ -481,6 +518,48 @@ class TestRenderer:
         assert "List all contacts" in result
         assert "ask_" in result
         assert "stop_" in result
+
+    def test_render_in_flight_actions_shows_paused_status(self, renderer):
+        """Renders paused actions with status='paused'."""
+        from unittest.mock import MagicMock
+
+        # Create a paused handle
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = False  # Paused
+
+        actions = {
+            0: {
+                "query": "Paused action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        result = renderer.render_in_flight_actions(actions)
+        assert "status='paused'" in result
+        assert "resume_" in result  # Should show resume tool
+        assert "pause_" not in result  # Should NOT show pause tool
+
+    def test_render_in_flight_actions_shows_executing_status(self, renderer):
+        """Renders running actions with status='executing'."""
+        from unittest.mock import MagicMock
+
+        # Create a running handle
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True  # Running
+
+        actions = {
+            0: {
+                "query": "Running action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        result = renderer.render_in_flight_actions(actions)
+        assert "status='executing'" in result
+        assert "pause_" in result  # Should show pause tool
+        assert "resume_" not in result  # Should NOT show resume tool
 
     def test_render_in_flight_actions_with_clarification(self, renderer):
         """Renders actions with pending clarifications."""
@@ -557,10 +636,14 @@ class TestRenderer:
         assert "Email ID: email_456" in result
         assert "Please review" in result
 
-    def test_render_contact(self, renderer, sample_contact):
+    def test_render_contact(self, renderer, sample_contact_info, sample_conv_state):
         """Renders contact with all details."""
         last_snapshot = datetime.now()
-        result = renderer.render_contact(sample_contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=sample_contact_info,
+            conv_state=sample_conv_state,
+            last_snapshot=last_snapshot,
+        )
         assert 'contact_id="1"' in result
         assert 'first_name="John"' in result
         assert 'surname="Doe"' in result
@@ -569,22 +652,27 @@ class TestRenderer:
 
     def test_global_thread_rendered_before_per_medium_threads(self, renderer):
         """Global thread appears before per-medium threads in rendered output."""
-        contact = Contact(
-            contact_id=1,
-            first_name="John",
-            surname="Doe",
-            bio="Test bio",
-            rolling_summary="Test summary",
-            response_policy="Be polite",
-        )
+        contact_info = {
+            "contact_id": 1,
+            "first_name": "John",
+            "surname": "Doe",
+            "bio": "Test bio",
+            "rolling_summary": "Test summary",
+            "response_policy": "Be polite",
+        }
+        conv_state = ConversationState(contact_id=1)
         # Add messages to both global and per-medium threads
         ts = datetime.now()
         msg = Message(name="John", content="Hello!", timestamp=ts)
-        contact.global_thread.append(msg)
-        contact.threads[Medium.SMS_MESSAGE].append(msg)
+        conv_state.global_thread.append(msg)
+        conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
         last_snapshot = datetime.now() - timedelta(hours=1)
-        result = renderer.render_contact(contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=contact_info,
+            conv_state=conv_state,
+            last_snapshot=last_snapshot,
+        )
 
         # Global thread should appear before sms thread
         global_pos = result.find("<global>")
@@ -597,24 +685,29 @@ class TestRenderer:
 
     def test_global_thread_shows_more_messages_than_per_medium(self, renderer):
         """Global thread renders up to 50 messages while per-medium shows 5."""
-        contact = Contact(
-            contact_id=1,
-            first_name="John",
-            surname="Doe",
-            bio="Test bio",
-            rolling_summary="Test summary",
-            response_policy="Be polite",
-        )
+        contact_info = {
+            "contact_id": 1,
+            "first_name": "John",
+            "surname": "Doe",
+            "bio": "Test bio",
+            "rolling_summary": "Test summary",
+            "response_policy": "Be polite",
+        }
+        conv_state = ConversationState(contact_id=1)
         # Add 10 messages to both threads
         base_time = datetime.now()
         for i in range(10):
             ts = base_time + timedelta(minutes=i)
             msg = Message(name="John", content=f"Message {i}", timestamp=ts)
-            contact.global_thread.append(msg)
-            contact.threads[Medium.SMS_MESSAGE].append(msg)
+            conv_state.global_thread.append(msg)
+            conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
         last_snapshot = datetime.now() - timedelta(hours=1)
-        result = renderer.render_contact(contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=contact_info,
+            conv_state=conv_state,
+            last_snapshot=last_snapshot,
+        )
 
         # Global thread should have all 10 messages
         for i in range(10):
@@ -640,10 +733,19 @@ class TestRenderer:
                 f"Message {i}" in sms_section
             ), f"Message {i} should be in sms_message"
 
-    def test_empty_global_thread_not_rendered(self, renderer, sample_contact):
+    def test_empty_global_thread_not_rendered(
+        self,
+        renderer,
+        sample_contact_info,
+        sample_conv_state,
+    ):
         """Empty global thread is not rendered."""
         last_snapshot = datetime.now()
-        result = renderer.render_contact(sample_contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=sample_contact_info,
+            conv_state=sample_conv_state,
+            last_snapshot=last_snapshot,
+        )
         assert "<global>" not in result
 
 
