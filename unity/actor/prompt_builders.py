@@ -2078,7 +2078,10 @@ def build_initial_plan_prompt(
     """
     Dynamically builds the system prompt for the Hierarchical Actor.
     """
-    formatted_functions = _format_existing_functions(existing_functions)
+    formatted_functions = _format_existing_functions(
+        existing_functions,
+        include_source=False,
+    )
     image_context_str = _format_images_for_prompt(images)
 
     env_context_str = _format_environment_contexts(environments)
@@ -2130,7 +2133,12 @@ def build_initial_plan_prompt(
         ### YOUR AVAILABLE FUNCTIONS (Already Loaded & Callable)
 
         The following functions are **ALREADY DEFINED and LOADED** in your execution environment.
-        They are DIRECTLY CALLABLE in your code. DO NOT redefine them. DO NOT reimplement their logic.
+        They are DIRECTLY CALLABLE in your code.
+
+        **Trust model:**
+        - Treat these functions as **tested, safe, high-level skills**.
+        - You do **NOT** need to see their source code to trust them.
+        - Do **NOT** "peek inside" by re-creating their internal logic with `primitives.*`, `computer_primitives.*` etc.
 
         **HOW TO USE THESE FUNCTIONS:**
 
@@ -2157,9 +2165,10 @@ def build_initial_plan_prompt(
         **CRITICAL RULES - READ CAREFULLY:**
         1. **CALL, DON'T REDEFINE**: These functions ALREADY EXIST in the runtime. Call them directly by name.
         2. **CHECK THE LIBRARY FIRST**: Before writing ANY new function, scan the available functions below. If one matches your goal, USE IT.
-        3. **DIRECT PRIMITIVE CALLS (WHEN APPROPRIATE)**:
-           - Prefer a library wrapper **only when it targets the same manager** you need (e.g., `ask_tasks` → `primitives.tasks.ask`).
-           - If **no appropriate wrapper exists** for the manager you need, call the correct `primitives.<manager>.*` method directly.
+        3. **WRAPPER-FIRST (WHEN AVAILABLE)**:
+           - If an available function clearly targets the same domain/manager you need, **you MUST call the function**, not `primitives.*` directly.
+           - Calling the wrapper is the **simplest** and **most reliable** plan; do not be defensive about black-box behavior.
+           - Only call `primitives.<manager>.*` directly when **no relevant wrapper exists** for that manager.
            - **Never** use a wrapper for a different manager as a “fallback” (e.g., don’t use `ask_knowledge` to answer a tasks question).
         4. **COMPOSE IF NEEDED**: If your goal requires multiple steps, orchestrate the existing functions in main_plan().
         5. **ONLY CREATE NEW FUNCTIONS WHEN**: No existing function is semantically related to your goal, OR you need helper logic that doesn't exist in the library.
@@ -2232,7 +2241,10 @@ def build_dynamic_implement_prompt(
     while the dynamic content contains goal, context, and function-specific data.
     """
 
-    formatted_functions = _format_existing_functions(existing_functions)
+    formatted_functions = _format_existing_functions(
+        existing_functions,
+        include_source=False,
+    )
     library_instruction = textwrap.dedent(
         f"""
         ### Existing Functions Library (Your Skills)
