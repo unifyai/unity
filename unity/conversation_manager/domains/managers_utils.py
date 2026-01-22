@@ -161,11 +161,11 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     ):
         # Use contact from event, fall back to default if not in index
         evt_contact_id = event.contact.get("contact_id")
-        if evt_contact_id in cm.contact_index.contacts:
+        if cm.contact_index.get_contact(contact_id=evt_contact_id):
             contact_id = evt_contact_id
         else:
             contact_id = 1
-    elif event.contact["contact_id"] in cm.contact_index.contacts:
+    elif cm.contact_index.get_contact(contact_id=event.contact["contact_id"]):
         contact_id = event.contact["contact_id"]
     if role == "Assistant":
         sender_id, receiver_ids = 0, [contact_id]
