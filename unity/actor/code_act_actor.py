@@ -2540,6 +2540,19 @@ class CodeActActor(BaseCodeActActor):
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
+        # Close any in-process session sandboxes owned by the session executor.
+        try:
+            await self._session_executor.close()
+        except Exception:
+            pass
+
+        # Clear session name registry.
+        try:
+            self._session_names.clear()
+            self._session_names_rev.clear()
+        except Exception:
+            pass
+
         # Close the pools (terminates persistent subprocess/session connections)
         await self._venv_pool.close()
         await self._shell_pool.close()
