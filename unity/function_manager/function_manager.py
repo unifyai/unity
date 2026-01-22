@@ -4594,14 +4594,17 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if remote Windows execution is required, False otherwise.
         """
-        if not func_data.get("windows_os_required", False):
+        windows_os_required = func_data.get("windows_os_required", False)
+        if not windows_os_required:
             return False
 
         from unity.session_details import SESSION_DETAILS
 
         assistant = SESSION_DETAILS.assistant
-
-        return assistant.desktop_mode == "windows" and not assistant.is_user_desktop
+        should_execute_remote = (
+            assistant.desktop_mode == "windows" and not assistant.is_user_desktop
+        )
+        return should_execute_remote
 
     def _calculate_wait_time_from_vm_ready_at(
         self,
@@ -4667,6 +4670,7 @@ class FunctionManager(BaseFunctionManager):
             )
 
         start_time = asyncio.get_event_loop().time()
+        print(f"[windows exec] Waiting for VM ready (timeout={timeout}s)")
 
         async with aiohttp.ClientSession() as session:
             while True:
@@ -4689,6 +4693,7 @@ class FunctionManager(BaseFunctionManager):
                             desktop_url = data.get("desktop_url")
 
                             if vm_ready and desktop_url:
+                                print(f"[windows exec] VM ready")
                                 logger.info(
                                     f"Windows VM ready for {assistant_id}: "
                                     f"{desktop_url}",
@@ -4702,9 +4707,10 @@ class FunctionManager(BaseFunctionManager):
                             remaining = timeout - elapsed
                             await asyncio.sleep(min(wait_secs, remaining))
                         else:
+                            resp_text = await resp.text()
                             logger.warning(
                                 f"VM status check failed: {resp.status} "
-                                f"{await resp.text()}",
+                                f"{resp_text}",
                             )
                             await asyncio.sleep(10)
                 except aiohttp.ClientError as e:
@@ -4742,19 +4748,20 @@ class FunctionManager(BaseFunctionManager):
             raise ValueError(f"VirtualEnv with ID {venv_id} not found")
 
         pyproject_content = venv_data["venv"]
-        venv_dir = f"venvs/venv_{venv_id}"
-
+        venv_dir = f"venvs\\venv_{venv_id}"
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
+        print(f"[windows exec] Preparing venv {venv_id}")
+
         async with aiohttp.ClientSession() as session:
-            # Step 1: Write pyproject.toml using /files endpoint (CRUD)
+            # Step 1: Write pyproject.toml
             async with session.post(
-                f"{desktop_url}/files",
+                f"{desktop_url}/api/files",
                 json={
                     "action": "save",
                     "files": [
                         {
-                            "filename": f"{venv_dir}/pyproject.toml",
+                            "filename": f"{venv_dir}\\pyproject.toml",
                             "content": pyproject_content,
                             "encoding": "text",
                         },
@@ -4764,18 +4771,35 @@ class FunctionManager(BaseFunctionManager):
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
                 if not resp.ok:
+                    resp_text = await resp.text()
                     raise RuntimeError(
-                        f"Failed to write pyproject.toml to remote: {await resp.text()}",
+                        f"Failed to write pyproject.toml to remote: {resp_text}",
                     )
 
-            # Step 2: Run 'uv sync' using /exec endpoint (general command execution)
-            venv_full_path = f"{self.REMOTE_WINDOWS_WORKSPACE_DIR}\\{venv_dir}"
+            # Step 2: Install uv via pip
+            print(f"[windows exec] Installing uv")
             async with session.post(
-                f"{desktop_url}/exec",
+                f"{desktop_url}/api/exec",
+                json={
+                    "command": "pip install uv",
+                    "cwd": self.REMOTE_WINDOWS_WORKSPACE_DIR,
+                    "timeout": 300000,
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=360),
+            ) as resp:
+                await resp.json()  # Don't fail if uv already installed
+
+            # Step 3: Run 'uv sync'
+            venv_full_path = f"{self.REMOTE_WINDOWS_WORKSPACE_DIR}\\{venv_dir}"
+            print(f"[windows exec] Running uv sync")
+            async with session.post(
+                f"{desktop_url}/api/exec",
                 json={
                     "command": "uv sync",
                     "cwd": venv_full_path,
-                    "timeout": 600000,  # 10 minutes for dependency installation
+                    "timeout": 600000,
                     "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
                 },
                 headers=headers,
@@ -4788,8 +4812,9 @@ class FunctionManager(BaseFunctionManager):
                         f"{result.get('stderr', result.get('stdout', 'Unknown error'))}",
                     )
 
+            python_path = f"{venv_full_path}\\.venv\\Scripts\\python.exe"
             logger.info(f"Prepared venv {venv_id} on remote Windows VM")
-            return f"{venv_full_path}\\.venv\\Scripts\\python.exe"
+            return python_path
 
     async def _execute_python_function_on_remote_windows(
         self,
@@ -4822,9 +4847,12 @@ class FunctionManager(BaseFunctionManager):
 
         from unity.session_details import SESSION_DETAILS
 
-        # Step 1: Wait for VM to be ready
-        desktop_url = await self._wait_for_remote_windows_vm_ready()
+        func_name_meta = func_data.get("name", "unknown")
+        print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
 
+        # Step 1: Get desktop URL
+        desktop_url = await self._wait_for_remote_windows_vm_ready()
+        # desktop_url = SESSION_DETAILS.assistant.desktop_url
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
         # Step 2: Prepare venv on remote (if specified)
@@ -4841,7 +4869,6 @@ class FunctionManager(BaseFunctionManager):
         exec_id = uuid.uuid4().hex[:8]
         is_async = "async def" in implementation
 
-        # Extract function name from implementation
         try:
             tree = ast.parse(implementation)
             func_name = tree.body[0].name if tree.body else "main"
@@ -4861,7 +4888,7 @@ import asyncio
 import sys
 
 # Function implementation
-{implementation}
+{implementation.split(")", 1)[1]}
 
 # Execution wrapper
 def _main():
@@ -4884,11 +4911,10 @@ if __name__ == "__main__":
 """
 
         async with aiohttp.ClientSession() as session:
-            # Step 4: Write script to remote using /files endpoint (CRUD)
-            script_filename = f"scripts/_exec_{exec_id}.py"
-
+            # Step 4: Write script to remote
+            script_filename = f"scripts\\_exec_{exec_id}.py"
             async with session.post(
-                f"{desktop_url}/files",
+                f"{desktop_url}/api/files",
                 json={
                     "action": "save",
                     "files": [
@@ -4903,25 +4929,26 @@ if __name__ == "__main__":
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
                 if not resp.ok:
+                    resp_text = await resp.text()
                     return {
                         "result": None,
-                        "error": (
-                            f"Failed to write script to remote: {await resp.text()}"
-                        ),
+                        "error": (f"Failed to write script to remote: {resp_text}"),
                         "stdout": "",
                         "stderr": "",
                     }
 
-            # Step 5: Execute script using /exec endpoint (general command execution)
+            # Step 5: Execute script
             cwd = self.REMOTE_WINDOWS_WORKSPACE_DIR
+            exec_command = f'& "{python_path}" "{script_filename}"'
 
             async with session.post(
-                f"{desktop_url}/exec",
+                f"{desktop_url}/api/exec",
                 json={
-                    "command": f'"{python_path}" "scripts\\_exec_{exec_id}.py"',
+                    "command": exec_command,
                     "cwd": cwd,
                     "timeout": 3600000,  # 1 hour
                     "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                    "user_session": True,  # Run in interactive user session for COM/Excel
                 },
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=3660),
@@ -4930,12 +4957,13 @@ if __name__ == "__main__":
 
             stdout = exec_result.get("stdout", "")
             stderr = exec_result.get("stderr", "")
+            exit_code = exec_result.get("exitCode")
+            print(f"[windows exec] Execution complete (exitCode={exit_code})")
 
-            # Step 6: Read result file using /files endpoint (CRUD)
+            # Step 6: Read result file
             result_filename = f"_result_{exec_id}.json"
-
             async with session.post(
-                f"{desktop_url}/files",
+                f"{desktop_url}/api/files",
                 json={
                     "action": "read",
                     "filename": result_filename,
@@ -4945,8 +4973,9 @@ if __name__ == "__main__":
             ) as resp:
                 if resp.ok:
                     file_data = await resp.json()
+                    content = file_data.get("content", "{}")
                     try:
-                        result_data = json.loads(file_data.get("content", "{}"))
+                        result_data = json.loads(content)
                     except json.JSONDecodeError:
                         result_data = {
                             "result": None,
@@ -4960,17 +4989,17 @@ if __name__ == "__main__":
                         ),
                     }
 
-            # Step 7: Clean up temporary files using /files endpoint (CRUD)
-            async with session.post(
-                f"{desktop_url}/files",
-                json={
-                    "action": "delete",
-                    "filenames": [script_filename, result_filename],
-                },
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as _:
-                pass  # Best effort cleanup
+            # Step 7: Clean up temporary files
+            # async with session.post(
+            #     f"{desktop_url}/api/files",
+            #     json={
+            #         "action": "delete",
+            #         "filenames": [script_filename, result_filename],
+            #     },
+            #     headers=headers,
+            #     timeout=aiohttp.ClientTimeout(total=30),
+            # ) as _:
+            #     pass  # Best effort cleanup
 
             return {
                 "result": result_data.get("result"),
