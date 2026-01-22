@@ -1211,6 +1211,22 @@ class CodeActActor(BaseCodeActActor):
 
         self._venv_pool = VenvPool()
         self._shell_pool = ShellPool()
+        self._session_executor = SessionExecutor(
+            venv_pool=self._venv_pool,
+            shell_pool=self._shell_pool,
+            environments=self.environments,
+            computer_primitives=self._computer_primitives,
+            function_manager=self.function_manager,
+            timeout=timeout,
+        )
+
+        # Session name registry: name -> (language, venv_id, session_id)
+        self._session_names: Dict[str, SessionKey] = {}
+        # Reverse map: (language, venv_id, session_id) -> set(names)
+        self._session_names_rev: Dict[SessionKey, set[str]] = {}
+        # Actor-level session cap (global across languages for this actor instance).
+        self._max_sessions_total: int = 20
+        self._next_session_id: dict[tuple[str, Optional[int]], int] = {}
 
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
@@ -1229,6 +1245,59 @@ class CodeActActor(BaseCodeActActor):
         self._act_semaphore = asyncio.Semaphore(20)
         # Timeout used when acquiring the semaphore (prevents unbounded waits).
         self._act_semaphore_timeout_s: float = 30.0
+
+    # ───────────────────────── Session name registry ─────────────────────── #
+
+    def _register_session_name(
+        self,
+        *,
+        name: str,
+        language: str,
+        venv_id: int | None,
+        session_id: int,
+    ) -> None:
+        key: SessionKey = (language, venv_id, int(session_id))
+        existing = self._session_names.get(name)
+        if existing is not None and existing != key:
+            raise ValueError(
+                f"Session name {name!r} is already bound to {existing}, cannot rebind to {key}.",
+            )
+        self._session_names[name] = key
+        self._session_names_rev.setdefault(key, set()).add(name)
+
+    def _resolve_session_name(self, name: str) -> SessionKey | None:
+        return self._session_names.get(name)
+
+    def _get_session_name(
+        self,
+        *,
+        language: str,
+        venv_id: int | None,
+        session_id: int,
+    ) -> str | None:
+        key: SessionKey = (language, venv_id, int(session_id))
+        names = self._session_names_rev.get(key)
+        if not names:
+            return None
+        # Prefer stable ordering for determinism.
+        return sorted(names)[0]
+
+    def _unregister_session_name(self, name: str) -> None:
+        key = self._session_names.pop(name, None)
+        if key is None:
+            return
+        names = self._session_names_rev.get(key)
+        if names is not None:
+            names.discard(name)
+            if not names:
+                self._session_names_rev.pop(key, None)
+
+    def _unregister_all_names_for_session(self, *, key: SessionKey) -> None:
+        names = self._session_names_rev.pop(key, None)
+        if not names:
+            return
+        for n in list(names):
+            self._session_names.pop(n, None)
 
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ComputerPrimitives."""
