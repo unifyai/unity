@@ -481,11 +481,13 @@ class VenvPool:
     stateful sessions per venv. Each session has its own subprocess and globals.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_total_sessions: int = 20) -> None:
         # Key: (venv_id, session_id) -> _VenvConnection
         self._connections: Dict[Tuple[int, int], _VenvConnection] = {}
+        self._metadata: Dict[Tuple[int, int], SessionMetadata] = {}
         self._lock = asyncio.Lock()
         self._closed = False
+        self._max_total_sessions = int(max_total_sessions)
 
     async def get_or_create_connection(
         self,
@@ -514,12 +516,23 @@ class VenvPool:
             if key in self._connections:
                 conn = self._connections[key]
                 if conn.is_alive():
+                    md = self._metadata.get(key)
+                    if md is not None:
+                        md.last_used = datetime.now(timezone.utc)
                     return conn
                 # Connection died, remove it and create a new one
                 logger.warning(
                     f"VenvPool: connection for venv {venv_id} session {session_id} died, creating new one",
                 )
                 del self._connections[key]
+                self._metadata.pop(key, None)
+
+            # Enforce global session cap (across all venv_id/session_id combinations).
+            active = sum(1 for c in self._connections.values() if c.is_alive())
+            if active >= self._max_total_sessions:
+                raise SessionLimitError(
+                    message=f"Maximum sessions reached for python ({active}/{self._max_total_sessions})",
+                )
 
             # Create new connection
             conn = await _VenvConnection.create(
@@ -528,6 +541,13 @@ class VenvPool:
                 timeout=timeout,
             )
             self._connections[key] = conn
+            now = datetime.now(timezone.utc)
+            self._metadata[key] = SessionMetadata(
+                venv_id=int(venv_id),
+                session_id=int(session_id),
+                created_at=now,
+                last_used=now,
+            )
             return conn
 
     async def execute_in_venv(
@@ -561,14 +581,23 @@ class VenvPool:
             Dict with keys: result, error, stdout, stderr
         """
         key = (venv_id, session_id)
-        conn = await self.get_or_create_connection(
-            venv_id=venv_id,
-            function_manager=function_manager,
-            session_id=session_id,
-        )
+        try:
+            conn = await self.get_or_create_connection(
+                venv_id=venv_id,
+                function_manager=function_manager,
+                session_id=session_id,
+            )
+        except SessionLimitError as e:
+            return {
+                "result": None,
+                "stdout": "",
+                "stderr": "",
+                "error": e.message,
+                "error_type": "resource_limit",
+            }
 
         try:
-            return await conn.execute(
+            out = await conn.execute(
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,
@@ -576,6 +605,11 @@ class VenvPool:
                 computer_primitives=computer_primitives,
                 timeout=timeout,
             )
+            # Update last_used best-effort
+            md = self._metadata.get(key)
+            if md is not None:
+                md.last_used = datetime.now(timezone.utc)
+            return out
         except RuntimeError as e:
             if "subprocess has died" in str(e):
                 # Try to recreate and retry once
