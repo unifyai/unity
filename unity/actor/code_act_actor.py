@@ -691,6 +691,53 @@ class PythonExecutionSession:
             "browser_used": self._browser_used,
         }
 
+async def _execute_shell_stateless(
+    *,
+    language: SupportedLanguage,
+    command: str,
+) -> Dict[str, Any]:
+    """
+    Execute shell code in an ephemeral subprocess (stateless).
+    """
+    if language == "python":
+        raise ValueError("Shell stateless executor called with language='python'")
+
+    # Build command line consistent with ShellSession's non-interactive choices.
+    if language == "bash":
+        argv = ["/bin/bash", "--norc", "--noprofile", "-c", command]
+    elif language == "zsh":
+        argv = ["/bin/zsh", "--no-rcs", "--no-globalrcs", "-c", command]
+    elif language == "sh":
+        argv = ["/bin/sh", "-c", command]
+    elif language == "powershell":
+        argv = ["pwsh", "-NoProfile", "-NoLogo", "-Command", command]
+    else:
+        raise ValueError(f"Unsupported shell language: {language}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_b, stderr_b = await proc.communicate()
+        return {
+            "stdout": (stdout_b or b"").decode(errors="replace"),
+            "stderr": (stderr_b or b"").decode(errors="replace"),
+            "result": int(proc.returncode or 0),
+            "error": None,
+            "browser_used": False,
+        }
+    except Exception as e:
+        return {
+            "stdout": "",
+            "stderr": "",
+            "result": None,
+            "error": f"{type(e).__name__}: {e}",
+            "browser_used": False,
+        }
+
 
 class CodeActActor(BaseCodeActActor):
     """
