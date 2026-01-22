@@ -1101,6 +1101,106 @@ def get_code_act_function_first_examples() -> str:
 
 
 # ---------------------------------------------------------------------------
+# 8b. Multi-language + multi-session execution examples (for CodeActActor)
+# ---------------------------------------------------------------------------
+
+
+def get_code_act_session_examples() -> str:
+    """Examples: using execute_code with sessions across Python + shell.
+
+    These examples are written in JSON tool-call form (not Python), because
+    `execute_code` is itself a tool call.
+    """
+
+    return r"""
+### Multi-Language + Multi-Session Execution (CodeActActor)
+
+**Key idea:** Use `execute_code` for *everything* (Python + shell), and use sessions
+to preserve state across multiple tool calls.
+
+#### Example A — Stateful shell session for repo navigation
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Create or reuse a persistent bash session for navigating the repo.",
+      "language": "bash",
+      "state_mode": "stateful",
+      "session_name": "repo_nav",
+      "code": "pwd && ls"
+    }
+  }]
+}
+```
+
+#### Example B — Continue the same shell session (cd persists)
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Continue in the same session so cwd is preserved.",
+      "language": "bash",
+      "state_mode": "stateful",
+      "session_name": "repo_nav",
+      "code": "cd unity && ls && git status -sb"
+    }
+  }]
+}
+```
+
+#### Example C — Stateful Python session for iterative work
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Use a stateful Python session so variables persist between calls.",
+      "language": "python",
+      "state_mode": "stateful",
+      "session_name": "analysis",
+      "code": "x = 41\nx += 1\nprint(x)"
+    }
+  }]
+}
+```
+
+#### Example D — Session discovery and inspection
+```json
+{
+  "tool_calls": [
+    { "name": "list_sessions", "arguments": {} },
+    {
+      "name": "inspect_state",
+      "arguments": {
+        "detail": "names",
+        "session_name": "analysis",
+        "language": "python"
+      }
+    }
+  ]
+}
+```
+
+#### Example E — Stateless execution (no persistence)
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Run a one-off command with no session/persistence.",
+      "language": "bash",
+      "state_mode": "stateless",
+      "code": "echo hello"
+    }
+  }]
+}
+```
+""".strip()
+
+
+# ---------------------------------------------------------------------------
 # 9. Helper Functions for Prompt Composition
 # ---------------------------------------------------------------------------
 
