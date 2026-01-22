@@ -239,6 +239,7 @@ def iter_steering_tools_for_action(
     handle_id: int,
     query: str,
     pending_clarifications: list[dict] | None = None,
+    is_paused: bool | None = None,
 ) -> list[tuple[str, str]]:
     """Generate (action_name, description) pairs for an action's steering tools.
 
@@ -246,6 +247,9 @@ def iter_steering_tools_for_action(
         handle_id: The action handle ID
         query: The original action query
         pending_clarifications: List of pending clarification dicts with "call_id" keys
+        is_paused: If True, only include resume (skip pause).
+                   If False, only include pause (skip resume).
+                   If None, include both (backward compatible behavior).
 
     Returns:
         List of (action_name, description) tuples
@@ -254,6 +258,13 @@ def iter_steering_tools_for_action(
     actions = []
 
     for op in STEERING_OPERATIONS:
+        # Conditionally skip pause/resume based on current state
+        if is_paused is not None:
+            if op.name == "pause" and is_paused:
+                continue  # Skip pause when already paused
+            if op.name == "resume" and not is_paused:
+                continue  # Skip resume when not paused (running)
+
         if op.requires_clarification:
             # Only generate answer_clarification if there are pending ones
             for clar in pending_clarifications or []:
