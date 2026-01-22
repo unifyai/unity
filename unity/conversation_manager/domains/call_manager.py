@@ -9,16 +9,46 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 
-# Preload LiveKit OpenAI plugin on the main thread.
+# Preload LiveKit plugins on the main thread.
 # LiveKit requires plugins to be registered on the main thread, but the voice
 # agent script runs in a background thread. Importing here ensures the plugin
 # registration happens before the thread is spawned.
+
+# STS mode plugins (OpenAI Realtime API)
 try:
     from livekit.plugins.openai import (
         realtime as _openai_realtime_preload,
     )  # noqa: F401
 except ImportError:
     # livekit-plugins-openai is optional; STS mode will fail at runtime if missing
+    pass
+
+# TTS mode plugins (call.py uses deepgram, elevenlabs, cartesia, silero)
+try:
+    from livekit.plugins import (
+        cartesia as _cartesia_preload,
+        deepgram as _deepgram_preload,
+        elevenlabs as _elevenlabs_preload,
+        silero as _silero_preload,
+    )  # noqa: F401
+except ImportError:
+    # These are optional; TTS mode will fail at runtime if missing
+    pass
+
+# Noise cancellation plugin (macOS only, used by call.py)
+try:
+    import sys as _sys
+    if _sys.platform == "darwin":
+        from livekit.plugins import noise_cancellation as _nc_preload  # noqa: F401
+except ImportError:
+    pass
+
+# Turn detector plugin (used by call.py for end-of-turn detection)
+try:
+    from livekit.plugins.turn_detector.english import (
+        EnglishModel as _turn_detector_preload,
+    )  # noqa: F401
+except ImportError:
     pass
 
 
