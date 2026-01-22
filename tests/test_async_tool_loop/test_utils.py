@@ -52,7 +52,7 @@ class TestGetHandlePausedState:
 
     def test_returns_none_when_pause_event_is_none(self):
         """Returns None when handle._pause_event is None."""
-        mock_handle = MagicMock()
+        mock_handle = MagicMock(spec=["_pause_event"])
         mock_handle._pause_event = None
 
         result = get_handle_paused_state(mock_handle)
@@ -60,7 +60,7 @@ class TestGetHandlePausedState:
 
     def test_returns_none_when_pause_event_has_no_is_set(self):
         """Returns None when _pause_event doesn't have is_set method."""
-        mock_handle = MagicMock()
+        mock_handle = MagicMock(spec=["_pause_event"])
         mock_handle._pause_event = "not an event"
 
         result = get_handle_paused_state(mock_handle)
@@ -96,6 +96,27 @@ class TestGetHandlePausedState:
         """Returns None when handle is None."""
         result = get_handle_paused_state(None)
         assert result is None
+
+    def test_with_pause_event_proxy(self):
+        """Works with proxy objects that expose is_set() (e.g., ActorHandle pattern)."""
+
+        class _PauseStateProxy:
+            """Minimal proxy like ActorHandle._pause_event."""
+
+            def __init__(self, paused: bool):
+                self._paused = paused
+
+            def is_set(self) -> bool:
+                return not self._paused  # Event set = running
+
+        # Test paused state
+        mock_handle = MagicMock(spec=["_pause_event"])
+        mock_handle._pause_event = _PauseStateProxy(paused=True)
+        assert get_handle_paused_state(mock_handle) is True
+
+        # Test running state
+        mock_handle._pause_event = _PauseStateProxy(paused=False)
+        assert get_handle_paused_state(mock_handle) is False
 
 
 # =============================================================================

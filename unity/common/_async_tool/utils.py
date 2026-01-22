@@ -28,6 +28,11 @@ def get_handle_paused_state(handle) -> bool | None:
     - Event **set** = running (not paused)
     - Event **cleared** = paused
 
+    All steerable handles should expose a `_pause_event` attribute (or property)
+    that follows this convention. For handles that track state differently
+    (e.g., via an enum), they should expose a `_pause_event` property that
+    returns a proxy object with an `is_set()` method.
+
     Args:
         handle: A SteerableToolHandle or any object with a `_pause_event` attribute.
 

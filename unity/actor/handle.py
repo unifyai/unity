@@ -145,6 +145,31 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             return list(self._loop_handle._client.messages)
         return list(self._chat_history)
 
+    @property
+    def _pause_event(self):
+        """Proxy for pause state compatibility with get_handle_paused_state().
+
+        Returns an object with is_set() that follows the async tool loop convention:
+        - is_set() == True → running (not paused)
+        - is_set() == False → paused
+
+        This allows ActorHandle to work with the shared get_handle_paused_state()
+        helper without special-casing, ensuring consistent pause/resume tool
+        availability across all handle types.
+        """
+
+        class _PauseStateProxy:
+            """Minimal proxy exposing is_set() based on ActorHandle._state."""
+
+            def __init__(proxy_self, handle: "ActorHandle"):  # noqa: N805
+                proxy_self._handle = handle
+
+            def is_set(proxy_self) -> bool:  # noqa: N805
+                # Event set = running; Event cleared = paused
+                return proxy_self._handle._state != _HandleState.PAUSED
+
+        return _PauseStateProxy(self)
+
     def _get_internal_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         current_tools = self._tools.copy()
 
