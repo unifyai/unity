@@ -1637,7 +1637,7 @@ class CodeActActor(BaseCodeActActor):
             return out
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
-            "execute_python_code": execute_python_code,
+            "execute_code": execute_code,
         }
 
         # Add FunctionManager tools (auto-inject callables into sandbox) if available.
@@ -1740,54 +1740,126 @@ class CodeActActor(BaseCodeActActor):
 
             tools["FunctionManager_add_functions"] = FunctionManager_add_functions
 
-            async def inspect_state() -> dict:
-                """
-                Inspect persistent state across all execution contexts.
+        # ───────────────────────── Session management tools ────────────────── #
 
-                Use this tool to understand what variables exist before deciding
-                how to call a function (stateful vs stateless vs read_only).
+        async def list_sessions(detail: str = "summary") -> Dict[str, Any]:
+            """
+            List all active sessions across all languages (Python + shell).
 
-                Returns:
-                    Dict with keys:
-                    - contexts: Dict mapping context names to their variables
-                      - "default": The main Python execution environment
-                      - "venv_{id}": Python venv contexts (session 0 implicit)
-                      - "venv_{id}_session_{n}": Additional venv sessions (n > 0)
-                      - "{shell}_0": Shell contexts (bash, zsh, sh, powershell)
-                    - summary: Human-readable overview of active contexts
+            Use this tool whenever you need to choose which session to use for a
+            subsequent `execute_code(..., state_mode="stateful"/"read_only")` call.
 
-                Notes:
-                    - Each context maintains independent state across function calls.
-                    - Use this to decide: should the next function call be stateful
-                      (extend state), stateless (fresh), or read_only (preview)?
-                """
-                contexts: dict[str, dict] = {}
-                summary_parts: list[str] = []
+            Parameters
+            ----------
+            detail:
+                Controls how much information is returned per session:
+                - "summary": metadata + a short `state_summary` string (default)
+                - "full": best-effort enrichment using cheap inspection where available
 
-                # Default context (in-process Python execution environment)
-                sandbox = _CURRENT_SANDBOX.get()
-                default_state = {}
-                for name, value in sandbox.global_state.items():
-                    # Skip internal names and infrastructure
-                    if name.startswith("_"):
-                        continue
-                    if name in (
-                        "asyncio",
-                        "typing",
-                        "pydantic",
-                        "json",
-                        "re",
-                        "os",
-                        "sys",
-                        "math",
-                        "datetime",
-                        "collections",
-                        "itertools",
-                        "functools",
-                        "pathlib",
-                        "primitives",
-                        "computer_primitives",
-                    ):
+            Returns
+            -------
+            dict:
+                {"sessions": [ ... ]} where each entry includes (best-effort):
+                - language: "python" | "bash" | "zsh" | "sh" | "powershell"
+                - session_id: int (scoped per language + venv_id)
+                - venv_id: int | None (Python only)
+                - session_name: optional human-friendly alias (if registered)
+                - created_at / last_used: timestamps when available
+                - state_summary: a short human-readable summary (e.g. "3 names", "cwd=/repo")
+
+            Notes
+            -----
+            - Session IDs are **scoped per (language, venv_id)**, so `python` session 0 and
+              `bash` session 0 can coexist.
+            - The default per-call Python sandbox is exposed as `python` session_id=0 (venv_id=None)
+              when it is bound for the current call.
+            """
+            detail = (detail or "summary").strip()
+
+            sessions: list[dict[str, Any]] = []
+
+            # Default sandbox (current act sandbox) as python session 0 (venv_id=None).
+            try:
+                sb = _CURRENT_SANDBOX.get()
+                sessions.append(
+                    {
+                        "language": "python",
+                        "session_id": 0,
+                        "venv_id": None,
+                        "session_name": self._get_session_name(
+                            language="python",
+                            venv_id=None,
+                            session_id=0,
+                        ),
+                        "created_at": None,
+                        "last_used": None,
+                        "state_summary": f"{len(sb.global_state)} globals",
+                    },
+                )
+            except Exception:
+                pass
+
+            # In-process python sessions created via SessionExecutor.
+            for s in self._session_executor.list_in_process_python_sessions():
+                s = dict(s)
+                s["session_name"] = self._get_session_name(
+                    language="python",
+                    venv_id=s.get("venv_id"),
+                    session_id=int(s["session_id"]),
+                )
+                sessions.append(s)
+
+            # Venv sessions.
+            try:
+                for s in self._venv_pool.get_all_sessions():
+                    s = dict(s)
+                    s["session_name"] = self._get_session_name(
+                        language="python",
+                        venv_id=s.get("venv_id"),
+                        session_id=int(s["session_id"]),
+                    )
+                    sessions.append(s)
+            except Exception:
+                pass
+
+            # Shell sessions.
+            try:
+                for s in self._shell_pool.get_all_sessions():
+                    s = dict(s)
+                    s["session_name"] = self._get_session_name(
+                        language=str(s.get("language")),
+                        venv_id=None,
+                        session_id=int(s["session_id"]),
+                    )
+                    sessions.append(s)
+            except Exception:
+                pass
+
+            if detail == "full":
+                # Best-effort enrich state_summary with inspection where cheap.
+                for s in sessions:
+                    try:
+                        if (
+                            s.get("language") == "python"
+                            and s.get("venv_id") is not None
+                        ):
+                            st = await self._venv_pool.get_session_state(
+                                venv_id=int(s["venv_id"]),
+                                session_id=int(s["session_id"]),
+                                function_manager=self.function_manager,
+                                detail="summary",
+                            )
+                            if isinstance(st, dict) and "count" in st:
+                                s["state_summary"] = f'{st["count"]} names'
+                        elif s.get("language") in ("bash", "zsh", "sh", "powershell"):
+                            st = await self._shell_pool.get_session_state(
+                                language=s["language"],
+                                session_id=int(s["session_id"]),
+                                detail="summary",
+                            )
+                            if isinstance(st, dict) and "summary" in st:
+                                s["state_summary"] = st["summary"]
+                    except Exception:
                         continue
                     # Skip modules, classes, and functions (show only data)
                     if isinstance(value, type) or callable(value):
