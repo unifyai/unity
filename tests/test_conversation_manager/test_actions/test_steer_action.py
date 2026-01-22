@@ -432,7 +432,7 @@ async def test_resume_after_pause(initialized_cm):
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Wait, hold on a moment.",
+            content="Wait, please put a pin in that request for now, I might be able to share a few more details, hold on a moment",
         ),
     )
 
@@ -440,7 +440,7 @@ async def test_resume_after_pause(initialized_cm):
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="OK, I'm back. Go ahead with that task list.",
+            content="OK, I'm back. Never mind there were no more details of importance, please continue as you were.",
         ),
     )
 
