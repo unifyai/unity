@@ -172,7 +172,7 @@ async def conversation_manager() -> CMStepDriver:
 
     # Create SimulatedActor for fast, deterministic testing
     # (avoids HierarchicalActor's browser/computer environment setup)
-    actor = SimulatedActor(steps=3, log_mode="log")
+    actor = SimulatedActor(steps=3, log_mode="log", emit_notifications=False)
 
     # Use file lock to coordinate manager initialization across parallel test processes.
     # ContactManager.__init__ creates system contacts (assistant id=0, user id=1)

@@ -108,6 +108,8 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         session_suffix: "str | None" = None,
         # Optional response format for structured output
         response_format: Optional[Type[BaseModel]] = None,
+        # Whether to emit notifications via next_notification()
+        emit_notifications: bool = True,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -121,6 +123,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             log_mode if log_mode in ("print", "log", None) else "log"
         )
         self._response_format = response_format
+        self._emit_notifications = emit_notifications
 
         # Store optional entrypoint metadata and a planned completion result
         self._entrypoint_info: dict | None = entrypoint_info
@@ -716,6 +719,11 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         return {}
 
     async def next_notification(self) -> dict:
+        # If notifications are disabled, block until the action completes
+        if not self._emit_notifications:
+            await asyncio.to_thread(self._done_event.wait)
+            return {}
+
         # Consume a unit of progress and report a concise, simulation‑consistent update
         try:
             self.simulate_step()
@@ -775,6 +783,8 @@ class SimulatedActor(BaseActor):
         log_mode: "str | None" = "log",
         # New: simulation-only guidance (does not alter TaskScheduler flow)
         simulation_guidance: Optional[str] = None,
+        # Whether handles emit notifications via next_notification()
+        emit_notifications: bool = True,
         # Accept but ignore parameters that real Actor may use
         description: str = "",
         **kwargs: Any,
@@ -787,6 +797,9 @@ class SimulatedActor(BaseActor):
                         before auto-completion.
             duration:   *(Optional)* Maximum wall-clock seconds before an activity
                         auto-completes. Pauses do not count toward this limit.
+            emit_notifications: Whether handles should emit notifications via
+                        next_notification(). When False, next_notification() blocks
+                        until the action completes. Defaults to True.
         """
         self._steps = steps
         self._duration = duration
@@ -794,6 +807,7 @@ class SimulatedActor(BaseActor):
         self._log_mode: str | None = (
             log_mode if log_mode in ("print", "log", None) else "log"
         )
+        self._emit_notifications = emit_notifications
         # Store simulation-only guidance
         self._sim_guidance: Optional[str] = simulation_guidance
 
@@ -916,4 +930,5 @@ class SimulatedActor(BaseActor):
             planned_result=planned_result,
             session_suffix=session_suffix,
             response_format=response_format,
+            emit_notifications=self._emit_notifications,
         )

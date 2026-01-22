@@ -163,7 +163,7 @@ async def cm_with_eventbus():
     _apply_comms_only_mocks(cm)
 
     # Initialize managers with SimulatedActor
-    actor = SimulatedActor(steps=3, log_mode="log")
+    actor = SimulatedActor(steps=3, log_mode="log", emit_notifications=False)
     await managers_utils.init_conv_manager(cm, actor=actor)
 
     # Start the operations listener that processes EventBus publishing
