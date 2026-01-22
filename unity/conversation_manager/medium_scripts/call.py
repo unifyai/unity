@@ -158,7 +158,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Fast brain LLM - lightweight model for responsive conversation
     # Uses UnifyLLM adapter for local caching (CI) and usage tracking
-    llm_model = UnifyLLM(model="gpt-5-nano@openai")
+    llm_model = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="minimal")
 
     # Build Voice Agent prompt (used by both TTS and STS modes)
     system_prompt = build_voice_agent_prompt(
