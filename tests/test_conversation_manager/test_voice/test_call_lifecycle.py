@@ -51,6 +51,7 @@ from unity.conversation_manager.events import (
 )
 
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
+from unity.conversation_manager.types import Medium
 
 
 # =============================================================================
@@ -819,7 +820,7 @@ class TestVoiceUtteranceHandlers:
         conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
         assert conv is not None
 
-        voice_thread = conv.threads.get("voice")
+        voice_thread = conv.threads.get(Medium.PHONE_CALL)
         assert voice_thread is not None
         # Voice thread is a deque of Message objects with .content attribute
         messages = [msg.content for msg in voice_thread]
@@ -845,7 +846,7 @@ class TestVoiceUtteranceHandlers:
         # Check message was added with assistant role (name="You" for assistant)
         contact_id = alice_contact["contact_id"]
         conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get("voice")
+        voice_thread = conv.threads.get(Medium.PHONE_CALL)
         # Voice thread is a deque of Message objects with .content attribute
         messages = [msg.content for msg in voice_thread]
         assert "Of course, I'd be happy to help!" in messages
@@ -969,7 +970,7 @@ class TestCallGuidanceFlow:
         # Check message was added to voice thread
         contact_id = alice_contact["contact_id"]
         conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get("voice")
+        voice_thread = conv.threads.get(Medium.PHONE_CALL)
 
         # Voice thread is a deque of Message objects
         # Guidance messages have name="Guidance" (the role becomes the name)
@@ -1159,7 +1160,7 @@ class TestFullCallLifecycle:
         # Verify guidance was recorded
         contact_id = alice_contact["contact_id"]
         conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get("voice")
+        voice_thread = conv.threads.get(Medium.PHONE_CALL)
 
         # Voice thread is a deque of Message objects with .content attribute
         messages = [msg.content for msg in voice_thread]
