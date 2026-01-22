@@ -425,3 +425,108 @@ async def set_counter(value):
     finally:
         await pool.close()
         _cleanup_venv(fm, venv_id)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Pool Enhancements: Session Listing, State Inspection, Limits
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_get_all_sessions_returns_metadata(function_manager_factory):
+    """get_all_sessions returns active sessions with created_at/last_used metadata."""
+    fm = function_manager_factory()
+    venv_id = await _create_prepared_venv(fm)
+    pool = VenvPool()
+    try:
+        await pool.execute_in_venv(
+            venv_id=venv_id,
+            implementation=SIMPLE_FUNC,
+            call_kwargs={},
+            is_async=True,
+            function_manager=fm,
+        )
+        sessions = pool.get_all_sessions()
+        assert len(sessions) == 1
+        s0 = sessions[0]
+        assert s0["language"] == "python"
+        assert s0["venv_id"] == venv_id
+        assert s0["session_id"] == 0
+        assert "created_at" in s0 and "last_used" in s0
+    finally:
+        await pool.close()
+        _cleanup_venv(fm, venv_id)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_get_session_state_detail_levels(function_manager_factory):
+    """get_session_state supports summary/names and full."""
+    fm = function_manager_factory()
+    venv_id = await _create_prepared_venv(fm)
+    pool = VenvPool()
+    try:
+        await pool.execute_in_venv(
+            venv_id=venv_id,
+            implementation=SET_VARS_FUNC,
+            call_kwargs={},
+            is_async=True,
+            function_manager=fm,
+        )
+        summary = await pool.get_session_state(
+            venv_id=venv_id,
+            session_id=0,
+            function_manager=fm,
+            detail="summary",
+        )
+        assert "names" in summary
+        assert "user_data" in summary["names"]
+
+        full = await pool.get_session_state(
+            venv_id=venv_id,
+            session_id=0,
+            function_manager=fm,
+            detail="full",
+        )
+        assert "user_data" in full
+    finally:
+        await pool.close()
+        _cleanup_venv(fm, venv_id)
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_session_limit_enforced(function_manager_factory):
+    """VenvPool enforces max_total_sessions across all venv_id/session_id."""
+    fm = function_manager_factory()
+    venv_id1 = await _create_prepared_venv(fm)
+    venv_id2 = fm.add_venv(
+        venv=MINIMAL_VENV_CONTENT.replace("test-inspect-state", "test-inspect-state-2"),
+    )
+    await fm.prepare_venv(venv_id=venv_id2)
+
+    pool = VenvPool(max_total_sessions=1)
+    try:
+        r1 = await pool.execute_in_venv(
+            venv_id=venv_id1,
+            implementation=SIMPLE_FUNC,
+            call_kwargs={},
+            is_async=True,
+            function_manager=fm,
+        )
+        assert r1.get("error") is None
+
+        r2 = await pool.execute_in_venv(
+            venv_id=venv_id2,
+            implementation=SIMPLE_FUNC,
+            call_kwargs={},
+            is_async=True,
+            function_manager=fm,
+        )
+        assert r2.get("error") is not None
+        assert r2.get("error_type") == "resource_limit"
+    finally:
+        await pool.close()
+        _cleanup_venv(fm, venv_id1)
+        _cleanup_venv(fm, venv_id2)
