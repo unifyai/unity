@@ -1299,6 +1299,84 @@ class CodeActActor(BaseCodeActActor):
         for n in list(names):
             self._session_names.pop(n, None)
 
+    def _count_active_sessions_total(self) -> int:
+        # Count unique in-process python sessions + persistent pool sessions.
+        n = 0
+        try:
+            n += len(
+                self._session_executor._python_sessions,
+            )  # pylint: disable=protected-access
+        except Exception:
+            pass
+        try:
+            n += len(self._shell_pool.get_active_sessions())
+        except Exception:
+            pass
+        try:
+            n += len(self._venv_pool.list_active_sessions())
+        except Exception:
+            pass
+        return n
+
+    def _session_exists(
+        self,
+        *,
+        language: str,
+        venv_id: int | None,
+        session_id: int,
+    ) -> bool:
+        if language == "python":
+            if venv_id is None:
+                return self._session_executor.has_python_session(
+                    session_id=int(session_id),
+                    venv_id=None,
+                )
+            # venv-backed python session exists if pool has it active
+            try:
+                return (int(venv_id), int(session_id)) in set(
+                    self._venv_pool.list_active_sessions(),
+                )
+            except Exception:
+                return False
+        # shell
+        try:
+            return self._shell_pool.has_session(
+                language=language,  # type: ignore[arg-type]
+                session_id=int(session_id),
+            )
+        except Exception:
+            return False
+
+    def _validate_execution_params(
+        self,
+        *,
+        state_mode: str,
+        session_id: int | None,
+        session_name: str | None,
+        language: str,
+        venv_id: int | None = None,
+    ) -> dict | None:
+        return _validate_execution_params(
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=language,
+            venv_id=venv_id,
+            resolve_session_name=self._resolve_session_name,
+            get_session_name_for_id=lambda l, v, s: self._get_session_name(
+                language=l,
+                venv_id=v,
+                session_id=s,
+            ),
+            session_exists=lambda l, v, s: self._session_exists(
+                language=l,
+                venv_id=v,
+                session_id=s,
+            ),
+            max_sessions_total=self._max_sessions_total,
+            active_session_count=self._count_active_sessions_total(),
+        )
+
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ComputerPrimitives."""
         if not self._computer_primitives:
