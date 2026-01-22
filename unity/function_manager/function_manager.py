@@ -1,5 +1,7 @@
 import ast
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import inspect
 import functools
 import json
@@ -448,6 +450,23 @@ class _VenvConnection:
                     self._process.kill()
                 except Exception:
                     pass
+
+
+@dataclass
+class SessionMetadata:
+    venv_id: int
+    session_id: int
+    created_at: datetime
+    last_used: datetime
+
+
+class SessionLimitError(RuntimeError):
+    def __init__(self, *, message: str):
+        super().__init__(message)
+        self.message = message
+
+    def to_error_dict(self) -> dict:
+        return {"error": self.message, "error_type": "resource_limit"}
 
 
 class VenvPool:
