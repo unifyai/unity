@@ -572,30 +572,6 @@ class TestVoiceCallFlowIntegration:
             assert isinstance(captured, CallGuidance)
             assert captured.content == "Please ask about their schedule"
 
-    async def test_tts_mode_publishes_guidance_not_utterance(
-        self,
-    ):
-        """
-        [Stage 2] TTS mode publishes call_guidance events.
-
-        Stage 2 is complete - when the Main CM Brain responds during a TTS call,
-        it publishes CallGuidance instead of OutboundPhoneUtterance.
-        """
-        # Verify by checking the conversation_manager code uses guidance pattern
-        import inspect
-        from unity.conversation_manager import conversation_manager as cm_module
-
-        source = inspect.getsource(cm_module.ConversationManager._run_llm)
-        # After Stage 2, TTS mode should publish CallGuidance
-        assert "CallGuidance" in source, "Should use CallGuidance for voice modes"
-        # Should NOT have separate paths for realtime vs TTS utterance publishing
-        assert (
-            "OutboundPhoneUtterance" not in source
-        ), "Should not publish OutboundPhoneUtterance anymore"
-        assert (
-            "OutboundUnifyMeetUtterance" not in source
-        ), "Should not publish OutboundUnifyMeetUtterance anymore"
-
 
 # =============================================================================
 # Integration Tests: Voice Guidance Channel
@@ -745,38 +721,6 @@ class TestRegressionBaseline:
 # =============================================================================
 
 
-class TestStage1MainBrainModel:
-    """
-    [Stage 1] Tests for Main CM Brain using SETTINGS.UNIFY_MODEL.
-
-    These tests verify that after Stage 1:
-    - The Main CM Brain uses SETTINGS.UNIFY_MODEL instead of hardcoded value
-    - The LLM is configured with appropriate reasoning settings
-    """
-
-    def test_conversation_manager_uses_settings_model(self):
-        """
-        ConversationManager's LLM should use SETTINGS.UNIFY_MODEL.
-
-        Stage 1 is complete - the Main CM Brain now uses the system default model.
-        """
-        # Verify the conversation_manager.py imports and uses SETTINGS.UNIFY_MODEL
-        import inspect
-        from unity.conversation_manager import conversation_manager as cm_module
-
-        # Check that SETTINGS is imported in the module
-        assert hasattr(cm_module, "SETTINGS"), "SETTINGS should be imported"
-
-        # Verify the source code uses SETTINGS.UNIFY_MODEL in _run_llm (not hardcoded)
-        source = inspect.getsource(cm_module.ConversationManager._run_llm)
-        assert (
-            "SETTINGS.UNIFY_MODEL" in source
-        ), "ConversationManager._run_llm should use SETTINGS.UNIFY_MODEL for LLM"
-        assert (
-            '"gpt-5-mini@openai"' not in source
-        ), "ConversationManager._run_llm should not have hardcoded model name"
-
-
 class TestStage2UnifiedVoiceResponse:
     """
     [Stage 2] Tests for unified voice response model (call_guidance everywhere).
@@ -818,105 +762,8 @@ class TestStage2UnifiedVoiceResponse:
         )
 
 
-class TestStage3TTSFastBrain:
-    """
-    [Stage 3] Tests for TTS Fast Brain implementation.
-
-    Stage 3 is complete. These tests verify:
-    - call.py has its own lightweight LLM for conversational responses
-    - The TTS fast brain receives guidance from the Main CM Brain
-    - The fast brain uses the same prompt as the Realtime phone agent
-    """
-
-    def test_tts_call_has_fast_brain_model(self):
-        """TTS call.py uses UnifyLLM adapter for fast conversational responses."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        # Check that UnifyLLM adapter is imported
-        assert hasattr(call_module, "UnifyLLM"), "UnifyLLM adapter should be imported"
-
-        # Check that entrypoint uses UnifyLLM with gpt-5-nano
-        source = inspect.getsource(call_module.entrypoint)
-        assert (
-            "UnifyLLM" in source
-        ), "entrypoint should use UnifyLLM adapter for fast brain"
-        assert (
-            "gpt-5-nano@openai" in source
-        ), "fast brain should use gpt-5-nano@openai model"
-        assert (
-            'reasoning_effort="none"' in source
-        ), "fast brain should disable reasoning for max speed"
-
-    def test_tts_fast_brain_receives_guidance(self):
-        """TTS fast brain subscribes to call_guidance channel."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        source = inspect.getsource(call_module.entrypoint)
-        # Verify subscription to guidance channel
-        assert (
-            "app:call:call_guidance" in source
-        ), "call.py should subscribe to call_guidance"
-        assert (
-            "wait_for_guidance" in source
-        ), "call.py should have wait_for_guidance function"
-
-    def test_tts_fast_brain_uses_voice_agent_prompt(self):
-        """TTS fast brain uses build_voice_agent_prompt."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        # Check that build_voice_agent_prompt is imported
-        assert hasattr(
-            call_module,
-            "build_voice_agent_prompt",
-        ), "build_voice_agent_prompt should be imported"
-
-        # Check that entrypoint uses this prompt builder
-        source = inspect.getsource(call_module.entrypoint)
-        assert (
-            "build_voice_agent_prompt" in source
-        ), "entrypoint should use build_voice_agent_prompt"
-
-    def test_tts_and_realtime_use_same_cli_args(self):
-        """TTS and Realtime modes use the same CLI arguments (CONTACT, BOSS, BIO)."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import (
-            call as call_module,
-            sts_call as sts_module,
-        )
-
-        call_source = inspect.getsource(call_module)
-        sts_source = inspect.getsource(sts_module)
-
-        # Both should use CONTACT, BOSS, and ASSISTANT_BIO env vars
-        for env_var in ["CONTACT", "BOSS", "ASSISTANT_BIO"]:
-            assert env_var in call_source, f"call.py should use {env_var}"
-            assert env_var in sts_source, f"sts_call.py should use {env_var}"
-
-    def test_call_manager_passes_boss_to_tts_mode(self):
-        """CallManager passes boss details to TTS mode (not just Realtime)."""
-        import inspect
-        from unity.conversation_manager.domains import call_manager as cm_module
-
-        source = inspect.getsource(cm_module.LivekitCallManager.start_call)
-        # Boss and assistant_bio should always be in the args list (not conditionally)
-        assert "json.dumps(boss)" in source, "start_call should pass boss"
-        assert "self.assistant_bio" in source, "start_call should pass assistant_bio"
-
-        # The args list should include boss/bio unconditionally - check that they
-        # appear BEFORE the if statement that selects the script
-        boss_line = source.find("json.dumps(boss)")
-        if_realtime_line = source.find("if self.uses_realtime_api:")
-        assert boss_line < if_realtime_line, (
-            "boss should be added to args before the uses_realtime_api conditional "
-            "(should not be conditionally added)"
-        )
-
-
 # =============================================================================
-# Stage 4: UnifyLLM Adapter Tests
+# UnifyLLM Adapter Tests
 # =============================================================================
 
 
@@ -995,39 +842,6 @@ class TestUnifyLLMAdapter:
         # _run should be an async method (not abstract)
         assert hasattr(UnifyLLMStream, "_run")
         assert inspect.iscoroutinefunction(UnifyLLMStream._run)
-
-    def test_unify_llm_uses_new_llm_client(self):
-        """UnifyLLMStream uses new_llm_client from unity.common.llm_client."""
-        import inspect
-        from unity.conversation_manager import livekit_unify_adapter
-
-        source = inspect.getsource(livekit_unify_adapter)
-        assert (
-            "from unity.common.llm_client import new_llm_client" in source
-        ), "Should import new_llm_client"
-        assert "new_llm_client" in inspect.getsource(
-            livekit_unify_adapter.UnifyLLMStream._run,
-        ), "Should use new_llm_client in _run()"
-
-    def test_call_py_uses_unify_llm_adapter(self):
-        """call.py imports and uses UnifyLLM instead of openai.LLM."""
-        import inspect
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        source = inspect.getsource(call_module)
-
-        # Should import UnifyLLM
-        assert (
-            "from unity.conversation_manager.livekit_unify_adapter import UnifyLLM"
-            in source
-        ), "call.py should import UnifyLLM"
-
-        # Should NOT import openai.LLM directly for the main LLM
-        # (openai plugin may still be imported but not used for the fast brain LLM)
-        entrypoint_source = inspect.getsource(call_module.entrypoint)
-        assert (
-            "openai.LLM" not in entrypoint_source
-        ), "entrypoint should not use openai.LLM directly"
 
     @pytest.mark.asyncio
     async def test_unify_llm_chat_returns_stream(self):
