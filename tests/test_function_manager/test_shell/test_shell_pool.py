@@ -351,3 +351,72 @@ async def test_shell_pool_sh():
         await pool.execute(language="sh", command="SH_VAR=sh_pool_value")
         result = await pool.execute(language="sh", command="echo $SH_VAR")
         assert "sh_pool_value" in result.stdout
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Session Metadata, State Inspection, and Limits
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_pool_get_all_sessions_and_metadata_updates():
+    pool = ShellPool()
+    try:
+        await pool.execute(language="bash", command="echo hi", session_id=0)
+        sessions = pool.get_all_sessions()
+        assert len(sessions) == 1
+        s0 = sessions[0]
+        assert s0["language"] == "bash"
+        assert s0["session_id"] == 0
+        assert "created_at" in s0 and "last_used" in s0
+
+        # Use the session again and ensure last_used is updated (monotonic-ish).
+        await pool.execute(language="bash", command="echo hi2", session_id=0)
+        sessions2 = pool.get_all_sessions()
+        assert len(sessions2) == 1
+        assert sessions2[0]["last_used"] >= s0["last_used"]
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_pool_get_session_state_detail_levels():
+    pool = ShellPool()
+    try:
+        await pool.execute(language="bash", command="export FOO=bar", session_id=0)
+        st = await pool.get_session_state(
+            language="bash",
+            session_id=0,
+            detail="summary",
+        )
+        assert "cwd" in st
+        assert "variables" in st
+        assert isinstance(st["variables"], list)
+
+        st2 = await pool.get_session_state(
+            language="bash",
+            session_id=0,
+            detail="full",
+        )
+        assert "variables" in st2
+        assert isinstance(st2["variables"], str)
+    finally:
+        await pool.close()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_shell_pool_session_limit_enforced():
+    pool = ShellPool(max_total_sessions=1)
+    try:
+        r1 = await pool.execute(language="bash", command="echo one", session_id=0)
+        assert r1.error is None
+
+        # Creating a different session should exceed the global limit.
+        r2 = await pool.execute(language="bash", command="echo two", session_id=1)
+        assert r2.error is not None
+        assert r2.error_type == "resource_limit"
+    finally:
+        await pool.close()
