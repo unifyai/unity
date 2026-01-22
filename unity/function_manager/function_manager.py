@@ -635,6 +635,107 @@ class VenvPool:
                 )
             raise
 
+    def get_all_sessions(self) -> List[Dict[str, Any]]:
+        """Return list of all active python venv sessions with metadata."""
+        out: List[Dict[str, Any]] = []
+        for (venv_id, session_id), conn in list(self._connections.items()):
+            if not conn.is_alive():
+                continue
+            md = self._metadata.get((venv_id, session_id))
+            if md is None:
+                now = datetime.now(timezone.utc)
+                md = SessionMetadata(
+                    venv_id=int(venv_id),
+                    session_id=int(session_id),
+                    created_at=now,
+                    last_used=now,
+                )
+                self._metadata[(venv_id, session_id)] = md
+            out.append(
+                {
+                    "language": "python",
+                    "session_id": int(session_id),
+                    "venv_id": int(venv_id),
+                    "created_at": md.created_at.isoformat(),
+                    "last_used": md.last_used.isoformat(),
+                    "state_summary": "active",
+                },
+            )
+        return out
+
+    async def get_session_state(
+        self,
+        *,
+        venv_id: int,
+        session_id: int,
+        function_manager: "FunctionManager",
+        detail: str = "summary",
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Inspect state of a python venv-backed session.
+        """
+        key = (int(venv_id), int(session_id))
+        if key not in self._connections or not self._connections[key].is_alive():
+            return {
+                "error": f"Python venv session {(int(venv_id), int(session_id))} not found",
+                "error_type": "validation",
+            }
+        state = await self.get_connection_state(
+            venv_id=int(venv_id),
+            function_manager=function_manager,
+            session_id=int(session_id),
+            timeout=timeout,
+        )
+
+        def _is_secret_name(n: str) -> bool:
+            nn = n.lower()
+            return any(
+                tok in nn
+                for tok in ("token", "secret", "apikey", "api_key", "password", "key")
+            )
+
+        def _safe_repr(name: str, value: Any) -> str:
+            if _is_secret_name(name):
+                return "<redacted>"
+            try:
+                s = repr(value)
+            except Exception:
+                s = f"<{type(value).__name__}>"
+            if len(s) > 500:
+                s = s[:500] + "..."
+            return s
+
+        names = sorted(
+            [k for k in state.keys() if isinstance(k, str) and not k.startswith("_")],
+        )
+        if detail in ("summary", "names"):
+            return {
+                "names": names,
+                "count": len(names),
+            }
+        if detail == "full":
+            return {name: _safe_repr(name, state.get(name)) for name in names}
+        return {
+            "error": f"Unsupported detail level: {detail!r}",
+            "error_type": "validation",
+        }
+
+    async def close_session(self, *, venv_id: int, session_id: int) -> bool:
+        """Close a specific venv session and free resources."""
+        key = (int(venv_id), int(session_id))
+        async with self._lock:
+            conn = self._connections.get(key)
+            if conn is None:
+                return False
+            try:
+                await conn.shutdown()
+            except Exception:
+                pass
+            self._connections.pop(key, None)
+            self._metadata.pop(key, None)
+            return True
+
     async def get_connection_state(
         self,
         venv_id: int,
