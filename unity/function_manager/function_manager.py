@@ -4576,6 +4576,190 @@ class FunctionManager(BaseFunctionManager):
     # Shell mode for remote Windows command execution ('powershell' or 'cmd')
     REMOTE_WINDOWS_SHELL_MODE = "powershell"
 
+    def _local_to_remote_path(self, local_path: str) -> str:
+        """
+        Convert a local absolute path to its remote Windows equivalent.
+
+        Preserves full directory structure under C:\\Unity.
+
+        Example:
+            /Users/julia/colliers2/data/file.xlsx
+            → C:\\Unity\\Users\\julia\\colliers2\\data\\file.xlsx
+        """
+        from pathlib import Path
+
+        local_abs = Path(local_path).resolve()
+        # Remove leading slash and convert to Windows path
+        # /Users/julia/... → Users\\julia\\...
+        relative = str(local_abs).lstrip("/").replace("/", "\\")
+        return f"{self.REMOTE_WINDOWS_WORKSPACE_DIR}\\{relative}"
+
+    async def _upload_data_to_remote(
+        self,
+        session: "aiohttp.ClientSession",
+        desktop_url: str,
+        headers: Dict[str, str],
+        local_path: str,
+    ) -> str:
+        """
+        Upload a file or directory to the remote VM via multipart.
+
+        Preserves full local directory structure under C:\\Unity.
+        Returns the remote Windows path.
+        """
+        import os
+        from pathlib import Path
+
+        local_path_obj = Path(local_path).resolve()
+
+        if not local_path_obj.exists():
+            raise FileNotFoundError(f"Data path does not exist: {local_path}")
+
+        # Compute the target directory on remote (preserving structure)
+        # /Users/julia/data/ → Users/julia/data/
+        path_relative_to_root = str(local_path_obj).lstrip("/")
+
+        if local_path_obj.is_file():
+            # Single file upload
+            target_dir = str(Path(path_relative_to_root).parent)
+            files_to_upload = [(local_path_obj, local_path_obj.name)]
+        else:
+            # Directory: collect all files recursively
+            target_dir = path_relative_to_root
+            files_to_upload = []
+            for root, _, filenames in os.walk(local_path_obj):
+                for fname in filenames:
+                    full_path = Path(root) / fname
+                    # Relative path within the directory
+                    rel_within_dir = full_path.relative_to(local_path_obj)
+                    files_to_upload.append((full_path, str(rel_within_dir)))
+
+        if not files_to_upload:
+            print(f"[windows exec] No files to upload from {local_path}")
+            return self._local_to_remote_path(local_path)
+
+        # Build multipart form
+        import aiohttp
+
+        form = aiohttp.FormData()
+        form.add_field("target_dir", target_dir)
+
+        file_handles = []
+        try:
+            for full_path, rel_name in files_to_upload:
+                fh = open(full_path, "rb")
+                file_handles.append(fh)
+                form.add_field(
+                    "files",
+                    fh,
+                    filename=rel_name,
+                    content_type="application/octet-stream",
+                )
+
+            print(
+                f"[windows exec] Uploading {len(files_to_upload)} files to {target_dir}",
+            )
+
+            async with session.post(
+                f"{desktop_url}/api/files",
+                data=form,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=600),  # 10 min for large uploads
+            ) as resp:
+                result = await resp.json()
+                if not resp.ok:
+                    raise RuntimeError(f"Upload failed: {result}")
+                print(f"[windows exec] Upload complete: {result.get('files', [])}")
+        finally:
+            for fh in file_handles:
+                fh.close()
+
+        return self._local_to_remote_path(local_path)
+
+    async def _download_data_from_remote(
+        self,
+        session: "aiohttp.ClientSession",
+        desktop_url: str,
+        headers: Dict[str, str],
+        local_path: str,
+    ) -> None:
+        """
+        Download output files from remote VM back to local path.
+
+        Uses the same path mapping: C:\\Unity\\path\\... → /path/...
+        """
+        import base64
+        from pathlib import Path
+
+        local_path_obj = Path(local_path).resolve()
+
+        # Convert to relative path for remote listing
+        path_relative = str(local_path_obj).lstrip("/")
+
+        # First, list files at remote path
+        async with session.post(
+            f"{desktop_url}/api/files",
+            json={"action": "list", "path": path_relative},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as resp:
+            if not resp.ok:
+                print(
+                    f"[windows exec] Could not list remote output path: {path_relative}",
+                )
+                return
+            listing = await resp.json()
+
+        files_to_download = listing.get("files", [])
+        if not files_to_download:
+            print(f"[windows exec] No output files found at {path_relative}")
+            return
+
+        # Download each file
+        for file_info in files_to_download:
+            if file_info.get("type") == "directory":
+                # Recurse into subdirectory
+                subdir_local = local_path_obj / file_info["name"]
+                await self._download_data_from_remote(
+                    session,
+                    desktop_url,
+                    headers,
+                    str(subdir_local),
+                )
+                continue
+
+            filename = file_info["name"]
+            remote_file_path = f"{path_relative}/{filename}"
+
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "read",
+                    "filename": remote_file_path,
+                    "encoding": "base64",
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
+                if not resp.ok:
+                    print(f"[windows exec] Failed to download {remote_file_path}")
+                    continue
+                file_data = await resp.json()
+
+            # Write to local
+            local_file = local_path_obj / filename
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+
+            content = file_data.get("content", "")
+            encoding = file_data.get("encoding", "text")
+
+            if encoding == "base64":
+                local_file.write_bytes(base64.b64decode(content))
+            else:
+                local_file.write_text(content)
+
+            print(f"[windows exec] Downloaded: {remote_file_path} → {local_file}")
+
     def _should_execute_python_function_on_remote_windows(
         self,
         func_data: Dict[str, Any],
@@ -4683,7 +4867,7 @@ class FunctionManager(BaseFunctionManager):
 
                 try:
                     async with session.get(
-                        f"{comms_url}/infra/vm/status/{assistant_id}",
+                        f"{comms_url}/infra/vm/status/369",
                         headers={"Authorization": f"Bearer {admin_key}"},
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
@@ -4851,8 +5035,8 @@ class FunctionManager(BaseFunctionManager):
         print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
 
         # Step 1: Get desktop URL
-        desktop_url = await self._wait_for_remote_windows_vm_ready()
-        # desktop_url = SESSION_DETAILS.assistant.desktop_url
+        # desktop_url = await self._wait_for_remote_windows_vm_ready()
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
         # Step 2: Prepare venv on remote (if specified)
@@ -4865,24 +5049,80 @@ class FunctionManager(BaseFunctionManager):
         else:
             python_path = "python"
 
-        # Step 3: Build wrapper script
-        exec_id = uuid.uuid4().hex[:8]
-        is_async = "async def" in implementation
+        async with aiohttp.ClientSession() as session:
+            # Step 2.5: Upload required data files
+            data_required = func_data.get("data_required") or []
+            rewritten_kwargs = dict(call_kwargs or {})
 
-        try:
-            tree = ast.parse(implementation)
-            func_name = tree.body[0].name if tree.body else "main"
-        except Exception:
-            func_name = "main"
+            for item in data_required:
+                if item.startswith("/"):
+                    # Static path - upload directly
+                    local_path = item
+                else:
+                    # Argument name - get value from kwargs
+                    if item not in rewritten_kwargs:
+                        print(
+                            f"[windows exec] Warning: data_required item "
+                            f"'{item}' not found in kwargs",
+                        )
+                        continue
+                    local_path = rewritten_kwargs[item]
 
-        call_kwargs_json = json.dumps(call_kwargs or {})
+                try:
+                    remote_path = await self._upload_data_to_remote(
+                        session=session,
+                        desktop_url=desktop_url,
+                        headers=headers,
+                        local_path=local_path,
+                    )
+                    # Rewrite kwargs for arg-based items
+                    if item in rewritten_kwargs:
+                        rewritten_kwargs[item] = remote_path
+                        print(
+                            f"[windows exec] Rewrote {item}: {local_path} → {remote_path}",
+                        )
+                except Exception as e:
+                    print(f"[windows exec] Failed to upload {item}: {e}")
+                    return {
+                        "result": None,
+                        "error": f"Data upload failed for '{item}': {e}",
+                        "stdout": "",
+                        "stderr": "",
+                    }
 
-        if is_async:
-            invoke_code = f"result = asyncio.run({func_name}(**call_kwargs))"
-        else:
-            invoke_code = f"result = {func_name}(**call_kwargs)"
+            # Also rewrite output paths to their remote equivalents
+            data_output = func_data.get("data_output") or []
+            output_local_paths: Dict[str, str] = {}  # Store for download phase
 
-        wrapper_script = f"""
+            for arg_name in data_output:
+                if arg_name in rewritten_kwargs:
+                    local_path = rewritten_kwargs[arg_name]
+                    remote_path = self._local_to_remote_path(local_path)
+                    output_local_paths[arg_name] = local_path
+                    rewritten_kwargs[arg_name] = remote_path
+                    print(
+                        f"[windows exec] Output path {arg_name}: "
+                        f"{local_path} → {remote_path}",
+                    )
+
+            # Step 3: Build wrapper script
+            exec_id = uuid.uuid4().hex[:8]
+            is_async = "async def" in implementation
+
+            try:
+                tree = ast.parse(implementation)
+                func_name = tree.body[0].name if tree.body else "main"
+            except Exception:
+                func_name = "main"
+
+            call_kwargs_json = json.dumps(rewritten_kwargs)
+
+            if is_async:
+                invoke_code = f"result = asyncio.run({func_name}(**call_kwargs))"
+            else:
+                invoke_code = f"result = {func_name}(**call_kwargs)"
+
+            wrapper_script = f"""
 import json
 import asyncio
 import sys
@@ -4910,7 +5150,6 @@ if __name__ == "__main__":
     _main()
 """
 
-        async with aiohttp.ClientSession() as session:
             # Step 4: Write script to remote
             script_filename = f"scripts\\_exec_{exec_id}.py"
             async with session.post(
@@ -4940,6 +5179,9 @@ if __name__ == "__main__":
             # Step 5: Execute script
             cwd = self.REMOTE_WINDOWS_WORKSPACE_DIR
             exec_command = f'& "{python_path}" "{script_filename}"'
+            print(
+                f"[windows exec] Starting script: {exec_command} - CWD: {cwd} - Kwargs: {rewritten_kwargs}",
+            )
 
             async with session.post(
                 f"{desktop_url}/api/exec",
@@ -4989,7 +5231,23 @@ if __name__ == "__main__":
                         ),
                     }
 
-            # Step 7: Clean up temporary files
+            # Step 7: Download output data
+            for arg_name, local_path in output_local_paths.items():
+                try:
+                    await self._download_data_from_remote(
+                        session=session,
+                        desktop_url=desktop_url,
+                        headers=headers,
+                        local_path=local_path,
+                    )
+                except Exception as e:
+                    print(
+                        f"[windows exec] Warning: Failed to download "
+                        f"output '{arg_name}': {e}",
+                    )
+                    # Don't fail the whole execution for output download issues
+
+            # Step 8: Clean up temporary files (commented out for debugging)
             # async with session.post(
             #     f"{desktop_url}/api/files",
             #     json={

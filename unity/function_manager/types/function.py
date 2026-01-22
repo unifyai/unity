@@ -112,6 +112,27 @@ class Function(BaseModel):
         ),
     )
 
+    # Remote execution data transfer
+    data_required: List[str] = Field(
+        default_factory=list,
+        description=(
+            "List of items specifying data to upload before remote execution. "
+            "Each item is either: (1) an argument name whose runtime value is a local "
+            "file/directory path, or (2) a static absolute path string (starts with '/'). "
+            "At runtime, paths are uploaded to the remote VM preserving full directory "
+            "structure under C:\\Unity, and argument values are rewritten to remote equivalents."
+        ),
+    )
+
+    data_output: List[str] = Field(
+        default_factory=list,
+        description=(
+            "List of argument names whose values are output file/directory paths "
+            "that should be downloaded from the remote VM after execution completes. "
+            "The remote paths are downloaded back to their corresponding local paths."
+        ),
+    )
+
     # Source-defined custom function tracking
     custom_hash: Optional[str] = Field(
         None,
