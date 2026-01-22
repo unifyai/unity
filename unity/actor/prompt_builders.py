@@ -34,38 +34,28 @@ def build_code_act_prompt(
     from unity.common.prompt_helpers import render_tools_block
 
     rules_and_examples = _build_code_act_rules_and_examples(environments=environments)
-
-    execute_tool = {
-        "execute_python_code": {
-            "signature": "async def execute_python_code(thought: str, code: str) -> Any",
-            "docstring": (
-                "Executes a block of Python code in a stateful sandbox and returns the result.\n"
-                "You have access to environment globals injected into the sandbox (e.g. `computer_primitives`, `primitives`).\n"
-                "All variables are preserved between calls. The sandbox is asynchronous - use await for all async methods.\n\n"
-                "Notifications (optional):\n"
-                "- A notification queue may be attached by the caller. If present, `execute_python_code` will emit:\n"
-                "  - `execution_started`  {type, sandbox_id, timestamp}\n"
-                "  - `execution_finished` {type, sandbox_id, status, stdout_len, stderr_len, browser_used, timestamp}\n"
-                "  - `execution_error`    {type, sandbox_id, error_kind, traceback_preview, timestamp}\n"
-                "- You can also emit custom progress from *inside Python* using `notify(payload: dict)`.\n"
-                "  - `notify` is best-effort (it does not block; safe to call frequently).\n"
-                "  - Use a stable schema like: `{'type': 'progress', 'step': '...', 'pct': 0-100}`.\n"
-                "  - Example:\n"
-                "    ```python\n"
-                "    notify({'type': 'progress', 'step': 'loaded data', 'pct': 25})\n"
-                "    ```"
-            ),
-        },
-    }
-    execute_tool_reference = json.dumps(execute_tool, indent=4)
+    primary_tool_reference = ""
+    if tools:
+        primary_names = [
+            "execute_code",
+            "list_sessions",
+            "inspect_state",
+            "close_session",
+            "close_all_sessions",
+        ]
+        primary_tools = {k: tools[k] for k in primary_names if k in tools}
+        if primary_tools:
+            primary_tool_reference = _build_tool_signatures(primary_tools)
 
     has_browser_env = "computer_primitives" in environments
-    role_line = "You are an expert agent that solves tasks by writing and executing Python code."
+    role_line = (
+        "You are an expert agent that solves tasks by writing and executing code."
+    )
     capabilities_line = (
-        "Your primary tool is a stateful code execution sandbox where you can control browsers, "
-        "send communications, and perform complex automation tasks."
+        "Your primary tool is a multi-language, multi-session execution environment where you can run Python and shell code, "
+        "and (when enabled) control browsers and other tool domains."
         if has_browser_env
-        else "Your primary tool is a stateful code execution sandbox where you can use whatever tool "
+        else "Your primary tool is a multi-language, multi-session execution environment where you can use whatever tool "
         "domains are available via injected environment globals (e.g. state managers, and optionally browser/desktop)."
     )
 
@@ -73,18 +63,30 @@ def build_code_act_prompt(
 ### Your Role: Code-First Automation Agent
 {role_line} {capabilities_line}
 
-### Primary Execution Tool
+### Primary Execution & Session Tools (CRITICAL)
+These tools are called via **structured JSON tool calls**, NOT inside Python code.
+They are the only supported way to run Python/shell code and manage sessions.
+
 ```json
-{execute_tool_reference}
+{primary_tool_reference or "{}"}
 ```
 
 {rules_and_examples}
 """
 
     if tools:
-        # Filter out execute_python_code since it has its own dedicated section above
+        # Filter out primary execution/session tools since they have a dedicated section above.
         additional_tools = {
-            k: v for k, v in tools.items() if k != "execute_python_code"
+            k: v
+            for k, v in tools.items()
+            if k
+            not in {
+                "execute_code",
+                "list_sessions",
+                "inspect_state",
+                "close_session",
+                "close_all_sessions",
+            }
         }
         if additional_tools:
             prompt += (
@@ -108,7 +110,7 @@ You have access to a catalogue of **pre-stored reusable functions** via the Func
    - `FunctionManager_filter_functions` - filter-based search
    - `FunctionManager_list_functions` - list all available functions
 
-   **Important**: Do this **before** you call `execute_python_code` for a new user request.
+   **Important**: Do this **before** you call `execute_code` for a new user request.
    Even if you *think* the correct answer is a direct `primitives.*` call, still search first —
    many memoized skills are thin wrappers around state managers (contacts/tasks/knowledge/transcripts/guidance/web).
 
