@@ -409,6 +409,26 @@ class ImplementationDecision(_StrictBaseModel):
     )
 
 
+class InitialPlanDecision(_StrictBaseModel):
+    """Structured output for the initial plan generation LLM call."""
+
+    code: str = Field(
+        ...,
+        description="The complete Python code for the initial plan, including the main_plan() function and any helper functions.",
+    )
+    reason: str = Field(
+        ...,
+        description=(
+            "A 2-3 lines concise explanation of your planning decisions, including: "
+            "1) Which functions from the FunctionManager library you chose to use and why, "
+            "2) Which functions you considered but decided not to use and why, "
+            "3) Why you chose to write new code instead of using existing functions (if applicable), "
+            "4) Your overall strategy for achieving the user's goal. "
+            "This reasoning helps ensure thoughtful function selection and plan composition."
+        ),
+    )
+
+
 class FunctionPatch(_StrictBaseModel):
     """Represents a single function's code to be updated in the plan."""
 
@@ -7240,16 +7260,49 @@ class HierarchicalActor(BaseActor):
                     images=plan.images,
                     response_format=plan.response_format,
                 )
-                response = await llm_call(
-                    plan.plan_generation_client,
-                    prompt,
-                    images=plan.images,
-                )
-                base_code = (
-                    response.strip().replace("```python", "").replace("```", "").strip()
-                )
+
+                # Use structured output for initial plan generation
+                plan.plan_generation_client.set_response_format(InitialPlanDecision)
+                try:
+                    response_str = await llm_call(
+                        plan.plan_generation_client,
+                        prompt,
+                        images=plan.images,
+                    )
+                    try:
+                        decision = InitialPlanDecision.model_validate_json(response_str)
+                    except Exception as validation_error:
+                        last_error = f"Failed to parse structured output: {validation_error}\nResponse: {response_str[:500]}"
+                        logger.error(
+                            f"Attempt {attempt+1} to generate plan failed. Reason: {last_error}",
+                        )
+                        if attempt == max_retries - 1:
+                            raise
+                        continue
+
+                    logger.debug(
+                        f"\n{format_pydantic_model(decision, title='INITIAL PLAN DECISION', indent=2)}",
+                    )
+
+                    # Log the reasoning for debugging and transparency
+                    logger.info(
+                        f"Initial plan reasoning (attempt {attempt+1}):\n{decision.reason}",
+                    )
+                    plan.action_log.append(
+                        f"Initial plan reasoning (attempt {attempt+1}):\n{decision.reason}",
+                    )
+
+                    base_code = (
+                        decision.code.strip()
+                        .replace("```python", "")
+                        .replace("```", "")
+                        .strip()
+                    )
+                finally:
+                    plan.plan_generation_client.reset_response_format()
+
                 logger.debug(
-                    f"LLM response for initial plan (attempt {attempt+1}):\n\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---\n\n",
+                    f"LLM response for initial plan (attempt {attempt+1}):\n\n--- LLM RAW RESPONSE START ---\n{response_str}\n--- LLM RAW RESPONSE END ---\n\n",
                 )
 
                 full_code, skip_verify = await self._inject_library_functions(base_code)

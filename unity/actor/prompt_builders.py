@@ -2250,7 +2250,7 @@ def build_initial_plan_prompt(
         {retry_msg}
 
         {image_context_str}
-        Begin your response now. Your response must start immediately with the code.
+        Respond with ONLY the JSON object matching the `InitialPlanDecision` schema.
     """,
     ).strip()
 
