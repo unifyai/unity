@@ -1923,10 +1923,9 @@ async def async_tool_loop_inner(
 
             # Inject `final_answer` tool automatically whenever a `response_format` is
             # supplied. The tool accepts a single `answer` argument whose schema matches
-            # the provided Pydantic model.
-            # IMPORTANT: Only expose `final_answer` when there are NO in‑flight tools,
-            # to ensure the loop cannot terminate while work is still pending.
-            if response_format is not None and not tools_data.pending:
+            # the provided Pydantic model. This tool is always available, even when other
+            # tools are in-flight - calling it will auto-cancel any pending work.
+            if response_format is not None:
                 try:
                     _answer_schema = _check_valid_response_format(response_format)
 
@@ -1938,7 +1937,10 @@ async def async_tool_loop_inner(
                                 "name": "final_answer",
                                 "description": (
                                     "Submit your final answer in the required JSON format. "
-                                    "Calling this tool marks the conversation as complete."
+                                    "Calling this tool marks the conversation as complete. "
+                                    "WARNING: If any tools are currently running, they will be "
+                                    "immediately cancelled when you call this. Only use this when "
+                                    "you have all the information needed to provide a complete answer."
                                 ),
                                 "parameters": {
                                     "type": "object",
@@ -2405,6 +2407,17 @@ async def async_tool_loop_inner(
 
                             # Validate payload with the provided Pydantic model.
                             response_format.model_validate(payload)
+
+                            # Cancel any in-flight tools before returning the final answer.
+                            # This ensures clean termination when the LLM decides to answer
+                            # early (e.g., user interjection provided the needed info).
+                            if tools_data.pending:
+                                logger.info(
+                                    f"final_answer called while {len(tools_data.pending)} "
+                                    f"task(s) are in-flight. Auto-cancelling to terminate.",
+                                    prefix="🔚",
+                                )
+                                await tools_data.cancel_pending_tasks()
 
                             tool_msg = create_tool_call_message(
                                 name="final_answer",
