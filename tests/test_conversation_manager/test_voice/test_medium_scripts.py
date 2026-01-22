@@ -577,8 +577,8 @@ class TestVoiceAgentPromptBuilding:
             is_boss_user=True,
         )
 
-        assert "<role>" in prompt
-        assert "</role>" in prompt
+        # Now uses Markdown headers
+        assert "Role\n----" in prompt
 
     def test_prompt_contains_bio(self, boss_contact):
         """Voice agent prompt includes assistant bio."""
@@ -606,7 +606,8 @@ class TestVoiceAgentPromptBuilding:
             is_boss_user=True,
         )
 
-        assert "<boss_details>" in prompt
+        # Now uses Markdown headers
+        assert "Boss details\n------------" in prompt
         assert "John" in prompt
         assert "Smith" in prompt
         assert "+15551234567" in prompt
@@ -631,7 +632,8 @@ class TestVoiceAgentPromptBuilding:
             is_boss_user=False,
         )
 
-        assert "<contact_details>" in prompt
+        # Now uses Markdown headers
+        assert "Contact details\n---------------" in prompt
         assert external_contact["first_name"] in prompt
         assert external_contact["surname"] in prompt
 
@@ -646,7 +648,8 @@ class TestVoiceAgentPromptBuilding:
             is_boss_user=True,
         )
 
-        assert "<contact_details>" not in prompt
+        # Now uses Markdown headers - section should not exist for boss calls
+        assert "Contact details\n---------------" not in prompt
 
     def test_prompt_contains_conversation_manager_section(self, boss_contact):
         """Voice agent prompt explains conversation manager interaction."""
@@ -659,7 +662,8 @@ class TestVoiceAgentPromptBuilding:
             is_boss_user=True,
         )
 
-        assert "<conversation_manager>" in prompt
+        # Now uses Markdown headers
+        assert "Conversation manager\n--------------------" in prompt
         assert "notification" in prompt.lower()
 
     def test_prompt_contains_communication_guidelines(self, boss_contact):
@@ -673,7 +677,8 @@ class TestVoiceAgentPromptBuilding:
             is_boss_user=True,
         )
 
-        assert "<communication_guidelines>" in prompt
+        # Now uses Markdown headers
+        assert "Communication guidelines\n------------------------" in prompt
 
 
 # =============================================================================
