@@ -477,19 +477,23 @@ class TestRenderer:
         return Renderer()
 
     @pytest.fixture
-    def sample_contact(self):
-        return Contact(
-            contact_id=1,
-            first_name="John",
-            surname="Doe",
-            phone_number="+15551234567",
-            email_address="john@example.com",
-            bio="Test bio",
-            rolling_summary="Test summary",
-            response_policy="Be polite",
-            threads={},
-            on_call=False,
-        )
+    def sample_contact_info(self):
+        """Contact info dict (from ContactManager)."""
+        return {
+            "contact_id": 1,
+            "first_name": "John",
+            "surname": "Doe",
+            "phone_number": "+15551234567",
+            "email_address": "john@example.com",
+            "bio": "Test bio",
+            "rolling_summary": "Test summary",
+            "response_policy": "Be polite",
+        }
+
+    @pytest.fixture
+    def sample_conv_state(self):
+        """Conversation state (from ContactIndex)."""
+        return ConversationState(contact_id=1, on_call=False)
 
     def test_render_in_flight_actions_empty(self, renderer):
         """Renders empty in-flight actions."""
@@ -630,10 +634,14 @@ class TestRenderer:
         assert "Email ID: email_456" in result
         assert "Please review" in result
 
-    def test_render_contact(self, renderer, sample_contact):
+    def test_render_contact(self, renderer, sample_contact_info, sample_conv_state):
         """Renders contact with all details."""
         last_snapshot = datetime.now()
-        result = renderer.render_contact(sample_contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=sample_contact_info,
+            conv_state=sample_conv_state,
+            last_snapshot=last_snapshot,
+        )
         assert 'contact_id="1"' in result
         assert 'first_name="John"' in result
         assert 'surname="Doe"' in result
@@ -642,22 +650,27 @@ class TestRenderer:
 
     def test_global_thread_rendered_before_per_medium_threads(self, renderer):
         """Global thread appears before per-medium threads in rendered output."""
-        contact = Contact(
-            contact_id=1,
-            first_name="John",
-            surname="Doe",
-            bio="Test bio",
-            rolling_summary="Test summary",
-            response_policy="Be polite",
-        )
+        contact_info = {
+            "contact_id": 1,
+            "first_name": "John",
+            "surname": "Doe",
+            "bio": "Test bio",
+            "rolling_summary": "Test summary",
+            "response_policy": "Be polite",
+        }
+        conv_state = ConversationState(contact_id=1)
         # Add messages to both global and per-medium threads
         ts = datetime.now()
         msg = Message(name="John", content="Hello!", timestamp=ts)
-        contact.global_thread.append(msg)
-        contact.threads[Medium.SMS_MESSAGE].append(msg)
+        conv_state.global_thread.append(msg)
+        conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
         last_snapshot = datetime.now() - timedelta(hours=1)
-        result = renderer.render_contact(contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=contact_info,
+            conv_state=conv_state,
+            last_snapshot=last_snapshot,
+        )
 
         # Global thread should appear before sms thread
         global_pos = result.find("<global>")
@@ -670,24 +683,29 @@ class TestRenderer:
 
     def test_global_thread_shows_more_messages_than_per_medium(self, renderer):
         """Global thread renders up to 50 messages while per-medium shows 5."""
-        contact = Contact(
-            contact_id=1,
-            first_name="John",
-            surname="Doe",
-            bio="Test bio",
-            rolling_summary="Test summary",
-            response_policy="Be polite",
-        )
+        contact_info = {
+            "contact_id": 1,
+            "first_name": "John",
+            "surname": "Doe",
+            "bio": "Test bio",
+            "rolling_summary": "Test summary",
+            "response_policy": "Be polite",
+        }
+        conv_state = ConversationState(contact_id=1)
         # Add 10 messages to both threads
         base_time = datetime.now()
         for i in range(10):
             ts = base_time + timedelta(minutes=i)
             msg = Message(name="John", content=f"Message {i}", timestamp=ts)
-            contact.global_thread.append(msg)
-            contact.threads[Medium.SMS_MESSAGE].append(msg)
+            conv_state.global_thread.append(msg)
+            conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
         last_snapshot = datetime.now() - timedelta(hours=1)
-        result = renderer.render_contact(contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=contact_info,
+            conv_state=conv_state,
+            last_snapshot=last_snapshot,
+        )
 
         # Global thread should have all 10 messages
         for i in range(10):
@@ -713,10 +731,19 @@ class TestRenderer:
                 f"Message {i}" in sms_section
             ), f"Message {i} should be in sms_message"
 
-    def test_empty_global_thread_not_rendered(self, renderer, sample_contact):
+    def test_empty_global_thread_not_rendered(
+        self,
+        renderer,
+        sample_contact_info,
+        sample_conv_state,
+    ):
         """Empty global thread is not rendered."""
         last_snapshot = datetime.now()
-        result = renderer.render_contact(sample_contact, last_snapshot=last_snapshot)
+        result = renderer.render_contact(
+            contact_info=sample_contact_info,
+            conv_state=sample_conv_state,
+            last_snapshot=last_snapshot,
+        )
         assert "<global>" not in result
 
 
