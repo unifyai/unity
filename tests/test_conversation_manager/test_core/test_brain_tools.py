@@ -745,21 +745,42 @@ class TestBuildActionSteeringTools:
         assert tools == {}
 
     def test_generates_tools_for_in_flight_action(self, brain_action_tools, mock_cm):
-        """Generates steering tools for each in-flight action."""
+        """Generates steering tools for each in-flight action.
+
+        Note: With pause/resume flipping, only ONE of pause/resume is generated
+        depending on the handle's pause state. For a running action (default),
+        only pause is available.
+        """
+        # Create a mock handle that appears to be running (not paused)
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True  # Running (not paused)
+
         mock_cm.in_flight_actions = {
             0: {
                 "query": "List all contacts",
-                "handle": MagicMock(),
+                "handle": mock_handle,
                 "handle_actions": [],
             },
         }
         tools = brain_action_tools.build_action_steering_tools()
-        # Should have tools for ask, stop, interject, pause, resume
+
+        # Should have tools for ask, stop, interject, pause (NOT resume when running)
         # (but NOT answer_clarification without pending clarifications)
-        non_clar_ops = [
-            op for op in STEERING_OPERATIONS if not op.requires_clarification
-        ]
-        assert len(tools) >= len(non_clar_ops)
+        tool_names = list(tools.keys())
+
+        # Should have pause but NOT resume when running
+        assert any(
+            "pause_" in n for n in tool_names
+        ), "Should have pause tool when running"
+        assert not any(
+            "resume_" in n for n in tool_names
+        ), "Should NOT have resume tool when running"
+
+        # Other steering tools should be present
+        assert any("ask_" in n for n in tool_names)
+        assert any("stop_" in n for n in tool_names)
+        assert any("interject_" in n for n in tool_names)
 
     def test_tool_names_follow_expected_format(self, brain_action_tools, mock_cm):
         """Tool names follow the build_action_name format."""
@@ -835,15 +856,24 @@ class TestBuildActionSteeringTools:
 
     def test_handles_multiple_actions(self, brain_action_tools, mock_cm):
         """Generates tools for multiple in-flight actions."""
+        # Create mock handles
+        mock_handle1 = MagicMock()
+        mock_handle1._pause_event = MagicMock()
+        mock_handle1._pause_event.is_set.return_value = True  # Running
+
+        mock_handle2 = MagicMock()
+        mock_handle2._pause_event = MagicMock()
+        mock_handle2._pause_event.is_set.return_value = True  # Running
+
         mock_cm.in_flight_actions = {
             0: {
                 "query": "Action one",
-                "handle": MagicMock(),
+                "handle": mock_handle1,
                 "handle_actions": [],
             },
             1: {
                 "query": "Action two",
-                "handle": MagicMock(),
+                "handle": mock_handle2,
                 "handle_actions": [],
             },
         }
@@ -853,6 +883,77 @@ class TestBuildActionSteeringTools:
         action1_tools = [n for n in tools.keys() if "__1" in n]
         assert len(action0_tools) > 0
         assert len(action1_tools) > 0
+
+    def test_paused_handle_only_shows_resume(self, brain_action_tools, mock_cm):
+        """When handle is paused, only resume_* is generated (not pause_*)."""
+        # Create a paused handle (pause_event is cleared)
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = False  # Paused
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Paused action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        tool_names = list(tools.keys())
+
+        # Should have resume but NOT pause when paused
+        assert any(
+            "resume_" in n for n in tool_names
+        ), "Should have resume tool when paused"
+        assert not any(
+            "pause_" in n for n in tool_names
+        ), "Should NOT have pause tool when paused"
+
+    def test_running_handle_only_shows_pause(self, brain_action_tools, mock_cm):
+        """When handle is running, only pause_* is generated (not resume_*)."""
+        # Create a running handle (pause_event is set)
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True  # Running
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Running action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        tool_names = list(tools.keys())
+
+        # Should have pause but NOT resume when running
+        assert any(
+            "pause_" in n for n in tool_names
+        ), "Should have pause tool when running"
+        assert not any(
+            "resume_" in n for n in tool_names
+        ), "Should NOT have resume tool when running"
+
+    def test_handle_without_pause_event_shows_pause(self, brain_action_tools, mock_cm):
+        """When handle has no _pause_event (unknown state), defaults to pause_*."""
+        # Create a handle without _pause_event
+        mock_handle = MagicMock(spec=[])  # No attributes
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Action with unknown state",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        tool_names = list(tools.keys())
+
+        # Should default to showing pause (assume running) when state unknown
+        assert any("pause_" in n for n in tool_names), "Should default to pause tool"
+        assert not any(
+            "resume_" in n for n in tool_names
+        ), "Should NOT have resume tool when state unknown"
 
     def test_steering_tools_have_docstrings(self, brain_action_tools, mock_cm):
         """Generated steering tools have docstrings."""

@@ -7,6 +7,7 @@ Conversation state (threads) is fetched from ContactIndex.
 
 from datetime import datetime
 
+from unity.common._async_tool.utils import get_handle_paused_state
 from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
@@ -213,7 +214,12 @@ class Renderer:
             for handle_id, handle_data in in_flight_actions.items():
                 query = handle_data.get("query", "")
                 short_name = derive_short_name(query)
+                handle = handle_data.get("handle")
                 handle_actions = handle_data.get("handle_actions", [])
+
+                # Determine status based on pause state
+                is_paused = get_handle_paused_state(handle)
+                status = "paused" if is_paused else "executing"
 
                 pending_clarifications = [
                     a
@@ -222,7 +228,7 @@ class Renderer:
                     and not a.get("response")
                 ]
 
-                out += f"<action id='{handle_id}' short_name='{short_name}' status='executing'>\n"
+                out += f"<action id='{handle_id}' short_name='{short_name}' status='{status}'>\n"
                 out += f"<original_request>{query}</original_request>\n"
 
                 out += "<steering_tools>\n"
@@ -230,6 +236,7 @@ class Renderer:
                     handle_id,
                     query,
                     pending_clarifications,
+                    is_paused=is_paused,
                 ):
                     out += f"  - {action_name}: {description}\n"
                 out += "</steering_tools>\n"

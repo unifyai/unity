@@ -12,7 +12,7 @@ from .tools_utils import ToolCallMetadata
 from .images import (
     append_images_with_source,
 )
-from .utils import maybe_await
+from .utils import get_handle_paused_state, maybe_await
 from unity.image_manager.types.image_refs import ImageRefs
 
 
@@ -752,14 +752,10 @@ class DynamicToolFactory:
             task_pause_event is not None
         )
 
-        paused_state = None
-        try:
-            # Prefer downstream handle's pause event if available
-            pev = getattr(handle, "_pause_event", None) if handle_available else None
-            if pev is not None and hasattr(pev, "is_set"):
-                paused_state = not pev.is_set()  # running ⇢ set, paused ⇢ cleared
-        except Exception:
-            pass
+        # Use shared helper to check handle's pause state first
+        paused_state = get_handle_paused_state(handle) if handle_available else None
+
+        # Fallback to task_pause_event if handle doesn't have _pause_event
         if (
             paused_state is None
             and task_pause_event is not None

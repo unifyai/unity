@@ -283,7 +283,8 @@ class TestIterSteeringToolsForAction:
     """Tests for iter_steering_tools_for_action function."""
 
     def test_basic_actions(self):
-        """Generates standard steering tools for an action."""
+        """Generates standard steering tools for an action (backward compatible)."""
+        # With is_paused=None (default), both pause and resume are included
         actions = iter_steering_tools_for_action(0, "List contacts")
         action_names = [a[0] for a in actions]
 
@@ -292,6 +293,36 @@ class TestIterSteeringToolsForAction:
         assert any("interject_" in n for n in action_names)
         assert any("pause_" in n for n in action_names)
         assert any("resume_" in n for n in action_names)
+
+    def test_is_paused_true_only_shows_resume(self):
+        """When is_paused=True, only resume is shown (not pause)."""
+        actions = iter_steering_tools_for_action(
+            0,
+            "List contacts",
+            is_paused=True,
+        )
+        action_names = [a[0] for a in actions]
+
+        assert any("resume_" in n for n in action_names)
+        assert not any("pause_" in n for n in action_names)
+        # Other steering tools should still be present
+        assert any("ask_" in n for n in action_names)
+        assert any("stop_" in n for n in action_names)
+
+    def test_is_paused_false_only_shows_pause(self):
+        """When is_paused=False, only pause is shown (not resume)."""
+        actions = iter_steering_tools_for_action(
+            0,
+            "List contacts",
+            is_paused=False,
+        )
+        action_names = [a[0] for a in actions]
+
+        assert any("pause_" in n for n in action_names)
+        assert not any("resume_" in n for n in action_names)
+        # Other steering tools should still be present
+        assert any("ask_" in n for n in action_names)
+        assert any("stop_" in n for n in action_names)
 
     def test_no_answer_clarification_without_pending(self):
         """No answer_clarification without pending clarifications."""
@@ -481,6 +512,48 @@ class TestRenderer:
         assert "List all contacts" in result
         assert "ask_" in result
         assert "stop_" in result
+
+    def test_render_in_flight_actions_shows_paused_status(self, renderer):
+        """Renders paused actions with status='paused'."""
+        from unittest.mock import MagicMock
+
+        # Create a paused handle
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = False  # Paused
+
+        actions = {
+            0: {
+                "query": "Paused action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        result = renderer.render_in_flight_actions(actions)
+        assert "status='paused'" in result
+        assert "resume_" in result  # Should show resume tool
+        assert "pause_" not in result  # Should NOT show pause tool
+
+    def test_render_in_flight_actions_shows_executing_status(self, renderer):
+        """Renders running actions with status='executing'."""
+        from unittest.mock import MagicMock
+
+        # Create a running handle
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True  # Running
+
+        actions = {
+            0: {
+                "query": "Running action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        result = renderer.render_in_flight_actions(actions)
+        assert "status='executing'" in result
+        assert "pause_" in result  # Should show pause tool
+        assert "resume_" not in result  # Should NOT show resume tool
 
     def test_render_in_flight_actions_with_clarification(self, renderer):
         """Renders actions with pending clarifications."""
