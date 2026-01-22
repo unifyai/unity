@@ -75,15 +75,34 @@ class ContactIndex:
     Contact information (name, email, phone, response_policy, etc.) is ALWAYS
     fetched from ContactManager - the single source of truth with DataStore-backed
     caching. This class only stores conversation state (message threads, call status).
+
+    Fallback Mechanism:
+    -------------------
+    Before ContactManager is initialized, inbound messages may arrive with contact
+    data. These contacts are cached in `_fallback_contacts` so get_contact() can
+    return them. Once ContactManager is set, the fallback cache is cleared and all
+    lookups go through ContactManager.
     """
 
     def __init__(self):
         self.active_conversations: dict[int, ConversationState] = {}
         self._contact_manager: "BaseContactManager | None" = None
+        # Fallback cache for contacts before ContactManager is initialized
+        self._fallback_contacts: dict[int, dict] = {}
 
     def set_contact_manager(self, contact_manager: "BaseContactManager") -> None:
-        """Set the ContactManager to use as the source of truth for contact data."""
+        """Set the ContactManager to use as the source of truth for contact data.
+
+        Note: We do NOT clear the fallback cache here. Contacts cached from inbounds
+        that arrived before initialization should remain available until they can be
+        looked up in ContactManager. The fallback cache is checked first in get_contact().
+        """
         self._contact_manager = contact_manager
+
+    @property
+    def is_contact_manager_initialized(self) -> bool:
+        """Check if ContactManager has been set."""
+        return self._contact_manager is not None
 
     @property
     def contact_manager(self) -> "BaseContactManager":
@@ -91,6 +110,23 @@ class ContactIndex:
         if self._contact_manager is None:
             raise RuntimeError("ContactManager not set on ContactIndex")
         return self._contact_manager
+
+    def set_fallback_contacts(self, contacts: list[dict]) -> None:
+        """
+        Cache contacts from inbound messages.
+
+        This is called when inbound messages arrive with contact data. These
+        contacts are checked first in get_contact() before ContactManager,
+        ensuring contacts from recent inbounds are always available even if
+        ContactManager hasn't synced them yet.
+
+        Args:
+            contacts: List of contact dicts from inbound message events.
+        """
+        for contact in contacts:
+            contact_id = contact.get("contact_id")
+            if contact_id is not None:
+                self._fallback_contacts[contact_id] = contact
 
     def clear_conversations(self):
         """Clear all active conversations for test isolation."""
@@ -115,10 +151,10 @@ class ContactIndex:
         email: str | None = None,
     ) -> dict | None:
         """
-        Get contact information from ContactManager.
+        Get contact information from fallback cache or ContactManager.
 
-        This is the ONLY way to get contact data - always queries ContactManager
-        which maintains a DataStore-backed cache synced with the backend.
+        Checks the local fallback cache first (populated from inbound message
+        events). If not found, falls back to ContactManager.
 
         Args:
             contact_id: Contact ID (preferred).
@@ -129,31 +165,43 @@ class ContactIndex:
             Contact dict or None if not found.
         """
         if self._contact_manager is None:
-            return None
-        try:
+            # Check fallback cache first (contacts from inbound messages)
             if contact_id is not None:
-                result = self._contact_manager.get_contact_info(contact_id)
-                return result.get(contact_id)
+                if contact_id in self._fallback_contacts:
+                    return self._fallback_contacts[contact_id]
             elif phone_number is not None:
-                result = self._contact_manager.filter_contacts(
-                    filter=f"phone_number == '{phone_number}'",
-                    limit=1,
-                )
-                contacts = result.get("contacts", [])
-                if contacts:
-                    c = contacts[0]
-                    return c.model_dump() if hasattr(c, "model_dump") else c
+                for c in self._fallback_contacts.values():
+                    if c.get("phone_number") == phone_number:
+                        return c
             elif email is not None:
-                result = self._contact_manager.filter_contacts(
-                    filter=f"email_address == '{email}'",
-                    limit=1,
-                )
-                contacts = result.get("contacts", [])
-                if contacts:
-                    c = contacts[0]
-                    return c.model_dump() if hasattr(c, "model_dump") else c
-        except Exception:
-            return None
+                for c in self._fallback_contacts.values():
+                    if c.get("email_address") == email:
+                        return c
+        else:
+            try:
+                if contact_id is not None:
+                    result = self._contact_manager.get_contact_info(contact_id)
+                    return result.get(contact_id)
+                elif phone_number is not None:
+                    result = self._contact_manager.filter_contacts(
+                        filter=f"phone_number == '{phone_number}'",
+                        limit=1,
+                    )
+                    contacts = result.get("contacts", [])
+                    if contacts:
+                        c = contacts[0]
+                        return c.model_dump() if hasattr(c, "model_dump") else c
+                elif email is not None:
+                    result = self._contact_manager.filter_contacts(
+                        filter=f"email_address == '{email}'",
+                        limit=1,
+                    )
+                    contacts = result.get("contacts", [])
+                    if contacts:
+                        c = contacts[0]
+                        return c.model_dump() if hasattr(c, "model_dump") else c
+            except Exception:
+                return None
         return None
 
     def push_message(
