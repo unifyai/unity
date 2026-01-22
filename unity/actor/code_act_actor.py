@@ -692,6 +692,413 @@ class PythonExecutionSession:
         }
 
 
+class SessionExecutor:
+    """
+    Unified execution engine for multi-language, multi-session CodeAct execution.
+
+    Notes
+    -----
+    - Python (in-process) sessions are backed by persistent PythonExecutionSession instances.
+    - Shell sessions use ShellPool (persistent) and ephemeral subprocesses for stateless.
+    - Venv-backed Python sessions are supported when venv_id is provided.
+    """
+
+    def __init__(
+        self,
+        *,
+        venv_pool: Any,
+        shell_pool: Any,
+        environments: Optional[Dict[str, "BaseEnvironment"]] = None,
+        computer_primitives: Optional[ComputerPrimitives] = None,
+        function_manager: Optional["FunctionManager"] = None,
+        timeout: Optional[float] = None,
+    ) -> None:
+        self._venv_pool = venv_pool
+        self._shell_pool = shell_pool
+        self._environments = environments or {}
+        self._computer_primitives = computer_primitives
+        self._function_manager = function_manager
+        self._timeout = timeout
+
+        # In-process Python sessions keyed by (venv_id=None, session_id).
+        self._python_sessions: Dict[
+            Tuple[Optional[int], int],
+            PythonExecutionSession,
+        ] = {}
+        self._python_session_meta: Dict[Tuple[Optional[int], int], dict[str, str]] = {}
+
+    def has_python_session(
+        self,
+        *,
+        session_id: int,
+        venv_id: int | None = None,
+    ) -> bool:
+        return (venv_id, session_id) in self._python_sessions
+
+    def list_in_process_python_sessions(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for (venv_id, session_id), sb in list(self._python_sessions.items()):
+            meta = self._python_session_meta.get((venv_id, session_id)) or {}
+            out.append(
+                {
+                    "language": "python",
+                    "venv_id": venv_id,
+                    "session_id": int(session_id),
+                    "created_at": meta.get("created_at"),
+                    "last_used": meta.get("last_used"),
+                    "state_summary": "active",
+                },
+            )
+        return out
+
+    async def close_in_process_python_session(
+        self,
+        *,
+        session_id: int,
+        venv_id: int | None = None,
+    ) -> bool:
+        key = (venv_id, int(session_id))
+        sb = self._python_sessions.pop(key, None)
+        self._python_session_meta.pop(key, None)
+        if sb is None:
+            return False
+        try:
+            await sb.close()
+        except Exception:
+            pass
+        return True
+
+    async def close(self) -> None:
+        # Close in-process python sandboxes; pools are owned by the actor.
+        for sb in list(self._python_sessions.values()):
+            try:
+                await sb.close()
+            except Exception:
+                pass
+        self._python_sessions.clear()
+        self._python_session_meta.clear()
+
+    async def execute(
+        self,
+        *,
+        code: str,
+        language: SupportedLanguage,
+        state_mode: StateMode,
+        session_id: int | None,
+        venv_id: int | None,
+        primitives: Any = None,
+        computer_primitives: Any = None,
+    ) -> Dict[str, Any]:
+        started = datetime.now(timezone.utc)
+        t0 = started.timestamp()
+
+        # Default: use actor computer primitives (if any).
+        if computer_primitives is None:
+            computer_primitives = self._computer_primitives
+
+        # ─── Python ────────────────────────────────────────────────────────
+        if language == "python":
+            # Special-case: session 0 is the *current bound sandbox* when present.
+            # This preserves legacy CodeAct behavior (one sandbox per act() handle)
+            # while enabling state sharing for execute_code(..., session_id=0) when a sandbox is bound.
+            if state_mode == "stateful" and venv_id is None and session_id == 0:
+                try:
+                    sb0 = _CURRENT_SANDBOX.get()
+                    res = await sb0.execute(code)
+                    return {
+                        **res,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": 0,
+                        "venv_id": None,
+                        "session_created": False,
+                        "duration_ms": int(
+                            (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                        ),
+                    }
+                except Exception:
+                    # If no sandbox is bound, fall back to executor-managed session 0.
+                    pass
+            # Stateless: fresh in-process sandbox per call.
+            if state_mode == "stateless":
+                sb = PythonExecutionSession(
+                    computer_primitives=computer_primitives,
+                    environments=self._environments,
+                    venv_pool=self._venv_pool,
+                    shell_pool=self._shell_pool,
+                )
+                try:
+                    res = await sb.execute(code)
+                finally:
+                    try:
+                        await sb.close()
+                    except Exception:
+                        pass
+                return {
+                    **res,
+                    "language": language,
+                    "state_mode": state_mode,
+                    "session_id": None,
+                    "venv_id": venv_id,
+                    "session_created": False,
+                    "duration_ms": int(
+                        (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                    ),
+                }
+
+            # If a venv_id is provided, use persistent subprocess sessions.
+            if venv_id is not None:
+                if session_id is None:
+                    raise ValueError(
+                        "session_id is required for venv-backed python execution",
+                    )
+                # Determine whether this is a new persistent session.
+                existed_before = (int(venv_id), int(session_id)) in set(
+                    self._venv_pool.list_active_sessions(),
+                )
+                # Wrap arbitrary code in a function definition so venv_runner can execute it.
+                implementation = _wrap_code_as_async_function(code)
+                if state_mode == "stateful":
+                    out = await self._venv_pool.execute_in_venv(
+                        venv_id=int(venv_id),
+                        implementation=implementation,
+                        call_kwargs={},
+                        is_async=True,
+                        session_id=int(session_id),
+                        primitives=primitives,
+                        computer_primitives=computer_primitives,
+                        function_manager=self._function_manager,
+                        timeout=self._timeout,
+                    )
+                    return {
+                        **out,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": session_id,
+                        "venv_id": venv_id,
+                        "session_created": not existed_before,
+                        "duration_ms": int(
+                            (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                        ),
+                    }
+
+                if state_mode == "read_only":
+                    # Snapshot state from persistent session, then run in one-shot subprocess.
+                    if self._function_manager is None:
+                        raise RuntimeError(
+                            "function_manager is required for venv read_only execution",
+                        )
+                    initial_state = await self._venv_pool.get_connection_state(
+                        venv_id=int(venv_id),
+                        function_manager=self._function_manager,
+                        session_id=int(session_id),
+                        timeout=10.0,
+                    )
+                    out = await self._function_manager.execute_in_venv(
+                        venv_id=int(venv_id),
+                        implementation=implementation,
+                        call_kwargs={},
+                        is_async=True,
+                        initial_state=initial_state,
+                        primitives=primitives,
+                        computer_primitives=computer_primitives,
+                    )
+                    return {
+                        **out,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": session_id,
+                        "venv_id": venv_id,
+                        "session_created": False,
+                        "duration_ms": int(
+                            (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                        ),
+                    }
+
+                raise ValueError(
+                    f"Unsupported state_mode for python venv: {state_mode}",
+                )
+
+            # In-process persistent sessions (venv_id is None).
+            if session_id is None:
+                raise ValueError(
+                    "session_id is required for in-process python stateful/read_only execution",
+                )
+
+            key = (venv_id, int(session_id))
+            if state_mode == "stateful":
+                created = False
+                if key not in self._python_sessions:
+                    self._python_sessions[key] = PythonExecutionSession(
+                        computer_primitives=computer_primitives,
+                        environments=self._environments,
+                        venv_pool=self._venv_pool,
+                        shell_pool=self._shell_pool,
+                    )
+                    created = True
+                    now = datetime.now(timezone.utc).isoformat()
+                    self._python_session_meta[key] = {
+                        "created_at": now,
+                        "last_used": now,
+                    }
+                sb = self._python_sessions[key]
+                res = await sb.execute(code)
+                meta = self._python_session_meta.get(key)
+                if meta is not None:
+                    meta["last_used"] = datetime.now(timezone.utc).isoformat()
+                return {
+                    **res,
+                    "language": language,
+                    "state_mode": state_mode,
+                    "session_id": session_id,
+                    "venv_id": venv_id,
+                    "session_created": created,
+                    "duration_ms": int(
+                        (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                    ),
+                }
+
+            if state_mode == "read_only":
+                # Create a throwaway sandbox seeded with current state.
+                if key not in self._python_sessions:
+                    raise ValueError(
+                        f"Python session {key} not found for read_only execution",
+                    )
+                base = self._python_sessions[key]
+                sb = PythonExecutionSession(
+                    computer_primitives=computer_primitives,
+                    environments=self._environments,
+                    venv_pool=self._venv_pool,
+                    shell_pool=self._shell_pool,
+                )
+                try:
+                    # Shallow copy globals to allow read access while avoiding persistence.
+                    sb.global_state.update(dict(base.global_state))
+                    res = await sb.execute(code)
+                finally:
+                    try:
+                        await sb.close()
+                    except Exception:
+                        pass
+                return {
+                    **res,
+                    "language": language,
+                    "state_mode": state_mode,
+                    "session_id": session_id,
+                    "venv_id": venv_id,
+                    "session_created": False,
+                    "duration_ms": int(
+                        (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                    ),
+                }
+
+            raise ValueError(
+                f"Unsupported state_mode for python in-process: {state_mode}",
+            )
+
+        # ─── Shell ─────────────────────────────────────────────────────────
+        # Stateless: ephemeral subprocess (no pool/session).
+        if state_mode == "stateless":
+            out = await _execute_shell_stateless(language=language, command=code)
+            return {
+                **out,
+                "language": language,
+                "state_mode": state_mode,
+                "session_id": None,
+                "venv_id": None,
+                "session_created": False,
+                "duration_ms": int(
+                    (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                ),
+            }
+
+        if session_id is None:
+            raise ValueError(
+                "session_id is required for shell stateful/read_only execution",
+            )
+
+        # Persistent shell session.
+        if state_mode == "stateful":
+            existed_before = self._shell_pool.has_session(
+                language=language,  # type: ignore[arg-type]
+                session_id=int(session_id),
+            )
+            res = await self._shell_pool.execute(
+                language=language,  # type: ignore[arg-type]
+                command=code,
+                session_id=int(session_id),
+                timeout=self._timeout,
+            )
+            return {
+                "stdout": res.stdout,
+                "stderr": res.stderr,
+                "result": res.exit_code,
+                "error": res.error,
+                "browser_used": False,
+                "language": language,
+                "state_mode": state_mode,
+                "session_id": session_id,
+                "venv_id": None,
+                "session_created": not existed_before,
+                "duration_ms": int(
+                    (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                ),
+            }
+
+        if state_mode == "read_only":
+            # Snapshot persistent state, restore into ephemeral session, execute, then discard.
+            from unity.function_manager.shell_session import ShellSession
+
+            sess = await self._shell_pool.get_session(
+                language=language,  # type: ignore[arg-type]
+                session_id=int(session_id),
+            )
+            snap = await sess.snapshot_state()
+            tmp = ShellSession(language=language)  # type: ignore[arg-type]
+            await tmp.start()
+            try:
+                restore_res = await tmp.restore_state(snap)
+                if restore_res.error:
+                    return {
+                        "stdout": restore_res.stdout,
+                        "stderr": restore_res.stderr,
+                        "result": restore_res.exit_code,
+                        "error": restore_res.error,
+                        "browser_used": False,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": session_id,
+                        "venv_id": None,
+                        "session_created": False,
+                        "duration_ms": int(
+                            (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                        ),
+                    }
+                res = await tmp.execute(code, timeout=self._timeout)
+                return {
+                    "stdout": res.stdout,
+                    "stderr": res.stderr,
+                    "result": res.exit_code,
+                    "error": res.error,
+                    "browser_used": False,
+                    "language": language,
+                    "state_mode": state_mode,
+                    "session_id": session_id,
+                    "venv_id": None,
+                    "session_created": False,
+                    "duration_ms": int(
+                        (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                    ),
+                }
+            finally:
+                try:
+                    await tmp.close()
+                except Exception:
+                    pass
+
+        raise ValueError(f"Unsupported state_mode for shell: {state_mode}")
+
+
 def _wrap_code_as_async_function(code: str) -> str:
     """
     Wrap an arbitrary code snippet into a single async function definition.
