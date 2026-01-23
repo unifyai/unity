@@ -214,13 +214,13 @@ class MockClientSession:
 
         return MockResponse({})
 
-    async def post(self, url: str, **kwargs):
-        """Record POST request and return mock response."""
+    def post(self, url: str, **kwargs):
+        """Record POST request and return mock response (sync - returns context manager)."""
         self.requests.append({"method": "POST", "url": url, **kwargs})
         return self._find_response(url, "POST", kwargs)
 
-    async def get(self, url: str, **kwargs):
-        """Record GET request and return mock response."""
+    def get(self, url: str, **kwargs):
+        """Record GET request and return mock response (sync - returns context manager)."""
         self.requests.append({"method": "GET", "url": url, **kwargs})
         return self._find_response(url, "GET", kwargs)
 
