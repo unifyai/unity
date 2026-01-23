@@ -2463,6 +2463,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add or update functions in batch.
@@ -2473,9 +2474,14 @@ class FunctionManager(BaseFunctionManager):
             preconditions: Optional preconditions for functions.
             verify: Optional verification settings (name -> bool).
             overwrite: If True, update existing functions; if False, skip duplicates.
+            raise_on_error: If True (default), raise ValueError when any function
+                fails to add. If False, errors are returned in the result dict.
 
         Returns:
             Dictionary mapping function names to status ("added", "updated", "skipped", or "error").
+
+        Raises:
+            ValueError: If raise_on_error=True and any function fails to add.
         """
 
         if preconditions is None:
@@ -2493,6 +2499,7 @@ class FunctionManager(BaseFunctionManager):
                 preconditions=preconditions,
                 verify=verify,
                 overwrite=overwrite,
+                raise_on_error=raise_on_error,
             )
 
         # Python-specific parsing and validation
@@ -2663,6 +2670,13 @@ class FunctionManager(BaseFunctionManager):
             if p is not None:
                 self._register_function_file(name, p)
 
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
+                raise ValueError(f"Failed to add function(s): {error_details}")
+
         return results
 
     def _add_shell_functions(
@@ -2673,6 +2687,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Dict[str, Dict],
         verify: Dict[str, bool],
         overwrite: bool,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add shell script functions (bash, zsh, sh, powershell).
@@ -2837,6 +2852,13 @@ class FunctionManager(BaseFunctionManager):
             p = self._write_function_file(f"{name}{ext}", source)
             if p is not None:
                 self._register_function_file(name, p)
+
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
+                raise ValueError(f"Failed to add function(s): {error_details}")
 
         return results
 
