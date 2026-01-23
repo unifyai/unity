@@ -208,7 +208,9 @@ async def _main_async() -> None:
                     f"{system_prompt_extension}\n\n### User Query\n{query}"
                 )
 
-                print(f'▶️  Analyzing: "{query[:80]}{"..." if len(query) > 80 else ""}"')
+                print(
+                    f'▶️  Analyzing: "{query[:80]}{"..." if len(query) > 80 else ""}"',
+                )
                 if args.voice:
                     speak("Analyzing your query.")
 

@@ -20,7 +20,6 @@ from unity.events.event_bus import EventBus, Event, EVENT_BUS
 from unity.events.types.llm import LLMPayload
 from unity.events.llm_event_hook import _llm_event_to_eventbus, install_llm_event_hook
 
-
 # ---------------------------------------------------------------------------
 #  1. LLMPayload model tests
 # ---------------------------------------------------------------------------

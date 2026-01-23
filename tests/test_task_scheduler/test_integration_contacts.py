@@ -3,7 +3,6 @@ from tests.helpers import _handle_project
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
 
-
 # --------------------------------------------------------------------------- #
 #  Ensure ContactManager.ask is exposed as a tool for both ask & update flows #
 # --------------------------------------------------------------------------- #
@@ -33,7 +32,6 @@ import asyncio
 import functools
 
 from unity.contact_manager.contact_manager import ContactManager
-
 
 # Slow eval-style tests that spin up real LLM loops.
 

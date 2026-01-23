@@ -13,7 +13,6 @@ from unity.common.single_shot import (
 )
 from unity.common.llm_client import new_llm_client
 
-
 # --------------------------------------------------------------------------- #
 #  Test fixtures: response format models                                       #
 # --------------------------------------------------------------------------- #

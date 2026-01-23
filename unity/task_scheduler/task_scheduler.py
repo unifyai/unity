@@ -87,7 +87,6 @@ from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
 from ..common.context_registry import ContextRegistry, TableContext
 
-
 # Sentinel for optional-argument presence detection
 _UNSET = _UnsetSentinel()
 

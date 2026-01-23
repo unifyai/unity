@@ -23,7 +23,6 @@ from typing import Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 
-
 # Structural delimiter separating semantic parts from identifiers.
 # Using __ because neither derive_short_name nor safe_call_id_suffix can produce it.
 _DELIM = "__"

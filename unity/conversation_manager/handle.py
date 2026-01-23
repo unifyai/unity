@@ -19,7 +19,6 @@ from .events import (
 from .prompt_builders import build_ask_handle_prompt
 import logging
 
-
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker

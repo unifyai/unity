@@ -11,7 +11,6 @@ from unity.common.log_utils import _derive_all_contexts
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.utils import make_solid_png_base64
 
-
 PNG_RED_B64 = make_solid_png_base64(32, 32, (255, 0, 0))
 PNG_BLUE_B64 = make_solid_png_base64(32, 32, (0, 0, 255))
 

@@ -23,7 +23,6 @@ from unity.common.llm_helpers import _dumps
 from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed
 
-
 # ---------------- Ground-truth helpers ---------------- #
 
 

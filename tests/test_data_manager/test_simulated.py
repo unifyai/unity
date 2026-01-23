@@ -13,7 +13,6 @@ from unity.data_manager.simulated import SimulatedDataManager
 from unity.data_manager.base import BaseDataManager
 from unity.data_manager.types import TableDescription, PlotResult
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Docstring inheritance
 # ────────────────────────────────────────────────────────────────────────────

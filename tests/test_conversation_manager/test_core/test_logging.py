@@ -30,7 +30,6 @@ from unity.conversation_manager.events import Ping
 from unity.conversation_manager.simulated import SimulatedConversationManagerHandle
 from tests.helpers import _handle_project
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. SessionLogger unit tests
 # ─────────────────────────────────────────────────────────────────────────────

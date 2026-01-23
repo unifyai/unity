@@ -26,7 +26,6 @@ import base64
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
 from tests.helpers import _handle_project
 
-
 # --------------------------------------------------------------------------- #
 #  0. Ask                                                                   //
 # --------------------------------------------------------------------------- #

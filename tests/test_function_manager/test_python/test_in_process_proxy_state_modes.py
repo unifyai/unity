@@ -22,7 +22,6 @@ from unity.function_manager.function_manager import (
 )
 from unity.common.context_registry import ContextRegistry
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Sample Functions
 # ────────────────────────────────────────────────────────────────────────────

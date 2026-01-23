@@ -11,7 +11,6 @@ from unity.actor.single_function_actor import (
 from unity.function_manager.function_manager import FunctionManager
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Helper functions to create test functions inside @_handle_project context
 # ────────────────────────────────────────────────────────────────────────────

@@ -27,7 +27,6 @@ from unity.task_scheduler.types.status import Status
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
 from tests.helpers import _handle_project
 
-
 # --------------------------------------------------------------------------- #
 #  Test helpers                                                               #
 # --------------------------------------------------------------------------- #

@@ -43,7 +43,6 @@ from unity.conversation_manager.domains.proactive_speech import (
 )
 from unity.conversation_manager.types import Medium, Mode
 
-
 # =============================================================================
 # Mock Helpers
 # =============================================================================

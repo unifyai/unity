@@ -11,7 +11,6 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
 
-
 # Sample pyproject.toml with minimal dependencies (fast to sync)
 MINIMAL_VENV_CONTENT = """
 [project]

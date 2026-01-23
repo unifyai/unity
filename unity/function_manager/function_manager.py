@@ -40,7 +40,6 @@ from .custom_functions import (
     compute_custom_venvs_hash,
 )
 
-
 logger = logging.getLogger(__name__)
 
 

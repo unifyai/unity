@@ -10,7 +10,6 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Response format schemas
 # ────────────────────────────────────────────────────────────────────────────
