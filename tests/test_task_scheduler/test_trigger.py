@@ -13,7 +13,6 @@ from unity.task_scheduler.types.status import Status
 from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.trigger import Trigger, Medium
 
-
 # --------------------------------------------------------------------------- #
 # 1.  Creation – triggerable tasks                                            #
 # --------------------------------------------------------------------------- #

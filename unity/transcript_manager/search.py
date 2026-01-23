@@ -17,7 +17,6 @@ from .types.message import Message
 from ..contact_manager.types.contact import Contact
 from ..common.embed_utils import ensure_vector_column
 
-
 # Module-level tuning knobs for ranking/backfill behaviour
 OVERSAMPLE_FACTOR = 5
 BASE_OVERSAMPLE_MIN = 50

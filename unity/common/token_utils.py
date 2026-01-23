@@ -14,7 +14,6 @@ from typing import Optional, Any, Dict, List, Tuple
 from unity.settings import SETTINGS
 from unity.common.grouping_helpers import iter_unique_values_via_groups
 
-
 _TIKTOKEN_AVAILABLE = True
 try:
     import tiktoken  # type: ignore

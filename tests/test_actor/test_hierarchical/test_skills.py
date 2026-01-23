@@ -19,7 +19,6 @@ from tests.test_actor.test_hierarchical.helpers import (
     wait_for_log_entry,
 )
 
-
 # --- Entrypoint skill definition ---
 ENTRYPOINT_SKILL = textwrap.dedent(
     """

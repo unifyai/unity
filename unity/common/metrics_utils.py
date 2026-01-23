@@ -6,7 +6,6 @@ import unify
 
 from .filter_utils import normalize_filter_expr
 
-
 SUPPORTED_REDUCTION_METRICS: set[str] = {
     "count",
     "sum",

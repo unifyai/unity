@@ -42,7 +42,6 @@ if "UNIFY_CACHE_DIR" not in os.environ:
 
 from unity.settings import SETTINGS
 
-
 _TEE_FILE_HANDLE: Optional[object] = None
 _TEE_ORIG_STREAM: Optional[object] = None
 _TEE_STREAM_ATTR: Optional[str] = None

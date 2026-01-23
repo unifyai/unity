@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-
 logger = logging.getLogger(__name__)
 
 from ....common.context_store import TableStore

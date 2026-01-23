@@ -15,7 +15,6 @@ from typing import Any, Callable, Dict, List, Optional, TypedDict
 
 from intranet.repairs_agent.metrics.types import MetricResult
 
-
 # =============================================================================
 # FILE PATH CONSTANTS (Data sources - these identify WHERE the data is)
 # =============================================================================

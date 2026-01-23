@@ -10,7 +10,6 @@ from unity.image_manager.utils import make_solid_png_base64
 from tests.helpers import _handle_project
 from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
 
-
 PNG_BLUE = make_solid_png_base64(32, 32, (0, 0, 255))
 
 

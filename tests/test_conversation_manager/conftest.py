@@ -29,7 +29,6 @@ import pytest_asyncio
 from tests.helpers import scenario_file_lock, get_or_create_contact
 from .cm_test_driver import CMStepDriver
 
-
 # Response policies matching ContactManager defaults
 # BOSS_RESPONSE_POLICY is for the user (contact_id 1) who gives commands
 # DEFAULT_RESPONSE_POLICY is for regular contacts who should NOT give commands

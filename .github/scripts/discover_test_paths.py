@@ -17,6 +17,7 @@ Option A algorithm:
 - Leaf directories (have test files, no test subdirs) → one job per directory
 - Non-leaf directories with test files → one job per individual test file
 """
+
 import os
 import sys
 from pathlib import Path

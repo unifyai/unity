@@ -22,7 +22,6 @@ from unity.function_manager.computer import Computer
 from unity.function_manager.function_manager import FunctionManager
 import unity.actor.hierarchical_actor as hierarchical_actor_module
 
-
 # --- Fixtures ---
 
 

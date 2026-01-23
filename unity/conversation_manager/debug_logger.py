@@ -9,7 +9,6 @@ import unify
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
-
 # Track whether AssistantJobs project has been verified/created
 _project_verified = False
 

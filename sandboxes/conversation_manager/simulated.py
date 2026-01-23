@@ -21,7 +21,6 @@ from unity.conversation_manager.events import (
     EmailSent,
 )
 
-
 MEDIUM = "phone"
 
 RECEIVED_MAP = {

@@ -5,7 +5,6 @@ from unity.events.event_bus import EventBus, Event
 from unity.events.types.comms import CommsPayload
 from tests.helpers import _handle_project
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

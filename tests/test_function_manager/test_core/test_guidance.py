@@ -8,7 +8,6 @@ from unity.guidance_manager.guidance_manager import GuidanceManager
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.utils import make_solid_png_base64
 
-
 # Solid green PNG (32x32)
 PNG_GREEN = make_solid_png_base64(32, 32, (0, 255, 0))
 

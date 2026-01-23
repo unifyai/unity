@@ -8,7 +8,6 @@ from unity.guidance_manager.guidance_manager import GuidanceManager
 from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 
-
 # Solid-blue PNG to satisfy provider parsing (32x32)
 PNG_BLUE_B64 = make_solid_png_base64(32, 32, (0, 0, 255))
 

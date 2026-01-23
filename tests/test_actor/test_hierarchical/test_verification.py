@@ -27,7 +27,6 @@ from tests.test_actor.test_hierarchical.helpers import (
     wait_for_state,
 )
 
-
 # --- Canned Plans for predictable tests ---
 
 CANNED_PLAN_SUCCESS_ASYNC_VERIFICATION = textwrap.dedent(

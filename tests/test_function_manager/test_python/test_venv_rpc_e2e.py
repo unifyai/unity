@@ -20,7 +20,6 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
 
-
 # Sample pyproject.toml with minimal dependencies
 MINIMAL_VENV_CONTENT = """
 [project]

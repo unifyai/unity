@@ -25,7 +25,6 @@ from tests.test_actor.test_hierarchical.helpers import (
     wait_for_state,
 )
 
-
 CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING = textwrap.dedent(
     """
     async def main_plan():

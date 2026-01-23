@@ -53,7 +53,6 @@ from unity.conversation_manager.events import (
 from tests.test_conversation_manager.conftest import TEST_CONTACTS
 from unity.conversation_manager.types import Medium
 
-
 # =============================================================================
 # Unit Tests: CallManager Configuration
 # =============================================================================

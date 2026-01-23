@@ -10,7 +10,6 @@ from unity.secret_manager.secret_manager import SecretManager
 from unity.secret_manager.simulated import SimulatedSecretManager
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Response format schemas
 # ────────────────────────────────────────────────────────────────────────────

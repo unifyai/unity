@@ -22,7 +22,6 @@ from unity.events.event_bus import EventBus, Event
 from unity.events.types.comms import CommsPayload
 from unity.events.types.manager_method import ManagerMethodPayload
 
-
 # --------------------------------------------------------------------------- #
 #  deterministic timestamps                                                   #
 # --------------------------------------------------------------------------- #

@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 import unify
 from unify.utils.http import RequestError as _UnifyRequestError
 
-
 # Private fields injected by log_utils wrappers
 _PRIVATE_FIELDS: Dict[str, str] = {
     "_user": "str",

@@ -8,7 +8,6 @@ from tests.helpers import _handle_project
 from unity.function_manager.execution_env import create_base_globals
 from unity.function_manager.function_manager import FunctionManager
 
-
 # Keep this minimal to make venv prep fast (no third-party deps).
 MINIMAL_VENV_CONTENT = """
 [project]

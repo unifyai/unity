@@ -12,7 +12,6 @@ from unity.image_manager.utils import make_solid_png_base64
 from unity.common.data_store import DataStore
 from tests.helpers import _handle_project
 
-
 PNG_RED_B64 = make_solid_png_base64(32, 32, (255, 0, 0))
 
 

@@ -8,7 +8,6 @@ import pytest
 
 from unity.actor.hierarchical_actor import HierarchicalActor, HierarchicalActorHandle
 
-
 # NOTE: These tests intentionally avoid running the full actor loop; they focus on
 # AST-based plan editing helpers used during recovery/reimplementation flows.
 

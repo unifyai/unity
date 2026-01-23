@@ -30,7 +30,6 @@ from unity.file_manager.file_parsers.types.contracts import (
 )
 from unity.file_manager.file_parsers.types.formats import FileFormat, MimeType
 
-
 # ---------------------------------------------------------------------------
 # Sample file helpers
 # ---------------------------------------------------------------------------

@@ -5,7 +5,6 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.session_details import SESSION_DETAILS
 from tests.helpers import _handle_project
 
-
 # ---------------------------------------------------------------------------
 #  Test-local fixture – ensure deterministic assistant state
 # ---------------------------------------------------------------------------

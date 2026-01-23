@@ -36,7 +36,6 @@ from typing import Callable, Dict, List, Optional
 
 from intranet.repairs_agent.static.registry import register
 
-
 # =============================================================================
 # @skip Decorator for Placeholder Metrics
 # =============================================================================
@@ -90,7 +89,6 @@ from .helpers import (
     normalize_grouped_result,
     resolve_group_by,
 )
-
 
 # =============================================================================
 # 1. Jobs Completed

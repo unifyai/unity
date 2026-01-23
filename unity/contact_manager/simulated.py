@@ -29,7 +29,6 @@ from ..common.simulated import (
 )
 from ..constants import LOGGER
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Structured response models for simulated private methods
 # ─────────────────────────────────────────────────────────────────────────────

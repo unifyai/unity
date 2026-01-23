@@ -10,7 +10,6 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Response format schemas
 # ────────────────────────────────────────────────────────────────────────────

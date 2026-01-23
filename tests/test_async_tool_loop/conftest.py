@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # Models to test against for cross-provider compatibility
 LLM_MODELS = [
     "gpt-5.2@openai",

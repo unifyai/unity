@@ -5,7 +5,6 @@ import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.simulated import SimulatedFunctionManager
 
-
 # --------------------------------------------------------------------------- #
 #  Doc-string inheritance                                                     #
 # --------------------------------------------------------------------------- #
