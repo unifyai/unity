@@ -162,6 +162,45 @@ def create_pubsub_message(thread: str, event: dict) -> MockPubSubMessage:
     return MockPubSubMessage(data=json.dumps(payload).encode("utf-8"))
 
 
+async def get_message_on_channel(
+    pubsub,
+    expected_channel: str,
+    timeout: float = 1.0,
+) -> dict | None:
+    """
+    Get the next message on the expected channel, skipping internal events.
+
+    CommsManager publishes internal events (like backup_contacts) before the
+    main message event. This helper loops until it finds a message on the
+    expected channel, or times out.
+
+    Args:
+        pubsub: The pubsub instance from broker.pubsub()
+        expected_channel: The channel to wait for (e.g., "app:comms:msg_message")
+        timeout: Total timeout in seconds for finding the expected message
+
+    Returns:
+        The message dict if found, None if timeout reached
+    """
+    import time
+
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        remaining = timeout - (time.monotonic() - start)
+        if remaining <= 0:
+            return None
+        msg = await pubsub.get_message(
+            timeout=min(remaining, 0.5),
+            ignore_subscribe_messages=True,
+        )
+        if msg is None:
+            continue
+        if msg["channel"] == expected_channel:
+            return msg
+        # Skip internal events like backup_contacts and keep looking
+    return None
+
+
 # =============================================================================
 # Test: Helper Functions
 # =============================================================================
@@ -326,9 +365,8 @@ class TestSMSMessageHandling:
             await asyncio.sleep(0.1)
 
             # Should receive SMS message event
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(pubsub, "app:comms:msg_message")
             assert msg is not None
-            assert msg["channel"] == "app:comms:msg_message"
 
             # Verify event data
             event = Event.from_json(msg["data"])
@@ -387,9 +425,8 @@ class TestEmailMessageHandling:
             await asyncio.sleep(0.1)
 
             # Should receive email message event
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(pubsub, "app:comms:email_message")
             assert msg is not None
-            assert msg["channel"] == "app:comms:email_message"
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, EmailReceived)
@@ -490,9 +527,11 @@ class TestUnifyMessageHandling:
             await asyncio.sleep(0.1)
 
             # Should receive unify_message event
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(
+                pubsub,
+                "app:comms:unify_message_message",
+            )
             assert msg is not None
-            assert msg["channel"] == "app:comms:unify_message_message"
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, UnifyMessageReceived)
@@ -536,7 +575,11 @@ class TestUnifyMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(
+                pubsub,
+                "app:comms:unify_message_message",
+            )
+            assert msg is not None
             event = Event.from_json(msg["data"])
             assert event.contact["contact_id"] == 1
 
@@ -578,7 +621,11 @@ class TestUnifyMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(
+                pubsub,
+                "app:comms:unify_message_message",
+            )
+            assert msg is not None
             event = Event.from_json(msg["data"])
             assert event.contact["contact_id"] == 1
 
@@ -630,9 +677,8 @@ class TestPhoneCallHandling:
             await asyncio.to_thread(cm.handle_message, message)
 
             # Should receive call_received event
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(pubsub, "app:comms:call_received")
             assert msg is not None
-            assert msg["channel"] == "app:comms:call_received"
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, PhoneCallReceived)
@@ -675,9 +721,8 @@ class TestPhoneCallHandling:
             # (handle_message uses blocking future.result() for call events)
             await asyncio.to_thread(cm.handle_message, message)
 
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(pubsub, "app:comms:call_answered")
             assert msg is not None
-            assert msg["channel"] == "app:comms:call_answered"
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, PhoneCallAnswered)
@@ -729,9 +774,8 @@ class TestUnifyMeetHandling:
             # (handle_message uses blocking future.result() for call/meet events)
             await asyncio.to_thread(cm.handle_message, message)
 
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            msg = await get_message_on_channel(pubsub, "app:comms:unify_meet_received")
             assert msg is not None
-            assert msg["channel"] == "app:comms:unify_meet_received"
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, UnifyMeetReceived)
