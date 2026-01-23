@@ -68,9 +68,6 @@ COPY pyproject.toml uv.lock ./
 # Configure git to use GITHUB_TOKEN for private repo authentication
 RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-# Install PyTorch CPU-only first (smaller and faster for containers)
-RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
 # Branch logic mirrors CI: main→main, otherwise→staging
 # This ensures staging deployments get staging branches (with latest fixes)
@@ -78,9 +75,13 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
-# Copy source and install unity with all dependencies
+# Copy source and install unity with all dependencies using uv sync (matches local dev)
+# This creates a venv at .venv/ just like local development
 COPY . /app
-RUN uv pip install --system --no-cache .
+RUN uv sync --all-groups
+
+# Install PyTorch CPU-only (smaller and faster for containers)
+RUN uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
@@ -114,8 +115,8 @@ RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 # Set memory-efficient environment variables for model loading
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
-RUN python unity/conversation_manager/medium_scripts/call.py download-files
-RUN playwright install
+RUN uv run python unity/conversation_manager/medium_scripts/call.py download-files
+RUN uv run playwright install
 
 # Set runtime environment variables for memory optimization
 ENV PYTHONUNBUFFERED=1
