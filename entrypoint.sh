@@ -127,9 +127,9 @@ CSB_PID=$!
 # DESKTOP_PID=$!
 
 
-# Start the main application in parallel (using uv run to match local dev environment)
+# Start the main application in parallel
 echo "Starting convo manager..."
-uv run python unity/conversation_manager/main.py &
+uv run unity/conversation_manager/main.py &
 MAIN_PID=$!
 echo "Main application started with PID: $MAIN_PID"
 
