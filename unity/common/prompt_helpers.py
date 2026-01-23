@@ -759,10 +759,10 @@ def compose_system_prompt(spec: PromptSpec) -> str:
 
     # 13) Current time footer
     if spec.include_time_footer:
-        parts.add(f"{spec.time_footer_prefix}{now()}.")
+        parts.add(f"{spec.time_footer_prefix}{now()}.", static=False)
 
     # 14) Clarification footer (single-sourced guidance sentence)
     if spec.include_clarification_footer:
-        parts.add(clarification_guidance(spec.tools))
+        parts.add(clarification_guidance(spec.tools), static=False)
 
     return parts.flatten()
