@@ -327,8 +327,6 @@ if __name__ == "__main__":
             entrypoint_fnc=entrypoint,
             agent_name=livekit_agent_name,  # LiveKit API expects 'agent_name'
             prewarm_fnc=prewarm,
-            # Run jobs in-process to allow sharing the in-memory event broker.
-            job_executor_type=agents.JobExecutorType.THREAD,
             initialize_process_timeout=60,
         ),
     )
