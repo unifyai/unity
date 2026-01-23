@@ -79,9 +79,9 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
-# Copy source and install unity with dependencies using uv sync
+# Copy source and install unity with dependencies
 COPY . /app
-RUN uv sync
+RUN uv pip install --no-cache .
 
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
@@ -115,7 +115,7 @@ RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 # Set memory-efficient environment variables for model loading
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
-RUN uv run python unity/conversation_manager/medium_scripts/call.py download-files
+RUN uv run unity/conversation_manager/medium_scripts/call.py download-files
 RUN uv run playwright install
 
 # Set runtime environment variables for memory optimization
