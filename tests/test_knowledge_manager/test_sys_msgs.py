@@ -55,11 +55,9 @@ def _build_prompt_in_subprocess(
         def _static_now(time_only: bool = False):
             dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
             label = "UTC"
-            return (
-                dt.strftime("%H:%M:%S ") + label
-                if time_only
-                else dt.strftime("%Y-%m-%d %H:%M:%S ") + label
-            )
+            if time_only:
+                return dt.strftime("%I:%M %p ") + label
+            return dt.strftime("%A, %B %d, %Y at %I:%M %p ") + label
         _ph.now = _static_now
         from unity.knowledge_manager.knowledge_manager import KnowledgeManager
         from unity.knowledge_manager.prompt_builders import (
@@ -135,7 +133,7 @@ def test_ask_system_prompt_formatting():
     )
 
     assert_section_spacing(prompt)
-    assert_time_footer(prompt, "Current UTC time: ")
+    assert_time_footer(prompt, "Current UTC time is ")
     print(
         "KnowledgeManager ask system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n\n\n" + prompt,
@@ -182,7 +180,7 @@ def test_update_system_prompt_formatting():
     )
 
     assert_section_spacing(prompt)
-    assert_time_footer(prompt, "Current UTC time: ")
+    assert_time_footer(prompt, "Current UTC time is ")
     print(
         "KnowledgeManager update system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n\n\n" + prompt,
@@ -228,7 +226,7 @@ def test_refactor_system_prompt_formatting():
     )
 
     assert_section_spacing(prompt)
-    assert_time_footer(prompt, "Current UTC time: ")
+    assert_time_footer(prompt, "Current UTC time is ")
     print(
         "KnowledgeManager refactor system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n\n\n" + prompt,
