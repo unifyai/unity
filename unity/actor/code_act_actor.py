@@ -229,12 +229,19 @@ def _validate_execution_params(
             )
 
     # Optional: enforce a global session cap (actor-owned pools, so this is per-actor).
+    # Note: `stateful` with no session specified means "use the default session" (session_id=0),
+    # so it does NOT create a new session and should not be rejected by the global cap here.
+    #
+    # We only apply the cap when the call would CREATE a new stateful session:
+    # - session_name is provided but does not resolve (new session would be allocated)
     if (
         max_sessions_total is not None
         and active_session_count is not None
         and state_mode == "stateful"
         and session_id is None
-        and session_name is None
+        and session_name is not None
+        and resolve_session_name is not None
+        and resolve_session_name(session_name) is None
         and active_session_count >= max_sessions_total
     ):
         return _validation_error(
@@ -1425,7 +1432,9 @@ class CodeActActor(BaseCodeActActor):
               - "read_only": reads from an existing session but does not persist changes
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
-              - for stateful: if omitted, a new session_id is allocated automatically
+              - for stateful: if omitted, defaults to **session_id=0** (the default session)
+              - to create an additional stateful session, provide a fresh `session_name` (recommended)
+                or an explicit `session_id` > 0
               - **Python session_id=0** is special:
                 - If this tool is called from inside a running CodeAct `act()` loop, session 0 maps to the
                   **current per-call Python sandbox** (shared via the ContextVar binding).
@@ -1488,10 +1497,10 @@ class CodeActActor(BaseCodeActActor):
                             session_id=int(session_id),
                         )
                 elif session_id is None:
-                    key = (str(language), int(venv_id) if venv_id is not None else None)
-                    next_id = self._next_session_id.get(key, 1)
-                    session_id = next_id
-                    self._next_session_id[key] = next_id + 1
+                    # Default stateful session for each language/venv is session_id=0.
+                    # This is especially important for Python because FunctionManager-injected
+                    # callables are available in the default/bound Python sandbox (session 0).
+                    session_id = 0
 
             # If name + id are both set but not registered yet, register alias.
             if state_mode == "stateful" and session_name and session_id is not None:
