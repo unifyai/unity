@@ -309,8 +309,15 @@ async def test_interject_nested_handle(model):
     await _wait_for_tool_request(client, "outer_tool")
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
 
-    # Send the interjection to be forwarded, then release the gate
+    # Send the interjection to be forwarded
     await top_handle.interject("forward: hello world")
+
+    # Wait for the outer LLM to call the interject helper BEFORE releasing the gate.
+    # This ensures the forwarded message reaches the inner loop while gated_task
+    # is still running, so the inner loop can include "hello world" in its response.
+    await _wait_for_assistant_call_prefix(client, "interject_outer_tool_")
+
+    # Only now release the gate, allowing gated_task to complete
     inner_gate.set()
 
     result = await top_handle.result()
