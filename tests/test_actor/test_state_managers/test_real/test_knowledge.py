@@ -18,6 +18,61 @@ from unity.knowledge_manager.types import ColumnType
 from unity.manager_registry import ManagerRegistry
 
 
+def _office_hours_fact_present() -> bool:
+    """Best-effort check that office hours were persisted by KnowledgeManager.update.
+
+    The real KnowledgeManager may normalize "Office hours are 9–5 PT" into a structured
+    schedule table (e.g. `Business_Hours`) rather than storing the exact input string.
+    This helper intentionally checks for semantic presence (9–5 + PT/Pacific) rather than
+    an exact phrase match.
+    """
+    km = ManagerRegistry.get_knowledge_manager()
+
+    def _row_matches(row: object) -> bool:
+        s = str(row).lower()
+        # Accept either explicit "pt" or a spelled-out pacific time reference.
+        tz_ok = ("pt" in s) or ("pacific" in s and "time" in s)
+        # Accept either literal 9/5, or normalized 09:00/17:00 style.
+        time_ok = (
+            ("9" in s and "5" in s)
+            or ("09:00" in s and "17:00" in s)
+            or ("09:00" in s and "5:00" in s)
+        )
+        return tz_ok and time_ok and ("hour" in s or "business" in s or "office" in s)
+
+    # Fast-path: common normalized tables.
+    for table in ("Business_Hours", "Office_Hours", "Policies"):
+        try:
+            rows_by_table = km._filter(tables=table, filter=None, limit=1000)
+            rows = (
+                rows_by_table.get(table, []) if isinstance(rows_by_table, dict) else []
+            )
+            if any(_row_matches(r) for r in rows):
+                return True
+        except Exception:
+            continue
+
+    # Slow-path: scan all knowledge tables.
+    try:
+        tables = list(km._tables_overview(include_column_info=False).keys())
+    except Exception:
+        return False
+
+    for table_name in tables:
+        try:
+            rows_by_table = km._filter(tables=table_name, filter=None, limit=1000)
+            rows = (
+                rows_by_table.get(table_name, [])
+                if isinstance(rows_by_table, dict)
+                else []
+            )
+            if any(_row_matches(r) for r in rows):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @pytest.mark.eval
@@ -86,9 +141,6 @@ async def ask_knowledge_question(question: str, response_format=None) -> str:
 
     **Use when** the question should be answered from stored organizational knowledge:
     policies, facts, reference material, and previously recorded information.
-
-    **How it works**: calls:
-    - `await primitives.knowledge.ask(question, response_format=response_format)`
 
     **Do NOT use when**:
     - the user needs current external facts (use `primitives.web.ask`)
@@ -163,36 +215,10 @@ async def test_update_calls_manager(mock_verification):
         #
         # NOTE: KnowledgeManager does not expose `_list_tables()` / `_filter_rows()`.
         # Use `_tables_overview()` + `_filter()` which are the current internal helpers.
-        found = False
-        tables = list(km._tables_overview(include_column_info=False).keys())
-        for table_name in tables:
-            try:
-                rows_by_table = km._filter(tables=table_name, filter=None, limit=1000)
-                rows = (
-                    rows_by_table.get(table_name, [])
-                    if isinstance(rows_by_table, dict)
-                    else []
-                )
-                for row in rows:
-                    # Check if any field contains the office hours fact (case-insensitive)
-                    row_str = str(row).lower()
-                    if (
-                        "office hours" in row_str
-                        and "9" in row_str
-                        and "5" in row_str
-                        and "pt" in row_str
-                    ):
-                        found = True
-                        break
-                if found:
-                    break
-            except Exception:
-                # Some tables may be unreadable in certain backends/configurations, skip them
-                continue
-
-        assert (
-            found
-        ), "Expected fact 'Office hours are 9–5 PT.' was not found in any knowledge table"
+        assert _office_hours_fact_present(), (
+            "Expected office hours to be persisted (9–5 PT / Pacific). "
+            "No matching rows found in knowledge tables."
+        )
 
 
 @pytest.mark.asyncio
@@ -214,9 +240,6 @@ async def store_knowledge(fact: str) -> str:
 
     **Use when** the user requests to store new knowledge, update an existing policy/fact,
     or otherwise change the knowledge base.
-
-    **How it works**: calls:
-    - `await primitives.knowledge.update(instruction, response_format=response_format)`
 
     **Do NOT use when**:
     - the request is read-only (use `primitives.knowledge.ask`)
@@ -256,33 +279,7 @@ async def store_knowledge(fact: str) -> str:
         #
         # NOTE: KnowledgeManager does not expose `_list_tables()` / `_filter_rows()`.
         # Use `_tables_overview()` + `_filter()` which are the current internal helpers.
-        found = False
-        tables = list(km._tables_overview(include_column_info=False).keys())
-        for table_name in tables:
-            try:
-                rows_by_table = km._filter(tables=table_name, filter=None, limit=1000)
-                rows = (
-                    rows_by_table.get(table_name, [])
-                    if isinstance(rows_by_table, dict)
-                    else []
-                )
-                for row in rows:
-                    # Check if any field contains the office hours fact (case-insensitive)
-                    row_str = str(row).lower()
-                    if (
-                        "office hours" in row_str
-                        and "9" in row_str
-                        and "5" in row_str
-                        and "pt" in row_str
-                    ):
-                        found = True
-                        break
-                if found:
-                    break
-            except Exception:
-                # Some tables may be unreadable in certain backends/configurations, skip them
-                continue
-
-        assert (
-            found
-        ), "Expected fact 'Office hours are 9–5 PT.' was not found in any knowledge table"
+        assert _office_hours_fact_present(), (
+            "Expected office hours to be persisted (9–5 PT / Pacific). "
+            "No matching rows found in knowledge tables."
+        )
