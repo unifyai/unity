@@ -444,7 +444,7 @@ async def _(event: BackupContactsEvent, cm: "ConversationManager", *args, **kwar
     or during ContactManager initialization.
     """
     print("BackupContactsEvent handler")
-    if cm.contact_index._contact_manager is None:
+    if cm.contact_index._contact_manager:
         return
     print(f"Caching {len(event.contacts)} contacts from inbound")
     cm._session_logger.debug(
