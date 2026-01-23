@@ -67,8 +67,11 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Should be valid JSON conforming to the schema
-    parsed = KnowledgeQueryResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, KnowledgeQueryResult):
+        parsed = result
+    else:
+        parsed = KnowledgeQueryResult.model_validate_json(result)
 
     assert isinstance(parsed.facts_found, int)
     assert parsed.facts_found >= 0
@@ -89,7 +92,11 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    parsed = KnowledgeUpdateResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, KnowledgeUpdateResult):
+        parsed = result
+    else:
+        parsed = KnowledgeUpdateResult.model_validate_json(result)
 
     assert isinstance(parsed.success, bool)
     assert isinstance(parsed.rows_added, int)
@@ -110,7 +117,11 @@ async def test_simulated_refactor_response_format():
     )
     result = await handle.result()
 
-    parsed = SchemaRefactorResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, SchemaRefactorResult):
+        parsed = result
+    else:
+        parsed = SchemaRefactorResult.model_validate_json(result)
 
     assert isinstance(parsed.changes_proposed, int)
     assert isinstance(parsed.tables_affected, list)
