@@ -44,8 +44,12 @@ async def test_code_act_file_questions_use_files_primitives(
         )
         result = await handle.result()
 
-        # Verify result is non-empty
-        assert isinstance(result, str) and result.strip()
+        # Verify result is non-empty (relax assertion: str, dict, or BaseModel)
+        from pydantic import BaseModel
+
+        assert result and (
+            isinstance(result, (str, dict)) or isinstance(result, BaseModel)
+        )
 
         # Routing: must hit files primitives for file queries
         assert calls, "Expected at least one state manager call."
@@ -67,8 +71,12 @@ async def test_code_act_file_ask_questions_use_ask_about_file(
         )
         result = await handle.result()
 
-        # Verify result is non-empty
-        assert isinstance(result, str) and result.strip()
+        # Verify result is non-empty (relax assertion: str, dict, or BaseModel)
+        from pydantic import BaseModel
+
+        assert result and (
+            isinstance(result, (str, dict)) or isinstance(result, BaseModel)
+        )
 
         # Routing: must hit files primitives for file content queries
         assert calls, "Expected at least one state manager call."

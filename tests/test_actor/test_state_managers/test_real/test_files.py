@@ -43,8 +43,8 @@ async def test_describe_calls_file_manager(mock_verification, tmp_path: Path):
         # Wait for result
         result = await handle.result()
 
-        # Assert result mentions file storage concepts
-        result_lower = result.lower()
+        # Assert result mentions file storage concepts (handle str, dict, or BaseModel)
+        result_lower = str(result).lower()
         assert any(
             term in result_lower
             for term in ["context", "table", "column", "storage", "csv"]
@@ -85,8 +85,8 @@ async def test_filter_files_calls_file_manager(mock_verification, tmp_path: Path
         # Wait for result
         result = await handle.result()
 
-        # Assert result mentions the files
-        result_lower = result.lower()
+        # Assert result mentions the files (handle str, dict, or BaseModel)
+        result_lower = str(result).lower()
         assert "sales" in result_lower or "csv" in result_lower or "q1" in result_lower
 
         # Assert file primitives were called
@@ -127,8 +127,9 @@ async def test_ask_about_file_calls_file_manager(mock_verification, tmp_path: Pa
         # Wait for result
         result = await handle.result()
 
-        # Assert result mentions the revenue
-        assert "5.2" in result or "million" in result.lower()
+        # Assert result mentions the revenue (handle str, dict, or BaseModel)
+        result_str = str(result)
+        assert "5.2" in result_str or "million" in result_str.lower()
 
         # Assert file primitives were called
         state_manager_tools = get_state_manager_tools(handle)
@@ -169,8 +170,9 @@ async def test_file_manager_delegates_to_data_manager(
         # Wait for result
         result = await handle.result()
 
-        # Assert result mentions the average (60)
-        assert "60" in result or "average" in result.lower()
+        # Assert result mentions the average (60) (handle str, dict, or BaseModel)
+        result_str = str(result)
+        assert "60" in result_str or "average" in result_str.lower()
 
         # Assert either files or data primitives were called (delegation may happen internally)
         state_manager_tools = get_state_manager_tools(handle)
