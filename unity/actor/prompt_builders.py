@@ -59,16 +59,24 @@ def build_code_act_prompt(
         "domains are available via injected environment globals (e.g. state managers, and optionally browser/desktop)."
     )
 
+    # Detect FunctionManager tools early for critical rules section
+    has_fm_tools = tools and any(
+        str(k).startswith("FunctionManager_") for k in tools.keys()
+    )
+    critical_rules = _build_critical_rules_section(has_function_manager=has_fm_tools)
+
     prompt = f"""
 ### Your Role: Code-First Automation Agent
 {role_line} {capabilities_line}
 
-### Primary Execution & Session Tools (CRITICAL)
+{critical_rules}
+
+### Primary Execution & Session Tools
 These tools are called via **structured JSON tool calls**, NOT inside Python code.
 They are the only supported way to run Python/shell code and manage sessions.
 
 ```json
-{primary_tool_reference or "{}"}
+{primary_tool_reference or "{{}}"}
 ```
 
 {rules_and_examples}
@@ -95,13 +103,16 @@ They are the only supported way to run Python/shell code and manage sessions.
                 f"{render_tools_block(additional_tools)}\n"
             )
 
-        # Preserve legacy FunctionManager guidance block when FunctionManager tools are present.
-        has_fm_tools = any(str(k).startswith("FunctionManager_") for k in tools.keys())
+        # FunctionManager guidance block when FunctionManager tools are present.
         if has_fm_tools:
             prompt += """
-### Function Library (CRITICAL)
+### Function Library (DETAILED GUIDANCE)
 
 You have access to a catalogue of **pre-stored reusable functions** via the FunctionManager tools listed above.
+
+⚠️ **CRITICAL REMINDER**: Functions are injected into **Session 0's namespace**.
+You **MUST** use `state_mode="stateful"` when calling `execute_code` to access injected functions.
+Using `state_mode="stateless"` creates a fresh session → functions NOT available → **NameError**.
 
 **🎯 FUNCTION-FIRST WORKFLOW:**
 
@@ -112,24 +123,59 @@ You have access to a catalogue of **pre-stored reusable functions** via the Func
 
    **Important**: Do this **before** you call `execute_code` for a new user request.
    Even if you *think* the correct answer is a direct `primitives.*` call, still search first —
-   many memoized skills are thin wrappers around state managers (contacts/tasks/knowledge/transcripts/guidance/web).
+   if a relevant function exists, you must use it.
 
-2. **Functions are automatically injected into your Python sandbox** after searching.
-   - The function name(s) returned by the tool become available immediately in Python.
+2. **Functions are automatically injected into Session 0** after searching.
+   - The function name(s) returned by the tool become available in Session 0's namespace.
    - Dependencies are injected automatically (including nested helper functions).
    - Venv-backed functions work transparently (subprocess RPC hidden behind an awaitable callable).
+   - **You MUST use `state_mode="stateful"` to access them** (stateless creates a new session!).
 
 3. **If found → USE IT**: Pre-saved functions are tested, optimized, and handle edge cases.
-   Don't re-explore tables/schemas when a function already does the job.
+   Don't re-explore tables/schemas when a function already exists.
 
 4. **Read signatures carefully**: Check `argspec` in the search results for parameter options
    like `group_by`, `include_plots`, date filters, etc.
 
-5. **Execute found functions** in your Python code (after the JSON tool call).
+5. **Execute found functions** in your Python code with `state_mode="stateful"`.
 
-Example workflow:
-- Tool call (JSON): `FunctionManager_search_functions(query="contacts prefer phone", n=5)`
-- Python code (after search): `result = await ask_contacts_question("Which contacts prefer phone?"); print(result)`
+**✅ CORRECT Example workflow:**
+```
+# Step 1 (JSON TOOL CALL): Search for function
+{
+  "name": "FunctionManager_search_functions",
+  "arguments": {"query": "contacts prefer phone", "n": 5}
+}
+# Returns: [{"name": "ask_contacts_question", "argspec": "(question: str) -> str", ...}]
+
+# Step 2 (JSON TOOL CALL): Execute with state_mode="stateful" (REQUIRED!)
+{
+  "name": "execute_code",
+  "arguments": {
+    "language": "python",
+    "state_mode": "stateful",
+    "code": "result = await ask_contacts_question('Which contacts prefer phone?')\\nprint(result)"
+  }
+}
+```
+
+**❌ WRONG Example (causes NameError):**
+```
+# Step 1: Search (correct)
+FunctionManager_search_functions(query="contacts prefer phone", n=5)
+
+# Step 2: Execute with WRONG state_mode
+{
+  "name": "execute_code",
+  "arguments": {
+    "language": "python",
+    "state_mode": "stateless",
+    "code": "result = await ask_contacts_question(...)"
+  }
+}
+# ERROR: NameError: 'ask_contacts_question' is not defined
+# WHY: stateless creates fresh session, function NOT available!
+```
 
 **❌ ANTI-PATTERN (AVOID THIS):**
 ```python
@@ -138,31 +184,33 @@ storage = await primitives.files.describe(file_path="...")  # Unnecessary!
 columns = await primitives.files.list_columns(context="...")  # Unnecessary!
 ```
 
-**✅ CORRECT WORKFLOW:**
-1. Call `FunctionManager_search_functions` tool with your query
-2. Review the returned functions and their `argspec`
-3. Execute the function in Python code with appropriate parameters
-
 **When passing tools to functions:**
 - Functions accepting `tools: FileTools` need: `tools = primitives.files.get_tools()`
 - For direct data operations, use: `await primitives.files.reduce(...)`
 
-### Function Execution Modes
+### Two Types of "State" (Important Distinction)
 
-Functions support three **execution modes** for fine-grained state control.
-By default, functions execute **statefully** (state persists across calls), but you can
-override this on a per-call basis:
+There are two independent "state" concepts in this system:
+
+| Concept | What It Controls | When to Use |
+|---------|------------------|-------------|
+| **CodeAct Session State** (`execute_code` `state_mode` parameter) | Whether variables/imports persist between `execute_code` calls | Use `stateful` for multi-step work AND when using FunctionManager functions |
+| **Function Execution Mode** (`.stateless()` / `.read_only()` methods) | Whether a FunctionManager function's internal state persists | Use `.stateless()` for pure functions, default for iterative work |
+
+**Key insight**: These are independent! You can call a stateless function in a stateful session.
+
+**For FunctionManager functions**: You **MUST** use `state_mode="stateful"` in `execute_code` to access
+injected functions, regardless of which execution mode you use for the function itself.
+
+### Function Execution Modes (for the function itself)
+
+Functions support three **execution modes** for fine-grained control over the **function's own** state:
 
 | Mode | Syntax | State Behavior |
 |------|--------|----------------|
-| **stateful** (default) | `await func(...)` | Variables persist across calls |
-| **stateless** | `await func.stateless(...)` | Fresh environment, no inherited state |
-| **read_only** | `await func.read_only(...)` | Sees current state, but changes are discarded |
-
-**Important mental model:**
-- These modes apply to the **function’s own execution context** (the function runtime), not necessarily your current Python
-  `execute_code` session globals. A stateful function call may persist its own internal state even if you don’t see new globals
-  appear in your current Python session.
+| **stateful** (default) | `await func(...)` | Function's internal state persists across calls |
+| **stateless** | `await func.stateless(...)` | Fresh environment for function, no inherited state |
+| **read_only** | `await func.read_only(...)` | Function sees current state, but changes are discarded |
 
 **When to use each mode:**
 
@@ -171,31 +219,26 @@ override this on a per-call basis:
 
 - **stateless**: Use for pure functions that should produce identical results regardless of
   execution history. Guarantees reproducibility and prevents accidental state pollution.
-  Example: running a deterministic computation multiple times with different inputs.
 
 - **read_only**: Use for "what-if" exploration without side effects. Inspect or transform
   current state without committing changes.
-  Example: preview a data transformation before deciding whether to apply it permanently.
 
 **Example usage:**
 ```python
-# Stateful (default) - state persists
-await load_dataset(path="data.csv")  # First call: loads 'df' into context
+# Stateful (default) - function's state persists
+await load_dataset(path="data.csv")  # First call: loads 'df' into function's context
 await analyze_dataset()               # Second call: can access 'df'
 
-# Stateless - isolated execution, no side effects
+# Stateless - isolated execution for the function
 result = await compute_score.stateless(values=[1, 2, 3])
 
 # Read-only - see state without modifying it
-preview = await transform_data.read_only(sample_size=100)  # 'df' unchanged
-# If preview looks good, run statefully to persist:
-await transform_data(sample_size=100)  # Now 'df' is transformed
+preview = await transform_data.read_only(sample_size=100)
 ```
 
 ### Inspecting Code Sessions (execute_code)
 
-Before deciding how to call a function (stateful/stateless/read_only), you can inspect
-what state currently exists using the `list_sessions` + `inspect_state` tools:
+Before deciding how to call a function, you can inspect what state currently exists:
 
 ```
 list_sessions()
@@ -210,16 +253,67 @@ inspect_state(detail="summary", session_name="repo_nav")
 - Before calling a function that might depend on prior state
 - When debugging unexpected behavior (is the state what you expect?)
 - When deciding whether to use stateless (isolation) vs stateful (extend existing state)
-- Before using read_only mode (to see what state you'll be reading)
 
 **Example workflow:**
 1. Use `list_sessions()` to see what **CodeAct sessions** exist (Python + shell).
-2. Use `inspect_state(...)` to inspect a specific **CodeAct session** (e.g., to check cwd / variable names).
-3. Choose a session and run `execute_code(..., state_mode="stateful"/"read_only")` for multi-step work in that session.
-4. For FunctionManager-injected skills, choose the function execution mode (`await fn(...)` / `.stateless` / `.read_only`)
-   based on whether you want that **skill’s internal state** to persist, be isolated, or be discarded.
+2. Use `inspect_state(...)` to inspect a specific session (e.g., to check cwd / variable names).
+3. Run `execute_code(..., state_mode="stateful")` to use FunctionManager-injected functions.
+4. Choose the function execution mode (`await fn(...)` / `.stateless()` / `.read_only()`)
+   based on whether you want that **skill's internal state** to persist, be isolated, or be discarded.
 """
     return prompt
+
+
+def _build_critical_rules_section(has_function_manager: bool) -> str:
+    """Build the critical rules section that appears first in the prompt.
+
+    This section contains the most important rules that models frequently miss,
+    formatted prominently for maximum visibility.
+    """
+    if not has_function_manager:
+        return ""
+
+    return textwrap.dedent(
+        """
+        ### 🚨 CRITICAL RULES (READ FIRST)
+
+        #### 1. FunctionManager + Stateful Sessions (MOST IMPORTANT)
+
+        When using FunctionManager tools, you **MUST** use `state_mode="stateful"` in `execute_code`:
+
+        | Step | What Happens |
+        |------|--------------|
+        | `FunctionManager_search_functions(...)` | Function is **injected into Session 0's namespace** |
+        | `execute_code(state_mode="stateful", ...)` | ✅ Uses Session 0 → function **available** |
+        | `execute_code(state_mode="stateless", ...)` | ❌ Creates NEW session → function **NOT available** → `NameError` |
+
+        **✅ CORRECT workflow:**
+        ```
+        Step 1: FunctionManager_search_functions(query="...", n=5)  # JSON tool call
+        Step 2: execute_code(language="python", state_mode="stateful", code="result = await found_function(...)")
+        ```
+
+        **❌ WRONG workflow (causes NameError):**
+        ```
+        Step 1: FunctionManager_search_functions(query="...", n=5)  # JSON tool call
+        Step 2: execute_code(language="python", state_mode="stateless", code="result = await found_function(...)")
+        #        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ BUG: stateless creates fresh session, function NOT available!
+        ```
+
+        #### 2. Function-First Workflow
+
+        If FunctionManager tools are available, **ALWAYS search BEFORE calling `execute_code`** for a new request:
+        1. Search with `FunctionManager_search_functions` (even for "simple" requests)
+        2. If a function exists → use it with `state_mode="stateful"`
+        3. Only fall back to raw `primitives.*` if no relevant function exists
+
+        #### 3. Default is Stateless (But FunctionManager Requires Stateful)
+
+        - `execute_code` defaults to `state_mode="stateless"` (fresh, isolated execution)
+        - **EXCEPTION**: After FunctionManager search, you MUST use `state_mode="stateful"`
+        - For multi-step workflows building state, also use `state_mode="stateful"`
+        """,
+    ).strip()
 
 
 def _build_simplicity_first_principles(
@@ -1355,7 +1449,15 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
         ### 🎯 CRITICAL RULES FOR CODE EXECUTION
 
 
-        1. **Stateful Execution**: Your code is executed in a persistent, stateful REPL-like environment. Variables, functions, and imports defined in one turn are available in all subsequent turns.
+        1. **Session-Based Execution**:
+           - You execute code by calling the `execute_code` tool (JSON tool call), specifying:
+             - `language` ("python" or a shell)
+             - `state_mode` ("stateless" | "stateful" | "read_only")
+             - optionally `session_id` / `session_name`
+           - **Default behavior is stateless** unless you explicitly choose `state_mode="stateful"` or `state_mode="read_only"`.
+           - Use **stateful sessions** when you need a "tab"/"notebook" that persists across multiple steps (e.g., navigate then observe).
+           - Use **stateless** for one-off checks (most reliable / least surprising).
+           - Use **read_only** to inspect an existing session without persisting changes.
 
         2. **Use `await`**: The execution sandbox is asynchronous. You **MUST** use the `await` keyword for any computer_primitives operations:
            ```python
@@ -1440,7 +1542,8 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
         """
         ### 💡 Strategy & Examples
 
-        Your primary workflow is an iterative loop: **Think → Code → Observe → Repeat**. You write a block of Python code, execute it, observe the output (including stdout, errors, and browser state), and then decide on the next block of code.
+        Your primary workflow is an iterative loop: **Think → Choose session/mode → Execute → Observe → Repeat**.
+        In these browser examples we use Python `state_mode="stateful", session_id=0` so state persists between steps.
 
         ---
 
@@ -1729,7 +1832,15 @@ def _build_generic_execution_rules() -> str:
         """
         ### 🎯 CRITICAL RULES FOR CODE EXECUTION
 
-        1. **Stateful Execution**: Your code runs in a persistent, stateful REPL-like environment. Variables, functions, and imports defined in one turn are available in subsequent turns.
+        1. **Session-Based Execution**:
+           - All code execution happens via the `execute_code` tool (JSON tool call).
+           - **Default is `state_mode="stateless"`** (fresh run; no persistence).
+           - Choose `state_mode="stateful"` when you need persistent state across multiple calls.
+           - Choose `state_mode="read_only"` when you need to use an existing session's state without persisting changes.
+           - **⚠️ EXCEPTION: When using FunctionManager functions, you MUST use `state_mode="stateful"`**
+             because functions are injected into Session 0's namespace. Stateless mode creates a fresh session
+             where the functions are NOT available (causes NameError).
+           - Use `list_sessions()` / `inspect_state()` to discover and understand active sessions.
 
         2. **Use `await`**: The execution sandbox is asynchronous. You **MUST** use `await` for any async calls.
 
@@ -1739,10 +1850,11 @@ def _build_generic_execution_rules() -> str:
 
         5. **Function-First (When Available)**:
            - If any tool names start with `FunctionManager_`, you **MUST** perform a FunctionManager search **before** you call `execute_code` for a new user request.
-           - This rule applies even if the request seems “simple” (including direct state manager calls like `primitives.contacts.ask`, `primitives.tasks.update`, `primitives.guidance.update`, etc.). Many stored functions are thin wrappers around these primitives.
+           - This rule applies even if the request seems "simple" (including direct state manager calls like `primitives.contacts.ask`, `primitives.tasks.update`, `primitives.guidance.update`, etc.). If a relevant function exists, you must use it.
+           - **CRITICAL**: After searching, use `state_mode="stateful"` in `execute_code` to access injected functions.
            - Workflow:
              1) Make a FunctionManager tool call (structured JSON tool call) to search.
-             2) If a relevant function exists, call it in Python (it will be auto-injected into the sandbox).
+             2) If a relevant function exists, call `execute_code` with `state_mode="stateful"` and invoke the function in Python.
              3) Only fall back to calling `primitives.*`/`computer_primitives.*` directly if no relevant function exists.
            - You may skip re-searching only when you already searched in this session and you are confident the needed callable is already injected.
 

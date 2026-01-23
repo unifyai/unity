@@ -1037,11 +1037,23 @@ def get_function_first_pattern_example() -> str:
 # BEFORE writing custom logic with raw primitives.
 #
 # Step 1 (JSON TOOL CALL): search for an existing function
-#   FunctionManager_search_functions(query="contacts prefer phone", n=5)
+# {
+#   "name": "FunctionManager_search_functions",
+#   "arguments": {"query": "contacts prefer phone", "n": 5}
+# }
 #
-# Step 2 (PYTHON): call the injected function by name (it becomes available automatically)
-#   result = await ask_contacts_question("Which of our contacts prefers phone contact?")
-#   print(result)
+# Step 2 (JSON TOOL CALL): execute with state_mode="stateful" (REQUIRED!)
+# {
+#   "name": "execute_code",
+#   "arguments": {
+#     "language": "python",
+#     "state_mode": "stateful",
+#     "code": "result = await ask_contacts_question('Which of our contacts prefers phone contact?')\nprint(result)"
+#   }
+# }
+#
+# IMPORTANT: You MUST use state_mode="stateful" because functions are injected into Session 0.
+# Using stateless creates a fresh session where the function is NOT available!
 #
 # If no function exists, THEN fall back to composing with primitives directly in Python.
 """
@@ -1051,7 +1063,7 @@ def get_function_first_anti_pattern_example() -> str:
     """Anti-pattern: skipping FunctionManager search when it exists (CodeAct style)."""
 
     return r"""
-# ❌ ANTI-PATTERN: Skipping FunctionManager when it's available
+# ❌ ANTI-PATTERN #1: Skipping FunctionManager when it's available
 #
 # DON'T do this:
 #   - immediately call raw primitives
@@ -1061,9 +1073,22 @@ def get_function_first_anti_pattern_example() -> str:
 #   handle = await primitives.contacts.ask("Which contacts prefer phone?")
 #   result = await handle.result()
 #
+# ❌ ANTI-PATTERN #2: Using stateless mode after FunctionManager search
+#
+# DON'T do this:
+# {
+#   "name": "execute_code",
+#   "arguments": {
+#     "language": "python",
+#     "state_mode": "stateless",
+#     "code": "result = await ask_contacts_question(...)"
+#   }
+# }
+# ERROR: NameError - function not available in fresh session!
+#
 # ✅ CORRECT:
 #   1) Call FunctionManager_search_functions(...) as a JSON tool call
-#   2) Call the injected function in Python (e.g. ask_contacts_question(...))
+#   2) Call execute_code with state_mode="stateful" and invoke the injected function
 """
 
 
@@ -1090,9 +1115,74 @@ def get_function_parameter_exploration_example() -> str:
 """
 
 
+def get_function_manager_stateful_requirement_example() -> str:
+    """Example: FunctionManager functions require stateful sessions (CRITICAL)."""
+
+    return r"""
+# 🚨 CRITICAL PATTERN: FunctionManager + Stateful Sessions
+#
+# Functions from FunctionManager are injected into Session 0's namespace.
+# You MUST use state_mode="stateful" in execute_code to access them.
+#
+# WHY: stateless mode creates a FRESH session each time, so injected functions
+# are NOT available in that new session → NameError.
+#
+# ✅ CORRECT WORKFLOW:
+#
+# Step 1 (JSON TOOL CALL): Search for function (injects into Session 0)
+# {
+#   "name": "FunctionManager_search_functions",
+#   "arguments": {"query": "store knowledge", "n": 5}
+# }
+# Returns: [{"name": "store_knowledge", "argspec": "(fact: str) -> str", ...}]
+#
+# Step 2 (JSON TOOL CALL): Execute with state_mode="stateful" (REQUIRED!)
+# {
+#   "name": "execute_code",
+#   "arguments": {
+#     "language": "python",
+#     "state_mode": "stateful",
+#     "code": "result = await store_knowledge('Office hours are 9-5 PT')\nprint(result)"
+#   }
+# }
+# ✅ Works! Function is available in Session 0.
+#
+# ❌ ANTI-PATTERN (causes NameError):
+#
+# {
+#   "name": "execute_code",
+#   "arguments": {
+#     "language": "python",
+#     "state_mode": "stateless",
+#     "code": "result = await store_knowledge('Office hours are 9-5 PT')"
+#   }
+# }
+# ❌ ERROR: NameError: name 'store_knowledge' is not defined
+# WHY: stateless creates fresh session where function was NOT injected!
+#
+# Mental Model:
+#
+#   FunctionManager_search_functions(...)
+#            ↓
+#      Injects into Session 0 namespace
+#            ↓
+#   execute_code(state_mode="stateful", ...)
+#            ↓
+#      ✅ Function available!
+#
+#   execute_code(state_mode="stateless", ...)
+#            ↓
+#      Creates NEW session (not Session 0)
+#            ↓
+#      ❌ Function NOT available! (NameError)
+"""
+
+
 def get_code_act_function_first_examples() -> str:
     """Get function-first examples for CodeActActor."""
     examples = [
+        # Put the critical stateful requirement example FIRST for maximum visibility
+        get_function_manager_stateful_requirement_example().strip(),
         get_function_first_pattern_example().strip(),
         get_function_first_anti_pattern_example().strip(),
         get_function_parameter_exploration_example().strip(),
@@ -1117,6 +1207,21 @@ def get_code_act_session_examples() -> str:
 
 **Key idea:** Use `execute_code` for *everything* (Python + shell), and use sessions
 to preserve state across multiple tool calls.
+
+**⚠️ CRITICAL: FunctionManager Functions Require Stateful Sessions**
+
+When using FunctionManager tools, functions are injected into Session 0. You MUST use
+`state_mode="stateful"` to access them:
+
+```
+FunctionManager_search_functions(...)
+         ↓
+   Injects into Session 0 namespace
+         ↓
+execute_code(state_mode="stateful", ...)   ←── ✅ Uses Session 0, function available!
+
+execute_code(state_mode="stateless", ...)  ←── ❌ Creates NEW session, NameError!
+```
 
 #### Example A — Stateful shell session for repo navigation
 ```json
