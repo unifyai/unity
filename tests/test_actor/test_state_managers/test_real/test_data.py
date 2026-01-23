@@ -70,8 +70,11 @@ async def test_filter_calls_data_manager(mock_verification):
             # Wait for result
             result = await handle.result()
 
-            # Assert result mentions the filtered data
-            assert "Item B" in result or "500" in result or "Item C" in result
+            # Assert result mentions the filtered data (handle str, dict, or BaseModel)
+            result_str = str(result)
+            assert (
+                "Item B" in result_str or "500" in result_str or "Item C" in result_str
+            )
 
             # Assert data primitives were called
             state_manager_tools = get_state_manager_tools(handle)
@@ -123,8 +126,9 @@ async def test_reduce_calls_data_manager(mock_verification):
             # Wait for result
             result = await handle.result()
 
-            # Assert result contains the sum (4500)
-            assert "4500" in result or "4,500" in result
+            # Assert result contains the sum (4500) (handle str, dict, or BaseModel)
+            result_str = str(result)
+            assert "4500" in result_str or "4,500" in result_str
 
             # Assert data primitives were called
             state_manager_tools = get_state_manager_tools(handle)
@@ -167,8 +171,8 @@ async def test_describe_table_calls_data_manager(mock_verification):
             # Wait for result
             result = await handle.result()
 
-            # Assert result mentions the columns
-            result_lower = result.lower()
+            # Assert result mentions the columns (handle str, dict, or BaseModel)
+            result_lower = str(result).lower()
             assert (
                 "id" in result_lower
                 or "name" in result_lower
