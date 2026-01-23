@@ -68,9 +68,8 @@ COPY pyproject.toml uv.lock ./
 # Configure git to use GITHUB_TOKEN for private repo authentication
 RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-# Create venv and install PyTorch CPU-only first (cached layer, ~2GB)
-# Must be BEFORE git clone so repo updates don't invalidate PyTorch cache
-RUN uv venv && uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# Install PyTorch CPU-only first (smaller and faster for containers)
+RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
 # Branch logic mirrors CI: main→main, otherwise→staging
@@ -79,7 +78,7 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
-# Copy source and install unity with dependencies
+# Copy source and install unity with all dependencies
 COPY . /app
 RUN uv pip install --system --no-cache .
 
@@ -115,8 +114,8 @@ RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 # Set memory-efficient environment variables for model loading
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
-RUN uv run unity/conversation_manager/medium_scripts/call.py download-files
-RUN uv run playwright install
+RUN python unity/conversation_manager/medium_scripts/call.py download-files
+RUN playwright install
 
 # Set runtime environment variables for memory optimization
 ENV PYTHONUNBUFFERED=1
