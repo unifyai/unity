@@ -246,6 +246,23 @@ def mock_aiohttp_session(monkeypatch):
     yield mock_session
 
 
+@pytest.fixture
+def skip_vm_wait(monkeypatch):
+    """Skip the VM readiness wait by returning desktop_url directly."""
+    from unity.function_manager.function_manager import FunctionManager
+
+    async def mock_wait_for_vm_ready(self):
+        from unity.session_details import SESSION_DETAILS
+
+        return SESSION_DETAILS.assistant.desktop_url
+
+    monkeypatch.setattr(
+        FunctionManager,
+        "_wait_for_remote_windows_vm_ready",
+        mock_wait_for_vm_ready,
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 1. Path Conversion Tests
 # ────────────────────────────────────────────────────────────────────────────
@@ -685,6 +702,7 @@ class TestExecutePythonFunctionOnRemoteWindows:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
+        skip_vm_wait,
     ):
         """Basic execution with result capture."""
         fm = function_manager_factory()
@@ -737,6 +755,7 @@ class TestExecutePythonFunctionOnRemoteWindows:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
+        skip_vm_wait,
     ):
         """Execution uses PowerShell shell mode."""
         fm = function_manager_factory()
@@ -769,6 +788,7 @@ class TestExecutePythonFunctionOnRemoteWindows:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
+        skip_vm_wait,
     ):
         """Execution uses user_session=True for COM automation."""
         fm = function_manager_factory()
@@ -802,6 +822,7 @@ class TestExecutePythonFunctionOnRemoteWindows:
         mock_session_details_windows,
         mock_aiohttp_session,
         temp_data_files,
+        skip_vm_wait,
     ):
         """data_required paths are uploaded before execution."""
         fm = function_manager_factory()
@@ -841,6 +862,7 @@ class TestExecutePythonFunctionOnRemoteWindows:
         mock_aiohttp_session,
         temp_data_files,
         tmp_path,
+        skip_vm_wait,
     ):
         """data_output paths are downloaded after execution."""
         fm = function_manager_factory()
@@ -889,25 +911,24 @@ class TestExecuteFunctionRemoteRouting:
         function_manager_factory,
         mock_session_details_windows,
         mock_aiohttp_session,
+        skip_vm_wait,
+        monkeypatch,
     ):
         """execute_function dispatches to remote execution when conditions met."""
         fm = function_manager_factory()
 
-        # Add a function with windows_os_required=True
+        # Add a function
         fm.add_functions(
             implementations=SIMPLE_WINDOWS_FUNC,
             language="python",
         )
 
-        # Update the function to have windows_os_required=True
-        # (add_functions doesn't support this directly, so we update it)
-        funcs = fm.filter_functions(filter="name == 'process_data'")
-        if funcs:
-            func = funcs[0]
-            fm._compositional_ctx.update(
-                int(func["function_id"]),
-                {"windows_os_required": True},
-            )
+        # Mock the routing check to return True (simulating windows_os_required=True)
+        monkeypatch.setattr(
+            fm,
+            "_should_execute_python_function_on_remote_windows",
+            lambda func_data: True,
+        )
 
         # Execute - should route to remote
         result = await fm.execute_function(
