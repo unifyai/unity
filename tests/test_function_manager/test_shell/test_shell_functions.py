@@ -89,7 +89,11 @@ def test_add_sh_function_minimal_metadata():
 def test_add_sh_function_missing_name_fails():
     """Test that shell scripts without @name comment fail."""
     fm = FunctionManager()
-    result = fm.add_functions(implementations=SH_SCRIPT_NO_NAME, language="sh")
+    result = fm.add_functions(
+        implementations=SH_SCRIPT_NO_NAME,
+        language="sh",
+        raise_on_error=False,  # Explicitly check error in result dict
+    )
 
     # Should have an error for the unnamed script
     assert len(result) == 1

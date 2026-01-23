@@ -142,6 +142,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         implementations: str | List[str],
         preconditions: Optional[Dict[str, Dict]] = None,
+        raise_on_error: bool = True,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
         sched = maybe_tool_log_scheduled(
