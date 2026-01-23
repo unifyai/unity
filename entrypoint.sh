@@ -129,7 +129,7 @@ CSB_PID=$!
 
 # Start the main application in parallel
 echo "Starting convo manager..."
-uv run unity/conversation_manager/main.py &
+python3 unity/conversation_manager/main.py &
 MAIN_PID=$!
 echo "Main application started with PID: $MAIN_PID"
 
