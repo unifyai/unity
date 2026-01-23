@@ -46,11 +46,9 @@ def _build_prompt_in_subprocess(test_context: str) -> str:
         def _static_now(time_only: bool = False):
             dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
             label = "UTC"
-            return (
-                dt.strftime("%H:%M:%S ") + label
-                if time_only
-                else dt.strftime("%Y-%m-%d %H:%M:%S ") + label
-            )
+            if time_only:
+                return dt.strftime("%I:%M %p ") + label
+            return dt.strftime("%A, %B %d, %Y at %I:%M %p ") + label
         _ph.now = _static_now
 
         from unity.transcript_manager.transcript_manager import TranscriptManager

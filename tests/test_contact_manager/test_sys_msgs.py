@@ -197,7 +197,10 @@ def _build_prompt_in_subprocess(method: str, test_context: str) -> str:
         from datetime import datetime, timezone
         def _static_now(time_only: bool = False):
             dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
-            return dt.strftime("%H:%M:%S UTC" if time_only else "%Y-%m-%d %H:%M:%S UTC")
+            label = "UTC"
+            if time_only:
+                return dt.strftime("%I:%M %p ") + label
+            return dt.strftime("%A, %B %d, %Y at %I:%M %p ") + label
         _ph.now = _static_now
         from unity.contact_manager.contact_manager import ContactManager
         from unity.contact_manager.prompt_builders import build_ask_prompt, build_update_prompt

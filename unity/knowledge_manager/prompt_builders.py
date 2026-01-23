@@ -292,7 +292,7 @@ Tool availability groups (for reference)
         ),
         include_clarification_footer=True,
         include_time_footer=True,
-        time_footer_prefix="Current UTC time: ",
+        time_footer_prefix="Current UTC time is ",
     )
 
     return compose_system_prompt(spec)
@@ -522,7 +522,7 @@ Use the `{ask_fname}` method to see if you can find any missing context *before*
         + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
-        time_footer_prefix="Current UTC time: ",
+        time_footer_prefix="Current UTC time is ",
     )
 
     return compose_system_prompt(spec)
@@ -743,7 +743,7 @@ Do **not** hallucinate data.
         + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
-        time_footer_prefix="Current UTC time: ",
+        time_footer_prefix="Current UTC time is ",
     )
 
     return compose_system_prompt(spec)
