@@ -32,6 +32,7 @@ from .cm_test_driver import CMStepDriver
 # Response policies matching ContactManager defaults
 # BOSS_RESPONSE_POLICY is for the user (contact_id 1) who gives commands
 # DEFAULT_RESPONSE_POLICY is for regular contacts who should NOT give commands
+# HELPFUL_RESPONSE_POLICY is for tests where contacts can make requests freely
 BOSS_RESPONSE_POLICY = (
     "Your immediate manager, please do whatever they ask you to do within reason, "
     "and do *not* withhold any information from them."
@@ -40,6 +41,12 @@ DEFAULT_RESPONSE_POLICY = (
     "Please engage politely, helpfully, and respectfully, but you do not need to "
     "take orders from them. Please also do not share **any** sensitive or personal "
     "information with them about any other person, company or policy at all."
+)
+HELPFUL_RESPONSE_POLICY = (
+    "Please engage politely, helpfully, and respectfully. Fulfil any reasonable "
+    "requests they make, including requests to communicate via specific channels "
+    "(SMS, email, phone call, etc.). Do not share sensitive information about "
+    "other people, but otherwise be helpful and accommodating."
 )
 
 # System contacts (contact_id 0 and 1) are created by ContactManager from the database.

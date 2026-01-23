@@ -26,7 +26,10 @@ from tests.test_conversation_manager.cm_helpers import (
     filter_events_by_type,
     assert_has_one,
 )
-from tests.test_conversation_manager.conftest import TEST_CONTACTS
+from tests.test_conversation_manager.conftest import (
+    TEST_CONTACTS,
+    HELPFUL_RESPONSE_POLICY,
+)
 from unity.conversation_manager.events import (
     EmailReceived,
     EmailSent,
@@ -47,6 +50,34 @@ from unity.conversation_manager.events import (
 from unity.conversation_manager.types import Medium
 
 pytestmark = pytest.mark.eval
+
+
+# ---------------------------------------------------------------------------
+#  Module-level fixture to use helpful response policy for all contacts
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def use_helpful_response_policy(initialized_cm):
+    """
+    Override response_policy for all test contacts to be more permissive.
+
+    The default response policy says "you do not need to take orders from them"
+    which Claude interprets too strictly, refusing to make phone calls or send
+    messages via specific channels when requested by non-boss contacts.
+
+    This fixture updates all test contacts to use HELPFUL_RESPONSE_POLICY which
+    encourages the assistant to fulfil reasonable requests including channel-
+    specific communication requests.
+    """
+    cm = initialized_cm.cm
+    if cm.contact_manager is not None:
+        for contact in TEST_CONTACTS:
+            cm.contact_manager.update_contact(
+                contact_id=contact["contact_id"],
+                response_policy=HELPFUL_RESPONSE_POLICY,
+            )
+    yield
 
 
 # ---------------------------------------------------------------------------
