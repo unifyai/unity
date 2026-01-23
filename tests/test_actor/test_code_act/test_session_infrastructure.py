@@ -66,8 +66,9 @@ from unity.function_manager.shell_pool import ShellPool
             dict(
                 state_mode="stateful",
                 session_id=None,
-                session_name=None,
+                session_name="new_session",
                 language="python",
+                resolve_session_name=lambda _n: None,
                 max_sessions_total=2,
                 active_session_count=2,
             ),
