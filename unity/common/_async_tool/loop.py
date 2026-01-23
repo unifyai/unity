@@ -1913,6 +1913,13 @@ async def async_tool_loop_inner(
             if response_format is not None and tool_choice_mode != "required":
                 tool_choice_mode = "required"
 
+            # When tools are in-flight, force tool_choice=required so the LLM must
+            # explicitly call final_answer to terminate (making the termination
+            # decision explicit and visible via the tool's warning docstring).
+            _has_pending_tools = bool(tools_data.pending)
+            if _has_pending_tools and tool_choice_mode != "required":
+                tool_choice_mode = "required"
+
             # No-op: overview is now injected synthetically when images change
 
             visible_base_tools_schema = [
@@ -1921,10 +1928,20 @@ async def async_tool_loop_inner(
                 if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
 
-            # Inject `final_answer` tool automatically whenever a `response_format` is
-            # supplied. The tool accepts a single `answer` argument whose schema matches
-            # the provided Pydantic model. This tool is always available, even when other
-            # tools are in-flight - calling it will auto-cancel any pending work.
+            # Inject `final_answer` tool in two scenarios:
+            # 1. When response_format is set (structured output mode)
+            # 2. When tools are in-flight (explicit termination required)
+            # This ensures the LLM always has a clear, documented way to terminate
+            # that warns about cancelling in-flight work.
+            #
+            # Shared description suffix (format-agnostic guidance):
+            _final_answer_suffix = (
+                "The answer can be a complete response, a partial response, "
+                "or a message indicating you cannot proceed "
+                "(e.g., 'I cannot help with that.'). "
+                "Calling this tool terminates the conversation. "
+                "WARNING: Any running tools will be immediately cancelled."
+            )
             if response_format is not None:
                 try:
                     _answer_schema = _check_valid_response_format(response_format)
@@ -1937,10 +1954,7 @@ async def async_tool_loop_inner(
                                 "name": "final_answer",
                                 "description": (
                                     "Submit your final answer in the required JSON format. "
-                                    "Calling this tool marks the conversation as complete. "
-                                    "WARNING: If any tools are currently running, they will be "
-                                    "immediately cancelled when you call this. Only use this when "
-                                    "you have all the information needed to provide a complete answer."
+                                    + _final_answer_suffix
                                 ),
                                 "parameters": {
                                     "type": "object",
@@ -1954,6 +1968,31 @@ async def async_tool_loop_inner(
                     logger.error(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
+            elif _has_pending_tools:
+                # Generic final_answer for termination when tools are in-flight
+                # (no response_format, so answer is free-form text)
+                visible_base_tools_schema.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "final_answer",
+                            "description": (
+                                "Submit your final text response. "
+                                + _final_answer_suffix
+                            ),
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "answer": {
+                                        "type": "string",
+                                        "description": "Your response (any content is valid).",
+                                    },
+                                },
+                                "required": ["answer"],
+                            },
+                        },
+                    },
+                )
 
             # Inject multi-handle `final_answer` tool when coordinator is present.
             # This tool requires request_id to specify which request is being answered.
@@ -2451,6 +2490,42 @@ async def async_tool_loop_inner(
                                 _msg_dispatcher,
                             )
                             continue
+
+                    # Special-case: handle generic `final_answer` tool (no response_format)
+                    # This is used when tools are in-flight and the LLM wants to terminate.
+                    if (
+                        name == "final_answer"
+                        and response_format is None
+                        and multi_handle_coordinator is None
+                    ):
+                        answer = args.get("answer") if isinstance(args, dict) else None
+                        if answer is None:
+                            answer = str(args) if args else ""
+
+                        # Cancel any in-flight tools before returning the final answer.
+                        if tools_data.pending:
+                            logger.info(
+                                f"final_answer called while {len(tools_data.pending)} "
+                                f"task(s) are in-flight. Auto-cancelling to terminate.",
+                                prefix="🔚",
+                            )
+                            await tools_data.cancel_pending_tasks()
+
+                        tool_msg = create_tool_call_message(
+                            name="final_answer",
+                            call_id=call["id"],
+                            content=answer,
+                        )
+
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
+
+                        return answer
 
                     # Special-case: handle multi-handle `final_answer` tool
                     if name == "final_answer" and multi_handle_coordinator is not None:
