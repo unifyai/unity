@@ -6,8 +6,9 @@ Pattern: Memoized function (semantic search; no on-the-fly codegen)
 
 from __future__ import annotations
 
-import pytest
+import textwrap
 
+import pytest
 
 from tests.test_actor.test_state_managers.utils import make_hierarchical_actor
 
@@ -29,33 +30,56 @@ async def test_live_events_use_memoized_function(
     question: str,
     mock_verification,
 ):
-    implementation = '''
-async def ask_web(question: str, response_format=None) -> str:
-    """Use live web search for time-sensitive, external-information questions.
+    implementation = textwrap.dedent(
+        '''
+        async def ask_web(question: str, response_format=None) -> str:
+            """Use live web search to produce a structured briefing for external/public topics.
 
-    **Use when** the user asks about current events, current weather, latest headlines,
-    or anything that requires up-to-date public information from the internet.
+            **Use when** the user asks about current events, general concepts, definitions,
+            or anything that requires up-to-date public information from the internet
+            and a clear, structured summary with sources.
 
-    **How it works**: this function calls the web-search state manager:
-    - `await primitives.web.ask(question, response_format=response_format)`
+            **Do NOT use when**:
+            - the answer should come from *your own stored messages/transcripts* (use transcripts)
+            - the answer should come from *your contacts* (use contacts)
+            - the request is to *update guidance* (use guidance.update)
+            - the request is to *create/update tasks* (use tasks.update)
 
-    **Do NOT use when**:
-    - the answer should come from *your own stored messages/transcripts* (use transcripts)
-    - the answer should come from *your contacts* (use contacts)
-    - the request is to *update guidance* (use guidance.update)
-    - the request is to *create/update tasks* (use tasks.update)
+            This helper does two steps:
+            1) Web research via primitives.web.ask
+            2) Structured briefing synthesis via computer_primitives.reason
 
-    Args:
-        question: The web search question to ask.
-        response_format: Optional Pydantic model for structured output.
+            Args:
+                question: The web search question to ask.
+                response_format: Optional Pydantic model for structured output.
 
-    Returns:
-        The answer from the web searcher as a string.
-    """
-    handle = await primitives.web.ask(question, response_format=response_format)
-    result = await handle.result()
-    return result
-'''
+            Returns:
+                The answer from the web searcher as a string.
+            """
+            cleaned = " ".join(str(question).split()).strip()
+            if not cleaned:
+                cleaned = "Provide a concise briefing on the topic."
+            if not cleaned.endswith("?"):
+                cleaned = f"{cleaned}?"
+            research_prompt = f"{cleaned} Provide reliable sources and include dates/numbers when available."
+            research_handle = await primitives.web.ask(research_prompt)
+            research_result = await research_handle.result()
+            briefing_request = (
+                "Create a structured briefing with: "
+                "1) Short answer (2-3 sentences), "
+                "2) Key facts (3-5 bullets, include dates/numbers if available), "
+                "3) Context/implications (2-3 bullets), "
+                "4) Sources (2-4 citations with titles or URLs)."
+            )
+            briefing = await computer_primitives.reason(
+                request=briefing_request,
+                context=research_result,
+            )
+            if isinstance(briefing, str):
+                return briefing.strip()
+            return briefing
+    ''',
+    ).strip()
     async with make_hierarchical_actor(impl="simulated") as actor:
         from unity.function_manager.function_manager import FunctionManager
 
@@ -65,7 +89,9 @@ async def ask_web(question: str, response_format=None) -> str:
         actor.function_manager = fm
 
         handle = await actor.act(
-            f"{question} Do not ask clarifying questions. Do not create any stubs. Generate the full plan. Proceed with the best interpretation of the request.",
+            f"{question} Please provide a structured briefing with a short answer, key facts with dates, "
+            "context/implications, and sources. Do not ask clarifying questions. Do not create any stubs. "
+            "Generate the full plan. Proceed with the best interpretation of the request.",
             can_compose=True,
             persist=False,
         )
