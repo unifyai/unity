@@ -400,13 +400,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             num_tasks=10,
             columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
         update_msg = build_update_prompt(
             update_tools,
             num_tasks=10,
             columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         self._llm.set_system_message(
             "You are a *simulated* task-list manager. "

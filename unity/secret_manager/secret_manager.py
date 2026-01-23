@@ -482,7 +482,7 @@ class SecretManager(BaseSecretManager):
 
         # System message via prompt builder
         client.set_system_message(
-            build_ask_prompt(tools=tools),
+            build_ask_prompt(tools=tools).to_list(),
         )
 
         handle = start_async_tool_loop(
@@ -570,7 +570,7 @@ class SecretManager(BaseSecretManager):
             )
 
         client.set_system_message(
-            build_update_prompt(tools=tools),
+            build_update_prompt(tools=tools).to_list(),
         )
 
         handle = start_async_tool_loop(

@@ -35,7 +35,7 @@ def test_ask_system_prompt_formatting(contact_manager_scenario):
         tools=tools,
         num_contacts=num_contacts,
         columns=cm._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)
@@ -108,7 +108,7 @@ def test_update_system_prompt_formatting(contact_manager_scenario):
         tools=tools,
         num_contacts=num_contacts,
         columns=cm._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)

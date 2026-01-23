@@ -34,7 +34,7 @@ def test_ask_system_prompt_formatting(task_scheduler_read_scenario):
         tools=tools,
         num_tasks=num_tasks,
         columns=ts._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)
@@ -95,7 +95,7 @@ def test_update_system_prompt_formatting(task_scheduler_read_scenario):
         tools=tools,
         num_tasks=num_tasks,
         columns=ts._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)

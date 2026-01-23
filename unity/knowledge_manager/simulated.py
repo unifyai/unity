@@ -348,17 +348,17 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             ref_tools,
             table_schemas_json="{}",
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
         store_ref = build_update_prompt(
             upd_tools,
             table_schemas_json="{}",
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
         retrieve_ref = build_ask_prompt(
             ask_tools,
             table_schemas_json="{}",
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         self._llm.set_system_message(
             "You are a *simulated* knowledge-base manager. "

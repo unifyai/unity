@@ -765,4 +765,4 @@ def compose_system_prompt(spec: PromptSpec) -> str:
     if spec.include_clarification_footer:
         parts.add(clarification_guidance(spec.tools), static=False)
 
-    return parts.flatten()
+    return parts

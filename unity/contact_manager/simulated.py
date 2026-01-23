@@ -508,13 +508,13 @@ class SimulatedContactManager(BaseContactManager):
             10,
             [{k: str(v.annotation)} for k, v in Contact.model_fields.items()],
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
         upd_msg = build_update_prompt(
             upd_tools,
             10,
             [{k: str(v.annotation)} for k, v in Contact.model_fields.items()],
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         self._llm.set_system_message(
             "You are a *simulated* contact-manager assistant. "

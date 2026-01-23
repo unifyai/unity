@@ -355,7 +355,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             transcript_columns=fake_columns,
             contact_columns=fake_contact_columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         self._llm.set_system_message(
             "You are a *simulated* transcript assistant. "

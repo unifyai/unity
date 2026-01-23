@@ -224,7 +224,7 @@ class ContactManager(BaseContactManager):
             num_contacts=self._num_contacts(),
             columns=self._list_columns(),
             include_activity=include_activity,
-        )
+        ).to_list()
         client.set_system_message(_ask_prompt)
 
         if images:
@@ -297,7 +297,7 @@ class ContactManager(BaseContactManager):
             num_contacts=self._num_contacts(),
             columns=self._list_columns(),
             include_activity=include_activity,
-        )
+        ).to_list()
         client.set_system_message(_upd_prompt)
         handle = start_async_tool_loop(
             client,

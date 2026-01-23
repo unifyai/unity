@@ -201,7 +201,7 @@ class GuidanceManager(BaseGuidanceManager):
                 num_items=self._num_items(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
         handle = start_async_tool_loop(
             client,
@@ -294,7 +294,7 @@ class GuidanceManager(BaseGuidanceManager):
                 num_items=self._num_items(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
         handle = start_async_tool_loop(
             client,

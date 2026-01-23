@@ -72,13 +72,13 @@ def _build_prompt_in_subprocess(
         table_schemas_json = '''{table_schemas_json}'''
         if "{method}" == "ask":
             tools = dict(km.get_tools("ask"))
-            prompt = build_ask_prompt(tools=tools, table_schemas_json=table_schemas_json)
+            prompt = build_ask_prompt(tools=tools, table_schemas_json=table_schemas_json).flatten()
         elif "{method}" == "update":
             tools = dict(km.get_tools("update"))
-            prompt = build_update_prompt(tools=tools, table_schemas_json=table_schemas_json)
+            prompt = build_update_prompt(tools=tools, table_schemas_json=table_schemas_json).flatten()
         else:
             tools = dict(km.get_tools("refactor"))
-            prompt = build_refactor_prompt(tools=tools, table_schemas_json=table_schemas_json)
+            prompt = build_refactor_prompt(tools=tools, table_schemas_json=table_schemas_json).flatten()
         sys.stdout.write(prompt)
         """,
     )
@@ -100,7 +100,10 @@ def test_ask_system_prompt_formatting():
     km = KnowledgeManager()
     tools = dict(km.get_tools("ask"))
     table_schemas_json = "{}"
-    prompt = build_ask_prompt(tools=tools, table_schemas_json=table_schemas_json)
+    prompt = build_ask_prompt(
+        tools=tools,
+        table_schemas_json=table_schemas_json,
+    ).flatten()
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
@@ -147,7 +150,10 @@ def test_update_system_prompt_formatting():
     km = KnowledgeManager()
     tools = dict(km.get_tools("update"))
     table_schemas_json = "{}"
-    prompt = build_update_prompt(tools=tools, table_schemas_json=table_schemas_json)
+    prompt = build_update_prompt(
+        tools=tools,
+        table_schemas_json=table_schemas_json,
+    ).flatten()
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
@@ -194,7 +200,10 @@ def test_refactor_system_prompt_formatting():
     km = KnowledgeManager()
     tools = dict(km.get_tools("refactor"))
     table_schemas_json = "{}"
-    prompt = build_refactor_prompt(tools=tools, table_schemas_json=table_schemas_json)
+    prompt = build_refactor_prompt(
+        tools=tools,
+        table_schemas_json=table_schemas_json,
+    ).flatten()
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)

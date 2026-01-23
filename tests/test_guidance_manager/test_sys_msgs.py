@@ -37,7 +37,7 @@ def test_ask_system_prompt_formatting():
         tools=tools,
         num_items=num_items,
         columns=gm._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)
@@ -105,7 +105,7 @@ def test_update_system_prompt_formatting():
         tools=tools,
         num_items=num_items,
         columns=gm._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)

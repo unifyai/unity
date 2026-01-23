@@ -335,8 +335,8 @@ class SimulatedSecretManager(BaseSecretManager):
         ask_tools = mirror_secret_manager_tools("ask")
         upd_tools = mirror_secret_manager_tools("update")
 
-        ask_msg = build_ask_prompt(tools=ask_tools)
-        upd_msg = build_update_prompt(tools=upd_tools)
+        ask_msg = build_ask_prompt(tools=ask_tools).flatten()
+        upd_msg = build_update_prompt(tools=upd_tools).flatten()
 
         # Seed the LLM with a combined system message describing behaviour
         self._llm.set_system_message(

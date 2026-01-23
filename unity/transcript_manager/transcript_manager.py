@@ -242,7 +242,7 @@ class TranscriptManager(BaseTranscriptManager):
                 transcript_columns=_storage_list_columns(self),
                 contact_columns=self._contact_manager._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # Decide effective tool policy (default requires search_messages first),

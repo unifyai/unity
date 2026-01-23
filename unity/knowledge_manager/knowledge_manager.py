@@ -517,7 +517,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 tools=tools,
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # 3️⃣  Launch interactive tool-use loop
@@ -619,7 +619,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
                 case_specific_instructions=case_specific_instructions,
-            ),
+            ).to_list(),
         )
 
         handle = start_async_tool_loop(
@@ -727,7 +727,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 include_activity=include_activity,
                 case_specific_instructions=case_specific_instructions,
                 include_join_info=include_join_info,
-            ),
+            ).to_list(),
         )
 
         tool_policy_fn = self._default_ask_tool_policy

@@ -485,7 +485,7 @@ class TaskScheduler(BaseTaskScheduler):
                 num_tasks=self._num_tasks(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # Prepare effective tool_policy – prefer image-aware policy when images are present
@@ -582,7 +582,7 @@ class TaskScheduler(BaseTaskScheduler):
                 num_tasks=self._num_tasks(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # Prepare effective tool_policy

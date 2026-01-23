@@ -63,7 +63,7 @@ def _build_prompt_in_subprocess(test_context: str) -> str:
             num_messages=tm._num_messages(),
             transcript_columns=tm._list_columns(),
             contact_columns=tm._contact_manager._list_columns(),
-        )
+        ).flatten()
         sys.stdout.write(prompt)
         """,
     )
@@ -90,7 +90,7 @@ def test_ask_system_prompt_formatting():
         num_messages=tm._num_messages(),
         transcript_columns=tm._list_columns(),
         contact_columns=tm._contact_manager._list_columns(),
-    )
+    ).flatten()
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
