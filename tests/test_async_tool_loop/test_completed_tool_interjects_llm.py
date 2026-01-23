@@ -10,6 +10,8 @@ from unity.common.llm_client import new_llm_client
 from tests.async_helpers import (
     make_gated_async_tool,
     _wait_for_tool_result,
+    _is_synthetic_check_status_stub,
+    _is_synthetic_check_status_tool_msg,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -277,31 +279,22 @@ async def test_llm_step_is_preempted_by_late_tool_completion(model) -> None:
     #   assistant injests both results (final)
     assert roles[0] == "user"
     assert roles[1] == "assistant"
-    # Exclude status stubs (check_status_*) from strict counts.
-    is_status_assistant = lambda m: (
-        m.get("role") == "assistant"
-        and bool(m.get("tool_calls"))
-        and any(
-            tc.get("function", {}).get("name", "").startswith("check_status_")
-            for tc in m["tool_calls"]
-        )
-    )
-    is_status_tool = lambda m: (
-        m.get("role") == "tool" and str(m.get("name", "")).startswith("check_status_")
-    )
+    # Exclude status stubs (check_status_*) from strict counts using shared helpers
     non_stub_assistants = [
         m
         for m in client.messages
-        if m.get("role") == "assistant" and not is_status_assistant(m)
+        if m.get("role") == "assistant" and not _is_synthetic_check_status_stub(m)
     ]
     non_stub_tools = [
-        m for m in client.messages if m.get("role") == "tool" and not is_status_tool(m)
+        m
+        for m in client.messages
+        if m.get("role") == "tool" and not _is_synthetic_check_status_tool_msg(m)
     ]
     assert len(non_stub_assistants) == 2  # initial + final
     assert len(non_stub_tools) == 2  # fast + slow
 
-    # The two tool results must correspond to the two tool names
-    tool_names = {m["name"] for m in client.messages if m["role"] == "tool"}
+    # The two tool results must correspond to the two tool names (excluding synthetic ones)
+    tool_names = {m["name"] for m in non_stub_tools}
     assert {"fast_task", "slow_task"}.issubset(tool_names)
 
     # Initial assistant turn must have requested *both* tools – search robustly
@@ -310,7 +303,7 @@ async def test_llm_step_is_preempted_by_late_tool_completion(model) -> None:
         for m in client.messages
         if m.get("role") == "assistant"
         and m.get("tool_calls")
-        and not is_status_assistant(m)
+        and not _is_synthetic_check_status_stub(m)
     ]
     assert any(
         {"fast_task", "slow_task"}.issubset(

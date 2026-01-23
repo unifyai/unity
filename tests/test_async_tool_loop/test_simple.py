@@ -29,7 +29,11 @@ import time
 from tests.helpers import _handle_project
 from tests.settings import SETTINGS
 from unity.common.llm_client import new_llm_client
-from tests.async_helpers import _wait_for_tool_request
+from tests.async_helpers import (
+    _wait_for_tool_request,
+    _is_synthetic_check_status_stub,
+    _is_synthetic_check_status_tool_msg,
+)
 
 import pytest
 import unillm
@@ -355,17 +359,26 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
     assert log[0] == "hello", "First tool call should execute"
     # The seeded turn should only produce 1 tool result due to pruning
     # (model may make additional calls in subsequent turns to compensate)
-    first_assistant_idx = next(
-        i
-        for i, m in enumerate(client.messages)
-        if m.get("role") == "assistant" and m.get("tool_calls")
-    )
-    # Count tool results that appear before the next assistant turn
+
+    # Find the first REAL assistant turn with tool calls (exclude synthetic check_status stubs)
+    first_assistant_idx = None
+    for i, m in enumerate(client.messages):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            if not _is_synthetic_check_status_stub(m):
+                first_assistant_idx = i
+                break
+    assert first_assistant_idx is not None, "Expected a real assistant tool call"
+
+    # Count REAL tool results (excluding synthetic check_status) that appear before the next REAL assistant turn
     tool_results_after_first = []
     for m in client.messages[first_assistant_idx + 1 :]:
         if m.get("role") == "tool" and m.get("name") == "echo":
+            # Skip synthetic check_status tool messages
+            if _is_synthetic_check_status_tool_msg(m):
+                continue
             tool_results_after_first.append(m)
-        elif m.get("role") == "assistant":
+        elif m.get("role") == "assistant" and not _is_synthetic_check_status_stub(m):
+            # Stop at the next real assistant turn
             break
     assert (
         len(tool_results_after_first) == 1

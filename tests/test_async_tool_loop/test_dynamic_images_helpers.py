@@ -429,11 +429,20 @@ async def test_two_images_then_interjection_three_asks_real_llm(
     final = await handle.result()
 
     # The final answer should be a valid color from mixing blue + yellow + red paint.
-    # In subtractive color mixing (paint), this tends toward brown/black.
+    # In subtractive color mixing (paint), this tends toward brown/black/maroon.
     final_lower = final.strip().lower()
     assert any(
         word in final_lower
-        for word in ("brown", "pink", "rose", "green", "orange", "red", "black")
+        for word in (
+            "brown",
+            "pink",
+            "rose",
+            "green",
+            "orange",
+            "red",
+            "black",
+            "maroon",
+        )
     )
 
     tool_msgs = [
