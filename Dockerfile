@@ -75,10 +75,9 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
-# Copy source and install unity with all dependencies using uv sync (matches local dev)
-# This creates a venv at .venv/ just like local development
+# Copy source and install unity with dependencies using uv sync (creates .venv/)
 COPY . /app
-RUN uv sync --all-groups
+RUN uv sync
 
 # Install PyTorch CPU-only (smaller and faster for containers)
 RUN uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
