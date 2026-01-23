@@ -60,6 +60,9 @@ class _StaticAnswerHandle(SteerableToolHandle):
     def done(self) -> bool:
         return True
 
+    def trigger_completion(self, result: str | None = None) -> None:
+        """No-op for static answer handles (already complete)."""
+
     async def result(self) -> str:
         return self._answer
 
@@ -664,6 +667,29 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
 
     def done(self) -> bool:
         return self._done_event.is_set()
+
+    def trigger_completion(self, result: str | None = None) -> None:
+        """Trigger immediate completion of the simulated actor.
+
+        This is a test-only method that forces the actor to complete immediately,
+        unblocking any awaiting result() calls. Useful for deterministic testing
+        without relying on step counts or durations.
+
+        Args:
+            result: Optional result string. If not provided, uses a default
+                    completion message.
+
+        Note: Idempotent - calling on an already-completed actor has no effect.
+        """
+        if self._done_event.is_set():
+            return  # Already done, no-op
+
+        msg = (
+            result
+            if result is not None
+            else f"Completed '{self._description}' (triggered)."
+        )
+        self._complete(msg)
 
     # ------------------------
     # Status query helpers

@@ -23,8 +23,9 @@ import base64
 @pytest.mark.asyncio
 @_handle_project
 async def test_start_and_act():
-    actor = SimulatedActor(duration=0.1)
+    actor = SimulatedActor()
     handle = await actor.act("Perform a quick demo.")
+    handle.trigger_completion()
     result = await handle.result()
     assert isinstance(result, str) and result.strip(), "Result should be non-empty"
 
@@ -44,12 +45,13 @@ class ActionResult(BaseModel):
 @_handle_project
 async def test_simulated_act_response_format():
     """Simulated Actor.act should return structured output when response_format is provided."""
-    actor = SimulatedActor(steps=2, duration=1)
+    actor = SimulatedActor()
 
     handle = await actor.act(
         "Perform a quick demo task and report results",
         response_format=ActionResult,
     )
+    handle.trigger_completion()
     result = await handle.result()
 
     # SimulatedActor returns a JSON string; validate it conforms to the schema.
@@ -70,7 +72,7 @@ async def test_stateful_memory_serial_asks():
     Two consecutive activities should share the same stateful LLM context.
     We exercise this by asking questions via the handle's ask() method.
     """
-    actor = SimulatedActor(steps=1)
+    actor = SimulatedActor()
 
     h1 = await actor.act("Start some new research.")
     ask_handle1 = await h1.ask(
@@ -84,7 +86,9 @@ async def test_stateful_memory_serial_asks():
     answer2 = (await ask_handle2.result()).lower()
     assert code.lower().split(" ")[-1] in answer2
 
-    # Allow both handles to complete
+    # Explicitly complete both handles
+    h1.trigger_completion()
+    h2.trigger_completion()
     await h1.result()
     await h2.result()
 
@@ -110,10 +114,11 @@ async def test_handle_interject(monkeypatch):
 
     monkeypatch.setattr(SimulatedActorHandle, "interject", wrapped, raising=True)
 
-    actor = SimulatedActor(steps=1)
+    actor = SimulatedActor()
     handle = await actor.act("Show me all steps performed so far.")
     await asyncio.sleep(0.05)
     await handle.interject("Also consider revenue trends.")
+    handle.trigger_completion()
     await handle.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 
@@ -124,7 +129,7 @@ async def test_handle_interject(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_handle_stop(monkeypatch):
-    actor = SimulatedActor(steps=1)
+    actor = SimulatedActor()
     handle = await actor.act("Generate a long report.")
     await asyncio.sleep(0.05)
     stop_msg = handle.stop("Not needed")
@@ -140,7 +145,7 @@ async def test_handle_stop(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_handle_requests_clarification():
-    actor = SimulatedActor(steps=2, _requests_clarification=True)
+    actor = SimulatedActor(_requests_clarification=True)
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -154,6 +159,7 @@ async def test_handle_requests_clarification():
     question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
+    # Answering the clarification triggers completion
     await down_q.put("Yes, please compile the Q1 report now.")
     result = await handle.result()
     assert isinstance(result, str) and result.strip()
@@ -196,7 +202,7 @@ async def test_handle_pause_and_resume(monkeypatch):
         raising=True,
     )
 
-    actor = SimulatedActor(steps=2)  # pause + resume = 2 steps
+    actor = SimulatedActor()
     handle = await actor.act("Summarise all open opportunities.")
 
     pause_reply = await handle.pause()
@@ -206,6 +212,9 @@ async def test_handle_pause_and_resume(monkeypatch):
 
     resume_reply = await handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
+
+    # Trigger completion after resume
+    handle.trigger_completion()
 
     answer = await asyncio.wait_for(res, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
@@ -218,7 +227,7 @@ async def test_handle_pause_and_resume(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_handle_ask():
-    actor = SimulatedActor(steps=1)
+    actor = SimulatedActor()
     handle = await actor.act("Summarize all unread messages this week.")
 
     # Ask a follow-up while running
@@ -227,7 +236,8 @@ async def test_handle_ask():
     reply = await ask_handle.result()
     assert isinstance(reply, str) and reply.strip()
 
-    # The original handle should still be awaitable and produce a result
+    # Trigger completion and get the result
+    handle.trigger_completion()
     result = await handle.result()
     assert isinstance(result, str) and result.strip()
 
@@ -238,6 +248,7 @@ async def test_handle_ask():
 @pytest.mark.asyncio
 @_handle_project
 async def test_pause_freezes_duration():
+    # This test specifically validates duration freezing behavior
     actor = SimulatedActor(duration=0.2)
     handle = await actor.act("Time-sensitive work.")
 
@@ -302,7 +313,7 @@ def simulate_linkedin_sales_leads() -> str:
     )
     assert isinstance(fid, int)
 
-    actor = SimulatedActor(steps=1, duration=None)  # only ask() consumes a step
+    actor = SimulatedActor()
     handle = await actor.act("Search sales leads.", entrypoint=fid)
 
     ask_handle = await handle.ask(
@@ -312,6 +323,7 @@ def simulate_linkedin_sales_leads() -> str:
     assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
     assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
 
+    handle.trigger_completion()
     await handle.result()
 
 
@@ -342,7 +354,7 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
         ],
     )
 
-    actor = SimulatedActor(steps=2, duration=None)  # interject + ask = 2 steps
+    actor = SimulatedActor()
     handle = await actor.act(
         "We'll start working on organizing the rota for the admin assistants.",
     )
@@ -366,6 +378,7 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
     assert isinstance(reply, str) and reply.strip()
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
+    handle.trigger_completion()
     await handle.result()
 
 
@@ -376,7 +389,8 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
 @_handle_project
 async def test_next_notification_emits_progress():
     """next_notification returns a progress event without consuming steps (observing isn't work)."""
-    actor = SimulatedActor(steps=1, duration=None)
+    # Use steps=1 to verify that next_notification doesn't consume the step
+    actor = SimulatedActor(steps=1)
     handle = await actor.act("Quick simulated task.")
 
     # Capture remaining steps before
@@ -394,8 +408,8 @@ async def test_next_notification_emits_progress():
     after = handle.get_remaining_steps()
     assert isinstance(after, int) and after == before
 
-    # Complete the simulation by consuming the step and ensure result is available
-    handle.simulate_step()
+    # Trigger completion and ensure result is available
+    handle.trigger_completion()
     res = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(res, str) and res.strip()
 
@@ -406,7 +420,7 @@ async def test_next_notification_emits_progress():
 @pytest.mark.asyncio
 @_handle_project
 async def test_stop_while_paused_finishes_immediately():
-    actor = SimulatedActor(steps=5, duration=None)
+    actor = SimulatedActor()
     handle = await actor.act("A long-running simulated activity.")
 
     # Pause quickly to freeze the worker thread
@@ -440,7 +454,7 @@ async def test_stop_while_paused_finishes_immediately():
 @_handle_project
 async def test_stop_while_waiting_for_clarification_finishes_immediately():
     # Configure the actor to request a clarification at the start of work
-    actor = SimulatedActor(steps=None, duration=None, _requests_clarification=True)
+    actor = SimulatedActor(_requests_clarification=True)
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
@@ -469,3 +483,25 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     assert (
         th is None or not th.is_alive()
     ), "Action thread should terminate after stop()"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 14.  trigger_completion is idempotent                                       #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_trigger_completion_idempotent():
+    """Calling trigger_completion multiple times should be safe (no-op after first)."""
+    actor = SimulatedActor()
+    handle = await actor.act("Some task.")
+
+    # First trigger completes the actor
+    handle.trigger_completion("First completion")
+    assert handle.done()
+    result1 = await handle.result()
+    assert "First completion" in result1
+
+    # Second trigger should be a no-op (doesn't change result)
+    handle.trigger_completion("Second completion")
+    result2 = await handle.result()
+    assert result1 == result2, "Result should not change after second trigger"
