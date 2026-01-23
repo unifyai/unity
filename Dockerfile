@@ -75,12 +75,12 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
 
-# Copy source and install unity with dependencies using uv sync (creates .venv/)
+# Create venv and install PyTorch CPU-only first (cached layer, ~2GB)
+RUN uv venv && uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Copy source and install unity with dependencies using uv sync
 COPY . /app
 RUN uv sync
-
-# Install PyTorch CPU-only (smaller and faster for containers)
-RUN uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
