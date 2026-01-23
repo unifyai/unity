@@ -15,6 +15,7 @@ __all__ = [
     "images_forwarding_block",
     # New standardized prompt composition utilities
     "PromptSpec",
+    "PromptParts",
     "compose_system_prompt",
     "render_tools_block",
     "render_counts_and_columns",
@@ -308,6 +309,57 @@ class PromptSpec:
     include_time_footer: bool = True
     # Optional override for the time footer prefix (allows ':' vs 'is')
     time_footer_prefix: str = "Current UTC time is "
+
+
+@dataclass
+class PromptParts:
+    """Structured prompt builder with List[Dict] internal representation.
+
+    This class replaces the raw `List[str]` accumulator in `compose_system_prompt`
+    with a structured representation where each part is stored as
+    `{"type": "text", "content": "..."}`.
+
+    The `add` method handles separator insertion (blank lines between blocks),
+    and `flatten` performs normalization (collapsing consecutive blanks) before
+    joining into the final prompt string.
+    """
+
+    _parts: List[Dict[str, str]] = field(default_factory=list)
+
+    def add(self, part: str, separator: bool = True) -> None:
+        """Add a part, optionally with a preceding blank line separator.
+
+        Parameters
+        ----------
+        part : str
+            The content to add.
+        separator : bool
+            If True (default), a blank line entry is prepended before the part.
+            Set to False for the first part or when no separator is desired.
+        """
+        if separator:
+            self._parts.append({"type": "text", "content": ""})
+        self._parts.append({"type": "text", "content": part})
+
+    def to_list(self) -> List[Dict[str, str]]:
+        """Return the internal structured parts, omitting empty separator entries."""
+        return [p for p in self._parts if p["content"]]
+
+    def flatten(self) -> str:
+        """Normalize and return the full prompt string.
+
+        Normalization removes consecutive empty strings and trailing blanks,
+        then joins all content with newlines.
+        """
+        contents = [p["content"] for p in self._parts]
+        normalized: List[str] = []
+        for c in contents:
+            if c == "" and (not normalized or normalized[-1] == ""):
+                continue
+            normalized.append(c)
+        if normalized and normalized[-1] == "":
+            normalized.pop()
+        return "\n".join(normalized)
 
 
 def render_tools_block(tools: Dict[str, Callable]) -> str:
@@ -619,44 +671,38 @@ def compose_system_prompt(spec: PromptSpec) -> str:
     # Determine if using schema-based table info (preferred) vs legacy columns
     use_schema_table_info = spec.table_schema_name is not None
 
-    parts: List[str] = []
+    parts = PromptParts()
 
     # 1) Role and global directives
-    parts.append(spec.role_line)
-    if spec.global_directives:
-        parts.extend(spec.global_directives)
+    parts.add(spec.role_line, separator=False)
+    for directive in spec.global_directives:
+        parts.add(directive, separator=False)
 
     # 2) Method‑specific policy guard
     if spec.include_read_only_guard:
-        parts.append("")
-        parts.append(read_only_ask_mutation_exit_block())
+        parts.add(read_only_ask_mutation_exit_block())
 
     # 3) Clarification – top sentence
-    parts.append("")
-    parts.append(clarification_top_sentence(spec.tools))
+    parts.add(clarification_top_sentence(spec.tools))
 
     # 4) Positioning lines
     if spec.positioning_lines:
-        parts.append("")
         for idx, block in enumerate(spec.positioning_lines):
-            if idx > 0:
-                parts.append("")
-            parts.append(block)
+            # First positioning line gets a separator, subsequent ones also get separators
+            parts.add(block)
 
     # 5) Schemas - render EARLY when using schema-based table info
     #    This ensures schemas appear before they are referenced in table info
     if use_schema_table_info and spec.schemas:
         rendered = render_schemas(spec.schemas)
         if _nonempty(rendered):
-            parts.append("")
-            parts.append(rendered)
+            parts.add(rendered)
 
     # 6) Counts and table info
     if spec.counts_entity_plural is not None and spec.counts_value is not None:
-        parts.append("")
         if use_schema_table_info:
             # Schema-based: reference schema instead of duplicating columns
-            parts.append(
+            parts.add(
                 render_table_info(
                     entity_plural=spec.counts_entity_plural,
                     count=spec.counts_value,
@@ -666,7 +712,7 @@ def compose_system_prompt(spec: PromptSpec) -> str:
             )
         elif spec.columns_payload is not None:
             # Legacy: include full columns (may duplicate schema)
-            parts.append(
+            parts.add(
                 render_counts_and_columns(
                     entity_plural=spec.counts_entity_plural,
                     count=spec.counts_value,
@@ -677,61 +723,43 @@ def compose_system_prompt(spec: PromptSpec) -> str:
 
     # 7) Tools block
     if spec.include_tools_block:
-        parts.append("")
-        parts.append(render_tools_block(spec.tools))
+        parts.add(render_tools_block(spec.tools))
 
     # 8) Usage examples (+ optional clarification examples)
     if _nonempty(spec.usage_examples):
-        parts.append("")
-        parts.append(spec.usage_examples or "")
+        parts.add(spec.usage_examples or "")
     if _nonempty(spec.clarification_examples_block):
-        parts.append(spec.clarification_examples_block or "")
+        parts.add(spec.clarification_examples_block or "", separator=False)
 
     # 9) Images policy/forwarding/extras
     if spec.include_images_policy:
-        parts.append("")
-        parts.append(images_policy_block())
+        parts.add(images_policy_block())
     if spec.include_images_forwarding:
-        parts.append("")
-        parts.append(images_forwarding_block())
+        parts.add(images_forwarding_block())
     if _nonempty(spec.images_extras_block):
-        parts.append("")
-        parts.append(spec.images_extras_block or "")
+        parts.add(spec.images_extras_block or "")
 
     # 10) Parallelism guidance
     if spec.include_parallelism:
-        parts.append("")
-        parts.append(parallelism_guidance())
+        parts.add(parallelism_guidance())
 
     # 11) Schemas - render late if NOT using schema-based table info (legacy)
     if not use_schema_table_info and spec.schemas:
         rendered = render_schemas(spec.schemas)
         if _nonempty(rendered):
-            parts.append("")
-            parts.append(rendered)
+            parts.add(rendered)
 
     # 12) Special blocks
     for block in spec.special_blocks:
         if _nonempty(block):
-            parts.append("")
-            parts.append(block)
+            parts.add(block)
 
     # 13) Current time footer
     if spec.include_time_footer:
-        parts.append("")
-        parts.append(f"{spec.time_footer_prefix}{now()}.")
+        parts.add(f"{spec.time_footer_prefix}{now()}.")
 
     # 14) Clarification footer (single-sourced guidance sentence)
     if spec.include_clarification_footer:
-        parts.append("")
-        parts.append(clarification_guidance(spec.tools))
+        parts.add(clarification_guidance(spec.tools))
 
-    # Clean leading/trailing empties and join
-    normalized: List[str] = []
-    for p in parts:
-        if p == "" and (not normalized or normalized[-1] == ""):
-            continue
-        normalized.append(p)
-    if normalized and normalized[-1] == "":
-        normalized.pop()
-    return "\n".join(normalized)
+    return parts.flatten()
