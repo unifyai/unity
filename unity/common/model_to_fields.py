@@ -32,11 +32,24 @@ def _is_nested_schema(prop: dict[str, Any]) -> bool:
     # Array of objects with properties
     if prop.get("type") == "array":
         items = prop.get("items", {})
-        if isinstance(items, dict) and items.get("properties"):
-            return True
+        if isinstance(items, dict):
+            # Direct object items
+            if items.get("properties"):
+                return True
+            # Items with anyOf (union types like RawImageRef | AnnotatedImageRef)
+            if "anyOf" in items:
+                for sub in items["anyOf"]:
+                    if isinstance(sub, dict) and sub.get("properties"):
+                        return True
     # Object with defined properties
     if prop.get("type") == "object" and prop.get("properties"):
         return True
+    # Handle anyOf (Optional types) - check if any non-null branch is nested
+    if "anyOf" in prop:
+        for sub in prop["anyOf"]:
+            if isinstance(sub, dict) and sub.get("type") != "null":
+                if _is_nested_schema(sub):
+                    return True
     return False
 
 

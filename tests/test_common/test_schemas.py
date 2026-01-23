@@ -1,18 +1,20 @@
 """
 pytest tests for the helper utilities:
 
+* model_to_fields                – Pydantic model → unify field schema (unit tests)
 * annotation_to_schema           – all supported annotation kinds
 * method_to_schema               – schema structure & enum handling
 """
 
 from __future__ import annotations
 
+import json
+from datetime import date, datetime, time, UTC
 from enum import Enum
 
-import unify
 import pytest
-from pydantic import BaseModel
-from datetime import datetime, UTC
+import unify
+from pydantic import BaseModel, Field
 
 from tests.helpers import _handle_project
 from unity.common.context_store import TableStore
@@ -20,6 +22,170 @@ from unity.common.model_to_fields import model_to_fields
 from unity.transcript_manager.types.message import Message
 
 import unity.common.llm_helpers as llmh
+
+# --------------------------------------------------------------------------- #
+#  UNIT TESTS: model_to_fields                                                #
+#  These run without Orchestra and catch schema structure issues immediately  #
+# --------------------------------------------------------------------------- #
+
+
+class _NestedChild(BaseModel):
+    child_id: int
+    label: str
+
+
+class _NestedParent(BaseModel):
+    parent_id: int
+    child: _NestedChild
+    children: list[_NestedChild]
+    optional_child: _NestedChild | None = None
+
+
+class _SimpleModel(BaseModel):
+    name: str
+    age: int
+    score: float
+    active: bool
+    created_at: datetime
+    birth_date: date
+    check_time: time
+    tags: list[str]
+    metadata: dict[str, str]
+    maybe_count: int | None = None
+
+
+class _OverrideModel(BaseModel):
+    normal_field: str
+    image_field: str = Field(json_schema_extra={"unify_type": "image"})
+
+
+class _LongDescriptionModel(BaseModel):
+    short_desc: str = Field(description="Short description")
+    long_desc: str = Field(
+        description="A" * 300,  # Exceeds Orchestra's 256 char limit
+    )
+
+
+def test_model_to_fields_no_ref_pointers():
+    """$ref pointers must be resolved inline - no dangling references."""
+    fields = model_to_fields(Message)
+    serialized = json.dumps(fields)
+    assert "$ref" not in serialized, "Found unresolved $ref in model_to_fields output"
+
+
+def test_model_to_fields_nested_keys_present():
+    """Nested Pydantic models must have their property names in the serialized schema."""
+    fields = model_to_fields(Message)
+    images_type = fields["images"]["type"]
+    # images contains AnnotatedImageRef with raw_image_ref.image_id and annotation
+    assert "raw_image_ref" in images_type
+    assert "annotation" in images_type
+    assert "image_id" in images_type
+
+
+def test_model_to_fields_simple_type_mapping():
+    """Simple types map to ColumnType strings, not JSON schemas."""
+    fields = model_to_fields(_SimpleModel)
+
+    # String types
+    assert fields["name"]["type"] == "str"
+
+    # Numeric types
+    assert fields["age"]["type"] == "int"
+    assert fields["score"]["type"] == "float"
+
+    # Boolean
+    assert fields["active"]["type"] == "bool"
+
+    # Date/time types
+    assert fields["created_at"]["type"] == "datetime"
+    assert fields["birth_date"]["type"] == "date"
+    assert fields["check_time"]["type"] == "time"
+
+    # Containers (simple - not nested objects)
+    assert fields["tags"]["type"] == "list"
+    assert fields["metadata"]["type"] == "dict"
+
+    # Optional unwraps to underlying type
+    assert fields["maybe_count"]["type"] == "int"
+
+
+def test_model_to_fields_nested_serialized_as_json():
+    """Nested object schemas are serialized as JSON strings."""
+    fields = model_to_fields(_NestedParent)
+
+    # Single nested object
+    child_type = fields["child"]["type"]
+    assert child_type.startswith("{"), "Nested object should be JSON string"
+    child_schema = json.loads(child_type)
+    assert "child_id" in str(child_schema)
+    assert "label" in str(child_schema)
+
+    # List of nested objects
+    children_type = fields["children"]["type"]
+    assert children_type.startswith("{"), "List of objects should be JSON string"
+    children_schema = json.loads(children_type)
+    assert children_schema.get("type") == "array"
+    assert "child_id" in str(children_schema)
+
+    # Optional nested object
+    optional_type = fields["optional_child"]["type"]
+    assert optional_type.startswith("{"), "Optional nested should be JSON string"
+    assert "child_id" in optional_type
+
+
+def test_model_to_fields_unify_type_override():
+    """json_schema_extra={'unify_type': ...} takes precedence."""
+    fields = model_to_fields(_OverrideModel)
+
+    assert fields["normal_field"]["type"] == "str"
+    assert fields["image_field"]["type"] == "image"
+
+
+def test_model_to_fields_uses_field_description():
+    """Description comes from Field(..., description=...), not JSON Schema."""
+    fields = model_to_fields(_LongDescriptionModel)
+
+    # Short description is preserved
+    assert fields["short_desc"].get("description") == "Short description"
+
+    # Long description is also preserved (truncation happens in Orchestra, not here)
+    # The key point is we use Field.description, not the JSON Schema description
+    assert fields["long_desc"].get("description") == "A" * 300
+
+
+def test_model_to_fields_mutable_flag():
+    """All fields should have mutable=True."""
+    fields = model_to_fields(_SimpleModel)
+    for name, field_spec in fields.items():
+        assert field_spec.get("mutable") is True, f"Field {name} missing mutable=True"
+
+
+def test_model_to_fields_message_schema_complete():
+    """Message model produces expected field structure."""
+    fields = model_to_fields(Message)
+
+    # All expected fields present
+    expected_fields = {
+        "message_id",
+        "medium",
+        "sender_id",
+        "receiver_ids",
+        "timestamp",
+        "content",
+        "exchange_id",
+        "images",
+    }
+    assert expected_fields <= set(fields.keys())
+
+    # Simple fields have ColumnType strings
+    assert fields["message_id"]["type"] == "int"
+    assert fields["medium"]["type"] == "str"
+    assert fields["timestamp"]["type"] == "datetime"
+    assert fields["content"]["type"] == "str"
+
+    # Nested field (images) is serialized JSON
+    assert fields["images"]["type"].startswith("{")
 
 
 # --------------------------------------------------------------------------- #
