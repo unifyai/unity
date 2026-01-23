@@ -117,6 +117,13 @@ def _strip_custom_function_decorators(source: str) -> str:
     The @custom_function decorator is used for sync metadata only (it is effectively
     a no-op at runtime), but the symbol is not guaranteed to exist inside execution
     environments (e.g., Actor sandboxes or venv runner subprocesses).
+
+    Handles both single-line and multi-line decorator syntax:
+        @custom_function(venv_name="foo")  # single-line
+        @custom_function(                   # multi-line
+            venv_name="foo",
+            verify=True,
+        )
     """
     try:
         lines = source.splitlines(keepends=True)
@@ -125,13 +132,44 @@ def _strip_custom_function_decorators(source: str) -> str:
 
     out: List[str] = []
     seen_def = False
+    in_custom_decorator = False
+    paren_depth = 0
+
     for line in lines:
         stripped = line.lstrip()
-        if not seen_def and stripped.startswith("@custom_function"):
+
+        # Once we've seen the function definition, keep all lines
+        if seen_def:
+            out.append(line)
             continue
+
         if stripped.startswith("def ") or stripped.startswith("async def "):
             seen_def = True
+            out.append(line)
+            continue
+
+        # Check if this line starts a @custom_function decorator
+        if stripped.startswith("@custom_function"):
+            in_custom_decorator = True
+            # Count parentheses to handle multi-line decorators
+            paren_depth += stripped.count("(") - stripped.count(")")
+            # If parens are balanced on this line, decorator is complete
+            if paren_depth <= 0:
+                in_custom_decorator = False
+                paren_depth = 0
+            continue
+
+        # If we're inside a multi-line @custom_function decorator, skip lines
+        if in_custom_decorator:
+            paren_depth += stripped.count("(") - stripped.count(")")
+            if paren_depth <= 0:
+                in_custom_decorator = False
+                paren_depth = 0
+            continue
+
+        # Keep other decorators and lines before the function def
         out.append(line)
+
     return "".join(out)
 
 
@@ -5032,6 +5070,9 @@ class FunctionManager(BaseFunctionManager):
 
         from unity.session_details import SESSION_DETAILS
 
+        # Strip @custom_function decorators (not available on remote Windows)
+        implementation = _strip_custom_function_decorators(implementation)
+
         func_name_meta = func_data.get("name", "unknown")
         print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
 
@@ -5128,7 +5169,7 @@ import asyncio
 import sys
 
 # Function implementation
-{implementation.split(")", 1)[1]}
+{implementation}
 
 # Execution wrapper
 def _main():
@@ -5246,18 +5287,6 @@ if __name__ == "__main__":
                         f"output '{arg_name}': {e}",
                     )
                     # Don't fail the whole execution for output download issues
-
-            # Step 8: Clean up temporary files (commented out for debugging)
-            # async with session.post(
-            #     f"{desktop_url}/api/files",
-            #     json={
-            #         "action": "delete",
-            #         "filenames": [script_filename, result_filename],
-            #     },
-            #     headers=headers,
-            #     timeout=aiohttp.ClientTimeout(total=30),
-            # ) as _:
-            #     pass  # Best effort cleanup
 
             return {
                 "result": result_data.get("result"),
