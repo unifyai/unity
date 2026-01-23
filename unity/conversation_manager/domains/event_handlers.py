@@ -94,9 +94,6 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         message_content = None
         notif_content = None
         boss = cm.contact_index.get_contact(contact_id=1)
-        print("PhoneCallReceived event:", event)
-        print("Fallback contacts:", cm.contact_index._fallback_contacts)
-        print("Boss contact:", boss)
         if isinstance(event, UnifyMeetReceived):
             contact = boss
         else:
@@ -443,10 +440,8 @@ async def _(event: BackupContactsEvent, cm: "ConversationManager", *args, **kwar
     ensuring contacts from recent inbounds are always available even before
     or during ContactManager initialization.
     """
-    print("BackupContactsEvent handler")
     if cm.contact_index._contact_manager:
         return
-    print(f"Caching {len(event.contacts)} contacts from inbound")
     cm._session_logger.debug(
         "backup_contacts",
         f"Caching {len(event.contacts)} contacts from inbound",
