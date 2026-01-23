@@ -54,8 +54,11 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Should be valid JSON conforming to the schema
-    parsed = ContactSummary.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, ContactSummary):
+        parsed = result
+    else:
+        parsed = ContactSummary.model_validate_json(result)
 
     assert isinstance(parsed.total_count, int)
     assert parsed.total_count >= 0
@@ -75,7 +78,11 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    parsed = ContactUpdateResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, ContactUpdateResult):
+        parsed = result
+    else:
+        parsed = ContactUpdateResult.model_validate_json(result)
 
     assert isinstance(parsed.success, bool)
     assert parsed.action_taken.strip(), "Action description should be non-empty"
@@ -100,7 +107,11 @@ async def test_real_ask_response_format(
     )
     result = await handle.result()
 
-    parsed = ContactSummary.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, ContactSummary):
+        parsed = result
+    else:
+        parsed = ContactSummary.model_validate_json(result)
 
     # We know from the fixture there are multiple contacts
     assert parsed.total_count > 0, "Should find at least one contact"
@@ -122,7 +133,11 @@ async def test_real_update_response_format(
     )
     result = await handle.result()
 
-    parsed = ContactUpdateResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, ContactUpdateResult):
+        parsed = result
+    else:
+        parsed = ContactUpdateResult.model_validate_json(result)
 
     assert isinstance(parsed.success, bool)
     assert parsed.action_taken.strip(), "Action description should be non-empty"
