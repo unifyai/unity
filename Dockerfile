@@ -81,7 +81,7 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
 
 # Copy source and install unity with dependencies
 COPY . /app
-RUN uv pip install --no-cache .
+RUN uv pip install --system --no-cache .
 
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
