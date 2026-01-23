@@ -4867,7 +4867,7 @@ class FunctionManager(BaseFunctionManager):
 
                 try:
                     async with session.get(
-                        f"{comms_url}/infra/vm/status/369",
+                        f"{comms_url}/infra/vm/status/{assistant_id}",
                         headers={"Authorization": f"Bearer {admin_key}"},
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
@@ -5035,8 +5035,7 @@ class FunctionManager(BaseFunctionManager):
         print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
 
         # Step 1: Get desktop URL
-        # desktop_url = await self._wait_for_remote_windows_vm_ready()
-        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        desktop_url = await self._wait_for_remote_windows_vm_ready()
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
         # Step 2: Prepare venv on remote (if specified)
