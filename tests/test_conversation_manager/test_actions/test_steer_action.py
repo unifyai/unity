@@ -34,7 +34,9 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
 )
 
-pytestmark = pytest.mark.eval
+# Actions need to stay in-flight for steering to be applied.
+# Max steering ops in this file: 3 (test_pause_interject_resume_sequence: pause + interject + resume)
+pytestmark = [pytest.mark.eval, pytest.mark.simulated_actor_steps(3)]
 
 # Note: BOSS (contact_id=1) is imported from conftest.py
 
