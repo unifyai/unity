@@ -4688,6 +4688,7 @@ class FunctionManager(BaseFunctionManager):
 
         Uses the same path mapping: C:\\Unity\\path\\... → /path/...
         """
+        import aiohttp
         import base64
         from pathlib import Path
 
