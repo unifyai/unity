@@ -452,8 +452,8 @@ async def test_clarification_request(
     judge = new_llm_client(async_client=False)
     judge.set_system_message(
         'Answer strictly with JSON: {"correct": true|false} – '
-        "true iff the candidate contains the exact date 2025-05-20, "
-        "but this can be expressed in any date format (does **not** need to be yyyy-mm-dd)",
+        "true iff the candidate contains a date matching May 20, 2025 in any format "
+        "(e.g., 'May 20th', '20th May', '2025-05-20', 'May 20, 2025') - the year can be omitted",
     )
     verdict = judge.generate(
         _dumps(
