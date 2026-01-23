@@ -66,8 +66,11 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Should be valid JSON conforming to the schema
-    parsed = TaskListSummary.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, TaskListSummary):
+        parsed = result
+    else:
+        parsed = TaskListSummary.model_validate_json(result)
 
     assert isinstance(parsed.total_tasks, int)
     assert parsed.total_tasks >= 0
@@ -88,7 +91,11 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    parsed = TaskUpdateResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, TaskUpdateResult):
+        parsed = result
+    else:
+        parsed = TaskUpdateResult.model_validate_json(result)
 
     assert isinstance(parsed.success, bool)
     assert parsed.action_taken.strip(), "Action description should be non-empty"
@@ -106,7 +113,11 @@ async def test_simulated_execute_response_format():
     )
     result = await handle.result()
 
-    parsed = TaskExecutionResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, TaskExecutionResult):
+        parsed = result
+    else:
+        parsed = TaskExecutionResult.model_validate_json(result)
 
     assert isinstance(parsed.completed, bool)
     assert parsed.outcome.strip(), "Outcome should be non-empty"

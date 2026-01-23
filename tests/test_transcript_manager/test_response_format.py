@@ -47,8 +47,11 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Should be valid JSON conforming to the schema
-    parsed = TranscriptSummary.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, TranscriptSummary):
+        parsed = result
+    else:
+        parsed = TranscriptSummary.model_validate_json(result)
 
     assert isinstance(parsed.total_messages, int)
     assert parsed.total_messages >= 0

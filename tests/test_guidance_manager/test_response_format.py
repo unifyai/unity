@@ -57,8 +57,11 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Should be valid JSON conforming to the schema
-    parsed = GuidanceQueryResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, GuidanceQueryResult):
+        parsed = result
+    else:
+        parsed = GuidanceQueryResult.model_validate_json(result)
 
     assert isinstance(parsed.guidance_count, int)
     assert parsed.guidance_count >= 0
@@ -79,7 +82,11 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    parsed = GuidanceUpdateResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, GuidanceUpdateResult):
+        parsed = result
+    else:
+        parsed = GuidanceUpdateResult.model_validate_json(result)
 
     assert isinstance(parsed.success, bool)
     assert parsed.action_taken.strip(), "Action description should be non-empty"

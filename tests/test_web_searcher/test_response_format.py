@@ -58,8 +58,11 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Should be valid JSON conforming to the schema
-    parsed = SearchResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, SearchResult):
+        parsed = result
+    else:
+        parsed = SearchResult.model_validate_json(result)
 
     assert isinstance(parsed.sources_count, int)
     assert parsed.sources_count >= 0
@@ -80,7 +83,11 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    parsed = WebsiteUpdateResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, WebsiteUpdateResult):
+        parsed = result
+    else:
+        parsed = WebsiteUpdateResult.model_validate_json(result)
 
     assert isinstance(parsed.success, bool)
     assert parsed.action_taken.strip(), "Action description should be non-empty"

@@ -54,8 +54,11 @@ async def test_simulated_act_response_format():
     handle.trigger_completion()
     result = await handle.result()
 
-    # SimulatedActor returns a JSON string; validate it conforms to the schema.
-    parsed = ActionResult.model_validate_json(result)
+    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    if isinstance(result, ActionResult):
+        parsed = result
+    else:
+        parsed = ActionResult.model_validate_json(result)
 
     assert isinstance(parsed.completed, bool)
     assert isinstance(parsed.steps_taken, list)
