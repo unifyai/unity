@@ -515,7 +515,13 @@ class InterjectionDecision(_StrictBaseModel):
         "complete_task",
         "refactor_and_generalize",
     ] = Field(..., description="The chosen action based on the user's interjection.")
-    reason: str = Field(..., description="A brief justification for the chosen action.")
+    reason: str = Field(
+        ...,
+        description=(
+            "A 2–3 line justification that explains why this action was chosen "
+            "and why the key alternatives were not chosen."
+        ),
+    )
     patches: Optional[List[FunctionPatch]] = Field(
         None,
         description="A list of functions to be updated. Required for 'modify_task'.",

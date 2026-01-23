@@ -812,6 +812,9 @@ def _build_interjection_static_prefix(
         ### Your Task: Analyze, Decide (Routing vs Patching), and Only Patch When Needed
 
         **1. Analyze Intent:** Choose the best action from the Decision Tree below.
+            - Classify the interjection as one of: (a) scope/tone/formatting update,
+              (b) correction to a selection/lookup already in-flight, (c) new functionality
+              or goal change, or (d) ambiguous/underspecified.
 
         **2. Decide: Routing-only vs Plan Patching (CRITICAL)**
 
@@ -844,6 +847,11 @@ def _build_interjection_static_prefix(
             - Create `FunctionPatch` for each modified function.
             - Omit `patches` for routing-only interjections (set `routing_action` instead).
             - If you include `patches`, your `reason` must state *why routing-only is insufficient* (e.g., future tool calls must change, plan logic must change, goal changed).
+
+        **Decision Rationale (REQUIRED):**
+            - In the `reason` field, write **2–3 lines**.
+            - Explicitly state **why the chosen action is best** and **why the key alternatives were not chosen**
+              (e.g., routing vs patching, modify_task vs replace_task, clarify vs proceed).
 
         **4. Devise Cache Strategy (CRITICAL for `modify_task` WITH PATCHES):**
 
