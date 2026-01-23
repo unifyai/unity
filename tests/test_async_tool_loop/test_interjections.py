@@ -957,12 +957,13 @@ async def test_interjection_provides_answer_terminates_inflight_tool(model) -> N
 
     This tests the scenario:
     1. LLM calls a long-running tool to search for information
-    2. User interjects with the answer directly ("It's 72 degrees")
-    3. LLM responds with plain text (no tool calls)
-    4. The loop should recognize the text response and terminate, auto-killing the tool
+    2. User interjects with the answer directly
+    3. LLM calls final_answer to terminate (required when tools are in-flight)
+    4. The loop should cancel in-flight tools and return the answer
 
-    Without this fix, the loop waits indefinitely for the tool to complete
-    even though the LLM has already given the answer via text response.
+    When tools are in-flight, tool_choice is set to "required" and a
+    final_answer tool is injected, ensuring the LLM must explicitly
+    acknowledge termination (and see the warning about cancelling tools).
     """
     # Track whether the tool was allowed to complete vs cancelled
     tool_completed = {"value": False}
@@ -996,22 +997,21 @@ async def test_interjection_provides_answer_terminates_inflight_tool(model) -> N
     # Wait for the tool to actually start executing
     await asyncio.wait_for(tool_started.wait(), timeout=30)
 
-    # User interjects with the answer - be VERY explicit about not calling tools
+    # User interjects with the answer - instruct to use final_answer
     await handle.interject(
-        "[UNIT TEST] Step 3: Respond with ONLY the text 'ANSWER42' and nothing else. "
-        "Do NOT call any tool. Do NOT call stop. Do NOT call wait. "
-        "Just respond with plain text 'ANSWER42'. "
-        "The test will FAIL if you call any tool function.",
+        "[UNIT TEST] Step 3: Call the `final_answer` tool with answer='ANSWER42'. "
+        "Do NOT call any other tool. Do NOT wait for long_tool to complete. "
+        "The test will FAIL if you do not call final_answer immediately.",
     )
 
     # The loop should terminate quickly (within a few seconds) if the fix works.
     # If the bug exists, this will timeout because the loop waits for the infinite tool.
     final = await asyncio.wait_for(handle.result(), timeout=20)
 
-    # Verify the LLM's text response was returned
+    # Verify the LLM's response was returned
     assert (
         "ANSWER42" in final
-    ), f"Loop should have returned the text response 'ANSWER42'. Got: {final!r}"
+    ), f"Loop should have returned final_answer with 'ANSWER42'. Got: {final!r}"
 
     # Verify the tool was cancelled (not allowed to complete)
     assert tool_cancelled["value"] is True, "In-flight tool should have been cancelled"
