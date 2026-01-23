@@ -331,6 +331,19 @@ def _is_synthetic_check_status_stub(msg: dict) -> bool:
     )
 
 
+def _is_synthetic_check_status_tool_msg(msg: dict) -> bool:
+    """Check if this tool message is a synthetic check_status_ response.
+
+    These are paired with synthetic assistant stubs and contain the actual
+    tool result that was moved to the end of the transcript for chronological
+    ordering.
+    """
+    if msg.get("role") != "tool":
+        return False
+    name = msg.get("name") or ""
+    return isinstance(name, str) and name.startswith("check_status_")
+
+
 def _count_non_synthetic_assistant_messages(msgs: Sequence[Any]) -> int:
     """Count assistant messages that are not synthetic check_status_ stubs."""
     count = 0
@@ -341,6 +354,191 @@ def _count_non_synthetic_assistant_messages(msgs: Sequence[Any]) -> int:
             continue
         count += 1
     return count
+
+
+# --------------------------------------------------------------------------- #
+#  REAL (NON-SYNTHETIC) MESSAGE FILTERING                                      #
+# --------------------------------------------------------------------------- #
+
+
+def real_assistant_tool_turns(msgs: List[dict]) -> List[dict]:
+    """Return assistant turns that contain tool_calls, excluding synthetic check_status_ stubs.
+
+    This is the recommended helper for tests that need to iterate over actual
+    LLM decisions (tool calls), without being affected by synthetic entries
+    that are inserted for chronological ordering when tools complete after
+    interjections arrive.
+
+    Example:
+        turns = real_assistant_tool_turns(client.messages)
+        assert turns[0]["tool_calls"][0]["function"]["name"] == "echo"
+    """
+    return [
+        m
+        for m in msgs
+        if m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and not _is_synthetic_check_status_stub(m)
+    ]
+
+
+def real_tool_messages(msgs: List[dict], tool_name: str | None = None) -> List[dict]:
+    """Return tool result messages, excluding synthetic check_status_ responses.
+
+    Args:
+        msgs: The message transcript.
+        tool_name: If provided, only return tool messages with this exact name.
+
+    Returns:
+        List of tool messages that are actual tool results (not synthetic).
+    """
+    results = []
+    for m in msgs:
+        if m.get("role") != "tool":
+            continue
+        if _is_synthetic_check_status_tool_msg(m):
+            continue
+        if tool_name is not None and m.get("name") != tool_name:
+            continue
+        results.append(m)
+    return results
+
+
+def nth_real_assistant_tool_turn(msgs: List[dict], n: int) -> dict:
+    """Return the nth (0-indexed) real assistant turn with tool_calls.
+
+    Raises AssertionError if there aren't enough real assistant tool turns.
+    """
+    turns = real_assistant_tool_turns(msgs)
+    if n >= len(turns):
+        raise AssertionError(
+            f"Expected at least {n + 1} real assistant tool turns, found {len(turns)}",
+        )
+    return turns[n]
+
+
+def find_assistant_tool_call(
+    msgs: List[dict],
+    tool_name: str,
+    *,
+    args_contain: dict | None = None,
+    occurrence: int = 1,
+) -> tuple[dict, dict] | None:
+    """Find an assistant turn that calls a specific tool, optionally matching args.
+
+    Args:
+        msgs: The message transcript.
+        tool_name: The tool name to search for.
+        args_contain: If provided, the tool call arguments must contain these key-value pairs.
+        occurrence: Which occurrence to return (1-indexed). Default is 1 (first match).
+
+    Returns:
+        (assistant_message, tool_call_dict) or None if not found.
+    """
+    import json
+
+    matches_found = 0
+    for m in msgs:
+        if m.get("role") != "assistant":
+            continue
+        if _is_synthetic_check_status_stub(m):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function", {}) or {}
+            if fn.get("name") != tool_name:
+                continue
+            if args_contain is not None:
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    continue
+                if not all(args.get(k) == v for k, v in args_contain.items()):
+                    continue
+            matches_found += 1
+            if matches_found == occurrence:
+                return m, tc
+    return None
+
+
+# --------------------------------------------------------------------------- #
+#  INDEX-AGNOSTIC ORDERING ASSERTIONS                                          #
+# --------------------------------------------------------------------------- #
+
+
+def message_appears_before(
+    msgs: List[dict],
+    first_predicate,
+    second_predicate,
+) -> bool:
+    """Check if a message matching first_predicate appears before one matching second_predicate.
+
+    Args:
+        msgs: The message transcript.
+        first_predicate: A callable that returns True for the first message to find.
+        second_predicate: A callable that returns True for the second message to find.
+
+    Returns:
+        True if first appears before second, False otherwise.
+    """
+    first_idx = None
+    second_idx = None
+    for i, m in enumerate(msgs):
+        if first_idx is None and first_predicate(m):
+            first_idx = i
+        if second_idx is None and second_predicate(m):
+            second_idx = i
+    if first_idx is None or second_idx is None:
+        return False
+    return first_idx < second_idx
+
+
+def find_message_index(msgs: List[dict], predicate) -> int | None:
+    """Find the index of the first message matching predicate, or None if not found."""
+    for i, m in enumerate(msgs):
+        if predicate(m):
+            return i
+    return None
+
+
+def is_user_interjection_containing(snippet: str):
+    """Return a predicate that matches user messages containing the given snippet.
+
+    This is useful for finding interjection messages by content.
+    """
+
+    def _predicate(m: dict) -> bool:
+        return m.get("role") == "user" and snippet in (m.get("content") or "")
+
+    return _predicate
+
+
+def is_real_assistant_calling(tool_name: str):
+    """Return a predicate that matches real (non-synthetic) assistant turns calling tool_name."""
+
+    def _predicate(m: dict) -> bool:
+        if m.get("role") != "assistant":
+            return False
+        if _is_synthetic_check_status_stub(m):
+            return False
+        for tc in m.get("tool_calls") or []:
+            if (tc.get("function", {}) or {}).get("name") == tool_name:
+                return True
+        return False
+
+    return _predicate
+
+
+def is_tool_result_for(tool_name: str):
+    """Return a predicate that matches real (non-synthetic) tool results for tool_name."""
+
+    def _predicate(m: dict) -> bool:
+        if m.get("role") != "tool":
+            return False
+        if _is_synthetic_check_status_tool_msg(m):
+            return False
+        return m.get("name") == tool_name
+
+    return _predicate
 
 
 async def _wait_for_any_assistant_tool_call(

@@ -12,8 +12,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import Any, List
+from typing import List
 
 import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
@@ -24,6 +23,11 @@ from tests.async_helpers import (
     _wait_for_tool_result,
     _wait_for_condition,
     _wait_for_any_assistant_tool_call,
+    real_assistant_tool_turns,
+    find_assistant_tool_call,
+    message_appears_before,
+    is_user_interjection_containing,
+    _is_synthetic_check_status_stub,
 )
 
 
@@ -112,11 +116,6 @@ def _effectively_adjacent(msgs: List[dict], idx1: int, idx2: int) -> bool:
     return True
 
 
-def _assistant_tool_turns(msgs: List[dict[str, Any]]):
-    """Yield assistant turns that contain tool_calls."""
-    return [m for m in msgs if m["role"] == "assistant" and m.get("tool_calls")]
-
-
 # --------------------------------------------------------------------------- #
 #  TESTS                                                                      #
 # --------------------------------------------------------------------------- #
@@ -147,39 +146,43 @@ async def test_interject_triggers_tool_and_result(model):
 
     msgs = client.messages
 
-    assistant_tool_turns = _assistant_tool_turns(msgs)
-    assert len(assistant_tool_turns) >= 2
-
-    first_args = json.loads(
-        assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"],
-    )
-    assert first_args == {"txt": "A"}
-
-    second_tool_calls = assistant_tool_turns[1]["tool_calls"]
-
-    echo_b_found = False
-    for call in second_tool_calls:
-        try:
-            args = json.loads(call["function"]["arguments"])
-            if args == {"txt": "B"} and call["function"]["name"] == "echo":
-                echo_b_found = True
-                break
-        except (json.JSONDecodeError, KeyError):
-            continue
-
+    # Use real_assistant_tool_turns to filter out synthetic check_status_* entries
+    # that may be inserted when tools complete after interjections arrive
+    tool_turns = real_assistant_tool_turns(msgs)
     assert (
-        echo_b_found
-    ), f"Second assistant turn should include echo('B'), got: {second_tool_calls}"
+        len(tool_turns) >= 2
+    ), f"Expected at least 2 real assistant tool turns, got {len(tool_turns)}"
 
-    idx_first_asst = msgs.index(assistant_tool_turns[0])
-    idx_inter_B = _interjection_index(msgs, "echo B")
-    idx_second_asst = msgs.index(assistant_tool_turns[1])
-    assert idx_first_asst < idx_inter_B < idx_second_asst
+    # Verify echo("A") was called (using find_assistant_tool_call for robustness)
+    echo_a_result = find_assistant_tool_call(msgs, "echo", args_contain={"txt": "A"})
+    assert echo_a_result is not None, "Expected echo('A') call not found"
 
-    # Interjections are now simple user messages (not system messages with wrapper content)
-    inter_msg = msgs[idx_inter_B]
-    assert inter_msg["role"] == "user"
-    assert "echo B" in inter_msg["content"]
+    # Verify echo("B") was called
+    echo_b_result = find_assistant_tool_call(msgs, "echo", args_contain={"txt": "B"})
+    assert echo_b_result is not None, "Expected echo('B') call not found"
+
+    # Verify ordering: echo("A") call → interjection → echo("B") call
+    # Use index-agnostic ordering check
+    echo_a_msg, _ = echo_a_result
+    echo_b_msg, _ = echo_b_result
+
+    assert message_appears_before(
+        msgs,
+        lambda m: m is echo_a_msg,
+        is_user_interjection_containing("echo B"),
+    ), "echo('A') should appear before the interjection"
+
+    assert message_appears_before(
+        msgs,
+        is_user_interjection_containing("echo B"),
+        lambda m: m is echo_b_msg,
+    ), "Interjection should appear before echo('B')"
+
+    # Verify the interjection message exists and has expected content
+    interjection_found = any(
+        m.get("role") == "user" and "echo B" in (m.get("content") or "") for m in msgs
+    )
+    assert interjection_found, "Interjection message with 'echo B' not found"
 
 
 @pytest.mark.asyncio
@@ -322,24 +325,29 @@ async def test_patient_interjection_defers_turn(
 
     final = await h.result()
 
-    # There should be two assistant messages: the original and the deferred one
-    assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
+    # There should be at least two assistant messages: the original and the deferred one
+    # Filter out synthetic check_status stubs that may be inserted for chronological ordering
+    assistant_msgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "assistant" and not _is_synthetic_check_status_stub(m)
+    ]
     assert len(assistant_msgs) >= 2
 
     # Verify the user interjection message is present and appears between the two assistant turns
     # Interjections are now user messages (not system messages) for Claude/Gemini compatibility
-    interjection_indices = [
-        i
-        for i, m in enumerate(client.messages)
-        if m.get("role") == "user"
-        and "please consider this later" in (m.get("content") or "")
-    ]
-    assert (
-        interjection_indices
-    ), "Expected a user interjection message in the transcript"
-    idx_first_asst = client.messages.index(assistant_msgs[0])
-    idx_second_asst = client.messages.index(assistant_msgs[-1])
-    assert any(idx_first_asst < si < idx_second_asst for si in interjection_indices)
+    # Use index-agnostic ordering check
+    assert message_appears_before(
+        client.messages,
+        lambda m: m is assistant_msgs[0],
+        is_user_interjection_containing("please consider this later"),
+    ), "First assistant message should appear before the interjection"
+
+    assert message_appears_before(
+        client.messages,
+        is_user_interjection_containing("please consider this later"),
+        lambda m: m is assistant_msgs[-1],
+    ), "Interjection should appear before the last assistant message"
 
     # Final answer should be from the second turn
     assert isinstance(final, str) and final.strip()

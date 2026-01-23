@@ -19,6 +19,10 @@ from tests.async_helpers import (
     _wait_for_tool_message_prefix,
     _wait_for_condition,
     make_gated_sync_tool,
+    first_user_message,
+    first_assistant_tool_call,
+    last_plain_assistant_message,
+    real_tool_messages,
 )
 
 
@@ -83,13 +87,14 @@ async def test_nested_async_tool_loop(model):
     """Full end-to-end check – no mocks, real network call to OpenAI."""
 
     # Outer client that drives the *first* loop
-    client = new_llm_client(model=model)
-    client.set_system_message(
+    expected_system = (
         "You are running inside an automated test. Perform the steps exactly:\n"
-        "1️⃣  Call `outer_tool` with no arguments.\n"
-        "2️⃣  Continue running this tool call, when given the option.\n"
-        "3️⃣  Once it is *completed*, respond with exactly 'all done'.",
+        "1\ufe0f\u20e3  Call `outer_tool` with no arguments.\n"
+        "2\ufe0f\u20e3  Continue running this tool call, when given the option.\n"
+        "3\ufe0f\u20e3  Once it is *completed*, respond with exactly 'all done'."
     )
+    client = new_llm_client(model=model)
+    client.set_system_message(expected_system)
 
     outer_tool = _make_outer_tool(model)
     handle = start_async_tool_loop(
@@ -106,46 +111,47 @@ async def test_nested_async_tool_loop(model):
     # The assistant should complete (we don't assert exact text - that's eval, not symbolic)
     assert final_reply is not None, "Loop should complete with a response"
 
-    # No runtime context system message is appended because this test provides
-    # no response_format, no caller_description, and no parent_chat_context.
-    assert len(client.messages) == 5, "Expected a 5-message sequence"
+    # Use semantic/index-agnostic assertions to be robust to synthetic entries
+    # that may be inserted for chronological ordering
 
-    # 0. Original system message (unchanged)
-    assert client.messages[0]["role"] == "system"
-    assert client.messages[0]["content"] == (
-        "You are running inside an automated test. Perform the steps exactly:\n"
-        "1\ufe0f\u20e3  Call `outer_tool` with no arguments.\n"
-        "2\ufe0f\u20e3  Continue running this tool call, when given the option.\n"
-        "3\ufe0f\u20e3  Once it is *completed*, respond with exactly 'all done'."
+    # 0. System message should be present (find it semantically)
+    system_msgs = [m for m in client.messages if m.get("role") == "system"]
+    # Filter to non-internal system messages (not _visibility_guidance, etc.)
+    real_system_msgs = [
+        m
+        for m in system_msgs
+        if not any(
+            m.get(marker)
+            for marker in ("_visibility_guidance", "_runtime_context", "_ctx_header")
+        )
+    ]
+    assert real_system_msgs, "Expected a system message"
+    assert real_system_msgs[0]["content"] == expected_system
+
+    # 1. User message should be "start"
+    user_msg = first_user_message(client.messages)
+    assert user_msg["content"] == "start"
+
+    # 2. Assistant should call outer_tool (use helper to find it)
+    initial_call_msg, initial_tc = first_assistant_tool_call(
+        client.messages,
+        "outer_tool",
     )
-
-    # 1. User message
-    assert client.messages[1] == {"role": "user", "content": "start"}
-
-    # 2. Assistant: initial tool selection
-    initial_call = client.messages[2]
-    assert initial_call["role"] == "assistant"
-    assert (
-        initial_call.get("tool_calls") is not None
-    ), "Assistant should make a tool call"
-    assert len(initial_call["tool_calls"]) == 1
-    assert initial_call["tool_calls"][0]["function"] == {
+    assert initial_tc["function"] == {
         "arguments": "{}",
         "name": "outer_tool",
     }
 
-    # 3. Tool: response for outer_tool.
-    # Its content should reflect the final result of the nested loop ("done" as a JSON string).
-    first_tool_resp = client.messages[3]
-    assert first_tool_resp["role"] == "tool"
-    assert first_tool_resp["name"] == "outer_tool"
+    # 3. Tool response for outer_tool should contain "done"
+    # Use helper that filters out synthetic check_status tool messages
+    outer_tool_results = real_tool_messages(client.messages, tool_name="outer_tool")
+    assert outer_tool_results, "Expected a tool result for outer_tool"
     assert (
-        first_tool_resp["content"] == "done"
+        outer_tool_results[0]["content"] == "done"
     ), "The placeholder for outer_tool should be updated with the inner loop's final result."
 
-    # 4. Assistant: final response
-    final_assistant_msg = client.messages[4]
-    assert final_assistant_msg["role"] == "assistant"
+    # 4. Final assistant message should have content and no tool calls
+    final_assistant_msg = last_plain_assistant_message(client.messages)
     assert (
         final_assistant_msg["content"] is not None
     ), "Final message should have content"
