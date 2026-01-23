@@ -317,16 +317,16 @@ class PromptParts:
 
     This class replaces the raw `List[str]` accumulator in `compose_system_prompt`
     with a structured representation where each part is stored as
-    `{"type": "text", "content": "..."}`.
+    `{"type": "text", "content": "...", "static": True/False}`.
 
     The `add` method handles separator insertion (blank lines between blocks),
     and `flatten` performs normalization (collapsing consecutive blanks) before
     joining into the final prompt string.
     """
 
-    _parts: List[Dict[str, str]] = field(default_factory=list)
+    _parts: List[Dict[str, Any]] = field(default_factory=list)
 
-    def add(self, part: str, separator: bool = True) -> None:
+    def add(self, part: str, separator: bool = True, static: bool = True) -> None:
         """Add a part, optionally with a preceding blank line separator.
 
         Parameters
@@ -336,12 +336,15 @@ class PromptParts:
         separator : bool
             If True (default), a blank line entry is prepended before the part.
             Set to False for the first part or when no separator is desired.
+        static : bool
+            If True (default), the part is marked as static content.
+            Set to False for dynamic content that may change between runs.
         """
         if separator:
-            self._parts.append({"type": "text", "content": ""})
-        self._parts.append({"type": "text", "content": part})
+            self._parts.append({"type": "text", "content": "", "static": True})
+        self._parts.append({"type": "text", "content": part, "static": static})
 
-    def to_list(self) -> List[Dict[str, str]]:
+    def to_list(self) -> List[Dict[str, Any]]:
         """Return the internal structured parts, omitting empty separator entries."""
         return [p for p in self._parts if p["content"]]
 
