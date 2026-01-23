@@ -31,7 +31,9 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
 )
 
-pytestmark = pytest.mark.eval
+# Actions need to stay in-flight for multi-action scenarios.
+# Max steering ops in this file: 2 (test_pause_first_start_second_resume_first: pause + resume)
+pytestmark = [pytest.mark.eval, pytest.mark.simulated_actor_steps(2)]
 
 # Note: BOSS (contact_id=1) is imported from conftest.py
 

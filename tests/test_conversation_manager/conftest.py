@@ -109,7 +109,7 @@ def pytest_configure(config):
     # Only Actor is simulated - all other state managers use real implementations
     # This avoids browser/computer environment dependencies while testing real DB behavior
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
-    os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"  # Allows pause+resume interactions
+    os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "0"  # Allows pause+resume interactions
 
     # Disable optional managers not needed for conversation manager tests
     os.environ["UNITY_MEMORY_ENABLED"] = "false"
@@ -134,7 +134,7 @@ def pytest_configure(config):
 
 
 @pytest_asyncio.fixture(scope="module")
-async def conversation_manager() -> CMStepDriver:
+async def conversation_manager(request) -> CMStepDriver:
     """
     Start and initialize ConversationManager in-process for the test module.
 
@@ -171,7 +171,27 @@ async def conversation_manager() -> CMStepDriver:
 
     # Create SimulatedActor for fast, deterministic testing
     # (avoids HierarchicalActor's browser/computer environment setup)
-    actor = SimulatedActor(steps=3, log_mode="log", emit_notifications=False)
+    #
+    # Steps configuration via pytest marker:
+    #   - Default: steps=0 (immediate completion, for tests that only check act was called)
+    #   - @pytest.mark.simulated_actor_steps(N) for tests needing in-flight actions
+    #
+    # Test file examples:
+    #   test_take_action.py - uses default (steps=0), actions complete immediately
+    #   test_steer_action.py - needs steps=3 (max: pause + interject + resume)
+    #   test_multi_action.py - needs steps=2 (max: pause + resume)
+    #
+    # For module-scoped fixtures, we need to get the marker from the module's own_markers
+    # since request.node is a Module object when the fixture is first invoked.
+    marker = request.node.get_closest_marker("simulated_actor_steps")
+    if marker is None:
+        # Fallback: check module's own markers directly
+        for m in getattr(request.node, "own_markers", []):
+            if m.name == "simulated_actor_steps":
+                marker = m
+                break
+    steps = marker.args[0] if marker else 0
+    actor = SimulatedActor(steps=steps, log_mode="log", emit_notifications=False)
 
     # Use file lock to coordinate manager initialization across parallel test processes.
     # ContactManager.__init__ creates system contacts (assistant id=0, user id=1)
@@ -259,8 +279,18 @@ def initialized_cm(
     # These create action steering tools that persist across tests
     conversation_manager.cm.in_flight_actions.clear()
 
+    # Reset handle_id counter to ensure deterministic tool names for caching.
+    # Without this, handle_ids increment across tests, causing tool names like
+    # pause_search_...__0 vs pause_search_...__1, which breaks LLM cache hits.
+    import unity.conversation_manager.domains.brain_action_tools as bat
+
+    bat._next_handle_id = 0
+
     # Clear chat history (LLM message history)
     conversation_manager.cm.chat_history.clear()
+
+    # Clear tool call tracking from previous tests
+    conversation_manager.all_tool_calls.clear()
 
     # Reset last_snapshot to use the patched prompt_now.
     # The module-scoped conversation_manager fixture is created BEFORE the
