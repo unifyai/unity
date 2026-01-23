@@ -42,9 +42,6 @@ async def ask_contacts_question(question: str, response_format=None) -> str:
     **Use when** the question is about stored contact records: emails, phone numbers,
     job titles, locations, preferences, account ownership, etc.
 
-    **How it works**: calls:
-    - `await primitives.contacts.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the question is about message history/transcripts (use transcripts)
     - the question is about current events/weather/news (use web)

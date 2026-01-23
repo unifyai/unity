@@ -42,9 +42,6 @@ async def ask_knowledge(question: str, response_format=None) -> str:
     **Use when** the question should be answered from stored organizational knowledge:
     policies, facts, reference material, and previously recorded information.
 
-    **How it works**: calls:
-    - `await primitives.knowledge.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the user needs current external facts (use `primitives.web.ask`)
     - the user is asking about message history/transcripts (use `primitives.transcripts.ask`)

@@ -51,9 +51,6 @@ async def ask_tasks(question: str, response_format=None) -> str:
     **Use when** the user is asking about existing tasks: what is due, what is scheduled,
     what is assigned to someone, priorities/statuses, or summaries of the task queue.
 
-    **How it works**: calls:
-    - `await primitives.tasks.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the user wants to create/update/delete/reorder tasks (use `primitives.tasks.update`)
     - the user wants to execute a task (use `tasks.execute` in the task system; not this test primitive)
@@ -76,9 +73,6 @@ async def update_or_create_or_delete_tasks(instruction: str, response_format=Non
 
     **Use when** the user requests any change to the task list: create a task, update
     fields like priority/schedule/status, delete tasks, or otherwise modify tasks.
-
-    **How it works**: calls:
-    - `await primitives.tasks.update(instruction, response_format=response_format)`
 
     **Do NOT use when**:
     - the user is asking a read-only question about tasks (use `primitives.tasks.ask`)
@@ -105,9 +99,6 @@ async def ask_contacts_question(question: str, response_format=None) -> str:
     **Use when** the question is about stored contact records: emails, phone numbers,
     job titles, locations, preferences, account ownership, etc.
 
-    **How it works**: calls:
-    - `await primitives.contacts.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the question is about message history/transcripts (use transcripts)
     - the question is about current events/weather/news (use web)
@@ -130,9 +121,6 @@ async def update_contacts_instruction(instruction: str, response_format=None) ->
 
     **Use when** the user requests to change contacts: add a person, edit fields,
     delete a contact, or merge duplicates.
-
-    **How it works**: calls the contacts mutation tool:
-    - `await primitives.contacts.update(instruction, response_format=response_format)`
 
     **Do NOT use when**:
     - the user is asking a read-only question about contacts (use `primitives.contacts.ask`)
@@ -157,9 +145,6 @@ async def update_or_create_or_delete_knowledge(instruction: str, response_format
     **Use when** the user requests to store new knowledge, update an existing policy/fact,
     or otherwise change the knowledge base.
 
-    **How it works**: calls:
-    - `await primitives.knowledge.update(instruction, response_format=response_format)`
-
     **Do NOT use when**:
     - the request is read-only (use `primitives.knowledge.ask`)
     - the user is asking about transcripts, contacts, tasks, guidance, or web facts
@@ -181,9 +166,6 @@ async def ask_knowledge(question: str, response_format=None) -> str:
 
     **Use when** the question should be answered from stored organizational knowledge:
     policies, facts, reference material, and previously recorded information.
-
-    **How it works**: calls:
-    - `await primitives.knowledge.ask(question, response_format=response_format)`
 
     **Do NOT use when**:
     - the user needs current external facts (use `primitives.web.ask`)
@@ -209,9 +191,6 @@ async def update_guidance(instruction: str, response_format=None) -> str:
     **Use when** the user requests changes to internal guidance content: add a runbook,
     update an existing entry, or correct/replace guidance text.
 
-    **How it works**: calls the guidance mutation tool:
-    - `await primitives.guidance.update(instruction, response_format=response_format)`
-
     **Do NOT use when**:
     - the user is asking a read-only question about existing guidance (use `primitives.guidance.ask`)
     - the user is asking about transcripts, contacts, tasks, or current web facts
@@ -233,9 +212,6 @@ async def ask_guidance_question(question: str, response_format=None) -> str:
 
     **Use when** the question is about internal operating guidance, runbooks, incident
     response procedures, best practices, or other curated guidance content.
-
-    **How it works**: calls the guidance read tool:
-    - `await primitives.guidance.ask(question, response_format=response_format)`
 
     **Do NOT use when**:
     - the user wants to create/update guidance entries (use `primitives.guidance.update`)

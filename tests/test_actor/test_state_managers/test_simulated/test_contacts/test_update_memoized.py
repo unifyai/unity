@@ -45,9 +45,6 @@ async def update_contacts_instruction(instruction: str, response_format=None) ->
     **Use when** the user requests to change contacts: add a person, edit fields,
     delete a contact, or merge duplicates.
 
-    **How it works**: calls the contacts mutation tool:
-    - `await primitives.contacts.update(instruction, response_format=response_format)`
-
     **Do NOT use when**:
     - the user is asking a read-only question about contacts (use `primitives.contacts.ask`)
     - the user is asking about message history/transcripts (use `primitives.transcripts.ask`)
