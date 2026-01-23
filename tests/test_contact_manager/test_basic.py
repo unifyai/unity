@@ -29,7 +29,7 @@ def test_create():
     assert contact.email_address is None
     assert contact.phone_number is None
     assert contact.rolling_summary is None
-    assert contact.should_respond is False
+    assert contact.should_respond is True
     assert contact.timezone is None
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
@@ -70,7 +70,7 @@ def test_update():
     contact = user_contacts[0]
     assert contact.first_name == "Daniel"
     assert contact.bio == "He's alright"
-    assert contact.should_respond is False
+    assert contact.should_respond is True
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
@@ -115,7 +115,7 @@ def test_create_multiple():
     assert tom_contact.phone_number is None
     assert tom_contact.bio is None
     assert tom_contact.rolling_summary is None
-    assert tom_contact.should_respond is False
+    assert tom_contact.should_respond is True
     assert tom_contact.timezone is None
 
     assert tom_contact.response_policy == custom_policy
