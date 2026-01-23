@@ -42,9 +42,6 @@ async def ask_knowledge(question: str, response_format=None) -> str:
     **Use when** the question should be answered from stored organizational knowledge:
     policies, facts, reference material, and previously recorded information.
 
-    **How it works**: calls:
-    - `await primitives.knowledge.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the user needs current external facts (use `primitives.web.ask`)
     - the user is asking about message history/transcripts (use `primitives.transcripts.ask`)
@@ -68,9 +65,6 @@ async def update_or_create_or_delete_knowledge(instruction: str, response_format
 
     **Use when** the user requests to store new knowledge, update an existing policy/fact,
     or otherwise change the knowledge base.
-
-    **How it works**: calls:
-    - `await primitives.knowledge.update(instruction, response_format=response_format)`
 
     **Do NOT use when**:
     - the request is read-only (use `primitives.knowledge.ask`)

@@ -59,9 +59,6 @@ async def ask_contacts_question(question: str, response_format=None) -> str:
     **Use when** the question is about stored contact records: emails, phone numbers,
     job titles, locations, preferences, account ownership, etc.
 
-    **How it works**: calls:
-    - `await primitives.contacts.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the question is about message history/transcripts (use transcripts)
     - the question is about current events/weather/news (use web)
@@ -84,9 +81,6 @@ async def update_contacts_instruction(instruction: str, response_format=None) ->
 
     **Use when** the user requests to change contacts: add a person, edit fields,
     delete a contact, or merge duplicates.
-
-    **How it works**: calls the contacts mutation tool:
-    - `await primitives.contacts.update(instruction, response_format=response_format)`
 
     **Do NOT use when**:
     - the user is asking a read-only question about contacts (use `primitives.contacts.ask`)

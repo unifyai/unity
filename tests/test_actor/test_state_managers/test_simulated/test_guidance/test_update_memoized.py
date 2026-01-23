@@ -26,9 +26,6 @@ async def update_guidance(instruction: str, response_format=None) -> str:
     **Use when** the user requests changes to internal guidance content: add a runbook,
     update an existing entry, or correct/replace guidance text.
 
-    **How it works**: calls the guidance mutation tool:
-    - `await primitives.guidance.update(instruction, response_format=response_format)`
-
     **Do NOT use when**:
     - the user is asking a read-only question about existing guidance (use `primitives.guidance.ask`)
     - the user is asking about transcripts, contacts, tasks, or current web facts

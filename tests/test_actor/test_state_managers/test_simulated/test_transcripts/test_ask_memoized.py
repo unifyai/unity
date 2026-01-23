@@ -42,9 +42,6 @@ async def ask_transcripts_question(question: str, response_format=None) -> str:
     - list messages from a person in a time window (e.g., "last 24 hours")
     - find the last SMS with a contact
 
-    **How it works**: this function calls the transcripts state manager:
-    - `await primitives.transcripts.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the user needs *current external facts* (use web search: `primitives.web.ask`)
     - the user is asking about contact records (use contacts: `primitives.contacts.ask`)

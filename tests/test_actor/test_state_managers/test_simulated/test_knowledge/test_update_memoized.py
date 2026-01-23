@@ -42,9 +42,6 @@ async def update_or_create_or_delete_knowledge(instruction: str, response_format
     **Use when** the user requests to store new knowledge, update an existing policy/fact,
     or otherwise change the knowledge base.
 
-    **How it works**: calls:
-    - `await primitives.knowledge.update(instruction, response_format=response_format)`
-
     **Do NOT use when**:
     - the request is read-only (use `primitives.knowledge.ask`)
     - the user is asking about transcripts, contacts, tasks, guidance, or web facts

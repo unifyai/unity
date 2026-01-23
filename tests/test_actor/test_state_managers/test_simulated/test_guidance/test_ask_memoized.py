@@ -26,9 +26,6 @@ async def ask_guidance_question(question: str, response_format=None) -> str:
     **Use when** the question is about internal operating guidance, runbooks, incident
     response procedures, best practices, or other curated guidance content.
 
-    **How it works**: calls the guidance read tool:
-    - `await primitives.guidance.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the user wants to create/update guidance entries (use `primitives.guidance.update`)
     - the user is asking about their message history/transcripts (use `primitives.transcripts.ask`)

@@ -80,9 +80,6 @@ async def ask_tasks(question: str, response_format=None) -> str:
     **Use when** the user is asking about existing tasks: what is due, what is scheduled,
     what is assigned to someone, priorities/statuses, or summaries of the task queue.
 
-    **How it works**: calls:
-    - `await primitives.tasks.ask(question, response_format=response_format)`
-
     **Do NOT use when**:
     - the user wants to create/update/delete/reorder tasks (use `primitives.tasks.update`)
     - the user wants to execute a task (use `tasks.execute` in the task system; not this test primitive)
@@ -179,9 +176,6 @@ async def create_or_update_or_delete_tasks(name: str, description: str) -> str:
 
     **Use when** the user requests any change to the task list: create a task, update
     fields like priority/schedule/status, delete tasks, or otherwise modify tasks.
-
-    **How it works**: calls:
-    - `await primitives.tasks.update(instruction, response_format=response_format)`
 
     **Do NOT use when**:
     - the user is asking a read-only question about tasks (use `primitives.tasks.ask`)
@@ -333,10 +327,6 @@ async def execute_task_by_name(task_name: str) -> str:
     """Execute a task by name via the task scheduler.
 
     **Use when** the user wants to start/run/execute a specific task that exists in the task queue.
-
-    **How it works**: calls:
-    - resolve a runnable `task_id` from the TaskScheduler state
-    - `await primitives.tasks.execute(task_id=...)` to start execution
 
     **Do NOT use when**:
     - the user is asking about tasks (use `primitives.tasks.ask`)

@@ -256,6 +256,8 @@ def _build_simplicity_first_principles(
         **Default to the simplest plan that could plausibly work.** Your tools are powerful:
         {tool_line}
         - High-quality plans are usually **short and elegant**, with **high-quality instructions** to these tools.
+        - Simplicity includes **reusing existing skills**: if a callable function matches the goal,
+          prefer calling it over assembling lower-level primitives.
 
         **Progressive elaboration rule:**
         - Start simple.
@@ -266,6 +268,7 @@ def _build_simplicity_first_principles(
         - Don’t create many helper functions “just in case”.
         - Don’t implement multi-path fallbacks unless there is evidence you need them.
         - Prefer a single clear `act(...)` / `observe(...)` loop over brittle micro-steps.
+        - Avoid bypassing available functions with `primitives.*` calls when a matching function exists.
 
         **When complexity is justified**, explain why in a short comment/docstring (evidence-based reasoning).
         """,
@@ -2179,6 +2182,8 @@ def build_initial_plan_prompt(
         **Trust model:**
         - Treat these functions as **tested, safe, high-level skills**.
         - You do **NOT** need to see their source code to trust them.
+        - Treat them as the **primary interface** for their domain; a direct call is simpler than
+          rebuilding the behavior with `primitives.*`, `computer_primitives.*`, etc.
         - Do **NOT** "peek inside" by re-creating their internal logic with `primitives.*`, `computer_primitives.*` etc.
 
         **HOW TO USE THESE FUNCTIONS:**
@@ -2204,18 +2209,15 @@ def build_initial_plan_prompt(
         ```
 
         **CRITICAL RULES - READ CAREFULLY:**
-        1. **CALL, DON'T REDEFINE**: These functions ALREADY EXIST in the runtime. Call them directly by name.
-        2. **CHECK THE LIBRARY FIRST**: Before writing ANY new function, scan the available functions below. If one matches your goal, USE IT.
-        3. **WRAPPER-FIRST (WHEN AVAILABLE)**:
-           - If an available function clearly targets the same domain/manager you need, **you MUST call the function**, not `primitives.*` directly.
-           - Calling the wrapper is the **simplest** and **most reliable** plan; do not be defensive about black-box behavior.
-           - Only call `primitives.<manager>.*` directly when **no relevant wrapper exists** for that manager.
-           - **Never** use a wrapper for a different manager as a “fallback” (e.g., don’t use `ask_knowledge` to answer a tasks question).
+        1. **CHECK THE LIBRARY FIRST**: Before writing ANY new function **or calling `primitives.*` directly**, scan the available functions below. If one matches your goal, USE IT. These functions are battle-tested and reliable so ALWAYS prefer using them over new code or lower-level primitives.
+        2. **CALL, DON'T REDEFINE**: These functions ALREADY EXIST in the runtime. Call them directly by name.
+        3. **CALL, DON'T BYPASS**: If a function matches the intent, do not replace it with a direct `primitives.*` call.
         4. **COMPOSE IF NEEDED**: If your goal requires multiple steps, orchestrate the existing functions in main_plan().
         5. **ONLY CREATE NEW FUNCTIONS WHEN**: No existing function is semantically related to your goal, OR you need helper logic that doesn't exist in the library.
 
         **When to use existing functions vs write new code:**
         - ✅ **USE existing function**: The function's purpose matches your goal → Call it directly
+        - ✅ **USE existing function**: The goal could be solved by a single `primitives.*` call, but a matching function exists → Call the function
         - ✅ **USE existing function**: You can achieve the goal by calling 2-3 existing functions → Compose them
         - ❌ **WRITE new code**: No existing function is semantically related to the goal
         - ❌ **WRITE new code**: Existing functions would require complex workarounds
