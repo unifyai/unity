@@ -27,7 +27,6 @@ from tests.test_actor.test_hierarchical.helpers import (
     wait_for_log_entry,
 )
 
-
 CANNED_PLAN_FOR_VERIFICATION_FAILURE_TEST_ADVANCE_COURSE_CORRECTION = textwrap.dedent(
     """
     async def _step_1_navigate_and_search():

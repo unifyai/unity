@@ -31,7 +31,6 @@ from pydantic import BaseModel
 from unity.actor.hierarchical_actor import HierarchicalActor, VerificationAssessment
 from unity.common.async_tool_loop import SteerableToolHandle
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # SimpleMockVerificationClient
 # ────────────────────────────────────────────────────────────────────────────

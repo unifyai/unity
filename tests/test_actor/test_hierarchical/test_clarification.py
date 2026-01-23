@@ -18,7 +18,6 @@ from tests.test_actor.test_hierarchical.helpers import (
     wait_for_log_entry,
 )
 
-
 CANNED_PLAN_CLARIFICATION_FLOW = textwrap.dedent(
     """
 async def get_dessert_info():

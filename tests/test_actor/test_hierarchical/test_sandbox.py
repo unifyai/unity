@@ -22,7 +22,6 @@ from tests.test_actor.test_hierarchical.helpers import (
     wait_for_log_entry,
 )
 
-
 CANNED_PLAN_FOR_SANDBOX_TEST_SANDBOX_ISOLATION_AND_MERGE = textwrap.dedent(
     """
     async def main_plan():

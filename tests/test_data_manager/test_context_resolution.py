@@ -13,7 +13,6 @@ from __future__ import annotations
 from unity.data_manager.simulated import SimulatedDataManager
 from unity.common.context_registry import ContextRegistry
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Context path resolution
 # ────────────────────────────────────────────────────────────────────────────

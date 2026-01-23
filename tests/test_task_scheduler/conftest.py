@@ -21,7 +21,6 @@ from tests.helpers import (
     mutation_test_lock,
 )
 
-
 # Separate commit hash storage for read vs mutation contexts
 _READ_SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 _MUTATION_SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}

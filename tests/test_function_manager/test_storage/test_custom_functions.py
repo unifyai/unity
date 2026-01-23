@@ -16,7 +16,6 @@ from unity.function_manager.custom_functions import (
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ────────────────────────────────────────────────────────────────────────────

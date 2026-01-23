@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from unity.contact_manager.types.contact import Contact
 
-
 _EXPECTED_FWD = {
     "message_id": "mid",
     "medium": "med",

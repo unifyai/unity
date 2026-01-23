@@ -24,7 +24,6 @@ Usage:
 import os
 from dataclasses import dataclass, field
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Default Assistant Identity
 # Used when no real assistant is configured (offline mode, tests)

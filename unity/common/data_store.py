@@ -7,7 +7,6 @@ import threading
 
 import unify
 
-
 KeyInput = Union[str, int, Tuple[Any, ...], Iterable[Any]]
 
 

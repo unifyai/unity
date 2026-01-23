@@ -39,7 +39,6 @@ from contextlib import redirect_stderr, redirect_stdout
 from queue import Queue
 from typing import Any, Dict
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Signal Handling for Graceful Shutdown
 # ────────────────────────────────────────────────────────────────────────────

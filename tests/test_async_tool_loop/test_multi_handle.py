@@ -26,7 +26,6 @@ from unity.common._async_tool.tagging import (
     format_request_cancelled_notice,
 )
 
-
 # --------------------------------------------------------------------------- #
 #  UNIT TESTS – Request State Module                                          #
 # --------------------------------------------------------------------------- #

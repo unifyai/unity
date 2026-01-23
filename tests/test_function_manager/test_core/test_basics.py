@@ -18,7 +18,6 @@ import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 
-
 # --------------------------------------------------------------------------- #
 #  4.  Existing add_functions tests                                           #
 # --------------------------------------------------------------------------- #

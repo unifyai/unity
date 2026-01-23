@@ -18,7 +18,6 @@ from unity.function_manager.primitives import ComputerPrimitives
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Sample Venv Content and Functions
 # ────────────────────────────────────────────────────────────────────────────

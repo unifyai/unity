@@ -36,7 +36,6 @@ from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from unity.transcript_manager.types.message import Message
 from unity.conversation_manager.types import Medium
 
-
 # ---------------------------------------------------------------------------
 #                             TEST CASE                                      #
 # ---------------------------------------------------------------------------

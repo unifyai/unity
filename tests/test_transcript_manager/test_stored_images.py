@@ -12,7 +12,6 @@ from tests.helpers import _handle_project
 from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
 from unity.contact_manager.types.contact import Contact
 
-
 PNG_BLUE_B64 = make_solid_png_base64(32, 32, (0, 0, 255))
 
 
