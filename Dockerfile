@@ -68,15 +68,16 @@ COPY pyproject.toml uv.lock ./
 # Configure git to use GITHUB_TOKEN for private repo authentication
 RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
+# Create venv and install PyTorch CPU-only first (cached layer, ~2GB)
+# Must be BEFORE git clone so repo updates don't invalidate PyTorch cache
+RUN uv venv && uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
 # Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
 # Branch logic mirrors CI: main→main, otherwise→staging
 # This ensures staging deployments get staging branches (with latest fixes)
 RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
     git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
-
-# Create venv and install PyTorch CPU-only first (cached layer, ~2GB)
-RUN uv venv && uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Copy source and install unity with dependencies using uv sync
 COPY . /app
