@@ -307,7 +307,7 @@ async def test_clarification_bubbles_through_returned_handle(model) -> None:
 # ---------------------------------------------------------------------------
 # Inner tool: always requests clarification and blocks forever without answer
 # ---------------------------------------------------------------------------
-async def inner_tool_that_requests_clarification(
+async def inner_ask(
     *,
     _clarification_up_q: asyncio.Queue[str] | None = None,
     _clarification_down_q: asyncio.Queue[str] | None = None,
@@ -324,28 +324,27 @@ async def inner_tool_that_requests_clarification(
 # ---------------------------------------------------------------------------
 # Outer tool: spawns an inner loop that will request clarification
 # ---------------------------------------------------------------------------
-async def tool_that_spawns_blocking_inner_loop(
+async def spawn_inner(
     *,
     _clarification_up_q: asyncio.Queue[str] | None = None,
     _clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:
     """
     Spawns an inner async tool loop.
-    The inner loop will call inner_tool_that_requests_clarification,
-    which blocks on clarification.
+    The inner loop will call inner_ask, which blocks on clarification.
     """
     inner_llm = make_llm(
         system_message=(
             "You coordinate internal tools. "
-            "Call inner_tool_that_requests_clarification to gather user preferences."
+            "Call inner_ask to gather user preferences."
         ),
     )
 
     handle = start_async_tool_loop(
         inner_llm,
-        message="Please run inner_tool_that_requests_clarification.",
+        message="Please run inner_ask.",
         tools={
-            "inner_tool_that_requests_clarification": inner_tool_that_requests_clarification,
+            "inner_ask": inner_ask,
         },
     )
     return handle
@@ -363,8 +362,8 @@ async def test_outer_loop_exits_when_inner_blocked_on_unanswered_clarification(
     awaits clarification.
 
     Scenario:
-    1. Outer loop's LLM calls `tool_that_spawns_blocking_inner_loop`
-    2. Inner loop's LLM calls `inner_tool_that_requests_clarification`
+    1. Outer loop's LLM calls `spawn_inner`
+    2. Inner loop's LLM calls `inner_ask`
     3. Inner tool blocks on `down_q.get()` waiting for clarification answer
     4. Clarification bubbles up to outer loop
     5. Outer loop's LLM (without request_clarification tool!) responds with content
@@ -378,9 +377,11 @@ async def test_outer_loop_exits_when_inner_blocked_on_unanswered_clarification(
         system_message=(
             "You coordinate tools. If a nested tool requests clarification and you "
             "cannot answer it (because you don't have a request_clarification tool), "
-            "just respond with: 'I cannot help with that.' and end the conversation.\n"
-            "IMPORTANT: When you see a clarification_request message, respond with "
-            "'I cannot help with that.' - do NOT try to answer it yourself or guess."
+            "call the `final_answer` tool with answer='I cannot help with that.' to "
+            "end the conversation.\n"
+            "IMPORTANT: When you see a clarification_request message, use `final_answer` "
+            "to respond with 'I cannot help with that.' - do NOT try to answer it "
+            "yourself or guess, and do NOT call stop or wait helpers."
         ),
         model=model,
     )
@@ -388,9 +389,9 @@ async def test_outer_loop_exits_when_inner_blocked_on_unanswered_clarification(
     # NOTE: Outer loop does NOT have request_clarification tool!
     handle = start_async_tool_loop(
         outer_llm,
-        message="Please run tool_that_spawns_blocking_inner_loop.",
+        message="Please run spawn_inner.",
         tools={
-            "tool_that_spawns_blocking_inner_loop": tool_that_spawns_blocking_inner_loop,
+            "spawn_inner": spawn_inner,
         },
     )
 
