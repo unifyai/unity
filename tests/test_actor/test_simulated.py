@@ -169,6 +169,37 @@ async def test_handle_requests_clarification():
     assert "q1 report" in result.lower()
 
 
+@pytest.mark.asyncio
+@_handle_project
+async def test_next_clarification_blocks_without_queue():
+    """
+    When no clarification queue is provided, next_clarification() should block
+    until the action completes (similar to next_notification with emit_notifications=False).
+
+    This prevents watcher loops from spinning when clarifications aren't enabled.
+    """
+    actor = SimulatedActor(steps=None)  # Action runs indefinitely
+    handle = await actor.act("Do some work")
+
+    # Start a task that waits on next_clarification
+    clarification_task = asyncio.create_task(handle.next_clarification())
+
+    # Give it a moment to start blocking
+    await asyncio.sleep(0.1)
+
+    # Task should NOT be done yet (it should be blocking)
+    assert (
+        not clarification_task.done()
+    ), "next_clarification() should block when no queue"
+
+    # Now complete the action
+    handle.trigger_completion()
+
+    # The clarification task should now complete
+    result = await asyncio.wait_for(clarification_task, timeout=DEFAULT_TIMEOUT)
+    assert result == {}, "Should return empty dict when no clarifications"
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 6.  Pause → Resume round-trip                                              #
 # ────────────────────────────────────────────────────────────────────────────

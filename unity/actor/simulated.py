@@ -729,15 +729,20 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     # Event APIs required by SteerableToolHandle
     # ------------------------
     async def next_clarification(self) -> dict:
+        # If no clarification queue, block until the action completes
+        # (similar to next_notification when emit_notifications=False)
+        if self._clarification_up_q is None:
+            await asyncio.to_thread(self._done_event.wait)
+            return {}
+
         try:
-            if self._clarification_up_q is not None:
-                msg = await self._clarification_up_q.get()
-                return {
-                    "type": "clarification",
-                    "call_id": "unknown",
-                    "tool_name": "simulated_actor",
-                    "question": msg,
-                }
+            msg = await self._clarification_up_q.get()
+            return {
+                "type": "clarification",
+                "call_id": "unknown",
+                "tool_name": "simulated_actor",
+                "question": msg,
+            }
         except Exception:
             pass
         return {}
