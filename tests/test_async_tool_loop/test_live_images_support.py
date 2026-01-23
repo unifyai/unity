@@ -15,7 +15,6 @@ from unity.image_manager.types import (
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 
-
 # Removed stub client; tests use real AsyncUnify with spies only.
 
 

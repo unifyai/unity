@@ -32,7 +32,6 @@ from unity.common.llm_client import new_llm_client
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
 
-
 # --------------------------------------------------------------------------- #
 #  DETERMINISTIC GROUND-TRUTH GENERATOR                                       #
 # --------------------------------------------------------------------------- #

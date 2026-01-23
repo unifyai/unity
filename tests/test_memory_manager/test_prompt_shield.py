@@ -9,7 +9,6 @@ from unity.memory_manager.memory_manager import MemoryManager
 from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 
-
 # ---------------------------------------------------------------------------
 #  1.  Shield *blocks* duplicate KnowledgeManager.update when explicit call
 # ---------------------------------------------------------------------------

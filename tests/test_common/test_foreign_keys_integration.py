@@ -23,7 +23,6 @@ from tests.helpers import _handle_project
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
-
 # --------------------------------------------------------------------------- #
 #  Integration: Contact Deletion Cascade                                      #
 # --------------------------------------------------------------------------- #

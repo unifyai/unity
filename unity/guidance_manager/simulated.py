@@ -25,7 +25,6 @@ from ..contact_manager.prompt_builders import build_simulated_method_prompt
 from ..common.llm_client import new_llm_client
 from ..constants import LOGGER
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal handle (mirrors contact/knowledge simulated handles)
 # ─────────────────────────────────────────────────────────────────────────────

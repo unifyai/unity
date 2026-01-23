@@ -10,7 +10,6 @@ This module tests that:
 from unity.common.log_utils import _derive_all_contexts
 from unity.session_details import DEFAULT_USER_CONTEXT
 
-
 # =============================================================================
 # Tests for _derive_all_contexts - Production contexts
 # =============================================================================

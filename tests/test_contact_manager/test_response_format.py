@@ -10,7 +10,6 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.simulated import SimulatedContactManager
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Response format schemas
 # ────────────────────────────────────────────────────────────────────────────

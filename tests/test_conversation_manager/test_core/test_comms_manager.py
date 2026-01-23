@@ -45,7 +45,6 @@ from unity.conversation_manager.events import (
 )
 from unity.contact_manager.types.contact import UNASSIGNED
 
-
 # =============================================================================
 # Contact Schema Tests (existing test preserved)
 # =============================================================================

@@ -59,7 +59,6 @@ from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.types import Medium, Mode
 
-
 # =============================================================================
 # Test Fixtures
 # =============================================================================

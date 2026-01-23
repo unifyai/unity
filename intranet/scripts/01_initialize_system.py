@@ -34,7 +34,6 @@ if not initialize_script_environment():
 
 from intranet.core.system_utils import SystemInitializer
 
-
 _shutdown_requested = False
 _loop_ref: asyncio.AbstractEventLoop | None = None
 _shutdown_event: asyncio.Event | None = None

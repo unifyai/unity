@@ -10,7 +10,6 @@ from unity.guidance_manager.guidance_manager import GuidanceManager
 from unity.guidance_manager.simulated import SimulatedGuidanceManager
 from tests.helpers import _handle_project
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Response format schemas
 # ────────────────────────────────────────────────────────────────────────────

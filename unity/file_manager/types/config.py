@@ -26,7 +26,6 @@ from unity.file_manager.file_parsers.registry import (
     DEFAULT_BACKEND_CLASS_PATHS_BY_FORMAT,
 )
 
-
 # ------------------------------ Parser ------------------------------------ #
 
 

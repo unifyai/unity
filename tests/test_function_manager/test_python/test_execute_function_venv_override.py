@@ -21,7 +21,6 @@ from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 from unity.common.context_registry import ContextRegistry
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Sample Functions
 # ────────────────────────────────────────────────────────────────────────────

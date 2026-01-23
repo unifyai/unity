@@ -14,7 +14,6 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.shell_pool import ShellPool
 from unity.common.context_registry import ContextRegistry
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Sample Shell Functions
 # ────────────────────────────────────────────────────────────────────────────

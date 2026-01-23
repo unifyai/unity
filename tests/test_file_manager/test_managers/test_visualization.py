@@ -28,7 +28,6 @@ from unity.common.llm_client import new_llm_client
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed, find_tool_calls_and_results
 
-
 # =============================================================================
 # LLM-AS-JUDGE HELPER FOR VISUALIZATION TESTS
 # =============================================================================

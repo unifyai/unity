@@ -24,7 +24,6 @@ from tests.test_actor.test_hierarchical.helpers import (
     wait_for_state,
 )
 
-
 INITIAL_PLAN = textwrap.dedent(
     """
 async def main_plan():

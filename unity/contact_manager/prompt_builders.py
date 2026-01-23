@@ -17,7 +17,6 @@ from ..common.prompt_helpers import (
     special_contacts_block as _special_contacts_block,
 )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────

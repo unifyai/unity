@@ -13,7 +13,6 @@ from unity.function_manager.function_manager import FunctionManager
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
 
-
 # Sample pyproject.toml content for testing
 SAMPLE_VENV_CONTENT = """
 [build-system]

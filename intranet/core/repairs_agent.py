@@ -28,7 +28,6 @@ from .prompt_builder import build_repairs_ask_instructions
 from unity.file_manager.managers.local import LocalFileManager as FileManager
 from unity.file_manager.types.config import FilePipelineConfig
 
-
 # Pipeline config containing business contexts (file paths, table/column descriptions, rules)
 PIPELINE_CONFIG_PATH = (
     "/home/hmahmood24/unity/intranet/repairs/repairs_file_pipeline_config.json"

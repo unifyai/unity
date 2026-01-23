@@ -3,7 +3,6 @@ from unify.utils import http
 
 from unity.settings import SETTINGS
 
-
 # admin headers and URLs
 admin_headers = {
     "Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()}",

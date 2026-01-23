@@ -2,8 +2,7 @@
 
 # Shared docstrings
 
-CLEAR_METHOD_DOCSTRING = (
-    """
+CLEAR_METHOD_DOCSTRING = ("""
     WARNING: Irreversible total data erasure.
 
     This clear operation will permanently and completely delete all records,
@@ -23,5 +22,4 @@ CLEAR_METHOD_DOCSTRING = (
 
     Only call this after the user has explicitly confirmed and you are 100% sure that
     you want to erase all data. This action cannot be undone.
-    """
-).strip()
+    """).strip()
