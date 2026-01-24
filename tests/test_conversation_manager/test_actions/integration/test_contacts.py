@@ -11,7 +11,7 @@ from tests.test_conversation_manager.test_actions.integration.helpers import (
 )
 from unity.conversation_manager.events import SMSReceived
 
-pytestmark = [pytest.mark.integration, pytest.mark.codeact, pytest.mark.eval]
+pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ from unity.conversation_manager.domains.brain_action_tools import (
     get_handle_paused_state,
 )
 
-pytestmark = [pytest.mark.integration, pytest.mark.codeact, pytest.mark.eval]
+pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
