@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-
+import inspect
 from unity.contact_manager.types import ContactDetailsEmail, ContactDetailsPhone
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
@@ -690,6 +690,7 @@ class ConversationManagerBrainActionTools:
         call_id: str | None = None,
     ) -> "Callable[..., Any]":
         """Create a closure for an action steering operation."""
+
         cm = self._cm
         # Use cm.event_broker to ensure the same broker is used throughout
         # (important for test patching)
@@ -766,9 +767,28 @@ class ConversationManagerBrainActionTools:
                                     "query": param_value,
                                 },
                             )
+                        # Optionally allow attaching images to an interjection for
+                        # visual steering (e.g., screenshare frames). Keep the LLM-facing
+                        # tool schema simple (image_ids: list[int]) and convert to
+                        # RawImageRef objects internally.
+                        image_ids = kwargs.get("image_ids")
+                        images = None
+                        if image_ids:
+                            try:
+                                from unity.image_manager.types.raw_image_ref import (
+                                    RawImageRef,
+                                )
+
+                                images = [
+                                    RawImageRef(image_id=int(i))
+                                    for i in list(image_ids)
+                                ]
+                            except Exception:
+                                images = None
                         await handle.interject(
                             param_value,
                             parent_chat_context_cont=cm.chat_history,
+                            images=images,
                         )
                         result = "Interjected successfully"
                     case "stop":
@@ -829,12 +849,121 @@ class ConversationManagerBrainActionTools:
 
             return {"status": "ok", "operation": operation, "result": result}
 
-        # Copy signature from the handle's method to get proper tool schema
-        if handle is not None and hasattr(handle, operation):
-            DynamicToolFactory._adopt_signature_and_annotations(
-                getattr(handle, operation),
-                steering_tool,
+        # Tool schema / signature notes
+        # ----------------------------
+        # These steering tools are exposed to the ConversationManager "brain" as OpenAI-style
+        # function tools (via `method_to_schema(..., strict=True)`).
+        #
+        # In principle, we could adopt the underlying handle method signature (like
+        # DynamicToolFactory does). In practice, a subset of handle methods include
+        # parameters that are either:
+        # - **plumbing-only** (e.g., `parent_chat_context_cont`) and should not be
+        #   model-supplied, or
+        # - **not representable in a provider-accepted strict JSON Schema** (notably
+        #   the `images` parameter, which may be typed as `ImageRefs | list[...]` or
+        #   an unparameterized `list | None`, both of which can yield schemas OpenAI rejects).
+        #
+        # We therefore:
+        # - Reuse DynamicToolFactory's signature adoption for "normal" steering methods,
+        #   then filter out plumbing params.
+        # - Special-case `interject` to expose a schema-safe `image_ids: list[int]` that we
+        #   convert internally to `RawImageRef` objects.
+        # - Keep `answer_clarification` schema minimal (answer-only) because `call_id` is
+        #   already embedded into the tool name and must not be model-controlled.
+
+        def _drop_params_from_signature(
+            fn: Any,
+            *,
+            drop: set[str],
+        ) -> None:
+            """Remove named parameters from a wrapper's signature/annotations if present."""
+            try:
+                _sig = inspect.signature(fn)
+                _params = [p for p in _sig.parameters.values() if p.name not in drop]
+                fn.__signature__ = inspect.Signature(
+                    parameters=_params,
+                    return_annotation=_sig.return_annotation,
+                )
+                anns = dict(getattr(fn, "__annotations__", {}) or {})
+                for k in drop:
+                    anns.pop(k, None)
+                fn.__annotations__ = anns
+            except Exception:
+                pass
+
+        if operation == "interject":
+            steering_tool.__signature__ = inspect.Signature(
+                parameters=[
+                    inspect.Parameter(
+                        name=param_name,
+                        kind=inspect.Parameter.KEYWORD_ONLY,
+                        default="",
+                        annotation=str,
+                    ),
+                    inspect.Parameter(
+                        name="image_ids",
+                        kind=inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=list[int],
+                    ),
+                ],
+                return_annotation=dict,
             )
+            steering_tool.__annotations__ = {
+                param_name: str,
+                "image_ids": list[int],
+                "return": dict,
+            }
+        elif operation == "answer_clarification":
+            steering_tool.__signature__ = inspect.Signature(
+                parameters=[
+                    inspect.Parameter(
+                        name=param_name,
+                        kind=inspect.Parameter.KEYWORD_ONLY,
+                        default="",
+                        annotation=str,
+                    ),
+                ],
+                return_annotation=dict,
+            )
+            steering_tool.__annotations__ = {param_name: str, "return": dict}
+        else:
+            # Default: adopt the handle method signature when possible, then remove
+            # plumbing params that CM supplies itself.
+            try:
+                src = getattr(handle, operation, None)
+                if callable(src):
+                    DynamicToolFactory._adopt_signature_and_annotations(
+                        src,
+                        steering_tool,
+                    )
+                    _drop_params_from_signature(
+                        steering_tool,
+                        drop={"parent_chat_context_cont", "images"},
+                    )
+                else:
+                    raise AttributeError
+            except Exception:
+                # Fallback: minimal, schema-safe surface
+                if param_name:
+                    steering_tool.__signature__ = inspect.Signature(
+                        parameters=[
+                            inspect.Parameter(
+                                name=param_name,
+                                kind=inspect.Parameter.KEYWORD_ONLY,
+                                default="",
+                                annotation=str,
+                            ),
+                        ],
+                        return_annotation=dict,
+                    )
+                    steering_tool.__annotations__ = {param_name: str, "return": dict}
+                else:
+                    steering_tool.__signature__ = inspect.Signature(
+                        parameters=[],
+                        return_annotation=dict,
+                    )
+                    steering_tool.__annotations__ = {"return": dict}
 
         # Always set a custom docstring that describes this specific action
         # (overrides any docstring copied from handle, e.g. from MagicMock in tests)
