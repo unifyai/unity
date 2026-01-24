@@ -54,7 +54,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        notification_up_q: Optional[asyncio.Queue[dict]] = None,
         call_id: Optional[str] = None,
         on_finally: Optional[Callable[[], Awaitable[None]]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
@@ -84,9 +83,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         # attempt to request clarification (the `request_clarification` tool will not be added).
         self._clar_up_q_internal: Optional[asyncio.Queue[str]] = clarification_up_q
         self._clar_down_q_internal: Optional[asyncio.Queue[str]] = clarification_down_q
-        self._notification_up_q_internal: Optional[asyncio.Queue[dict]] = (
-            notification_up_q
-        )
         self._call_id: Optional[str] = call_id
 
         self._state: _HandleState = _HandleState.IDLE
@@ -96,6 +92,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
         self._completion_event = asyncio.Event()
         self._resume_requested_event = asyncio.Event()
+        # Event signaling that _loop_handle is ready for delegation
+        self._loop_handle_ready = asyncio.Event()
 
         self._task_id = str(uuid.uuid4())
         self._main_event_loop = main_event_loop
@@ -237,6 +235,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     response_format=self._response_format,
                     persist=bool(self._persist),
                 )
+                # Signal that _loop_handle is ready for delegation (e.g., next_notification)
+                self._loop_handle_ready.set()
 
                 try:
                     loop_result_str = await self._loop_handle.result()
@@ -373,32 +373,17 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         return {"question": question}
 
     async def next_notification(self) -> dict:
-        """Await the next notification from this handle or its inner tool loop."""
-        # Prefer the caller-provided notification queue when supplied.
-        if self._notification_up_q_internal is not None and self._loop_handle is None:
-            return await self._notification_up_q_internal.get()
+        """Await the next notification from the inner tool loop.
 
-        # If we have both a caller queue and an inner loop, wait on whichever fires first.
-        if (
-            self._notification_up_q_internal is not None
-            and self._loop_handle is not None
-        ):
-            loop_task = asyncio.create_task(self._loop_handle.next_notification())
-            q_task = asyncio.create_task(self._notification_up_q_internal.get())
-            done, pending = await asyncio.wait(
-                {loop_task, q_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for t in pending:
-                t.cancel()
-            # Return whichever completed first.
-            return next(iter(done)).result()
-
-        # Fall back to inner loop notifications when available.
-        if self._loop_handle is not None:
-            return await self._loop_handle.next_notification()
-
-        raise RuntimeError("Notification is disabled for this handle.")
+        Notifications bubble up from tools (like execute_code) through the async
+        tool loop's internal notification queue. This method delegates to the
+        inner loop handle once it's ready.
+        """
+        # Wait for the inner loop handle to be ready
+        await self._loop_handle_ready.wait()
+        if self._loop_handle is None:
+            raise RuntimeError("Inner loop handle not available.")
+        return await self._loop_handle.next_notification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         """Provide an answer to the pending clarification (call_id is ignored)."""
@@ -421,8 +406,10 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     @property
     def notification_up_q(self) -> Optional[asyncio.Queue[dict]]:
-        """Queue for sending notifications upwards (when the caller supplied one)."""
-        return self._notification_up_q_internal
+        """Queue for sending notifications upwards (delegated to inner loop)."""
+        if self._loop_handle is not None:
+            return getattr(self._loop_handle, "_notification_q", None)
+        return None
 
     def _is_valid_method(self, name: str) -> bool:
         if name == "stop":

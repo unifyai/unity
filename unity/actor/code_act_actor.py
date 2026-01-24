@@ -470,12 +470,14 @@ class PythonExecutionSession:
         # Expose sandbox metadata to user code (best-effort; callers may ignore).
         self.global_state["__sandbox_id__"] = self.id
 
-        # Notification queue is injected per-call by CodeActActor via:
+        # Notification queue is injected dynamically by execute_code when it
+        # receives a _notification_up_q from the async tool loop:
         # sandbox.global_state["__notification_up_q__"] = <asyncio.Queue>
         #
         # Provide a user-driven progress helper:
         #   notify({"type": "...", ...})
         # This helper is intentionally synchronous; it uses put_nowait.
+        # Notifications bubble up through the async tool loop to the outer handle.
         def notify(payload: dict) -> None:
             try:
                 q = self.global_state.get("__notification_up_q__")
@@ -1460,6 +1462,7 @@ class CodeActActor(BaseCodeActActor):
             session_id: int | None = None,
             session_name: str | None = None,
             venv_id: int | None = None,
+            _notification_up_q: asyncio.Queue[dict] | None = None,
         ) -> Any:
             """
             Execute code in a specified language and state mode, optionally within a session.
@@ -1567,14 +1570,17 @@ class CodeActActor(BaseCodeActActor):
             if err is not None:
                 return err
 
-            # Emit notifications for Python execution when a notification queue is attached
-            # to the currently-bound sandbox.
-            notification_q = None
+            # Emit notifications for Python execution when a notification queue is provided.
+            # The queue is auto-created by the async tool loop and passed as _notification_up_q.
+            # We also inject it into the sandbox so user code can call notify({...}).
+            notification_q = _notification_up_q
             sandbox_id = None
             try:
                 sb_for_notifs = _CURRENT_SANDBOX.get()
-                notification_q = sb_for_notifs.global_state.get("__notification_up_q__")
                 sandbox_id = getattr(sb_for_notifs, "id", None)
+                # Inject the per-tool notification queue into the sandbox so notify() works
+                if notification_q is not None:
+                    sb_for_notifs.global_state["__notification_up_q__"] = notification_q
             except Exception:
                 pass
 
@@ -2277,7 +2283,6 @@ class CodeActActor(BaseCodeActActor):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        _notification_up_q: Optional[asyncio.Queue[dict]] = None,
         _call_id: Optional[str] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
@@ -2458,8 +2463,8 @@ class CodeActActor(BaseCodeActActor):
             venv_pool=self._venv_pool,
             shell_pool=self._shell_pool,
         )
-        if _notification_up_q is not None:
-            sandbox.global_state["__notification_up_q__"] = _notification_up_q
+        # Note: __notification_up_q__ is injected dynamically by execute_code
+        # when it receives a _notification_up_q from the async tool loop.
         token = _CURRENT_SANDBOX.set(sandbox)
 
         async def _cleanup() -> None:
@@ -2577,7 +2582,6 @@ class CodeActActor(BaseCodeActActor):
             parent_chat_context=_parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-            notification_up_q=_notification_up_q,
             call_id=_call_id,
             on_finally=_cleanup,
             main_event_loop=self._main_event_loop,
