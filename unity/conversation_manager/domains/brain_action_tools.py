@@ -546,9 +546,15 @@ class ConversationManagerBrainActionTools:
 
         await managers_utils.wait_for_initialization(self._cm)
 
+        # Provide a per-handle notification queue so the actor can surface
+        # bottom-up notifications via `handle.next_notification()` without relying
+        # on an inner loop handle implementation.
+        notification_up_q: asyncio.Queue[dict] = asyncio.Queue()
+
         handle = await self._cm.actor.act(
             query,
             _parent_chat_context=self._cm.chat_history,
+            _notification_up_q=notification_up_q,
         )
 
         handle_id = _next_handle_id
@@ -557,6 +563,7 @@ class ConversationManagerBrainActionTools:
             "handle": handle,
             "query": query,
             "handle_actions": [],
+            "notification_up_q": notification_up_q,
         }
 
         await self._event_broker.publish(
