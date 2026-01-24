@@ -539,3 +539,51 @@ async def test_trigger_completion_idempotent():
     handle.trigger_completion("Second completion")
     result2 = await handle.result()
     assert result1 == result2, "Result should not change after second trigger"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 15.  Cancellation regression test for result/next_notification/next_clarification
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_methods_are_cancellable():
+    """
+    Regression test: result(), next_notification(), and next_clarification()
+    must be cancellable without blocking event loop shutdown.
+
+    Previously these methods used asyncio.to_thread(_done_event.wait) which
+    created executor threads that blocked indefinitely. Now they use polling,
+    allowing clean cancellation.
+    """
+    actor = SimulatedActor(steps=None, emit_notifications=False)
+    handle = await actor.act("Long running task")
+
+    # Start tasks that would block indefinitely without completion
+    result_task = asyncio.create_task(handle.result())
+    notification_task = asyncio.create_task(handle.next_notification())
+    clarification_task = asyncio.create_task(handle.next_clarification())
+
+    # Give tasks time to start their polling loops
+    await asyncio.sleep(0.2)
+
+    # Verify tasks are still running (not completed)
+    assert not result_task.done(), "result() should be waiting"
+    assert not notification_task.done(), "next_notification() should be waiting"
+    assert not clarification_task.done(), "next_clarification() should be waiting"
+
+    # Cancel all tasks - this should succeed without hanging
+    result_task.cancel()
+    notification_task.cancel()
+    clarification_task.cancel()
+
+    # Wait for cancellation to complete (should be immediate)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(result_task, timeout=1.0)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(notification_task, timeout=1.0)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(clarification_task, timeout=1.0)
+
+    # Cleanup: complete the handle to avoid any lingering state
+    handle.trigger_completion()
+    assert handle.done()
