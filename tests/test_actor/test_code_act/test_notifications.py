@@ -8,13 +8,15 @@ from unity.actor.code_act_actor import CodeActActor, PythonExecutionSession
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_code_act_notifications_and_notify_helper():
+async def test_execute_code_notifications_with_notification_queue():
     """
-    Validate that CodeActActor emits execution_started/execution_finished notifications
-    and that user code can call notify({...}) from within the sandbox.
+    Validate that execute_code emits execution_started/execution_finished notifications
+    and that user code can call notify({...}) from within the sandbox when a
+    _notification_up_q is provided (as the async tool loop does automatically).
     """
     from unity.actor.code_act_actor import _CURRENT_SANDBOX
 
+    # Create a notification queue that simulates what the async tool loop provides
     notification_q: asyncio.Queue[dict] = asyncio.Queue()
 
     actor = CodeActActor(headless=True, computer_mode="mock")
@@ -28,13 +30,13 @@ async def test_code_act_notifications_and_notify_helper():
         venv_pool=actor._venv_pool,
         shell_pool=actor._shell_pool,
     )
-    sandbox.global_state["__notification_up_q__"] = notification_q
     token = _CURRENT_SANDBOX.set(sandbox)
 
     try:
         tools = actor.get_tools("act")
         execute_code = tools["execute_code"]
 
+        # Call execute_code with _notification_up_q (as the tool loop would)
         _ = await execute_code(
             "emit notifications",
             "notify({'type': 'custom_progress', 'step': 1})\nprint('hi')",
@@ -42,16 +44,20 @@ async def test_code_act_notifications_and_notify_helper():
             state_mode="stateful",
             session_id=0,
             venv_id=None,
+            _notification_up_q=notification_q,  # Tool loop provides this
         )
 
+        # Verify execution_started notification
         started = await asyncio.wait_for(notification_q.get(), timeout=30)
         assert started.get("type") == "execution_started"
         assert isinstance(started.get("sandbox_id"), str)
 
+        # Verify custom notification from notify() call in sandbox
         custom = await asyncio.wait_for(notification_q.get(), timeout=30)
         assert custom.get("type") == "custom_progress"
         assert custom.get("step") == 1
 
+        # Verify execution_finished notification
         finished = await asyncio.wait_for(notification_q.get(), timeout=30)
         assert finished.get("type") == "execution_finished"
         assert finished.get("status") == "ok"
@@ -72,25 +78,52 @@ async def test_code_act_notifications_and_notify_helper():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
-async def test_actor_handle_next_notification_reads_queue():
-    """ActorHandle.next_notification should surface events when a queue is supplied."""
+@pytest.mark.timeout(120)
+async def test_actor_handle_delegates_next_notification_to_inner_loop():
+    """
+    ActorHandle.next_notification() should delegate to the inner loop handle
+    once it's ready. This tests the standard async tool loop pattern where
+    notifications bubble up through the loop.
+    """
     from unity.actor.handle import ActorHandle
 
-    notification_q: asyncio.Queue[dict] = asyncio.Queue()
+    # Create a simple tool that emits a notification
+    async def notifying_tool(
+        message: str,
+        *,
+        _notification_up_q: asyncio.Queue[dict] | None = None,
+    ) -> str:
+        """A tool that emits a notification when called."""
+        if _notification_up_q is not None:
+            await _notification_up_q.put(
+                {"type": "test_notification", "message": message},
+            )
+        return f"Processed: {message}"
 
     handle: ActorHandle | None = None
     try:
         handle = ActorHandle(
-            task_description="No-op task (test notifications only).",
-            tools={},
-            notification_up_q=notification_q,
-            timeout=5,
+            task_description="Call notifying_tool with message='hello'",
+            tools={"notifying_tool": notifying_tool},
+            timeout=60,
+            custom_system_prompt=(
+                "You are a helpful assistant. When asked to call a tool, call it with the "
+                "specified arguments. Do not ask for clarification - just call the tool."
+            ),
         )
 
-        await notification_q.put({"type": "notification", "message": "hello"})
-        event = await asyncio.wait_for(handle.next_notification(), timeout=10)
-        assert event.get("message") == "hello"
+        # Wait for the inner loop handle to be ready
+        await asyncio.wait_for(handle._loop_handle_ready.wait(), timeout=30)
+
+        # The inner loop should eventually call the tool and emit a notification.
+        # The tool loop wraps notifications with tool_name and call_id, but the original
+        # payload (including 'type') is merged in via **event_payload.
+        event = await asyncio.wait_for(handle.next_notification(), timeout=60)
+        assert event.get("type") == "test_notification"  # From our tool's payload
+        assert event.get("tool_name") == "notifying_tool"
+        # The message from our tool should be in the event
+        assert "hello" in str(event.get("message", ""))
+
     finally:
         if handle and not handle.done():
             try:
