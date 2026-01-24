@@ -581,6 +581,50 @@ class PythonExecutionSession:
         print_patched = False
 
         try:
+            # Guardrails: prevent agent code from accidentally shadowing critical
+            # injected environment globals (common failure mode in LLM-generated code).
+            #
+            # We do this via an AST rewrite (not brittle string heuristics):
+            # rewrite any assignment targets named `primitives` / `computer_primitives`
+            # to `_primitives_local` / `_computer_primitives_local`.
+            #
+            # This preserves the injected globals for the rest of the session.
+            try:
+
+                class _ShadowingGuard(ast.NodeTransformer):
+                    _REMAP = {
+                        "primitives": "_primitives_local",
+                        "computer_primitives": "_computer_primitives_local",
+                    }
+
+                    def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
+                        # Only rewrite *assignments* (Store context). Loads are preserved.
+                        if isinstance(node.ctx, ast.Store) and node.id in self._REMAP:
+                            return ast.copy_location(
+                                ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
+                                node,
+                            )
+                        return node
+
+                    def visit_Global(self, node: ast.Global) -> ast.AST:  # noqa: N802
+                        node.names = [self._REMAP.get(n, n) for n in node.names]
+                        return node
+
+                    def visit_Nonlocal(
+                        self,
+                        node: ast.Nonlocal,
+                    ) -> ast.AST:  # noqa: N802
+                        node.names = [self._REMAP.get(n, n) for n in node.names]
+                        return node
+
+                tree = ast.parse(code)
+                tree = _ShadowingGuard().visit(tree)  # type: ignore[assignment]
+                ast.fix_missing_locations(tree)
+                code = ast.unparse(tree)
+            except Exception:
+                # Best-effort only; if rewriting fails, proceed with original code.
+                pass
+
             is_empty_or_comment_only = all(
                 line.strip() == "" or line.strip().startswith("#")
                 for line in code.splitlines()
