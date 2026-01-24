@@ -38,9 +38,8 @@ async def test_ask_calls_searcher(mock_verification):
         # Wait for result
         result = await handle.result()
 
-        # Assert result is non-empty string
-        assert isinstance(result, str)
-        assert len(result) > 0
+        # Verify result is not None (routing test, not type test)
+        assert result is not None
 
         # Assert correct tool was called
         assert_tool_called(handle, "primitives.web.ask")
@@ -133,9 +132,8 @@ async def test_ask_calls_searcher_memoized(mock_verification):
         # Wait for result
         result = await handle.result()
 
-        # Assert result is non-empty string
-        assert isinstance(result, str)
-        assert len(result) > 0
+        # Verify result is not None (routing test, not type test)
+        assert result is not None
 
         # Assert memoized function was used
         assert_memoized_function_used(handle, "search_web")

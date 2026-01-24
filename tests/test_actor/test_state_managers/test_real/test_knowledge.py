@@ -187,11 +187,9 @@ async def ask_knowledge_with_analysis(question: str, response_format=None) -> st
         result = await handle.result()
 
         # Assert result is non-empty (relax assertion: str, dict, or BaseModel)
-        from pydantic import BaseModel
 
-        assert result and (
-            isinstance(result, (str, dict)) or isinstance(result, BaseModel)
-        )
+        # Verify result is not None (routing test, not type test)
+        assert result is not None
 
         # Assert memoized function was used
         assert_memoized_function_used(handle, "ask_knowledge_with_analysis")

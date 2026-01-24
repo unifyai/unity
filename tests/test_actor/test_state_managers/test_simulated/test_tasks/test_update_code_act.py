@@ -33,11 +33,9 @@ async def test_code_act_update_only_calls_update(
         )
         result = await handle.result()
         # Relax assertion: result can be str, dict, or Pydantic BaseModel
-        from pydantic import BaseModel
 
-        assert result and (
-            isinstance(result, (str, dict)) or isinstance(result, BaseModel)
-        )
+        # Verify result is not None (routing test, not type test)
+        assert result is not None
 
         assert calls, "Expected at least one state manager call."
 

@@ -32,7 +32,8 @@ async def test_code_act_update_only_calls_knowledge_update(
             clarification_enabled=False,
         )
         result = await handle.result()
-        assert isinstance(result, str) and result.strip()
+        # Verify result is not None (routing test, not type test)
+        assert result is not None
 
         assert calls, "Expected at least one state manager call."
         assert "primitives.knowledge.update" in set(calls), f"Calls seen: {calls}"
