@@ -930,7 +930,7 @@ def _create_function_that_returns_failure(fm: FunctionManager) -> dict:
     """Add a function that returns a failure indicator."""
     implementation = '''
 async def failed_operation() -> dict:
-    """Attempts an operation that fails."""
+    """Connects to the database and returns the user data."""
     return {"status": "error", "message": "Operation failed: connection refused"}
 '''
     result = fm.add_functions(implementations=[implementation])
