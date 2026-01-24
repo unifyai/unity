@@ -2292,6 +2292,21 @@ def build_initial_plan_prompt(
             """,
         )
 
+    # Build the namespaces list based on available environments
+    has_browser_for_library = (
+        environments is None or "computer_primitives" in environments
+    )
+    has_primitives_for_library = environments is None or "primitives" in environments
+
+    if has_browser_for_library and has_primitives_for_library:
+        namespace_list = "`primitives.*`, `computer_primitives.*`"
+    elif has_browser_for_library:
+        namespace_list = "`computer_primitives.*`"
+    elif has_primitives_for_library:
+        namespace_list = "`primitives.*`"
+    else:
+        namespace_list = "lower-level primitives"
+
     library_instruction = textwrap.dedent(
         f"""
         ### YOUR AVAILABLE FUNCTIONS (Already Loaded & Callable)
@@ -2303,8 +2318,8 @@ def build_initial_plan_prompt(
         - Treat these functions as **tested, safe, high-level skills**.
         - You do **NOT** need to see their source code to trust them.
         - Treat them as the **primary interface** for their domain; a direct call is simpler than
-          rebuilding the behavior with `primitives.*`, `computer_primitives.*`, etc.
-        - Do **NOT** "peek inside" by re-creating their internal logic with `primitives.*`, `computer_primitives.*` etc.
+          rebuilding the behavior with {namespace_list}, etc.
+        - Do **NOT** "peek inside" by re-creating their internal logic with {namespace_list} etc.
 
         **HOW TO USE THESE FUNCTIONS:**
 
