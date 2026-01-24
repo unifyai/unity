@@ -308,8 +308,13 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 pass
 
     async def result(self) -> str:
-        # Wait for action to complete (don't consume steps - observing isn't work)
-        await asyncio.to_thread(self._done_event.wait)
+        # Wait for action to complete using polling instead of asyncio.to_thread().
+        # Using asyncio.to_thread(_done_event.wait) creates executor threads that block
+        # indefinitely, which prevents pytest-asyncio from cleaning up the event loop
+        # after tests complete. Polling with asyncio.sleep() allows the coroutine to be
+        # cancelled cleanly during event loop shutdown.
+        while not self._done_event.is_set():
+            await asyncio.sleep(0.1)
         raw_result = self._result_str  # type: ignore
 
         # If response_format is specified, generate structured output
@@ -731,8 +736,10 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     async def next_clarification(self) -> dict:
         # If no clarification queue, block until the action completes
         # (similar to next_notification when emit_notifications=False)
+        # Use polling instead of asyncio.to_thread() to allow clean cancellation
         if self._clarification_up_q is None:
-            await asyncio.to_thread(self._done_event.wait)
+            while not self._done_event.is_set():
+                await asyncio.sleep(0.1)
             return {}
 
         try:
@@ -749,8 +756,10 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
 
     async def next_notification(self) -> dict:
         # If notifications are disabled, block until the action completes
+        # Use polling instead of asyncio.to_thread() to allow clean cancellation
         if not self._emit_notifications:
-            await asyncio.to_thread(self._done_event.wait)
+            while not self._done_event.is_set():
+                await asyncio.sleep(0.1)
             return {}
 
         # Report progress without consuming steps (observing isn't work)
