@@ -366,8 +366,14 @@ async def test_ask_stop(
 @pytest.mark.asyncio
 async def test_ask_uses_reduce_for_numeric_aggregation(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+    monkeypatch,
 ):
     """Verify LLM uses reduce tool for numeric aggregation questions."""
+    from unity.settings import SETTINGS
+
+    # Disable the "search_contacts on first turn" policy so reduce is available immediately
+    monkeypatch.setattr(SETTINGS, "FIRST_ASK_TOOL_IS_SEARCH", False)
+
     cm, _ = contact_manager_scenario
 
     handle = await cm.ask(
