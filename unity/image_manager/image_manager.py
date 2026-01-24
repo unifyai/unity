@@ -469,13 +469,16 @@ class ImageHandle:
         """
         if self.annotation is not None:
             return self.annotation
-        if timeout is None:
-            await asyncio.to_thread(self._annotation_event.wait)
-        else:
-            await asyncio.wait_for(
-                asyncio.to_thread(self._annotation_event.wait),
-                timeout=timeout,
-            )
+        # Use polling instead of asyncio.to_thread(_annotation_event.wait).
+        # asyncio.to_thread creates executor threads that block indefinitely,
+        # preventing clean event loop shutdown. Polling allows cancellation.
+        start = asyncio.get_event_loop().time() if timeout else None
+        while not self._annotation_event.is_set():
+            await asyncio.sleep(0.1)
+            if timeout is not None:
+                elapsed = asyncio.get_event_loop().time() - start  # type: ignore
+                if elapsed >= timeout:
+                    raise asyncio.TimeoutError()
         return self.annotation
 
     async def wait_for_caption(
@@ -489,13 +492,16 @@ class ImageHandle:
         """
         if self.caption is not None:
             return self.caption
-        if timeout is None:
-            await asyncio.to_thread(self._caption_event.wait)
-        else:
-            await asyncio.wait_for(
-                asyncio.to_thread(self._caption_event.wait),
-                timeout=timeout,
-            )
+        # Use polling instead of asyncio.to_thread(_caption_event.wait).
+        # asyncio.to_thread creates executor threads that block indefinitely,
+        # preventing clean event loop shutdown. Polling allows cancellation.
+        start = asyncio.get_event_loop().time() if timeout else None
+        while not self._caption_event.is_set():
+            await asyncio.sleep(0.1)
+            if timeout is not None:
+                elapsed = asyncio.get_event_loop().time() - start  # type: ignore
+                if elapsed >= timeout:
+                    raise asyncio.TimeoutError()
         return self.caption
 
     # ------------------------------ Deferred persistence ------------------
