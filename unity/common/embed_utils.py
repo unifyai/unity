@@ -253,7 +253,7 @@ def ensure_vector_column(
         return
 
     # Define the embedding equation with explicit lg scoping and ensure the embedding column.
-    embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}, async_embeddings={async_embeddings}')"
+    embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}', async_embeddings={async_embeddings})"
     ensure_derived_column(
         context=context,
         key=embed_column,
