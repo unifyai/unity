@@ -25,8 +25,72 @@ from tests.helpers import (
     scenario_file_lock,
     mutation_test_lock,
 )
+from unity.common.embed_utils import ensure_vector_column
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
+
+# Pure columns that should have embeddings pre-computed during seeding.
+# These are the text columns commonly used in semantic search queries.
+# Pre-computing avoids recomputing embeddings on every test run.
+_COLUMNS_TO_EMBED = [
+    "content",  # Main message text column used in semantic search
+]
+
+
+def _precompute_embeddings(context: str) -> None:
+    """
+    Pre-compute embeddings for pure columns used in semantic search.
+
+    This avoids recomputing embeddings on every test run. The embeddings
+    are computed once during initial seeding and then committed with the
+    scenario data.
+    """
+    print(f"Pre-computing embeddings for {context}...")
+    for column in _COLUMNS_TO_EMBED:
+        embed_column = f"_{column}_emb"
+        try:
+            ensure_vector_column(
+                context=context,
+                embed_column=embed_column,
+                source_column=column,
+                derived_expr=None,
+            )
+            print(f"  - Created {embed_column}")
+        except Exception as e:
+            # Column might not have data or might already exist
+            print(f"  - Skipped {embed_column}: {e}")
+
+
+def _ensure_embeddings_exist(context: str) -> bool:
+    """
+    Check if embeddings exist for the pure columns, create them if missing.
+
+    Returns True if any embeddings were created (scenario needs recommit).
+    """
+    try:
+        fields = unify.get_fields(context=context)
+    except Exception:
+        return False
+
+    embeddings_created = False
+    for column in _COLUMNS_TO_EMBED:
+        embed_column = f"_{column}_emb"
+        if embed_column not in fields:
+            print(f"Missing embedding {embed_column} in {context}, creating...")
+            try:
+                ensure_vector_column(
+                    context=context,
+                    embed_column=embed_column,
+                    source_column=column,
+                    derived_expr=None,
+                )
+                embeddings_created = True
+                print(f"  - Created {embed_column}")
+            except Exception as e:
+                print(f"  - Failed to create {embed_column}: {e}")
+
+    return embeddings_created
+
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -396,6 +460,11 @@ def _setup_tm_scenario(
             ids = rebuild_id_mapping(cm, _CONTACTS)
             _ID_BY_NAME.update(ids)
             _rebuild_commit_hashes(ctx)
+            # Check if embeddings exist, create if missing (for older scenarios)
+            if _ensure_embeddings_exist(transcript_ctx):
+                # Embeddings were created, need to recommit
+                print(f"Recommitting {ctx} with new embeddings...")
+                _commit_contexts_for_rollback(ctx)
         else:
             # Scenario not seeded - seed it
             print("Seeding transcript manager scenario...")
@@ -404,6 +473,9 @@ def _setup_tm_scenario(
             sb._seed_key_exchanges()
             sb._seed_filler()
             sb.finalize()  # Wait for all async log operations to complete
+            # Pre-compute embeddings for pure columns before committing
+            # This avoids recomputing on every test run
+            _precompute_embeddings(transcript_ctx)
             _commit_contexts_for_rollback(ctx)
 
     # Unset context after setup, like ContactManager does
@@ -428,6 +500,17 @@ async def tm_scenario(
 
 @pytest.fixture(scope="function")
 def tm_manager_scenario(tm_scenario):
+    """
+    Per-test fixture for tests using the transcript scenario (e.g., test_ask.py).
+
+    Uses a file lock to serialize tests, ensuring the full sequence
+    (rollback → run test → verify) is atomic. This prevents race conditions
+    where parallel tests' rollbacks orphan each other's derived column data.
+
+    Note: Despite being called "read scenario", these tests create derived
+    columns (embeddings, composite fields) during semantic search, so they
+    are not truly read-only and require serialization.
+    """
     tm, _ID_BY_NAME = tm_scenario
 
     def rollback_context(ctx):
@@ -439,7 +522,8 @@ def tm_manager_scenario(tm_scenario):
     # Use mutation_test_lock to prevent parallel rollbacks from orphaning
     # derived column data (embeddings) created by concurrent search operations
     with mutation_test_lock("tm_read"):
-        # Rollback to clean state before test
+        # Rollback INSIDE the lock to prevent other tests
+        # from rolling back while this test is running
         scenario_names = list(SCENARIO_COMMIT_HASHES.keys())
         if scenario_names:
             unify.map(rollback_context, scenario_names, mode="asyncio")
