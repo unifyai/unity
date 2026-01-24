@@ -81,6 +81,35 @@ def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
         ("transcripts", ["ask"]),
         ("guidance", ["ask", "update"]),
         ("web", ["ask"]),
+        (
+            "data",
+            [
+                "filter",
+                "search",
+                "reduce",
+                "join",
+                "insert_rows",
+                "update_rows",
+                "delete_rows",
+                "vectorize",
+                "plot",
+                "create_table",
+                "describe_table",
+            ],
+        ),
+        (
+            "files",
+            [
+                "ask",
+                "ask_about_file",
+                "describe",
+                "list_columns",
+                "reduce",
+                "filter_files",
+                "search_files",
+                "visualize",
+            ],
+        ),
     ]
     for manager_attr, methods in targets:
         try:
