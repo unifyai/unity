@@ -179,26 +179,17 @@ async def conversation_manager(request) -> CMStepDriver:
     # Create SimulatedActor for fast, deterministic testing
     # (avoids HierarchicalActor's browser/computer environment setup)
     #
-    # Steps configuration via pytest marker:
-    #   - Default: steps=0 (immediate completion, for tests that only check act was called)
-    #   - @pytest.mark.simulated_actor_steps(N) for tests needing in-flight actions
-    #
-    # Test file examples:
-    #   test_take_action.py - uses default (steps=0), actions complete immediately
-    #   test_steer_action.py - needs steps=3 (max: pause + interject + resume)
-    #   test_multi_action.py - needs steps=2 (max: pause + resume)
-    #
-    # For module-scoped fixtures, we need to get the marker from the module's own_markers
-    # since request.node is a Module object when the fixture is first invoked.
-    marker = request.node.get_closest_marker("simulated_actor_steps")
-    if marker is None:
-        # Fallback: check module's own markers directly
-        for m in getattr(request.node, "own_markers", []):
-            if m.name == "simulated_actor_steps":
-                marker = m
-                break
-    steps = marker.args[0] if marker else 0
-    actor = SimulatedActor(steps=steps, log_mode="log", emit_notifications=False)
+    # Uses steps=None, duration=None so actions run indefinitely until explicitly
+    # completed via trigger_completion() in test cleanup. This makes tests fully
+    # deterministic with no timing dependencies. Tests that verify steering (pause,
+    # resume, stop, interject) just check that steering tools were called - they
+    # don't need actions to auto-complete based on step counts.
+    actor = SimulatedActor(
+        steps=None,
+        duration=None,
+        log_mode="log",
+        emit_notifications=False,
+    )
 
     # Use file lock to coordinate manager initialization across parallel test processes.
     # ContactManager.__init__ creates system contacts (assistant id=0, user id=1)
@@ -269,22 +260,38 @@ async def conversation_manager(request) -> CMStepDriver:
     reset_event_broker()
 
 
+def _complete_in_flight_actions(cm: "CMStepDriver") -> None:
+    """
+    Complete all in-flight actions to unblock watcher threads.
+
+    With steps=None, actions run indefinitely. The watcher tasks (actor_watch_result,
+    actor_watch_notifications, actor_watch_clarifications) block on _done_event.wait()
+    in thread pool threads. If we don't call trigger_completion(), these threads
+    never terminate and cause "executor did not finish joining" warnings at shutdown.
+    """
+    for handle_data in list(cm.cm.in_flight_actions.values()):
+        handle = handle_data.get("handle")
+        if handle and hasattr(handle, "trigger_completion"):
+            handle.trigger_completion()
+    cm.cm.in_flight_actions.clear()
+
+
 @pytest.fixture
 def initialized_cm(
     conversation_manager: CMStepDriver,
-) -> CMStepDriver:
+):
     """
     Per-test fixture that provides a clean ConversationManager.
 
     Clears conversation state between tests for isolation while reusing
-    the expensive module-scoped CM instance.
+    the expensive module-scoped CM instance. Also ensures in-flight actions
+    are completed after each test to prevent thread leaks.
     """
+    # Complete and clear in-flight actions from previous tests
+    _complete_in_flight_actions(conversation_manager)
+
     # Clear any conversation state from previous tests
     conversation_manager.contact_index.clear_conversations()
-
-    # Clear in-flight actions (from previous act() calls)
-    # These create action steering tools that persist across tests
-    conversation_manager.cm.in_flight_actions.clear()
 
     # Reset handle_id counter to ensure deterministic tool names for caching.
     # Without this, handle_ids increment across tests, causing tool names like
@@ -310,4 +317,7 @@ def initialized_cm(
 
     conversation_manager.cm.last_snapshot = prompt_now(as_string=False)
 
-    return conversation_manager
+    yield conversation_manager
+
+    # Cleanup after test: complete any in-flight actions created during this test
+    _complete_in_flight_actions(conversation_manager)
