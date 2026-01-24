@@ -24,6 +24,8 @@ import pytest
 import unity
 from pydantic import BaseModel
 
+from tests.helpers import _handle_project
+
 from unity.actor.hierarchical_actor import (
     HierarchicalActor,
     HierarchicalActorHandle,
@@ -899,6 +901,7 @@ async def test_live_handle_management_tracks_steerable_primitives():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
+@_handle_project
 async def test_code_act_actor_primitives_only_sandbox_can_call_state_managers():
     """
     Test that CodeActActor can run in primitives-only mode (no browser env) and
@@ -932,13 +935,16 @@ async def test_code_act_actor_primitives_only_sandbox_can_call_state_managers():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
+@_handle_project
 async def test_code_act_actor_mixed_envs_sandbox_can_call_browser_and_state_managers():
     """
     Test that CodeActActor in mixed mode (browser + primitives envs) injects both namespaces
-    and the sandbox can call both tool domains.
+    and the PythonExecutionSession can call both tool domains.
 
     This test is sandbox-only (no LLM/tool-loop) to keep it deterministic.
     """
+    from unity.actor.code_act_actor import PythonExecutionSession
+
     primitives = Primitives()
 
     async def mock_contacts_update(text: str, **kwargs):
@@ -960,7 +966,9 @@ async def test_code_act_actor_mixed_envs_sandbox_can_call_browser_and_state_mana
         ],
     )
     try:
-        exec_result = await actor._sandbox.execute(
+        # Use PythonExecutionSession directly
+        sandbox = PythonExecutionSession(environments=actor.environments)
+        exec_result = await sandbox.execute(
             'await computer_primitives.navigate("https://example.com")\n'
             'await computer_primitives.act("Click something")\n'
             'h = await primitives.contacts.update("Add contact: Alice")\n'
