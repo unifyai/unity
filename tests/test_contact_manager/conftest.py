@@ -267,10 +267,15 @@ async def contact_read_scenario(
 @pytest.fixture(scope="function")
 def contact_manager_scenario(contact_read_scenario):
     """
-    Per-test fixture for READ-ONLY tests (e.g., test_ask.py, test_semantic.py).
+    Per-test fixture for tests using the read scenario (e.g., test_ask.py).
 
-    Rolls back to committed state before each test. These tests can run
-    fully in parallel since they use a separate context from mutation tests.
+    Uses a file lock to serialize tests, ensuring the full sequence
+    (rollback → run test → verify) is atomic. This prevents race conditions
+    where parallel tests' rollbacks orphan each other's derived column data.
+
+    Note: Despite being called "read scenario", these tests create derived
+    columns (embeddings, composite fields) during semantic search, so they
+    are not truly read-only and require serialization.
     """
     cm, id_map = contact_read_scenario
 
@@ -280,12 +285,14 @@ def contact_manager_scenario(contact_read_scenario):
             commit_hash=_READ_SCENARIO_COMMIT_HASHES[ctx],
         )
 
-    # Rollback to clean state before test
-    ctx_names = list(_READ_SCENARIO_COMMIT_HASHES.keys())
-    if ctx_names:
-        unify.map(rollback_context, ctx_names, mode="asyncio")
+    with mutation_test_lock("cm_read"):
+        # Rollback INSIDE the lock to prevent other tests
+        # from rolling back while this test is running
+        ctx_names = list(_READ_SCENARIO_COMMIT_HASHES.keys())
+        if ctx_names:
+            unify.map(rollback_context, ctx_names, mode="asyncio")
 
-    yield cm, id_map
+        yield cm, id_map
 
 
 # ---------------------------------------------------------------------------
