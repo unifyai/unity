@@ -9,6 +9,7 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.manager_registry import ManagerRegistry
 from unity.common.context_registry import ContextRegistry
+from unity.common.embed_utils import ensure_vector_column
 from tests.helpers import (
     get_or_create_contact,
     rebuild_id_mapping,
@@ -16,6 +17,16 @@ from tests.helpers import (
     scenario_file_lock,
     mutation_test_lock,
 )
+
+# Pure columns that should have embeddings pre-computed during seeding.
+# These are the text columns commonly used in semantic search queries.
+# Pre-computing avoids recomputing embeddings on every test run.
+_COLUMNS_TO_EMBED = [
+    "first_name",
+    "surname",
+    "bio",
+    "rolling_summary",
+]
 
 # Separate commit hash storage for read vs mutation contexts
 # This ensures rollbacks in one context don't affect the other
@@ -80,6 +91,61 @@ def _seed_contacts(cm: ContactManager) -> Dict[str, int]:
             name_key = _make_name_key(contact_data)
             id_mapping[name_key] = contact_id
     return id_mapping
+
+
+def _precompute_embeddings(context: str) -> None:
+    """
+    Pre-compute embeddings for pure columns used in semantic search.
+
+    This avoids recomputing embeddings on every test run. The embeddings
+    are computed once during initial seeding and then committed with the
+    scenario data.
+    """
+    print(f"Pre-computing embeddings for {context}...")
+    for column in _COLUMNS_TO_EMBED:
+        embed_column = f"_{column}_emb"
+        try:
+            ensure_vector_column(
+                context=context,
+                embed_column=embed_column,
+                source_column=column,
+                derived_expr=None,
+            )
+            print(f"  - Created {embed_column}")
+        except Exception as e:
+            # Column might not have data or might already exist
+            print(f"  - Skipped {embed_column}: {e}")
+
+
+def _ensure_embeddings_exist(context: str) -> bool:
+    """
+    Check if embeddings exist for the pure columns, create them if missing.
+
+    Returns True if any embeddings were created (scenario needs recommit).
+    """
+    try:
+        fields = unify.get_fields(context=context)
+    except Exception:
+        return False
+
+    embeddings_created = False
+    for column in _COLUMNS_TO_EMBED:
+        embed_column = f"_{column}_emb"
+        if embed_column not in fields:
+            print(f"Missing embedding {embed_column} in {context}, creating...")
+            try:
+                ensure_vector_column(
+                    context=context,
+                    embed_column=embed_column,
+                    source_column=column,
+                    derived_expr=None,
+                )
+                embeddings_created = True
+                print(f"  - Created {embed_column}")
+            except Exception as e:
+                print(f"  - Failed to create {embed_column}: {e}")
+
+    return embeddings_created
 
 
 def _rebuild_commit_hashes(
@@ -155,10 +221,18 @@ def _setup_scenario(
             print(f"Scenario already seeded ({ctx}), rebuilding local state...")
             id_mapping = rebuild_id_mapping(cm, _CONTACTS_DATA)
             _rebuild_commit_hashes(ctx, commit_hashes)
+            # Check if embeddings exist, create if missing (for older scenarios)
+            if _ensure_embeddings_exist(cm._ctx):
+                # Embeddings were created, need to recommit
+                print(f"Recommitting {ctx} with new embeddings...")
+                _commit_contexts_for_rollback(ctx, commit_hashes)
         else:
             # Scenario not seeded - seed it
             print(f"Seeding contact manager scenario ({ctx})...")
             id_mapping = _seed_contacts(cm)
+            # Pre-compute embeddings for pure columns before committing
+            # This avoids recomputing on every test run
+            _precompute_embeddings(cm._ctx)
             _commit_contexts_for_rollback(ctx, commit_hashes)
 
     unify.unset_context()
