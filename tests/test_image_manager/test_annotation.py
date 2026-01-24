@@ -353,3 +353,97 @@ async def test_wait_for_annotation_immediate_via_constructor():
 
     got = await h.wait_for_annotation(timeout=0.5)
     assert got == "ready-now"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Cancellation regression tests
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_annotation_is_cancellable():
+    """
+    Regression test: wait_for_annotation() must be cancellable without
+    blocking event loop shutdown.
+
+    Previously this method used asyncio.to_thread(_annotation_event.wait) which
+    created executor threads that blocked indefinitely. Now it uses polling,
+    allowing clean cancellation.
+    """
+    im = ImageManager()
+    [h] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": "cancel test",
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=True,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+
+    # Don't set annotation - this would block indefinitely with old implementation
+    wait_task = _asyncio.create_task(h.wait_for_annotation())
+
+    # Give task time to start polling
+    await _asyncio.sleep(0.2)
+
+    # Task should still be running (waiting for annotation)
+    assert not wait_task.done(), "wait_for_annotation() should be waiting"
+
+    # Cancel the task - this should succeed without hanging
+    wait_task.cancel()
+
+    # Wait for cancellation to complete (should be immediate)
+    with pytest.raises(_asyncio.CancelledError):
+        await _asyncio.wait_for(wait_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_caption_is_cancellable():
+    """
+    Regression test: wait_for_caption() must be cancellable without
+    blocking event loop shutdown.
+
+    Previously this method used asyncio.to_thread(_caption_event.wait) which
+    created executor threads that blocked indefinitely. Now it uses polling,
+    allowing clean cancellation.
+    """
+    im = ImageManager()
+    [h] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": None,
+                    "auto_caption": False,
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=True,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+
+    # Don't set caption - this would block indefinitely with old implementation
+    wait_task = _asyncio.create_task(h.wait_for_caption())
+
+    # Give task time to start polling
+    await _asyncio.sleep(0.2)
+
+    # Task should still be running (waiting for caption)
+    assert not wait_task.done(), "wait_for_caption() should be waiting"
+
+    # Cancel the task - this should succeed without hanging
+    wait_task.cancel()
+
+    # Wait for cancellation to complete (should be immediate)
+    with pytest.raises(_asyncio.CancelledError):
+        await _asyncio.wait_for(wait_task, timeout=1.0)
