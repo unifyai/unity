@@ -23,6 +23,7 @@ from tests.helpers import (
     rebuild_id_mapping,
     is_scenario_seeded,
     scenario_file_lock,
+    mutation_test_lock,
 )
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
@@ -435,12 +436,15 @@ def tm_manager_scenario(tm_scenario):
             commit_hash=SCENARIO_COMMIT_HASHES[ctx],
         )
 
-    # Rollback to clean state before test
-    scenario_names = list(SCENARIO_COMMIT_HASHES.keys())
-    if scenario_names:
-        unify.map(rollback_context, scenario_names, mode="asyncio")
+    # Use mutation_test_lock to prevent parallel rollbacks from orphaning
+    # derived column data (embeddings) created by concurrent search operations
+    with mutation_test_lock("tm_read"):
+        # Rollback to clean state before test
+        scenario_names = list(SCENARIO_COMMIT_HASHES.keys())
+        if scenario_names:
+            unify.map(rollback_context, scenario_names, mode="asyncio")
 
-    # Re-set the scenario context to ensure nested operations work
-    unify.set_context("tests/test_transcript_manager/Scenario", relative=False)
+        # Re-set the scenario context to ensure nested operations work
+        unify.set_context("tests/test_transcript_manager/Scenario", relative=False)
 
-    yield tm, _ID_BY_NAME
+        yield tm, _ID_BY_NAME
