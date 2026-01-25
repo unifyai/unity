@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import zipfile
 from typing import AsyncIterator
 
 import pytest
@@ -235,72 +234,10 @@ def initialized_cm_codeact(
 def test_files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     """
     Return absolute paths for sample fixture files.
-
-    Note on DOCX:
-    - We do NOT commit binary DOCX blobs to the repo.
-    - Instead we generate a minimal, valid .docx at runtime (a ZIP container with XML parts).
     """
     fixtures_dir = Path(__file__).parent / "fixtures"
-
-    def _write_minimal_docx(path: Path, *, paragraphs: list[str]) -> None:
-        # Minimal DOCX structure (ZIP with WordprocessingML).
-        # References:
-        # - [Content_Types].xml is required
-        # - _rels/.rels links to the main document part
-        # - word/document.xml contains the body
-        content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-</Types>
-"""
-        rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>
-"""
-
-        def _escape_xml(s: str) -> str:
-            return (
-                s.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace('"', "&quot;")
-                .replace("'", "&apos;")
-            )
-
-        p_xml = "\n".join(
-            f"<w:p><w:r><w:t>{_escape_xml(p)}</w:t></w:r></w:p>" for p in paragraphs
-        )
-        document_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-    {p_xml}
-    <w:sectPr/>
-  </w:body>
-</w:document>
-"""
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("[Content_Types].xml", content_types)
-            zf.writestr("_rels/.rels", rels)
-            zf.writestr("word/document.xml", document_xml)
-
-    tmp_dir = tmp_path_factory.mktemp("cm_codeact_integration_fixtures")
-    docx_path = tmp_dir / "test_document.docx"
-    _write_minimal_docx(
-        docx_path,
-        paragraphs=[
-            "ConversationManager integration test fixture (.docx).",
-            "This document exists to validate FileManager parsing of real DOCX containers.",
-            "It is generated at test runtime to avoid committing binary blobs.",
-        ],
-    )
 
     return {
         "test_report.pdf": str(fixtures_dir / "test_report.pdf"),
         "test_data.csv": str(fixtures_dir / "test_data.csv"),
-        "test_document.docx": str(docx_path),
     }
