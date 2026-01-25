@@ -383,8 +383,12 @@ def verify_task_in_db(
     TaskScheduler stores tasks in a Unify "Tasks" context. We read a minimal row
     projection via its internal TasksStore for deterministic verification.
     """
-    scheduler = cm.cm.task_scheduler
-    assert scheduler is not None, "ConversationManager has no TaskScheduler"
+    # TaskScheduler is not a direct field on ConversationManager; access it via
+    # ManagerRegistry (the canonical owner), which is what `primitives.tasks` uses.
+    from unity.manager_registry import ManagerRegistry
+
+    scheduler = ManagerRegistry.get_task_scheduler()
+    assert scheduler is not None, "TaskScheduler is not available"
     store = getattr(scheduler, "_store", None)
     assert store is not None, "TaskScheduler missing _store (storage not provisioned?)"
 
