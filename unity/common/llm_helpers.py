@@ -543,6 +543,9 @@ def method_to_schema(
             "_notification_up_q",
             "_pause_event",
             "_interject_queue",
+            # Plumbing parameter for continued parent context in steering methods
+            # (ask, interject, stop). This matches parent_chat_context in start_async_tool_loop.
+            "parent_chat_context_cont",
         )
 
         if is_hidden:

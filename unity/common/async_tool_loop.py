@@ -39,17 +39,18 @@ from abc import ABC, abstractmethod
 class SteerableHandle(ABC):
     """Abstract base class for steerable handles.
 
-    Notes on _parent_chat_context_cont
-    ----------------------------------
-    Some steering methods accept an optional parameter ``_parent_chat_context_cont``.
+    Notes on parent_chat_context_cont
+    ---------------------------------
+    Some steering methods accept an optional parameter ``parent_chat_context_cont``.
     This represents the parent chat context continued since the start of this loop –
     i.e., a continuation of the parent "conversation" (which may itself be another
     tool loop). Implementations should ensure that, when provided, this context is
     surfaced to the LLM in an appropriate way.
 
-    The leading underscore marks this as a plumbing parameter that is automatically
-    hidden from LLM tool schemas (LLMs should not control this value; it is injected
-    by the orchestrating code layer).
+    This parameter is a plumbing parameter that is automatically hidden from LLM
+    tool schemas by ``method_to_schema`` (LLMs should not control this value; it is
+    injected by the orchestrating code layer). This matches the naming convention
+    of ``parent_chat_context`` used in ``start_async_tool_loop``.
     """
 
     @abstractmethod
@@ -57,7 +58,7 @@ class SteerableHandle(ABC):
         self,
         question: str,
         *,
-        _parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> "SteerableHandle":
         """
@@ -86,7 +87,7 @@ class SteerableHandle(ABC):
         self,
         message: str,
         *,
-        _parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Provide additional information or instructions to the running task.
@@ -117,7 +118,7 @@ class SteerableToolHandle(SteerableHandle):
         self,
         reason: Optional[str] = None,
         *,
-        _parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Stop this task immediately, cancelling any pending work.
@@ -325,7 +326,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         question: str,
         *,
-        _parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         _return_reasoning_steps: bool = False,
         **kwargs,
@@ -334,7 +335,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         Answers *question* about this *pending* tool, associated with this handle.
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
-        When ``_parent_chat_context_cont`` is provided, the user message will be
+        When ``parent_chat_context_cont`` is provided, the user message will be
         packaged as a dict with keys {"parent_chat_context_continuted", "message"}
         to clearly signal the continuation of the parent conversation since the
         start of this loop.
@@ -347,7 +348,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
 
         # Record the user-visible question immediately (even if delegated)
-        self._append_user_visible_user(question, _parent_chat_context_cont)
+        self._append_user_visible_user(question, parent_chat_context_cont)
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -436,10 +437,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Build the message for the inspection loop – either a plain string or
         # a single string that embeds the continued parent context.
-        if _parent_chat_context_cont is not None:
-            _ctx_text = str(_parent_chat_context_cont)
+        if parent_chat_context_cont is not None:
+            _ctx_text = str(parent_chat_context_cont)
             with suppress(Exception):
-                _ctx_text = json.dumps(_parent_chat_context_cont, indent=2)
+                _ctx_text = json.dumps(parent_chat_context_cont, indent=2)
             _ask_message = {
                 "role": "user",
                 "content": f"{question}\n\nparent_chat_context_continuted:\n{_ctx_text}",
@@ -520,7 +521,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         message: str,
         *,
-        _parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         trigger_immediate_llm_turn: bool = True,
         **kwargs,
@@ -528,12 +529,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
         # Record user-visible immediately
-        self._append_user_visible_user(message, _parent_chat_context_cont)
+        self._append_user_visible_user(message, parent_chat_context_cont)
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
         payload = {
             "message": message,
-            "parent_chat_context_continuted": _parent_chat_context_cont,
+            "parent_chat_context_continuted": parent_chat_context_cont,
             "images": images,
             "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
         }
@@ -564,7 +565,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         reason: Optional[str] = None,
         *,
-        _parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         **kwargs,
     ) -> None:

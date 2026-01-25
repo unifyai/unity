@@ -290,8 +290,8 @@ class DynamicToolFactory:
             # Set fallback docstring first; _adopt_signature_and_annotations may override
             _interject.__doc__ = doc
             # Expose the downstream handle's signature to the LLM dynamically.
-            # Parameters starting with _ (like _parent_chat_context_cont) are automatically
-            # hidden by method_to_schema, so we don't need to manually filter them.
+            # Plumbing parameters like parent_chat_context_cont are automatically hidden
+            # by method_to_schema (via the explicit hidden params list).
             with suppress(Exception):
                 if hasattr(handle, "interject"):
                     self._adopt_signature_and_annotations(
