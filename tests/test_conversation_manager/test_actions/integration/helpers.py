@@ -19,6 +19,7 @@ from tests.test_conversation_manager.cm_helpers import filter_events_by_type
 from unity.conversation_manager.events import (
     ActorHandleStarted,
     ActorResult,
+    ActorClarificationRequest,
     Event,
     Error,
     SMSSent,
@@ -108,6 +109,54 @@ async def wait_for_actor_result_event(
         raise TimeoutError(
             f"Timed out waiting for ActorResult for handle_id={handle_id}",
         )
+
+
+async def wait_for_actor_clarification_event(
+    cm: Any,
+    handle_id: int,
+    *,
+    timeout: float = 30.0,
+) -> ActorClarificationRequest:
+    """Wait for ActorClarificationRequest on the in-memory broker."""
+    broker = cm.cm.event_broker
+    async with broker.pubsub() as pubsub:
+        await pubsub.subscribe("app:actor:clarification_request")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            msg = await pubsub.get_message(timeout=0.5, ignore_subscribe_messages=True)
+            if not msg:
+                continue
+            try:
+                evt = Event.from_json(msg["data"])
+            except Exception:
+                continue
+            if isinstance(evt, ActorClarificationRequest) and int(evt.handle_id) == int(
+                handle_id,
+            ):
+                return evt
+        raise TimeoutError(
+            f"Timed out waiting for ActorClarificationRequest for handle_id={handle_id}",
+        )
+
+
+async def inject_actor_clarification_request(
+    cm_driver: Any,
+    *,
+    handle_id: int,
+    query: str,
+    call_id: str | None = None,
+) -> None:
+    """Deterministically apply an ActorClarificationRequest to CM state."""
+    from unity.conversation_manager.domains.event_handlers import EventHandler
+
+    cm = cm_driver.cm
+    evt = ActorClarificationRequest(handle_id=handle_id, query=query, call_id=call_id)
+    await EventHandler.handle_event(
+        evt,
+        cm,
+        is_voice_call=cm.call_manager.uses_realtime_api,
+    )
 
 
 async def wait_for_actor_completion(
