@@ -1,5 +1,0 @@
-This is NOT a real DOCX file.
-
-Real `.docx` files are ZIP containers with WordprocessingML XML parts.
-For determinism and to avoid committing binary blobs, the integration test fixture
-generates a valid DOCX at runtime in `tests/test_conversation_manager/test_actions/integration/conftest.py`.
