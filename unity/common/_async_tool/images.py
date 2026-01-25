@@ -338,10 +338,10 @@ def build_live_image_tools(
                 # Pass parent context only when the handle supports it
                 fn = getattr(ih, "ask")
                 params = inspect.signature(fn).parameters
-                if "_parent_chat_context_cont" in params:
+                if "parent_chat_context_cont" in params:
                     return await ih.ask(
                         question,
-                        _parent_chat_context_cont=ctx_repr,
+                        parent_chat_context_cont=ctx_repr,
                     )
                 return await ih.ask(question)
 
