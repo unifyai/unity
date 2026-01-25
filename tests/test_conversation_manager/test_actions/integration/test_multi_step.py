@@ -165,3 +165,171 @@ async def test_summarize_file_then_create_task_smoke(
         expected_fields={"name": task_name},
     )
     assert_no_errors(result2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+@_handle_project
+@pytest.mark.skip(
+    reason=(
+        "FIXME(Robust CM↔Actor E2E): CM brain can delegate only step 1 of a compound user "
+        "instruction to the actor (lossy multi-step). This test must run via CM→Actor, "
+        "but is currently unreliable until delegation is fixed."
+    ),
+)
+async def test_single_message_file_then_create_task(
+    initialized_cm_codeact,
+    test_files,
+    tmp_path,
+):
+    """
+    Single-message multi-step: read a file, extract a token, then create a follow-up task.
+
+    Contract: CodeActActor can execute a multi-step plan from ONE natural-language request
+    and persist the requested side-effect (task creation), while actually reading the file
+    (validated via a token that exists only inside the file).
+    """
+    # FIXME(Robust CM↔Actor E2E): Keep this test routed through CM (production path).
+    # The actor-direct variant that *does* pass is intentionally left commented below
+    # as guidance for what should succeed once CM delegation is fixed.
+    import uuid
+    from pathlib import Path
+
+    cm = initialized_cm_codeact
+    # Write a per-test plain-text file with an unguessable token.
+    token = f"SINGLEMSG-TOKEN-{uuid.uuid4().hex}"
+    note_path = Path(tmp_path) / f"single_message_note_{token[-8:]}.txt"
+    note_path.write_text(f"Reference token: {token}\n", encoding="utf-8")
+
+    task_name = f"Follow up on note ({token})"
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content=(
+                f"I just received a small text note at {str(note_path)}. "
+                "Please do all of the following steps:\n"
+                "1) Read the note and extract the reference token.\n"
+                "2) Create a task in my task list with the exact name I give you below.\n"
+                "3) Set the task description to include the extracted token.\n"
+                f"Task name: '{task_name}'.\n"
+                "Reply 'DONE' only after the task is created."
+            ),
+        ),
+    )
+    handle_id = get_actor_started_event(result).handle_id
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+
+    task_id = _find_task_id_by_name(cm, name=task_name)
+    row = verify_task_in_db(cm, task_id, expected_fields={"name": task_name})
+    desc = str(row.get("description") or "")
+    assert (
+        token in desc
+    ), f"Expected task description to contain token {token!r}, got: {desc!r}"
+    assert_no_errors(result)
+
+    # Actor-direct variant (commented guidance):
+    # import asyncio
+    # actor = cm.cm.actor
+    # handle = await actor.act(
+    #     (
+    #         f"I just received a small text note at {str(note_path)}. "
+    #         "Read the note, extract the reference token, then create a task in my task list "
+    #         f"with the exact name '{task_name}' and a description that includes the extracted token."
+    #     ),
+    #     _parent_chat_context=cm.cm.chat_history,
+    # )
+    # _final = await asyncio.wait_for(handle.result(), timeout=90)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+@_handle_project
+@pytest.mark.skip(
+    reason=(
+        "FIXME(Robust CM↔Actor E2E): CM brain can delegate only step 1 of a compound user "
+        "instruction to the actor (lossy multi-step). This test must run via CM→Actor, "
+        "but is currently unreliable until delegation is fixed."
+    ),
+)
+async def test_single_message_update_contact_then_create_task(initialized_cm_codeact):
+    """
+    Single-message multi-step: update a contact, then create a task referencing the updated value.
+
+    Contract: CodeActActor can chain ContactManager.update → TaskScheduler.update in a single request,
+    and the final persisted state matches what was requested.
+    """
+    # FIXME(Robust CM↔Actor E2E): Keep this test routed through CM (production path).
+    # The actor-direct variant that *does* pass is intentionally left commented below
+    # as guidance for what should succeed once CM delegation is fixed.
+    import os
+    import uuid
+
+    cm = initialized_cm_codeact
+    uniq = os.getpid()
+    email = f"sam.taylor.{uniq}@example.com"
+    _ = get_or_create_contact(
+        cm.cm.contact_manager,
+        first_name="Sam",
+        surname="Taylor",
+        email_address=email,
+        phone_number="+15555550001",
+    )
+
+    token = f"CONTACTTASK-{uuid.uuid4().hex}"
+    new_phone = "+15555550002"
+    task_name = f"Call Sam ({token})"
+    task_desc = f"Call Sam at {new_phone}. Ref: {token}."
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content=(
+                "Please do ALL of the following in order:\n"
+                f"1) Update the contact with email {email} to have phone number {new_phone}.\n"
+                f"2) Create a task named '{task_name}' with description '{task_desc}'.\n"
+                "Reply 'DONE' only after both steps are complete."
+            ),
+        ),
+    )
+    handle_id = get_actor_started_event(result).handle_id
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+
+    # Verify the contact update persisted.
+    payload = cm.cm.contact_manager.filter_contacts(
+        filter=f"email_address == '{email}'",
+        limit=5,
+    )
+    contacts = payload.get("contacts") or []
+    assert contacts, f"Expected to find contact for {email!r}, got: {payload}"
+    c0 = contacts[0]
+    contact_id = (
+        int(c0.get("contact_id")) if isinstance(c0, dict) else int(c0.contact_id)
+    )
+    verify_contact_in_db(
+        cm,
+        contact_id,
+        expected_fields={"email_address": email, "phone_number": new_phone},
+    )
+
+    # Verify the task creation persisted.
+    task_id = _find_task_id_by_name(cm, name=task_name)
+    verify_task_in_db(
+        cm,
+        task_id,
+        expected_fields={"name": task_name, "description": task_desc},
+    )
+    assert_no_errors(result)
+
+    # Actor-direct variant (commented guidance):
+    # import asyncio
+    # actor = cm.cm.actor
+    # handle = await actor.act(
+    #     (
+    #         "Please do both steps in order: "
+    #         f"update the contact with email {email} to phone number {new_phone}; "
+    #         f"then create a task named '{task_name}' with description '{task_desc}'."
+    #     ),
+    #     _parent_chat_context=cm.cm.chat_history,
+    # )
+    # _final = await asyncio.wait_for(handle.result(), timeout=90)
