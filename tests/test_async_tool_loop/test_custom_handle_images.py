@@ -9,6 +9,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
+from unity.image_manager.types import ImageRefs
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 from tests.async_helpers import _wait_for_tool_request
@@ -38,7 +39,7 @@ class CustomImagesHandle(SteerableToolHandle):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        images: Optional[ImageRefs] = None,
     ) -> Optional[str]:
         self.interject_calls.append(
             {
